@@ -348,6 +348,20 @@ describe('heuristic layout reconstruction (E-PDF EP4)', () => {
     expect(placed.doc.section?.margins?.top).toBe(0);
   });
 
+  it('reads the weight the page set, where the descriptor states none', async () => {
+    // §9.8.1 — a descriptor that gives no /FontWeight and does not force bold
+    // has said NOTHING about weight; reading that silence as "regular" is how
+    // TAMReview.pdf's Times-Bold came back light, and every bold word on the
+    // page with it — its title, "Abstract", "Keywords:".
+    const body =
+      '<w:p><w:r><w:rPr><w:b/></w:rPr><w:t>HeavyWord</w:t></w:r></w:p>' +
+      '<w:p><w:r><w:t>PlainWord</w:t></w:r></w:p>';
+    const flow = await layoutFlow(body);
+    const runs = flow.body.flatMap((b) => (b.kind === 'paragraph' ? b.paragraph.runs : []));
+    expect(runs.find((r) => r.text.includes('Heavy'))?.properties.bold).toBe(true);
+    expect(runs.find((r) => r.text.includes('Plain'))?.properties.bold).toBeFalsy();
+  });
+
   it('marks a line far larger than the median as a heading', async () => {
     const big = '<w:p><w:r><w:rPr><w:sz w:val="48"/></w:rPr><w:t>BigTitle</w:t></w:r></w:p>';
     const flow = await layoutFlow(

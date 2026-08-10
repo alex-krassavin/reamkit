@@ -88,6 +88,7 @@ export interface TextSpan {
 export function paragraphFromRuns(
   spans: ReadonlyArray<TextSpan>,
   outlineLevel?: number,
+  placement?: Pick<ParagraphProperties, 'alignment' | 'spacingBefore'>,
 ): BodyElement {
   const merged: Array<{
     text: string;
@@ -133,7 +134,13 @@ export function paragraphFromRuns(
     runs[0]!.text = runs[0]!.text.replace(/^ /, '');
     runs[runs.length - 1]!.text = runs[runs.length - 1]!.text.replace(/ $/, '');
   }
-  const properties: ParagraphProperties = outlineLevel !== undefined ? { outlineLevel } : {};
+  // §17.3.1 — how the page SET it, beside what it says: a PDF states no
+  // alignment and no paragraph spacing, and both are read back off where the
+  // lines were placed (see `layout.ts`).
+  const properties: ParagraphProperties = {
+    ...(outlineLevel !== undefined ? { outlineLevel } : {}),
+    ...placement,
+  };
   return {
     kind: 'paragraph',
     paragraph: {

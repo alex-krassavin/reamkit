@@ -254,21 +254,46 @@ function faceStyle(
 ): { bold?: boolean; italic?: boolean } {
   const owner = isType0 ? descendantFont(file, fontDict) : fontDict;
   const descriptor = file.resolve(owner.get('FontDescriptor') ?? PDF_NULL);
+  const named = styleFromName(asName(file.resolve(fontDict.get('BaseFont') ?? PDF_NULL)));
   if (descriptor instanceof Map) {
     const flags = asNumber(file.resolve(descriptor.get('Flags') ?? PDF_NULL), 0);
-    const weight = asNumber(file.resolve(descriptor.get('FontWeight') ?? PDF_NULL), 0);
+    const weightVal = file.resolve(descriptor.get('FontWeight') ?? PDF_NULL);
     const slant = asNumber(file.resolve(descriptor.get('ItalicAngle') ?? PDF_NULL), 0);
-    const bold = weight >= BOLD_WEIGHT || (flags & FLAG_FORCE_BOLD) !== 0;
-    const italic = slant !== 0 || (flags & FLAG_ITALIC) !== 0;
-    return { ...(bold ? { bold } : {}), ...(italic ? { italic } : {}) };
+    // §9.8.1 — a descriptor decides only what it STATES. One that gives no
+    // /FontWeight and does not force bold has said nothing about weight, and
+    // reading that silence as "regular" is how TAMReview.pdf's Times-Bold came
+    // back light: every bold word on the page — its title, "Abstract",
+    // "Keywords:" — set in the same face as the body.
+    const statesWeight = typeof weightVal === 'number' || (flags & FLAG_FORCE_BOLD) !== 0;
+    const bold = statesWeight
+      ? asNumber(weightVal, 0) >= BOLD_WEIGHT || (flags & FLAG_FORCE_BOLD) !== 0
+      : named.bold;
+    // The slant and the flag each state italic outright; where neither does,
+    // the name is the only witness left.
+    const italic = slant !== 0 || (flags & FLAG_ITALIC) !== 0 || named.italic;
+    return { ...(bold ? { bold: true } : {}), ...(italic ? { italic: true } : {}) };
   }
-  const name = asName(file.resolve(fontDict.get('BaseFont') ?? PDF_NULL)).replace(
-    /^[A-Z]{6}\+/u,
-    '',
-  );
-  const bold = /bold|black|heavy/iu.test(name);
-  const italic = /italic|oblique/iu.test(name);
-  return { ...(bold ? { bold } : {}), ...(italic ? { italic } : {}) };
+  return { ...(named.bold ? { bold: true } : {}), ...(named.italic ? { italic: true } : {}) };
+}
+
+/**
+ * §9.6.2.2 — the style a font's NAME states, by the PostScript convention:
+ * `Family-Style`, or `Family,Style` as Word writes it.
+ *
+ * The separator is what makes this safe. A family whose name merely CONTAINS
+ * the word — "New Basrah Bold", "Damascus Bold", both real faces in
+ * ArabicCIDTrueType.pdf — is not a bold cut of anything, and reading it as one
+ * set two lines heavy that no reader sets heavy. `Times-Bold` is.
+ */
+function styleFromName(baseFont: string): { bold: boolean; italic: boolean } {
+  // §9.6.4 — six arbitrary capitals and a plus sign mark a subset, and they may
+  // spell anything at all.
+  const name = baseFont.replace(/^[A-Z]{6}\+/u, '');
+  const style = /[-,]([A-Za-z]+)$/u.exec(name)?.[1] ?? '';
+  return {
+    bold: /bold|black|heavy|semib|demi/iu.test(style),
+    italic: /italic|oblique/iu.test(style),
+  };
 }
 
 /** §9.7.4 — a `/Type0` font's one descendant CIDFont, which owns the descriptor. */

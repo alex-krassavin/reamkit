@@ -142,11 +142,23 @@ export function reconstructByLayout(
         return;
       }
       const lines = groupIntoLines(colRuns).filter((l) => l.text.length > 0);
-      for (const para of groupIntoParagraphs(lines)) {
+      // The column the paragraphs were set in — its own edges, not the page's,
+      // so a two-column page judges each side against the side it belongs to.
+      const measure =
+        lines.length > 0
+          ? {
+              left: Math.min(...lines.map((l) => l.x)),
+              right: Math.max(...lines.map((l) => l.x + l.width)),
+            }
+          : undefined;
+      for (const para of groupIntoParagraphs(lines, measure)) {
         blocks.push({
           col,
           top: para.top,
-          el: paragraphFromRuns(para.spans, headingLevel(para.fontSize, medianFont)),
+          el: paragraphFromRuns(para.spans, headingLevel(para.fontSize, medianFont), {
+            ...(para.alignment !== undefined ? { alignment: para.alignment } : {}),
+            ...(para.spacingBefore !== undefined ? { spacingBefore: pt(para.spacingBefore) } : {}),
+          }),
         });
       }
     };
@@ -578,20 +590,72 @@ function lineSpans(runs: ReadonlyArray<TextRun>, fontSize: number): Array<TextSp
 // line's leading starts a new paragraph. `top` is the paragraph's first (highest) line.
 function groupIntoParagraphs(
   lines: ReadonlyArray<Line>,
-): Array<{ spans: Array<TextSpan>; fontSize: number; top: number }> {
+  column?: { left: number; right: number },
+): Array<{
+  spans: Array<TextSpan>;
+  fontSize: number;
+  top: number;
+  alignment?: 'center' | 'right';
+  spacingBefore?: number;
+}> {
   const groups: Array<Array<Line>> = [];
+  const gaps: Array<number> = [];
   let prevY: number | undefined;
   for (const line of lines) {
     const gap = prevY !== undefined ? prevY - line.y : 0;
-    if (groups.length === 0 || (prevY !== undefined && gap > line.fontSize * 1.5)) groups.push([]);
+    if (groups.length === 0 || (prevY !== undefined && gap > line.fontSize * 1.5)) {
+      groups.push([]);
+      gaps.push(prevY === undefined ? 0 : gap);
+    }
     groups[groups.length - 1]!.push(line);
     prevY = line.y;
   }
-  return groups.map((g) => ({
-    spans: g.flatMap((l, i) => (i > 0 ? [{ text: ' ' }, ...l.spans] : [...l.spans])),
-    fontSize: Math.max(...g.map((l) => l.fontSize)),
-    top: g[0]!.y,
-  }));
+  return groups.map((g, i) => {
+    const first = g[0]!;
+    const fontSize = Math.max(...g.map((l) => l.fontSize));
+    // The gap that OPENED this paragraph, less the line it would have taken
+    // anyway, is the space its author put before it. Under a third of a line it
+    // is just leading, and a paragraph is not spaced by rounding error.
+    const opened = (gaps[i] ?? 0) - fontSize * 1.2;
+    const spacingBefore = opened > fontSize * 0.3 ? Math.min(opened, fontSize * 3) : undefined;
+    return {
+      spans: g.flatMap((l, k) => (k > 0 ? [{ text: ' ' }, ...l.spans] : [...l.spans])),
+      fontSize,
+      top: first.y,
+      ...(spacingBefore !== undefined ? { spacingBefore } : {}),
+      ...alignmentOf(g, column),
+    };
+  });
+}
+
+/**
+ * §17.3.1.13 — where a paragraph sits across its column, which is the only
+ * witness a PDF leaves of how it was set: every line is placed absolutely and
+ * nothing says "centred".
+ *
+ * A paragraph whose lines are inset by about as much on each side is centred; a
+ * one-line paragraph pushed to the right edge is right-aligned. Everything else
+ * is left alone — a justified paragraph and a ragged-right one look the same
+ * from here, and guessing between them would re-set the body of every document.
+ */
+function alignmentOf(
+  lines: ReadonlyArray<Line>,
+  column: { left: number; right: number } | undefined,
+): { alignment?: 'center' | 'right' } {
+  if (!column || lines.length === 0) return {};
+  const width = column.right - column.left;
+  if (!(width > 0)) return {};
+  const leads = lines.map((l) => l.x - column.left);
+  const trails = lines.map((l) => column.right - (l.x + l.width));
+  const lead = Math.min(...leads);
+  const trail = Math.min(...trails);
+  // A tenth of the measure is the smallest inset worth calling a placement:
+  // below it every ragged line would read as centred.
+  const meaningful = width * 0.1;
+  if (lead < meaningful && trail < meaningful) return {};
+  if (Math.abs(lead - trail) <= width * 0.06) return { alignment: 'center' };
+  if (lead > meaningful && trail < meaningful) return { alignment: 'right' };
+  return {};
 }
 
 // A line markedly larger than the body text reads as a heading.
