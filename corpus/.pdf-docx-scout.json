@@ -220,26 +220,6 @@
   }
  },
  {
-  "name": "colors.pdf",
-  "best": 1,
-  "flow": {
-   "score": 1,
-   "note": "pages 8≠2",
-   "pages": [
-    8,
-    2
-   ]
-  },
-  "positional": {
-   "score": 1,
-   "note": "pages 8≠2",
-   "pages": [
-    8,
-    2
-   ]
-  }
- },
- {
   "name": "bitmap-composite-and-xnor-refine.pdf",
   "best": 1,
   "flow": {
@@ -680,8 +660,28 @@
   }
  },
  {
+  "name": "bug1755507.pdf",
+  "best": 0.9907,
+  "flow": {
+   "score": 0.991,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.9907,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
   "name": "franz_2.pdf",
-  "best": 0.9768,
+  "best": 0.94,
   "flow": {
    "score": 0.9768,
    "note": "",
@@ -691,7 +691,7 @@
    ]
   },
   "positional": {
-   "score": 0.9768,
+   "score": 0.94,
    "note": "",
    "pages": [
     1,
@@ -701,37 +701,17 @@
  },
  {
   "name": "bug946506.pdf",
-  "best": 0.9135,
+  "best": 0.8974,
   "flow": {
    "score": 0.9135,
-   "note": "pages 4≠1",
+   "note": "pages 2≠1",
    "pages": [
-    4,
+    2,
     1
    ]
   },
   "positional": {
-   "score": 0.9399,
-   "note": "pages 20≠1",
-   "pages": [
-    20,
-    1
-   ]
-  }
- },
- {
-  "name": "bug1755507.pdf",
-  "best": 0.8652,
-  "flow": {
-   "score": 0.8652,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.8652,
+   "score": 0.8974,
    "note": "",
    "pages": [
     1,
@@ -740,50 +720,110 @@
   }
  },
  {
-  "name": "calrgb.pdf",
-  "best": 0.8336,
+  "name": "comments.pdf",
+  "best": 0.879,
   "flow": {
-   "score": 0.8336,
-   "note": "pages 136≠17",
+   "score": 0.879,
+   "note": "pages 5≠14",
    "pages": [
-    136,
-    17
+    5,
+    14
    ]
   },
   "positional": {
-   "score": 0.8361,
-   "note": "pages 153≠17",
+   "score": 0.879,
+   "note": "pages 5≠14",
    "pages": [
-    153,
-    17
+    5,
+    14
+   ]
+  }
+ },
+ {
+  "name": "canvas.pdf",
+  "best": 0.8647,
+  "flow": {
+   "score": 0.8647,
+   "note": "pages 17≠2",
+   "pages": [
+    17,
+    2
+   ]
+  },
+  "positional": {
+   "score": 0.8647,
+   "note": "pages 17≠2",
+   "pages": [
+    17,
+    2
+   ]
+  }
+ },
+ {
+  "name": "bug1771477.pdf",
+  "best": 0.8081,
+  "flow": {
+   "score": 0.812,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.8081,
+   "note": "",
+   "pages": [
+    1,
+    1
    ]
   }
  },
  {
   "name": "calgray.pdf",
-  "best": 0.7283,
+  "best": 0.7684,
   "flow": {
-   "score": 0.7283,
-   "note": "pages 12≠3",
+   "score": 0.7716,
+   "note": "",
    "pages": [
-    12,
+    3,
     3
    ]
   },
   "positional": {
-   "score": 0.7317,
-   "note": "pages 15≠3",
+   "score": 0.7684,
+   "note": "",
    "pages": [
-    15,
+    3,
     3
+   ]
+  }
+ },
+ {
+  "name": "calrgb.pdf",
+  "best": 0.7634,
+  "flow": {
+   "score": 0.7758,
+   "note": "",
+   "pages": [
+    17,
+    17
+   ]
+  },
+  "positional": {
+   "score": 0.7634,
+   "note": "",
+   "pages": [
+    17,
+    17
    ]
   }
  },
  {
   "name": "bug852992_reduced.pdf",
-  "best": 0.6829,
+  "best": 0.5926,
   "flow": {
-   "score": 0.6829,
+   "score": 0.5926,
    "note": "",
    "pages": [
     1,
@@ -791,50 +831,10 @@
    ]
   },
   "positional": {
-   "score": 0.6829,
+   "score": 0.5926,
    "note": "",
    "pages": [
     1,
-    1
-   ]
-  }
- },
- {
-  "name": "ccitt_EndOfBlock_false.pdf",
-  "best": 0.599,
-  "flow": {
-   "score": 0.599,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.599,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "freetexts.pdf",
-  "best": 0.5849,
-  "flow": {
-   "score": 98,
-   "note": "soffice would not open our .docx",
-   "pages": [
-    0,
-    0
-   ]
-  },
-  "positional": {
-   "score": 0.5849,
-   "note": "pages 355≠1",
-   "pages": [
-    355,
     1
    ]
   }
@@ -860,70 +860,10 @@
   }
  },
  {
-  "name": "comments.pdf",
-  "best": 0.5712,
+  "name": "ccitt_EndOfBlock_false.pdf",
+  "best": 0.5683,
   "flow": {
-   "score": 0.5712,
-   "note": "pages 28≠14",
-   "pages": [
-    28,
-    14
-   ]
-  },
-  "positional": {
-   "score": 0.5712,
-   "note": "pages 28≠14",
-   "pages": [
-    28,
-    14
-   ]
-  }
- },
- {
-  "name": "TAMReview.pdf",
-  "best": 0.5337,
-  "flow": {
-   "score": 0.5337,
-   "note": "pages 1≠23",
-   "pages": [
-    1,
-    23
-   ]
-  },
-  "positional": {
-   "score": 0.5337,
-   "note": "pages 1≠23",
-   "pages": [
-    1,
-    23
-   ]
-  }
- },
- {
-  "name": "S2.pdf",
-  "best": 0.4817,
-  "flow": {
-   "score": 0.4817,
-   "note": "pages 3≠1",
-   "pages": [
-    3,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.4817,
-   "note": "pages 4≠1",
-   "pages": [
-    4,
-    1
-   ]
-  }
- },
- {
-  "name": "SimFang-variant.pdf",
-  "best": 0.4627,
-  "flow": {
-   "score": 0.4627,
+   "score": 0.5683,
    "note": "",
    "pages": [
     1,
@@ -931,7 +871,47 @@
    ]
   },
   "positional": {
-   "score": 0.4627,
+   "score": 0.5683,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "TAMReview.pdf",
+  "best": 0.534,
+  "flow": {
+   "score": 0.534,
+   "note": "pages 1≠23",
+   "pages": [
+    1,
+    23
+   ]
+  },
+  "positional": {
+   "score": 0.534,
+   "note": "pages 1≠23",
+   "pages": [
+    1,
+    23
+   ]
+  }
+ },
+ {
+  "name": "SimFang-variant.pdf",
+  "best": 0.4621,
+  "flow": {
+   "score": 0.4621,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.4634,
    "note": "",
    "pages": [
     1,
@@ -960,21 +940,41 @@
   }
  },
  {
-  "name": "XiaoBiaoSong.pdf",
-  "best": 0.4518,
+  "name": "S2.pdf",
+  "best": 0.4558,
   "flow": {
-   "score": 0.4518,
-   "note": "pages 2≠1",
+   "score": 0.4559,
+   "note": "",
    "pages": [
-    2,
+    1,
     1
    ]
   },
   "positional": {
-   "score": 0.4627,
-   "note": "pages 9≠1",
+   "score": 0.4558,
+   "note": "",
    "pages": [
-    9,
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "XiaoBiaoSong.pdf",
+  "best": 0.4502,
+  "flow": {
+   "score": 0.4502,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.4756,
+   "note": "",
+   "pages": [
+    1,
     1
    ]
   }
@@ -1000,46 +1000,6 @@
   }
  },
  {
-  "name": "chrome-text-selection-markedContent.pdf",
-  "best": 0.4187,
-  "flow": {
-   "score": 0.4187,
-   "note": "pages 6≠1",
-   "pages": [
-    6,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.4697,
-   "note": "pages 6≠1",
-   "pages": [
-    6,
-    1
-   ]
-  }
- },
- {
-  "name": "alphatrans.pdf",
-  "best": 0.3951,
-  "flow": {
-   "score": 0.4037,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.3951,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
   "name": "endchar.pdf",
   "best": 0.3838,
   "flow": {
@@ -1061,9 +1021,9 @@
  },
  {
   "name": "copy_paste_ligatures.pdf",
-  "best": 0.3786,
+  "best": 0.3785,
   "flow": {
-   "score": 0.3786,
+   "score": 0.3785,
    "note": "",
    "pages": [
     1,
@@ -1080,30 +1040,10 @@
   }
  },
  {
-  "name": "clippath.pdf",
-  "best": 0.3234,
+  "name": "chrome-text-selection-markedContent.pdf",
+  "best": 0.3096,
   "flow": {
-   "score": 0.3234,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.3234,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "blendmode.pdf",
-  "best": 0.2872,
-  "flow": {
-   "score": 0.2995,
+   "score": 0.4187,
    "note": "pages 4≠1",
    "pages": [
     4,
@@ -1111,19 +1051,19 @@
    ]
   },
   "positional": {
-   "score": 0.2872,
-   "note": "pages 4≠1",
+   "score": 0.3096,
+   "note": "",
    "pages": [
-    4,
+    1,
     1
    ]
   }
  },
  {
   "name": "highlights.pdf",
-  "best": 0.278,
+  "best": 0.2783,
   "flow": {
-   "score": 0.278,
+   "score": 0.2783,
    "note": "pages 1≠14",
    "pages": [
     1,
@@ -1131,82 +1071,22 @@
    ]
   },
   "positional": {
-   "score": 0.278,
+   "score": 0.2783,
    "note": "pages 1≠14",
    "pages": [
     1,
     14
-   ]
-  }
- },
- {
-  "name": "bug1708040.pdf",
-  "best": 0.2585,
-  "flow": {
-   "score": 0.2585,
-   "note": "pages 3≠1",
-   "pages": [
-    3,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.2839,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "canvas.pdf",
-  "best": 0.2544,
-  "flow": {
-   "score": 0.2544,
-   "note": "pages 153≠2",
-   "pages": [
-    153,
-    2
-   ]
-  },
-  "positional": {
-   "score": 0.2544,
-   "note": "pages 153≠2",
-   "pages": [
-    153,
-    2
-   ]
-  }
- },
- {
-  "name": "bug1922766.pdf",
-  "best": 0.2385,
-  "flow": {
-   "score": 0.2385,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.2385,
-   "note": "",
-   "pages": [
-    1,
-    1
    ]
   }
  },
  {
   "name": "freeculture.pdf",
-  "best": 0.2203,
+  "best": 0.2432,
   "flow": {
-   "score": 0.2203,
-   "note": "pages 355≠352",
+   "score": 0.2432,
+   "note": "",
    "pages": [
-    355,
+    352,
     352
    ]
   },
@@ -1220,50 +1100,10 @@
   }
  },
  {
-  "name": "22060_A1_01_Plans.pdf",
-  "best": 0.2191,
+  "name": "issue10640.pdf",
+  "best": 0.2132,
   "flow": {
-   "score": 0.2191,
-   "note": "pages 4≠1",
-   "pages": [
-    4,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.2191,
-   "note": "pages 4≠1",
-   "pages": [
-    4,
-    1
-   ]
-  }
- },
- {
-  "name": "issue11144_reduced.pdf",
-  "best": 0.2185,
-  "flow": {
-   "score": 0.2185,
-   "note": "pages 3≠1",
-   "pages": [
-    3,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.2187,
-   "note": "pages 3≠1",
-   "pages": [
-    3,
-    1
-   ]
-  }
- },
- {
-  "name": "ShowText-ShadingPattern.pdf",
-  "best": 0.2176,
-  "flow": {
-   "score": 0.2176,
+   "score": 0.2132,
    "note": "",
    "pages": [
     1,
@@ -1271,7 +1111,7 @@
    ]
   },
   "positional": {
-   "score": 0.2185,
+   "score": 0.2132,
    "note": "",
    "pages": [
     1,
@@ -1280,30 +1120,30 @@
   }
  },
  {
-  "name": "issue10572.pdf",
-  "best": 0.2128,
+  "name": "alphatrans.pdf",
+  "best": 0.1874,
   "flow": {
-   "score": 0.2128,
-   "note": "pages 2≠1",
+   "score": 0.1874,
+   "note": "",
    "pages": [
-    2,
+    1,
     1
    ]
   },
   "positional": {
-   "score": 0.2128,
-   "note": "pages 2≠1",
+   "score": 0.1876,
+   "note": "",
    "pages": [
-    2,
+    1,
     1
    ]
   }
  },
  {
   "name": "bug1844576.pdf",
-  "best": 0.1823,
+  "best": 0.1815,
   "flow": {
-   "score": 0.2185,
+   "score": 0.1815,
    "note": "",
    "pages": [
     1,
@@ -1311,30 +1151,10 @@
    ]
   },
   "positional": {
-   "score": 0.1823,
+   "score": 0.1819,
    "note": "",
    "pages": [
     1,
-    1
-   ]
-  }
- },
- {
-  "name": "bug1743245.pdf",
-  "best": 0.1811,
-  "flow": {
-   "score": 0.1811,
-   "note": "pages 233≠1",
-   "pages": [
-    233,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.1811,
-   "note": "pages 233≠1",
-   "pages": [
-    233,
     1
    ]
   }
@@ -1360,10 +1180,10 @@
   }
  },
  {
-  "name": "bug1883609.pdf",
-  "best": 0.1788,
+  "name": "issue10572.pdf",
+  "best": 0.1787,
   "flow": {
-   "score": 0.1931,
+   "score": 0.1787,
    "note": "",
    "pages": [
     1,
@@ -1371,10 +1191,10 @@
    ]
   },
   "positional": {
-   "score": 0.1788,
-   "note": "pages 2≠1",
+   "score": 0.1787,
+   "note": "",
    "pages": [
-    2,
+    1,
     1
    ]
   }
@@ -1400,46 +1220,6 @@
   }
  },
  {
-  "name": "gradientfill.pdf",
-  "best": 0.1681,
-  "flow": {
-   "score": 0.1681,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.1681,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "160F-2019.pdf",
-  "best": 0.1678,
-  "flow": {
-   "score": 0.1678,
-   "note": "pages 10≠1",
-   "pages": [
-    10,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.189,
-   "note": "pages 11≠1",
-   "pages": [
-    11,
-    1
-   ]
-  }
- },
- {
   "name": "bug911034.pdf",
   "best": 0.1669,
   "flow": {
@@ -1460,26 +1240,6 @@
   }
  },
  {
-  "name": "issue10519_reduced.pdf",
-  "best": 0.1653,
-  "flow": {
-   "score": 0.1672,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.1653,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
   "name": "issue10084_reduced.pdf",
   "best": 0.1624,
   "flow": {
@@ -1491,99 +1251,19 @@
    ]
   },
   "positional": {
-   "score": 0.1687,
+   "score": 0.1781,
    "note": "",
    "pages": [
     1,
-    1
-   ]
-  }
- },
- {
-  "name": "bug1934157.pdf",
-  "best": 0.1592,
-  "flow": {
-   "score": 0.1597,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.1592,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bug920426.pdf",
-  "best": 0.1587,
-  "flow": {
-   "score": 0.1697,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.1587,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "issue11362.pdf",
-  "best": 0.156,
-  "flow": {
-   "score": 0.1921,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.156,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "IndexedCS_negative_and_high.pdf",
-  "best": 0.1554,
-  "flow": {
-   "score": 0.1554,
-   "note": "pages 6≠1",
-   "pages": [
-    6,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.1554,
-   "note": "pages 6≠1",
-   "pages": [
-    6,
     1
    ]
   }
  },
  {
   "name": "bug1992868.pdf",
-  "best": 0.1525,
+  "best": 0.1526,
   "flow": {
-   "score": 0.1525,
+   "score": 0.1526,
    "note": "pages 1≠14",
    "pages": [
     1,
@@ -1591,7 +1271,7 @@
    ]
   },
   "positional": {
-   "score": 0.1525,
+   "score": 0.1526,
    "note": "pages 1≠14",
    "pages": [
     1,
@@ -1600,81 +1280,41 @@
   }
  },
  {
-  "name": "ThuluthFeatures.pdf",
-  "best": 0.1469,
+  "name": "bug1922766.pdf",
+  "best": 0.1467,
   "flow": {
-   "score": 0.1469,
-   "note": "pages 4≠1",
+   "score": 0.1467,
+   "note": "",
    "pages": [
-    4,
+    1,
     1
    ]
   },
   "positional": {
-   "score": 0.1469,
-   "note": "pages 4≠1",
+   "score": 0.1479,
+   "note": "",
    "pages": [
-    4,
+    1,
     1
    ]
   }
  },
  {
-  "name": "images.pdf",
-  "best": 0.1424,
+  "name": "issue10519_reduced.pdf",
+  "best": 0.1351,
   "flow": {
-   "score": 0.1427,
-   "note": "pages 2≠1",
+   "score": 0.1672,
+   "note": "",
    "pages": [
-    2,
+    1,
     1
    ]
   },
   "positional": {
-   "score": 0.1424,
-   "note": "pages 2≠1",
+   "score": 0.1351,
+   "note": "",
    "pages": [
-    2,
-    1
-   ]
-  }
- },
- {
-  "name": "bug1669099.pdf",
-  "best": 0.1329,
-  "flow": {
-   "score": 0.2077,
-   "note": "pages 2≠1",
-   "pages": [
-    2,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.1329,
-   "note": "pages 2≠1",
-   "pages": [
-    2,
-    1
-   ]
-  }
- },
- {
-  "name": "bug1885505.pdf",
-  "best": 0.1323,
-  "flow": {
-   "score": 0.1323,
-   "note": "pages 2≠1",
-   "pages": [
-    2,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.1323,
-   "note": "pages 2≠1",
-   "pages": [
-    2,
+    1,
     1
    ]
   }
@@ -1700,50 +1340,50 @@
   }
  },
  {
-  "name": "ZapfDingbats.pdf",
-  "best": 0.1238,
+  "name": "blendmode.pdf",
+  "best": 0.1249,
   "flow": {
-   "score": 0.1238,
-   "note": "pages 6≠2",
+   "score": 0.1249,
+   "note": "",
    "pages": [
-    6,
-    2
-   ]
-  },
-  "positional": {
-   "score": 0.1256,
-   "note": "pages 21≠2",
-   "pages": [
-    21,
-    2
-   ]
-  }
- },
- {
-  "name": "bug1799927.pdf",
-  "best": 0.1238,
-  "flow": {
-   "score": 0.1238,
-   "note": "pages 21≠1",
-   "pages": [
-    21,
+    1,
     1
    ]
   },
   "positional": {
-   "score": 0.1238,
-   "note": "pages 21≠1",
+   "score": 0.125,
+   "note": "",
    "pages": [
-    21,
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1885505.pdf",
+  "best": 0.1206,
+  "flow": {
+   "score": 0.1206,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.1206,
+   "note": "",
+   "pages": [
+    1,
     1
    ]
   }
  },
  {
   "name": "bug1844583.pdf",
-  "best": 0.1205,
+  "best": 0.12,
   "flow": {
-   "score": 0.1205,
+   "score": 0.1201,
    "note": "",
    "pages": [
     1,
@@ -1751,7 +1391,7 @@
    ]
   },
   "positional": {
-   "score": 0.1205,
+   "score": 0.12,
    "note": "",
    "pages": [
     1,
@@ -1760,10 +1400,10 @@
   }
  },
  {
-  "name": "bug1175962.pdf",
-  "best": 0.1186,
+  "name": "bug1934157.pdf",
+  "best": 0.1132,
   "flow": {
-   "score": 0.1186,
+   "score": 0.1132,
    "note": "",
    "pages": [
     1,
@@ -1771,27 +1411,7 @@
    ]
   },
   "positional": {
-   "score": 0.1197,
-   "note": "pages 2≠1",
-   "pages": [
-    2,
-    1
-   ]
-  }
- },
- {
-  "name": "bug1552113.pdf",
-  "best": 0.1162,
-  "flow": {
-   "score": 0.1162,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.1176,
+   "score": 0.1137,
    "note": "",
    "pages": [
     1,
@@ -1801,9 +1421,9 @@
  },
  {
   "name": "image-rotated-black-white-ratio.pdf",
-  "best": 0.1139,
+  "best": 0.1131,
   "flow": {
-   "score": 0.1139,
+   "score": 0.1131,
    "note": "",
    "pages": [
     1,
@@ -1811,7 +1431,7 @@
    ]
   },
   "positional": {
-   "score": 0.1139,
+   "score": 0.1131,
    "note": "",
    "pages": [
     1,
@@ -1820,10 +1440,10 @@
   }
  },
  {
-  "name": "bug898853.pdf",
-  "best": 0.1079,
+  "name": "bug1669099.pdf",
+  "best": 0.11,
   "flow": {
-   "score": 0.1079,
+   "score": 0.1444,
    "note": "",
    "pages": [
     1,
@@ -1831,7 +1451,7 @@
    ]
   },
   "positional": {
-   "score": 0.1079,
+   "score": 0.11,
    "note": "",
    "pages": [
     1,
@@ -1860,10 +1480,10 @@
   }
  },
  {
-  "name": "highlight_popup.pdf",
-  "best": 0.1047,
+  "name": "issue11144_reduced.pdf",
+  "best": 0.1059,
   "flow": {
-   "score": 0.1047,
+   "score": 0.1059,
    "note": "",
    "pages": [
     1,
@@ -1871,67 +1491,7 @@
    ]
   },
   "positional": {
-   "score": 0.1065,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "devicen.pdf",
-  "best": 0.1046,
-  "flow": {
-   "score": 0.1046,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.1046,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bug1721218_reduced.pdf",
-  "best": 0.1041,
-  "flow": {
-   "score": 0.1101,
-   "note": "pages 3≠1",
-   "pages": [
-    3,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.1041,
-   "note": "pages 3≠1",
-   "pages": [
-    3,
-    1
-   ]
-  }
- },
- {
-  "name": "bug1019475_1.pdf",
-  "best": 0.1041,
-  "flow": {
-   "score": 0.1041,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.1078,
+   "score": 0.1059,
    "note": "",
    "pages": [
     1,
@@ -1991,7 +1551,7 @@
    ]
   },
   "positional": {
-   "score": 0.1022,
+   "score": 0.1021,
    "note": "",
    "pages": [
     1,
@@ -2000,10 +1560,10 @@
   }
  },
  {
-  "name": "issue11403_reduced.pdf",
-  "best": 0.1015,
+  "name": "issue11362.pdf",
+  "best": 0.1006,
   "flow": {
-   "score": 0.1015,
+   "score": 0.1198,
    "note": "",
    "pages": [
     1,
@@ -2011,67 +1571,7 @@
    ]
   },
   "positional": {
-   "score": 0.1052,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bug1868759.pdf",
-  "best": 0.1004,
-  "flow": {
-   "score": 0.1051,
-   "note": "pages 4≠1",
-   "pages": [
-    4,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.1004,
-   "note": "pages 4≠1",
-   "pages": [
-    4,
-    1
-   ]
-  }
- },
- {
-  "name": "annotation-tx2.pdf",
-  "best": 0.0984,
-  "flow": {
-   "score": 0.0984,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0984,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bug894572.pdf",
-  "best": 0.096,
-  "flow": {
-   "score": 0.097,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.096,
+   "score": 0.1006,
    "note": "",
    "pages": [
     1,
@@ -2081,9 +1581,9 @@
  },
  {
   "name": "issue11549_reduced.pdf",
-  "best": 0.096,
+  "best": 0.0952,
   "flow": {
-   "score": 0.096,
+   "score": 0.0952,
    "note": "",
    "pages": [
     1,
@@ -2091,7 +1591,7 @@
    ]
   },
   "positional": {
-   "score": 0.096,
+   "score": 0.0952,
    "note": "",
    "pages": [
     1,
@@ -2100,10 +1600,10 @@
   }
  },
  {
-  "name": "decodeACSuccessive.pdf",
-  "best": 0.0959,
+  "name": "ThuluthFeatures.pdf",
+  "best": 0.0947,
   "flow": {
-   "score": 0.0959,
+   "score": 0.0947,
    "note": "",
    "pages": [
     1,
@@ -2111,7 +1611,7 @@
    ]
   },
   "positional": {
-   "score": 0.0959,
+   "score": 0.0947,
    "note": "",
    "pages": [
     1,
@@ -2120,10 +1620,10 @@
   }
  },
  {
-  "name": "bug766086.pdf",
-  "best": 0.0907,
+  "name": "Type3WordSpacing.pdf",
+  "best": 0.0912,
   "flow": {
-   "score": 0.0907,
+   "score": 0.1205,
    "note": "",
    "pages": [
     1,
@@ -2131,7 +1631,27 @@
    ]
   },
   "positional": {
-   "score": 0.0907,
+   "score": 0.0912,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug898853.pdf",
+  "best": 0.091,
+  "flow": {
+   "score": 0.091,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.091,
    "note": "",
    "pages": [
     1,
@@ -2141,7 +1661,7 @@
  },
  {
   "name": "bug1308536.pdf",
-  "best": 0.0906,
+  "best": 0.0902,
   "flow": {
    "score": 0.1506,
    "note": "",
@@ -2151,7 +1671,7 @@
    ]
   },
   "positional": {
-   "score": 0.0906,
+   "score": 0.0902,
    "note": "",
    "pages": [
     1,
@@ -2160,10 +1680,10 @@
   }
  },
  {
-  "name": "bug847420.pdf",
-  "best": 0.0902,
+  "name": "bug1868759.pdf",
+  "best": 0.0901,
   "flow": {
-   "score": 0.0902,
+   "score": 0.0901,
    "note": "",
    "pages": [
     1,
@@ -2171,7 +1691,27 @@
    ]
   },
   "positional": {
-   "score": 0.0902,
+   "score": 0.0983,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1175962.pdf",
+  "best": 0.0882,
+  "flow": {
+   "score": 0.1186,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0882,
    "note": "",
    "pages": [
     1,
@@ -2200,10 +1740,10 @@
   }
  },
  {
-  "name": "file_url_link.pdf",
-  "best": 0.0851,
+  "name": "bug1799927.pdf",
+  "best": 0.0836,
   "flow": {
-   "score": 0.0851,
+   "score": 0.0836,
    "note": "",
    "pages": [
     1,
@@ -2211,27 +1751,7 @@
    ]
   },
   "positional": {
-   "score": 0.0851,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bug1337429.pdf",
-  "best": 0.0829,
-  "flow": {
-   "score": 0.0829,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.094,
+   "score": 0.0836,
    "note": "",
    "pages": [
     1,
@@ -2280,106 +1800,6 @@
   }
  },
  {
-  "name": "images_1bit_grayscale.pdf",
-  "best": 0.0785,
-  "flow": {
-   "score": 0.0785,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0785,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "issue11442_reduced.pdf",
-  "best": 0.078,
-  "flow": {
-   "score": 0.0801,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.078,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bug850854.pdf",
-  "best": 0.0771,
-  "flow": {
-   "score": 0.0771,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0783,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bug1200096.pdf",
-  "best": 0.0766,
-  "flow": {
-   "score": 0.081,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0766,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "cidfont_cmap_overflow.pdf",
-  "best": 0.0758,
-  "flow": {
-   "score": 0.0872,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0758,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
   "name": "issue11131_reduced.pdf",
   "best": 0.0753,
   "flow": {
@@ -2400,10 +1820,10 @@
   }
  },
  {
-  "name": "bug1186827.pdf",
-  "best": 0.0753,
+  "name": "bug894572.pdf",
+  "best": 0.0749,
   "flow": {
-   "score": 0.0843,
+   "score": 0.097,
    "note": "",
    "pages": [
     1,
@@ -2411,47 +1831,7 @@
    ]
   },
   "positional": {
-   "score": 0.0753,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bad-PageLabels.pdf",
-  "best": 0.0744,
-  "flow": {
-   "score": 0.0744,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0744,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bug1671312_ArialNarrow.pdf",
-  "best": 0.0736,
-  "flow": {
-   "score": 0.0739,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0736,
+   "score": 0.0749,
    "note": "",
    "pages": [
     1,
@@ -2480,10 +1860,10 @@
   }
  },
  {
-  "name": "issue11279.pdf",
-  "best": 0.0729,
+  "name": "IndexedCS_negative_and_high.pdf",
+  "best": 0.0731,
   "flow": {
-   "score": 0.0729,
+   "score": 0.0731,
    "note": "",
    "pages": [
     1,
@@ -2491,7 +1871,27 @@
    ]
   },
   "positional": {
-   "score": 0.0729,
+   "score": 0.0731,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "gradientfill.pdf",
+  "best": 0.073,
+  "flow": {
+   "score": 0.073,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.073,
    "note": "",
    "pages": [
     1,
@@ -3920,30 +3320,10 @@
   }
  },
  {
-  "name": "firefox_stamp.pdf",
-  "best": 0.0719,
+  "name": "highlight_popup.pdf",
+  "best": 0.0672,
   "flow": {
-   "score": 0.0719,
-   "note": "pages 1≠2",
-   "pages": [
-    1,
-    2
-   ]
-  },
-  "positional": {
-   "score": 0.0719,
-   "note": "pages 1≠2",
-   "pages": [
-    1,
-    2
-   ]
-  }
- },
- {
-  "name": "cmykjpeg.pdf",
-  "best": 0.0719,
-  "flow": {
-   "score": 0.0719,
+   "score": 0.0672,
    "note": "",
    "pages": [
     1,
@@ -3951,107 +3331,7 @@
    ]
   },
   "positional": {
-   "score": 0.0719,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bug1795263.pdf",
-  "best": 0.0713,
-  "flow": {
-   "score": 0.0718,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0713,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "Type3WordSpacing.pdf",
-  "best": 0.0702,
-  "flow": {
-   "score": 0.0702,
-   "note": "pages 10≠1",
-   "pages": [
-    10,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0702,
-   "note": "pages 10≠1",
-   "pages": [
-    10,
-    1
-   ]
-  }
- },
- {
-  "name": "franz.pdf",
-  "best": 0.0693,
-  "flow": {
-   "score": 0.0716,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0693,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "file_pdfjs_test.pdf",
-  "best": 0.0677,
-  "flow": {
-   "score": 0.0705,
-   "note": "",
-   "pages": [
-    5,
-    5
-   ]
-  },
-  "positional": {
-   "score": 0.0677,
-   "note": "",
-   "pages": [
-    5,
-    5
-   ]
-  }
- },
- {
-  "name": "bug1811668_reduced.pdf",
-  "best": 0.0666,
-  "flow": {
-   "score": 0.0666,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.067,
+   "score": 0.0676,
    "note": "",
    "pages": [
     1,
@@ -4080,10 +3360,10 @@
   }
  },
  {
-  "name": "bug1050040.pdf",
-  "best": 0.0643,
+  "name": "cidfont_cmap_overflow.pdf",
+  "best": 0.0636,
   "flow": {
-   "score": 0.0643,
+   "score": 0.0872,
    "note": "",
    "pages": [
     1,
@@ -4091,7 +3371,7 @@
    ]
   },
   "positional": {
-   "score": 0.068,
+   "score": 0.0636,
    "note": "",
    "pages": [
     1,
@@ -4100,10 +3380,10 @@
   }
  },
  {
-  "name": "bug1252420.pdf",
-  "best": 0.0635,
+  "name": "images.pdf",
+  "best": 0.0623,
   "flow": {
-   "score": 0.0984,
+   "score": 0.0654,
    "note": "",
    "pages": [
     1,
@@ -4111,27 +3391,7 @@
    ]
   },
   "positional": {
-   "score": 0.0635,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "issue11477_reduced.pdf",
-  "best": 0.062,
-  "flow": {
-   "score": 0.086,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.062,
+   "score": 0.0623,
    "note": "",
    "pages": [
     1,
@@ -4160,30 +3420,10 @@
   }
  },
  {
-  "name": "annotation_hidden_noview.pdf",
-  "best": 0.0613,
-  "flow": {
-   "score": 0.0615,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0613,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "issue10542_reduced.pdf",
+  "name": "bug920426.pdf",
   "best": 0.0609,
   "flow": {
-   "score": 0.061,
+   "score": 0.1697,
    "note": "",
    "pages": [
     1,
@@ -4211,7 +3451,7 @@
    ]
   },
   "positional": {
-   "score": 0.0609,
+   "score": 0.0608,
    "note": "",
    "pages": [
     1,
@@ -4220,30 +3460,10 @@
   }
  },
  {
-  "name": "bug1997343.pdf",
-  "best": 0.0604,
-  "flow": {
-   "score": 0.0604,
-   "note": "",
-   "pages": [
-    2,
-    2
-   ]
-  },
-  "positional": {
-   "score": 0.0959,
-   "note": "pages 7≠2",
-   "pages": [
-    7,
-    2
-   ]
-  }
- },
- {
-  "name": "bigboundingbox.pdf",
+  "name": "devicen.pdf",
   "best": 0.0594,
   "flow": {
-   "score": 0.0724,
+   "score": 0.0594,
    "note": "",
    "pages": [
     1,
@@ -4252,18 +3472,18 @@
   },
   "positional": {
    "score": 0.0594,
-   "note": "pages 2≠1",
+   "note": "",
    "pages": [
-    2,
+    1,
     1
    ]
   }
  },
  {
-  "name": "bug878026.pdf",
-  "best": 0.0586,
+  "name": "cmykjpeg.pdf",
+  "best": 0.0575,
   "flow": {
-   "score": 0.0649,
+   "score": 0.0575,
    "note": "",
    "pages": [
     1,
@@ -4271,7 +3491,27 @@
    ]
   },
   "positional": {
-   "score": 0.0586,
+   "score": 0.0575,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "22060_A1_01_Plans.pdf",
+  "best": 0.0562,
+  "flow": {
+   "score": 0.0562,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0562,
    "note": "",
    "pages": [
     1,
@@ -4281,7 +3521,27 @@
  },
  {
   "name": "bug1863910.pdf",
-  "best": 0.057,
+  "best": 0.0555,
+  "flow": {
+   "score": 0.0555,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0555,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug859204.pdf",
+  "best": 0.052,
   "flow": {
    "score": 0.057,
    "note": "",
@@ -4291,187 +3551,7 @@
    ]
   },
   "positional": {
-   "score": 0.057,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "issue1055r.pdf",
-  "best": 0.055,
-  "flow": {
-   "score": 0.055,
-   "note": "pages 2≠1",
-   "pages": [
-    2,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.055,
-   "note": "pages 2≠1",
-   "pages": [
-    2,
-    1
-   ]
-  }
- },
- {
-  "name": "bug859204.pdf",
-  "best": 0.0547,
-  "flow": {
-   "score": 0.057,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0547,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bug1873345.pdf",
-  "best": 0.0535,
-  "flow": {
-   "score": 0.1065,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0535,
-   "note": "pages 5≠1",
-   "pages": [
-    5,
-    1
-   ]
-  }
- },
- {
-  "name": "bug1250079.pdf",
-  "best": 0.0528,
-  "flow": {
-   "score": 0.0565,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0528,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "issue10665_reduced.pdf",
-  "best": 0.0527,
-  "flow": {
-   "score": 0.0782,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0527,
-   "note": "pages 2≠1",
-   "pages": [
-    2,
-    1
-   ]
-  }
- },
- {
-  "name": "colorkeymask.pdf",
-  "best": 0.0511,
-  "flow": {
-   "score": 0.0511,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0511,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bug1675139.pdf",
-  "best": 0.0509,
-  "flow": {
-   "score": 0.0578,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0509,
-   "note": "pages 2≠1",
-   "pages": [
-    2,
-    1
-   ]
-  }
- },
- {
-  "name": "bug1978317.pdf",
-  "best": 0.0506,
-  "flow": {
-   "score": 0.0506,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0647,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "font_ascent_descent.pdf",
-  "best": 0.0495,
-  "flow": {
-   "score": 0.0495,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0495,
+   "score": 0.052,
    "note": "",
    "pages": [
     1,
@@ -4481,7 +3561,7 @@
  },
  {
   "name": "bug1027533.pdf",
-  "best": 0.0493,
+  "best": 0.0502,
   "flow": {
    "score": 0.0516,
    "note": "",
@@ -4491,7 +3571,7 @@
    ]
   },
   "positional": {
-   "score": 0.0493,
+   "score": 0.0502,
    "note": "",
    "pages": [
     1,
@@ -4500,10 +3580,10 @@
   }
  },
  {
-  "name": "bug893730.pdf",
-  "best": 0.0489,
+  "name": "bug1978317.pdf",
+  "best": 0.049,
   "flow": {
-   "score": 0.051,
+   "score": 0.0506,
    "note": "",
    "pages": [
     1,
@@ -4511,7 +3591,7 @@
    ]
   },
   "positional": {
-   "score": 0.0489,
+   "score": 0.049,
    "note": "",
    "pages": [
     1,
@@ -4540,10 +3620,10 @@
   }
  },
  {
-  "name": "bug1132849.pdf",
-  "best": 0.0468,
+  "name": "issue11403_reduced.pdf",
+  "best": 0.0478,
   "flow": {
-   "score": 0.0468,
+   "score": 0.1015,
    "note": "",
    "pages": [
     1,
@@ -4551,7 +3631,7 @@
    ]
   },
   "positional": {
-   "score": 0.0479,
+   "score": 0.0478,
    "note": "",
    "pages": [
     1,
@@ -4560,10 +3640,10 @@
   }
  },
  {
-  "name": "bug868745.pdf",
-  "best": 0.0463,
+  "name": "images_1bit_grayscale.pdf",
+  "best": 0.0424,
   "flow": {
-   "score": 0.0463,
+   "score": 0.0424,
    "note": "",
    "pages": [
     1,
@@ -4571,110 +3651,10 @@
    ]
   },
   "positional": {
-   "score": 0.049,
+   "score": 0.0424,
    "note": "",
    "pages": [
     1,
-    1
-   ]
-  }
- },
- {
-  "name": "issue10438_reduced.pdf",
-  "best": 0.0463,
-  "flow": {
-   "score": 0.0489,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0463,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bug1627427_reduced.pdf",
-  "best": 0.0461,
-  "flow": {
-   "score": 0.0612,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0461,
-   "note": "pages 5≠1",
-   "pages": [
-    5,
-    1
-   ]
-  }
- },
- {
-  "name": "bug866395.pdf",
-  "best": 0.0455,
-  "flow": {
-   "score": 0.0455,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0468,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bug1815476.pdf",
-  "best": 0.0415,
-  "flow": {
-   "score": 0.0577,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0415,
-   "note": "pages 4≠1",
-   "pages": [
-    4,
-    1
-   ]
-  }
- },
- {
-  "name": "issue10640.pdf",
-  "best": 0.041,
-  "flow": {
-   "score": 0.041,
-   "note": "pages 2≠1",
-   "pages": [
-    2,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.041,
-   "note": "pages 2≠1",
-   "pages": [
-    2,
     1
    ]
   }
@@ -4720,46 +3700,6 @@
   }
  },
  {
-  "name": "close-path-bug.pdf",
-  "best": 0.0392,
-  "flow": {
-   "score": 0.0392,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0392,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bug886717.pdf",
-  "best": 0.038,
-  "flow": {
-   "score": 0.044,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.038,
-   "note": "pages 3≠1",
-   "pages": [
-    3,
-    1
-   ]
-  }
- },
- {
   "name": "bug1538111.pdf",
   "best": 0.0378,
   "flow": {
@@ -4780,38 +3720,78 @@
   }
  },
  {
-  "name": "annotation-tx3.pdf",
-  "best": 0.0351,
+  "name": "ShowText-ShadingPattern.pdf",
+  "best": 0.0372,
   "flow": {
-   "score": 0.0351,
-   "note": "pages 2≠1",
+   "score": 0.0509,
+   "note": "",
    "pages": [
-    2,
+    1,
     1
    ]
   },
   "positional": {
-   "score": 0.0351,
-   "note": "pages 3≠1",
+   "score": 0.0372,
+   "note": "",
    "pages": [
-    3,
+    1,
     1
    ]
   }
  },
  {
-  "name": "IdentityToUnicodeMap_charCodeOf.pdf",
-  "best": 0.0329,
+  "name": "issue10665_reduced.pdf",
+  "best": 0.0367,
   "flow": {
+   "score": 0.0782,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0367,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1721218_reduced.pdf",
+  "best": 0.0355,
+  "flow": {
+   "score": 0.0355,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
    "score": 0.0362,
    "note": "",
    "pages": [
     1,
     1
    ]
+  }
+ },
+ {
+  "name": "font_ascent_descent.pdf",
+  "best": 0.0348,
+  "flow": {
+   "score": 0.0348,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
   },
   "positional": {
-   "score": 0.0329,
+   "score": 0.0348,
    "note": "",
    "pages": [
     1,
@@ -4820,30 +3800,90 @@
   }
  },
  {
-  "name": "evaljs.pdf",
-  "best": 0.0311,
+  "name": "bug1337429.pdf",
+  "best": 0.0345,
   "flow": {
-   "score": 0.0318,
+   "score": 0.0829,
    "note": "",
    "pages": [
-    2,
-    2
+    1,
+    1
    ]
   },
   "positional": {
-   "score": 0.0311,
+   "score": 0.0345,
    "note": "",
    "pages": [
-    2,
-    2
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "colorkeymask.pdf",
+  "best": 0.034,
+  "flow": {
+   "score": 0.034,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.034,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug850854.pdf",
+  "best": 0.0339,
+  "flow": {
+   "score": 0.0771,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0339,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "annotation_hidden_noview.pdf",
+  "best": 0.0336,
+  "flow": {
+   "score": 0.0354,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0336,
+   "note": "",
+   "pages": [
+    1,
+    1
    ]
   }
  },
  {
   "name": "bug2026037.pdf",
-  "best": 0.0308,
+  "best": 0.0306,
   "flow": {
-   "score": 0.0308,
+   "score": 0.0306,
    "note": "",
    "pages": [
     1,
@@ -4851,7 +3891,7 @@
    ]
   },
   "positional": {
-   "score": 0.0308,
+   "score": 0.0306,
    "note": "",
    "pages": [
     1,
@@ -4861,9 +3901,9 @@
  },
  {
   "name": "bug1889122.pdf",
-  "best": 0.0301,
+  "best": 0.0302,
   "flow": {
-   "score": 0.0301,
+   "score": 0.0302,
    "note": "",
    "pages": [
     1,
@@ -4871,7 +3911,27 @@
    ]
   },
   "positional": {
-   "score": 0.0301,
+   "score": 0.0302,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1186827.pdf",
+  "best": 0.0288,
+  "flow": {
+   "score": 0.0843,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0288,
    "note": "",
    "pages": [
     1,
@@ -4900,10 +3960,10 @@
   }
  },
  {
-  "name": "glyph_accent.pdf",
-  "best": 0.0285,
+  "name": "bug1252420.pdf",
+  "best": 0.0284,
   "flow": {
-   "score": 0.0292,
+   "score": 0.0984,
    "note": "",
    "pages": [
     1,
@@ -4911,7 +3971,7 @@
    ]
   },
   "positional": {
-   "score": 0.0285,
+   "score": 0.0284,
    "note": "",
    "pages": [
     1,
@@ -4940,10 +4000,10 @@
   }
  },
  {
-  "name": "inks_basic.pdf",
-  "best": 0.028,
+  "name": "bug1050040.pdf",
+  "best": 0.0267,
   "flow": {
-   "score": 0.028,
+   "score": 0.0643,
    "note": "",
    "pages": [
     1,
@@ -4951,87 +4011,7 @@
    ]
   },
   "positional": {
-   "score": 0.028,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "issue1002.pdf",
-  "best": 0.027,
-  "flow": {
-   "score": 0.0296,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.027,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bug2013793.pdf",
-  "best": 0.0269,
-  "flow": {
-   "score": 0.0289,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0269,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bug1703683_page2_reduced.pdf",
-  "best": 0.0269,
-  "flow": {
-   "score": 0.0269,
-   "note": "pages 3≠1",
-   "pages": [
-    3,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0273,
-   "note": "pages 3≠1",
-   "pages": [
-    3,
-    1
-   ]
-  }
- },
- {
-  "name": "firefox_logo.pdf",
-  "best": 0.0266,
-  "flow": {
-   "score": 0.0266,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0266,
+   "score": 0.0267,
    "note": "",
    "pages": [
     1,
@@ -5041,9 +4021,9 @@
  },
  {
   "name": "issue11016_reduced.pdf",
-  "best": 0.0265,
+  "best": 0.0264,
   "flow": {
-   "score": 0.0265,
+   "score": 0.0264,
    "note": "",
    "pages": [
     1,
@@ -5051,27 +4031,7 @@
    ]
   },
   "positional": {
-   "score": 0.0265,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bug1942064.pdf",
-  "best": 0.0265,
-  "flow": {
-   "score": 0.0265,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0265,
+   "score": 0.0264,
    "note": "",
    "pages": [
     1,
@@ -5100,10 +4060,10 @@
   }
  },
  {
-  "name": "bug1020858.pdf",
-  "best": 0.0259,
+  "name": "bug1703683_page2_reduced.pdf",
+  "best": 0.0261,
   "flow": {
-   "score": 0.0259,
+   "score": 0.0261,
    "note": "",
    "pages": [
     1,
@@ -5111,7 +4071,7 @@
    ]
   },
   "positional": {
-   "score": 0.0587,
+   "score": 0.0261,
    "note": "",
    "pages": [
     1,
@@ -5120,30 +4080,30 @@
   }
  },
  {
-  "name": "annotation-choice-widget.pdf",
-  "best": 0.025,
+  "name": "ZapfDingbats.pdf",
+  "best": 0.0255,
   "flow": {
-   "score": 0.025,
-   "note": "pages 2≠1",
+   "score": 0.086,
+   "note": "",
    "pages": [
     2,
-    1
+    2
    ]
   },
   "positional": {
-   "score": 0.0257,
-   "note": "pages 2≠1",
+   "score": 0.0255,
+   "note": "",
    "pages": [
     2,
-    1
+    2
    ]
   }
  },
  {
-  "name": "bug900822.pdf",
-  "best": 0.0247,
+  "name": "bug1942064.pdf",
+  "best": 0.0254,
   "flow": {
-   "score": 0.0282,
+   "score": 0.0254,
    "note": "",
    "pages": [
     1,
@@ -5151,27 +4111,7 @@
    ]
   },
   "positional": {
-   "score": 0.0247,
-   "note": "pages 3≠1",
-   "pages": [
-    3,
-    1
-   ]
-  }
- },
- {
-  "name": "highlight.pdf",
-  "best": 0.0245,
-  "flow": {
-   "score": 0.0245,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0248,
+   "score": 0.0254,
    "note": "",
    "pages": [
     1,
@@ -5180,30 +4120,10 @@
   }
  },
  {
-  "name": "bug1771477.pdf",
-  "best": 0.0242,
+  "name": "bug1019475_1.pdf",
+  "best": 0.0239,
   "flow": {
-   "score": 0.0258,
-   "note": "pages 7≠1",
-   "pages": [
-    7,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0242,
-   "note": "pages 8≠1",
-   "pages": [
-    8,
-    1
-   ]
-  }
- },
- {
-  "name": "annotation-text-widget.pdf",
-  "best": 0.0241,
-  "flow": {
-   "score": 0.0241,
+   "score": 0.0686,
    "note": "",
    "pages": [
     1,
@@ -5211,47 +4131,7 @@
    ]
   },
   "positional": {
-   "score": 0.0288,
-   "note": "pages 2≠1",
-   "pages": [
-    2,
-    1
-   ]
-  }
- },
- {
-  "name": "bug1953099.pdf",
-  "best": 0.024,
-  "flow": {
-   "score": 0.025,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.024,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "german-umlaut-r.pdf",
-  "best": 0.0237,
-  "flow": {
-   "score": 0.0258,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0237,
+   "score": 0.0239,
    "note": "",
    "pages": [
     1,
@@ -5280,10 +4160,10 @@
   }
  },
  {
-  "name": "bug1046314.pdf",
-  "best": 0.0232,
+  "name": "bug1552113.pdf",
+  "best": 0.0235,
   "flow": {
-   "score": 0.0254,
+   "score": 0.1162,
    "note": "",
    "pages": [
     1,
@@ -5291,7 +4171,7 @@
    ]
   },
   "positional": {
-   "score": 0.0232,
+   "score": 0.0235,
    "note": "",
    "pages": [
     1,
@@ -5300,30 +4180,70 @@
   }
  },
  {
-  "name": "bug860632.pdf",
+  "name": "issue10542_reduced.pdf",
+  "best": 0.022,
+  "flow": {
+   "score": 0.061,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.022,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "clippath.pdf",
+  "best": 0.0214,
+  "flow": {
+   "score": 0.0214,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0214,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "glyph_accent.pdf",
   "best": 0.0208,
   "flow": {
+   "score": 0.0292,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
    "score": 0.0208,
    "note": "",
    "pages": [
     1,
     1
    ]
-  },
-  "positional": {
-   "score": 0.0248,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
   }
  },
  {
-  "name": "issue11150_reduced.pdf",
-  "best": 0.0201,
+  "name": "bug1132849.pdf",
+  "best": 0.02,
   "flow": {
-   "score": 0.0505,
+   "score": 0.0468,
    "note": "",
    "pages": [
     1,
@@ -5331,19 +4251,39 @@
    ]
   },
   "positional": {
-   "score": 0.0201,
-   "note": "pages 4≠1",
+   "score": 0.02,
+   "note": "",
    "pages": [
-    4,
+    1,
     1
    ]
   }
  },
  {
-  "name": "annotation-text-without-popup.pdf",
+  "name": "bug878026.pdf",
+  "best": 0.0195,
+  "flow": {
+   "score": 0.0649,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0195,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "highlight.pdf",
   "best": 0.019,
   "flow": {
-   "score": 0.0192,
+   "score": 0.0211,
    "note": "",
    "pages": [
     1,
@@ -5360,30 +4300,10 @@
   }
  },
  {
-  "name": "inks.pdf",
-  "best": 0.0184,
+  "name": "issue1002.pdf",
+  "best": 0.0164,
   "flow": {
-   "score": 0.0184,
-   "note": "pages 2≠1",
-   "pages": [
-    2,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0184,
-   "note": "pages 2≠1",
-   "pages": [
-    2,
-    1
-   ]
-  }
- },
- {
-  "name": "issue1045.pdf",
-  "best": 0.0174,
-  "flow": {
-   "score": 0.0174,
+   "score": 0.0296,
    "note": "",
    "pages": [
     1,
@@ -5391,47 +4311,7 @@
    ]
   },
   "positional": {
-   "score": 0.0175,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bug2014080.pdf",
-  "best": 0.0171,
-  "flow": {
-   "score": 0.0188,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0171,
-   "note": "pages 2≠1",
-   "pages": [
-    2,
-    1
-   ]
-  }
- },
- {
-  "name": "ContentStreamCycleType3insideType3.pdf",
-  "best": 0.0166,
-  "flow": {
-   "score": 0.0166,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0169,
+   "score": 0.0164,
    "note": "",
    "pages": [
     1,
@@ -5460,10 +4340,10 @@
   }
  },
  {
-  "name": "bug1919513.pdf",
-  "best": 0.0156,
+  "name": "bug1669097.pdf",
+  "best": 0.015,
   "flow": {
-   "score": 0.0156,
+   "score": 0.015,
    "note": "",
    "pages": [
     1,
@@ -5471,7 +4351,7 @@
    ]
   },
   "positional": {
-   "score": 0.0156,
+   "score": 0.015,
    "note": "",
    "pages": [
     1,
@@ -5480,10 +4360,10 @@
   }
  },
  {
-  "name": "bug921409.pdf",
-  "best": 0.0147,
+  "name": "franz.pdf",
+  "best": 0.0144,
   "flow": {
-   "score": 0.0157,
+   "score": 0.0716,
    "note": "",
    "pages": [
     1,
@@ -5491,7 +4371,7 @@
    ]
   },
   "positional": {
-   "score": 0.0147,
+   "score": 0.0144,
    "note": "",
    "pages": [
     1,
@@ -5500,10 +4380,10 @@
   }
  },
  {
-  "name": "annotation-stamp.pdf",
-  "best": 0.0141,
+  "name": "bug886717.pdf",
+  "best": 0.0143,
   "flow": {
-   "score": 0.0141,
+   "score": 0.044,
    "note": "",
    "pages": [
     1,
@@ -5512,6 +4392,106 @@
   },
   "positional": {
    "score": 0.0143,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "160F-2019.pdf",
+  "best": 0.0141,
+  "flow": {
+   "score": 0.0467,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0141,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1627427_reduced.pdf",
+  "best": 0.0138,
+  "flow": {
+   "score": 0.0612,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0138,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1873345.pdf",
+  "best": 0.0137,
+  "flow": {
+   "score": 0.0591,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0137,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1046314.pdf",
+  "best": 0.0137,
+  "flow": {
+   "score": 0.0254,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0137,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1671312_ArialNarrow.pdf",
+  "best": 0.0137,
+  "flow": {
+   "score": 0.0739,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0137,
    "note": "",
    "pages": [
     1,
@@ -5540,50 +4520,70 @@
   }
  },
  {
-  "name": "bug1392647.pdf",
-  "best": 0.0127,
+  "name": "inks.pdf",
+  "best": 0.0136,
   "flow": {
+   "score": 0.0136,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0136,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1250079.pdf",
+  "best": 0.0131,
+  "flow": {
+   "score": 0.0565,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
    "score": 0.0131,
    "note": "",
    "pages": [
     1,
     1
    ]
-  },
-  "positional": {
-   "score": 0.0127,
+  }
+ },
+ {
+  "name": "bug866395.pdf",
+  "best": 0.013,
+  "flow": {
+   "score": 0.0455,
    "note": "",
    "pages": [
     1,
     1
    ]
-  }
- },
- {
-  "name": "bug903856.pdf",
-  "best": 0.0127,
-  "flow": {
+  },
+  "positional": {
    "score": 0.013,
    "note": "",
    "pages": [
     1,
     1
    ]
-  },
-  "positional": {
-   "score": 0.0127,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
   }
  },
  {
-  "name": "Test-plusminus.pdf",
-  "best": 0.0123,
+  "name": "issue11477_reduced.pdf",
+  "best": 0.0128,
   "flow": {
-   "score": 0.0143,
+   "score": 0.086,
    "note": "",
    "pages": [
     1,
@@ -5591,19 +4591,19 @@
    ]
   },
   "positional": {
-   "score": 0.0123,
-   "note": "pages 2≠1",
+   "score": 0.0128,
+   "note": "",
    "pages": [
-    2,
+    1,
     1
    ]
   }
  },
  {
-  "name": "annotation-square-circle.pdf",
+  "name": "issue10438_reduced.pdf",
   "best": 0.0121,
   "flow": {
-   "score": 0.0125,
+   "score": 0.0489,
    "note": "",
    "pages": [
     1,
@@ -5640,10 +4640,10 @@
   }
  },
  {
-  "name": "bug1669097.pdf",
-  "best": 0.0111,
+  "name": "issue11150_reduced.pdf",
+  "best": 0.0118,
   "flow": {
-   "score": 0.0111,
+   "score": 0.0505,
    "note": "",
    "pages": [
     1,
@@ -5651,7 +4651,7 @@
    ]
   },
   "positional": {
-   "score": 0.0111,
+   "score": 0.0118,
    "note": "",
    "pages": [
     1,
@@ -5660,10 +4660,10 @@
   }
  },
  {
-  "name": "issue10388_reduced.pdf",
-  "best": 0.0109,
+  "name": "issue1055r.pdf",
+  "best": 0.0117,
   "flow": {
-   "score": 0.0109,
+   "score": 0.0281,
    "note": "",
    "pages": [
     1,
@@ -5671,7 +4671,7 @@
    ]
   },
   "positional": {
-   "score": 0.0115,
+   "score": 0.0117,
    "note": "",
    "pages": [
     1,
@@ -5680,10 +4680,90 @@
   }
  },
  {
-  "name": "ContentStreamNoCycleType3insideType3.pdf",
+  "name": "bug1743245.pdf",
+  "best": 0.0108,
+  "flow": {
+   "score": 0.0108,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0108,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "file_url_link.pdf",
+  "best": 0.0107,
+  "flow": {
+   "score": 0.0851,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0107,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "annotation-text-widget.pdf",
+  "best": 0.0105,
+  "flow": {
+   "score": 0.0238,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0105,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug893730.pdf",
+  "best": 0.0104,
+  "flow": {
+   "score": 0.051,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0104,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bigboundingbox.pdf",
   "best": 0.0102,
   "flow": {
-   "score": 0.0104,
+   "score": 0.0362,
    "note": "",
    "pages": [
     1,
@@ -5720,10 +4800,10 @@
   }
  },
  {
-  "name": "annotation-polyline-polygon.pdf",
-  "best": 0.0099,
+  "name": "bug1883609.pdf",
+  "best": 0.01,
   "flow": {
-   "score": 0.0099,
+   "score": 0.0307,
    "note": "",
    "pages": [
     1,
@@ -5731,7 +4811,7 @@
    ]
   },
   "positional": {
-   "score": 0.0099,
+   "score": 0.01,
    "note": "",
    "pages": [
     1,
@@ -5760,30 +4840,10 @@
   }
  },
  {
-  "name": "boundingBox_invalid.pdf",
-  "best": 0.0093,
+  "name": "bug847420.pdf",
+  "best": 0.0097,
   "flow": {
-   "score": 0.0093,
-   "note": "",
-   "pages": [
-    3,
-    3
-   ]
-  },
-  "positional": {
-   "score": 0.0093,
-   "note": "",
-   "pages": [
-    3,
-    3
-   ]
-  }
- },
- {
-  "name": "TrueType_without_cmap.pdf",
-  "best": 0.0093,
-  "flow": {
-   "score": 0.0093,
+   "score": 0.0902,
    "note": "",
    "pages": [
     1,
@@ -5800,10 +4860,70 @@
   }
  },
  {
-  "name": "bug1820909.1.pdf",
+  "name": "bug1811668_reduced.pdf",
+  "best": 0.0096,
+  "flow": {
+   "score": 0.0666,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0096,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug766086.pdf",
+  "best": 0.0096,
+  "flow": {
+   "score": 0.0907,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0096,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1997343.pdf",
   "best": 0.0093,
   "flow": {
+   "score": 0.0259,
+   "note": "",
+   "pages": [
+    2,
+    2
+   ]
+  },
+  "positional": {
    "score": 0.0093,
+   "note": "",
+   "pages": [
+    2,
+    2
+   ]
+  }
+ },
+ {
+  "name": "bug1020858.pdf",
+  "best": 0.0093,
+  "flow": {
+   "score": 0.0238,
    "note": "",
    "pages": [
     1,
@@ -5820,10 +4940,30 @@
   }
  },
  {
-  "name": "bug1782564.pdf",
+  "name": "boundingBox_invalid.pdf",
+  "best": 0.0092,
+  "flow": {
+   "score": 0.0093,
+   "note": "",
+   "pages": [
+    3,
+    3
+   ]
+  },
+  "positional": {
+   "score": 0.0092,
+   "note": "",
+   "pages": [
+    3,
+    3
+   ]
+  }
+ },
+ {
+  "name": "TrueType_without_cmap.pdf",
   "best": 0.009,
   "flow": {
-   "score": 0.009,
+   "score": 0.0093,
    "note": "",
    "pages": [
     1,
@@ -5840,30 +4980,10 @@
   }
  },
  {
-  "name": "form_two_pages.pdf",
-  "best": 0.0087,
+  "name": "german-umlaut-r.pdf",
+  "best": 0.0088,
   "flow": {
-   "score": 0.0087,
-   "note": "",
-   "pages": [
-    2,
-    2
-   ]
-  },
-  "positional": {
-   "score": 0.0087,
-   "note": "",
-   "pages": [
-    2,
-    2
-   ]
-  }
- },
- {
-  "name": "bug864847.pdf",
-  "best": 0.0086,
-  "flow": {
-   "score": 0.009,
+   "score": 0.0267,
    "note": "",
    "pages": [
     1,
@@ -5871,7 +4991,7 @@
    ]
   },
   "positional": {
-   "score": 0.0086,
+   "score": 0.0088,
    "note": "",
    "pages": [
     1,
@@ -5880,50 +5000,190 @@
   }
  },
  {
-  "name": "basicapi.pdf",
-  "best": 0.0078,
+  "name": "bug903856.pdf",
+  "best": 0.0088,
   "flow": {
-   "score": 0.0086,
+   "score": 0.013,
    "note": "",
    "pages": [
-    3,
-    3
+    1,
+    1
    ]
   },
   "positional": {
-   "score": 0.0078,
+   "score": 0.0088,
    "note": "",
    "pages": [
-    3,
-    3
+    1,
+    1
    ]
   }
  },
  {
-  "name": "bug1802888.pdf",
+  "name": "ContentStreamNoCycleType3insideType3.pdf",
+  "best": 0.0088,
+  "flow": {
+   "score": 0.0088,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0088,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "file_pdfjs_test.pdf",
+  "best": 0.0085,
+  "flow": {
+   "score": 0.0683,
+   "note": "",
+   "pages": [
+    5,
+    5
+   ]
+  },
+  "positional": {
+   "score": 0.0085,
+   "note": "",
+   "pages": [
+    5,
+    5
+   ]
+  }
+ },
+ {
+  "name": "bug1795263.pdf",
+  "best": 0.0084,
+  "flow": {
+   "score": 0.0085,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0084,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "issue11442_reduced.pdf",
+  "best": 0.0084,
+  "flow": {
+   "score": 0.0801,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0084,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug860632.pdf",
+  "best": 0.0084,
+  "flow": {
+   "score": 0.0208,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0084,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug921409.pdf",
+  "best": 0.008,
+  "flow": {
+   "score": 0.0157,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.008,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "issue11279.pdf",
+  "best": 0.0079,
+  "flow": {
+   "score": 0.008,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0079,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "colors.pdf",
   "best": 0.0076,
   "flow": {
    "score": 0.0076,
    "note": "",
    "pages": [
-    1,
-    1
+    2,
+    2
    ]
   },
   "positional": {
    "score": 0.0076,
    "note": "",
    "pages": [
-    1,
-    1
+    2,
+    2
    ]
   }
  },
  {
-  "name": "bug1529502.pdf",
-  "best": 0.0073,
+  "name": "ContentStreamCycleType3insideType3.pdf",
+  "best": 0.0075,
   "flow": {
-   "score": 0.0078,
+   "score": 0.009,
    "note": "",
    "pages": [
     1,
@@ -5931,19 +5191,59 @@
    ]
   },
   "positional": {
-   "score": 0.0073,
-   "note": "pages 2≠1",
+   "score": 0.0075,
+   "note": "",
    "pages": [
-    2,
+    1,
     1
    ]
   }
  },
  {
-  "name": "bug1918115.pdf",
-  "best": 0.0067,
+  "name": "bug1815476.pdf",
+  "best": 0.0074,
   "flow": {
-   "score": 0.0067,
+   "score": 0.0322,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0074,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bad-PageLabels.pdf",
+  "best": 0.0071,
+  "flow": {
+   "score": 0.0744,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0071,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1919513.pdf",
+  "best": 0.0069,
+  "flow": {
+   "score": 0.0156,
    "note": "",
    "pages": [
     1,
@@ -5960,10 +5260,10 @@
   }
  },
  {
-  "name": "helloworld-bad.pdf",
-  "best": 0.0066,
+  "name": "bug1392647.pdf",
+  "best": 0.0068,
   "flow": {
-   "score": 0.0066,
+   "score": 0.0131,
    "note": "",
    "pages": [
     1,
@@ -5971,7 +5271,7 @@
    ]
   },
   "positional": {
-   "score": 0.007,
+   "score": 0.0068,
    "note": "",
    "pages": [
     1,
@@ -5980,10 +5280,10 @@
   }
  },
  {
-  "name": "annotation-button-widget.pdf",
-  "best": 0.0065,
+  "name": "annotation-text-without-popup.pdf",
+  "best": 0.0068,
   "flow": {
-   "score": 0.0065,
+   "score": 0.0106,
    "note": "",
    "pages": [
     1,
@@ -5991,7 +5291,7 @@
    ]
   },
   "positional": {
-   "score": 0.0077,
+   "score": 0.0068,
    "note": "",
    "pages": [
     1,
@@ -6000,10 +5300,30 @@
   }
  },
  {
-  "name": "bug1727053.pdf",
-  "best": 0.0061,
+  "name": "IdentityToUnicodeMap_charCodeOf.pdf",
+  "best": 0.0067,
   "flow": {
-   "score": 0.0061,
+   "score": 0.0362,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0067,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "freetexts.pdf",
+  "best": 0.0063,
+  "flow": {
+   "score": 0.0156,
    "note": "",
    "pages": [
     1,
@@ -6012,6 +5332,46 @@
   },
   "positional": {
    "score": 0.0063,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "Test-plusminus.pdf",
+  "best": 0.0062,
+  "flow": {
+   "score": 0.0102,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0062,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1200096.pdf",
+  "best": 0.0061,
+  "flow": {
+   "score": 0.081,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0061,
    "note": "",
    "pages": [
     1,
@@ -6040,26 +5400,6 @@
   }
  },
  {
-  "name": "bug854315.pdf",
-  "best": 0.0058,
-  "flow": {
-   "score": 0.0062,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0058,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
   "name": "checkbox_no_appearance.pdf",
   "best": 0.0058,
   "flow": {
@@ -6080,10 +5420,10 @@
   }
  },
  {
-  "name": "fields_order.pdf",
-  "best": 0.0057,
+  "name": "bug900822.pdf",
+  "best": 0.0054,
   "flow": {
-   "score": 0.0057,
+   "score": 0.0153,
    "note": "",
    "pages": [
     1,
@@ -6091,31 +5431,11 @@
    ]
   },
   "positional": {
-   "score": 0.0057,
+   "score": 0.0054,
    "note": "",
    "pages": [
     1,
     1
-   ]
-  }
- },
- {
-  "name": "hello_world_rotated.pdf",
-  "best": 0.0055,
-  "flow": {
-   "score": 0.0055,
-   "note": "",
-   "pages": [
-    5,
-    5
-   ]
-  },
-  "positional": {
-   "score": 0.0056,
-   "note": "",
-   "pages": [
-    5,
-    5
    ]
   }
  },
@@ -6140,30 +5460,10 @@
   }
  },
  {
-  "name": "issue11045.pdf",
-  "best": 0.0052,
+  "name": "bug1820909.1.pdf",
+  "best": 0.0053,
   "flow": {
-   "score": 0.0053,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0052,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bug1365930.pdf",
-  "best": 0.0052,
-  "flow": {
-   "score": 0.0052,
+   "score": 0.0093,
    "note": "",
    "pages": [
     1,
@@ -6180,27 +5480,7 @@
   }
  },
  {
-  "name": "Embedded_font.pdf",
-  "best": 0.0051,
-  "flow": {
-   "score": 0.0051,
-   "note": "pages 2≠1",
-   "pages": [
-    2,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0069,
-   "note": "pages 2≠1",
-   "pages": [
-    2,
-    1
-   ]
-  }
- },
- {
-  "name": "bug1937438_af_from_latex.pdf",
+  "name": "inks_basic.pdf",
   "best": 0.0051,
   "flow": {
    "score": 0.0051,
@@ -6211,7 +5491,27 @@
    ]
   },
   "positional": {
-   "score": 0.0087,
+   "score": 0.0051,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug2014080.pdf",
+  "best": 0.0051,
+  "flow": {
+   "score": 0.0113,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0051,
    "note": "",
    "pages": [
     1,
@@ -6231,7 +5531,7 @@
    ]
   },
   "positional": {
-   "score": 0.0052,
+   "score": 0.005,
    "note": "",
    "pages": [
     1,
@@ -6240,10 +5540,10 @@
   }
  },
  {
-  "name": "bug1724918.pdf",
+  "name": "bug1953099.pdf",
   "best": 0.005,
   "flow": {
-   "score": 0.005,
+   "score": 0.025,
    "note": "",
    "pages": [
     1,
@@ -6251,59 +5551,39 @@
    ]
   },
   "positional": {
-   "score": 0.0053,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "file_pdfjs_form.pdf",
-  "best": 0.005,
-  "flow": {
    "score": 0.005,
    "note": "",
    "pages": [
     1,
     1
    ]
-  },
-  "positional": {
-   "score": 0.0063,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
   }
  },
  {
-  "name": "annotation-highlight.pdf",
+  "name": "hello_world_rotated.pdf",
   "best": 0.0049,
   "flow": {
-   "score": 0.0053,
+   "score": 0.0055,
    "note": "",
    "pages": [
-    1,
-    1
+    5,
+    5
    ]
   },
   "positional": {
    "score": 0.0049,
    "note": "",
    "pages": [
-    1,
-    1
+    5,
+    5
    ]
   }
  },
  {
-  "name": "issue11473.pdf",
-  "best": 0.0048,
+  "name": "bug2013793.pdf",
+  "best": 0.0047,
   "flow": {
-   "score": 0.0049,
+   "score": 0.0289,
    "note": "",
    "pages": [
     1,
@@ -6311,27 +5591,7 @@
    ]
   },
   "positional": {
-   "score": 0.0048,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "annotation-highlight-without-appearance.pdf",
-  "best": 0.0048,
-  "flow": {
-   "score": 0.0048,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0048,
+   "score": 0.0047,
    "note": "",
    "pages": [
     1,
@@ -6351,7 +5611,7 @@
    ]
   },
   "positional": {
-   "score": 0.0048,
+   "score": 0.0047,
    "note": "",
    "pages": [
     1,
@@ -6360,10 +5620,10 @@
   }
  },
  {
-  "name": "bug1937438_mml_from_latex.pdf",
-  "best": 0.0044,
+  "name": "issue10388_reduced.pdf",
+  "best": 0.0045,
   "flow": {
-   "score": 0.0044,
+   "score": 0.0109,
    "note": "",
    "pages": [
     1,
@@ -6371,7 +5631,7 @@
    ]
   },
   "positional": {
-   "score": 0.0065,
+   "score": 0.0045,
    "note": "",
    "pages": [
     1,
@@ -6380,50 +5640,10 @@
   }
  },
  {
-  "name": "bug2009627.pdf",
+  "name": "issue11473.pdf",
   "best": 0.0044,
   "flow": {
-   "score": 0.0044,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0058,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "dates_save.pdf",
-  "best": 0.0044,
-  "flow": {
-   "score": 0.0044,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0046,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "annotation-line-without-appearance-empty-Rect.pdf",
-  "best": 0.0044,
-  "flow": {
-   "score": 0.0044,
+   "score": 0.0045,
    "note": "",
    "pages": [
     1,
@@ -6460,10 +5680,10 @@
   }
  },
  {
-  "name": "bug1057544.pdf",
-  "best": 0.0042,
+  "name": "annotation-line-without-appearance-empty-Rect.pdf",
+  "best": 0.0043,
   "flow": {
-   "score": 0.0047,
+   "score": 0.0044,
    "note": "",
    "pages": [
     1,
@@ -6471,7 +5691,7 @@
    ]
   },
   "positional": {
-   "score": 0.0042,
+   "score": 0.0043,
    "note": "",
    "pages": [
     1,
@@ -6480,47 +5700,7 @@
   }
  },
  {
-  "name": "annotation-underline.pdf",
-  "best": 0.0042,
-  "flow": {
-   "score": 0.0042,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0042,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "issue10529.pdf",
-  "best": 0.0042,
-  "flow": {
-   "score": 0.0045,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0042,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bug1974436.pdf",
+  "name": "annotation-tx2.pdf",
   "best": 0.0038,
   "flow": {
    "score": 0.0038,
@@ -6531,7 +5711,7 @@
    ]
   },
   "positional": {
-   "score": 0.004,
+   "score": 0.0053,
    "note": "",
    "pages": [
     1,
@@ -6540,10 +5720,30 @@
   }
  },
  {
-  "name": "annotation-ink-without-appearance.pdf",
+  "name": "basicapi.pdf",
   "best": 0.0038,
   "flow": {
+   "score": 0.0048,
+   "note": "",
+   "pages": [
+    3,
+    3
+   ]
+  },
+  "positional": {
    "score": 0.0038,
+   "note": "",
+   "pages": [
+    3,
+    3
+   ]
+  }
+ },
+ {
+  "name": "issue1045.pdf",
+  "best": 0.0037,
+  "flow": {
+   "score": 0.0174,
    "note": "",
    "pages": [
     1,
@@ -6551,7 +5751,7 @@
    ]
   },
   "positional": {
-   "score": 0.0038,
+   "score": 0.0037,
    "note": "",
    "pages": [
     1,
@@ -6560,10 +5760,90 @@
   }
  },
  {
-  "name": "acroform_calculation_order.pdf",
+  "name": "annotation-highlight-without-appearance.pdf",
+  "best": 0.0037,
+  "flow": {
+   "score": 0.0048,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0037,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "annotation-tx3.pdf",
+  "best": 0.0036,
+  "flow": {
+   "score": 0.0036,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0061,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug868745.pdf",
+  "best": 0.0036,
+  "flow": {
+   "score": 0.0463,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0036,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1365930.pdf",
+  "best": 0.0035,
+  "flow": {
+   "score": 0.0052,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0035,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "annotation-choice-widget.pdf",
   "best": 0.0034,
   "flow": {
-   "score": 0.0041,
+   "score": 0.0086,
    "note": "",
    "pages": [
     1,
@@ -6580,10 +5860,10 @@
   }
  },
  {
-  "name": "annotation-strikeout.pdf",
-  "best": 0.0033,
+  "name": "Embedded_font.pdf",
+  "best": 0.0034,
   "flow": {
-   "score": 0.0033,
+   "score": 0.0035,
    "note": "",
    "pages": [
     1,
@@ -6591,67 +5871,7 @@
    ]
   },
   "positional": {
-   "score": 0.0042,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bug1825002.pdf",
-  "best": 0.0033,
-  "flow": {
-   "score": 0.0033,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0033,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "issue10900.pdf",
-  "best": 0.0032,
-  "flow": {
-   "score": 0.0032,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0032,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "dates.pdf",
-  "best": 0.0031,
-  "flow": {
-   "score": 0.0031,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0031,
+   "score": 0.0034,
    "note": "",
    "pages": [
     1,
@@ -6680,10 +5900,30 @@
   }
  },
  {
-  "name": "annotation-underline-without-appearance.pdf",
+  "name": "evaljs.pdf",
   "best": 0.0028,
   "flow": {
+   "score": 0.0033,
+   "note": "",
+   "pages": [
+    2,
+    2
+   ]
+  },
+  "positional": {
    "score": 0.0028,
+   "note": "",
+   "pages": [
+    2,
+    2
+   ]
+  }
+ },
+ {
+  "name": "bug864847.pdf",
+  "best": 0.0026,
+  "flow": {
+   "score": 0.009,
    "note": "",
    "pages": [
     1,
@@ -6691,7 +5931,7 @@
    ]
   },
   "positional": {
-   "score": 0.0028,
+   "score": 0.0026,
    "note": "",
    "pages": [
     1,
@@ -6700,10 +5940,10 @@
   }
  },
  {
-  "name": "annotation-squiggly-without-appearance.pdf",
-  "best": 0.0028,
+  "name": "annotation-strikeout.pdf",
+  "best": 0.0026,
   "flow": {
-   "score": 0.0028,
+   "score": 0.0034,
    "note": "",
    "pages": [
     1,
@@ -6711,7 +5951,7 @@
    ]
   },
   "positional": {
-   "score": 0.0028,
+   "score": 0.0026,
    "note": "",
    "pages": [
     1,
@@ -6720,10 +5960,10 @@
   }
  },
  {
-  "name": "annotation-strikeout-without-appearance.pdf",
-  "best": 0.0027,
+  "name": "bug1947248_forms.pdf",
+  "best": 0.0025,
   "flow": {
-   "score": 0.0027,
+   "score": 0.0025,
    "note": "",
    "pages": [
     1,
@@ -6731,27 +5971,7 @@
    ]
   },
   "positional": {
-   "score": 0.0028,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "attachment.pdf",
-  "best": 0.0027,
-  "flow": {
-   "score": 0.0027,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0029,
+   "score": 0.0025,
    "note": "",
    "pages": [
     1,
@@ -6780,10 +6000,10 @@
   }
  },
  {
-  "name": "bug1937438_from_word.pdf",
-  "best": 0.0025,
+  "name": "close-path-bug.pdf",
+  "best": 0.0024,
   "flow": {
-   "score": 0.0025,
+   "score": 0.0024,
    "note": "",
    "pages": [
     1,
@@ -6791,7 +6011,107 @@
    ]
   },
   "positional": {
-   "score": 0.0026,
+   "score": 0.0024,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "dates_save.pdf",
+  "best": 0.0023,
+  "flow": {
+   "score": 0.0029,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0023,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1727053.pdf",
+  "best": 0.0023,
+  "flow": {
+   "score": 0.0061,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0023,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1708040.pdf",
+  "best": 0.0023,
+  "flow": {
+   "score": 0.2575,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0023,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "annotation-ink-without-appearance.pdf",
+  "best": 0.0022,
+  "flow": {
+   "score": 0.0038,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0022,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "fields_order.pdf",
+  "best": 0.0022,
+  "flow": {
+   "score": 0.0022,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0022,
    "note": "",
    "pages": [
     1,
@@ -6803,7 +6123,7 @@
   "name": "bug1001080.pdf",
   "best": 0.0022,
   "flow": {
-   "score": 0.0038,
+   "score": 0.0039,
    "note": "pages 3≠1",
    "pages": [
     3,
@@ -6820,10 +6140,10 @@
   }
  },
  {
-  "name": "bug1947248_forms.pdf",
-  "best": 0.0021,
+  "name": "issue10529.pdf",
+  "best": 0.0022,
   "flow": {
-   "score": 0.0021,
+   "score": 0.0045,
    "note": "",
    "pages": [
     1,
@@ -6840,10 +6160,10 @@
   }
  },
  {
-  "name": "annotation-caret-ink.pdf",
-  "best": 0.002,
+  "name": "dates.pdf",
+  "best": 0.0022,
   "flow": {
-   "score": 0.002,
+   "score": 0.0022,
    "note": "",
    "pages": [
     1,
@@ -6851,7 +6171,7 @@
    ]
   },
   "positional": {
-   "score": 0.002,
+   "score": 0.0022,
    "note": "",
    "pages": [
     1,
@@ -6860,10 +6180,10 @@
   }
  },
  {
-  "name": "bug1811694.pdf",
-  "best": 0.002,
+  "name": "bug1937438_af_from_latex.pdf",
+  "best": 0.0021,
   "flow": {
-   "score": 0.002,
+   "score": 0.0043,
    "note": "",
    "pages": [
     1,
@@ -6871,7 +6191,7 @@
    ]
   },
   "positional": {
-   "score": 0.002,
+   "score": 0.0021,
    "note": "",
    "pages": [
     1,
@@ -6880,10 +6200,10 @@
   }
  },
  {
-  "name": "checkbox-bad-appearance.pdf",
-  "best": 0.002,
+  "name": "bug1937438_mml_from_latex.pdf",
+  "best": 0.0019,
   "flow": {
-   "score": 0.002,
+   "score": 0.0036,
    "note": "",
    "pages": [
     1,
@@ -6891,7 +6211,7 @@
    ]
   },
   "positional": {
-   "score": 0.002,
+   "score": 0.0019,
    "note": "",
    "pages": [
     1,
@@ -6920,10 +6240,10 @@
   }
  },
  {
-  "name": "annotation-line.pdf",
+  "name": "bug1675139.pdf",
   "best": 0.0018,
   "flow": {
-   "score": 0.0019,
+   "score": 0.0026,
    "note": "",
    "pages": [
     1,
@@ -6940,30 +6260,10 @@
   }
  },
  {
-  "name": "annotation-squiggly.pdf",
-  "best": 0.0018,
-  "flow": {
-   "score": 0.0021,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0018,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bug2004951.pdf",
+  "name": "file_pdfjs_form.pdf",
   "best": 0.0017,
   "flow": {
-   "score": 0.0017,
+   "score": 0.0025,
    "note": "",
    "pages": [
     1,
@@ -6971,7 +6271,7 @@
    ]
   },
   "positional": {
-   "score": 0.0018,
+   "score": 0.0017,
    "note": "",
    "pages": [
     1,
@@ -7000,47 +6300,67 @@
   }
  },
  {
-  "name": "annotation-link-text-popup.pdf",
-  "best": 0.0017,
-  "flow": {
-   "score": 0.0018,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0017,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bug793632.pdf",
+  "name": "annotation-highlight.pdf",
   "best": 0.0016,
   "flow": {
-   "score": 0.0033,
-   "note": "pages 1≠4",
+   "score": 0.0025,
+   "note": "",
    "pages": [
     1,
-    4
+    1
    ]
   },
   "positional": {
    "score": 0.0016,
    "note": "",
    "pages": [
-    4,
-    4
+    1,
+    1
    ]
   }
  },
  {
-  "name": "bug1811510.pdf",
+  "name": "bug1811694.pdf",
+  "best": 0.0016,
+  "flow": {
+   "score": 0.0016,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0016,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "annotation-underline.pdf",
+  "best": 0.0016,
+  "flow": {
+   "score": 0.0024,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0016,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1825002.pdf",
   "best": 0.0015,
   "flow": {
    "score": 0.0015,
@@ -7060,47 +6380,7 @@
   }
  },
  {
-  "name": "fraction-highlight.pdf",
-  "best": 0.0015,
-  "flow": {
-   "score": 0.003,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0015,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bug1019475_2.pdf",
-  "best": 0.0014,
-  "flow": {
-   "score": 0.0015,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0014,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bug1963407.pdf",
+  "name": "annotation-square-circle.pdf",
   "best": 0.0014,
   "flow": {
    "score": 0.0014,
@@ -7120,10 +6400,10 @@
   }
  },
  {
-  "name": "annotation-border-styles.pdf",
+  "name": "annotation-button-widget.pdf",
   "best": 0.0014,
   "flow": {
-   "score": 0.0015,
+   "score": 0.0054,
    "note": "",
    "pages": [
     1,
@@ -7140,10 +6420,130 @@
   }
  },
  {
-  "name": "bug1539074.pdf",
+  "name": "decodeACSuccessive.pdf",
+  "best": 0.0012,
+  "flow": {
+   "score": 0.0012,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0012,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1724918.pdf",
+  "best": 0.0012,
+  "flow": {
+   "score": 0.0012,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0012,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug2009627.pdf",
+  "best": 0.0012,
+  "flow": {
+   "score": 0.0044,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0012,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "checkbox-bad-appearance.pdf",
+  "best": 0.0011,
+  "flow": {
+   "score": 0.002,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0011,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "helloworld-bad.pdf",
+  "best": 0.0011,
+  "flow": {
+   "score": 0.0066,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0011,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "form_two_pages.pdf",
+  "best": 0.0011,
+  "flow": {
+   "score": 0.0012,
+   "note": "",
+   "pages": [
+    2,
+    2
+   ]
+  },
+  "positional": {
+   "score": 0.0011,
+   "note": "",
+   "pages": [
+    2,
+    2
+   ]
+  }
+ },
+ {
+  "name": "issue11045.pdf",
   "best": 0.001,
   "flow": {
-   "score": 0.0011,
+   "score": 0.0043,
    "note": "",
    "pages": [
     1,
@@ -7160,10 +6560,10 @@
   }
  },
  {
-  "name": "bug1796741.pdf",
+  "name": "bug1529502.pdf",
   "best": 0.001,
   "flow": {
-   "score": 0.0011,
+   "score": 0.0078,
    "note": "",
    "pages": [
     1,
@@ -7172,6 +6572,66 @@
   },
   "positional": {
    "score": 0.001,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1802888.pdf",
+  "best": 0.001,
+  "flow": {
+   "score": 0.0013,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.001,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "acroform_calculation_order.pdf",
+  "best": 0.001,
+  "flow": {
+   "score": 0.0041,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.001,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1057544.pdf",
+  "best": 0.0009,
+  "flow": {
+   "score": 0.0047,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0009,
    "note": "",
    "pages": [
     1,
@@ -7181,26 +6641,6 @@
  },
  {
   "name": "arial_unicode_ab_cidfont.pdf",
-  "best": 0.0009,
-  "flow": {
-   "score": 0.0009,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0009,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "annotation-fileattachment.pdf",
   "best": 0.0009,
   "flow": {
    "score": 0.0009,
@@ -7260,7 +6700,47 @@
   }
  },
  {
-  "name": "90ms_rksj_h_sample.pdf",
+  "name": "annotation-squiggly-without-appearance.pdf",
+  "best": 0.0008,
+  "flow": {
+   "score": 0.0028,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0008,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1918115.pdf",
+  "best": 0.0008,
+  "flow": {
+   "score": 0.0021,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0008,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "firefox_logo.pdf",
   "best": 0.0008,
   "flow": {
    "score": 0.0008,
@@ -7280,107 +6760,7 @@
   }
  },
  {
-  "name": "doc_3_3_pages.pdf",
-  "best": 0.0008,
-  "flow": {
-   "score": 0.0008,
-   "note": "",
-   "pages": [
-    3,
-    3
-   ]
-  },
-  "positional": {
-   "score": 0.0008,
-   "note": "",
-   "pages": [
-    3,
-    3
-   ]
-  }
- },
- {
-  "name": "doc_2_3_pages.pdf",
-  "best": 0.0008,
-  "flow": {
-   "score": 0.0008,
-   "note": "",
-   "pages": [
-    3,
-    3
-   ]
-  },
-  "positional": {
-   "score": 0.0008,
-   "note": "",
-   "pages": [
-    3,
-    3
-   ]
-  }
- },
- {
-  "name": "bug2025674.pdf",
-  "best": 0.0008,
-  "flow": {
-   "score": 0.0008,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0011,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "doc_1_3_pages.pdf",
-  "best": 0.0008,
-  "flow": {
-   "score": 0.0008,
-   "note": "",
-   "pages": [
-    3,
-    3
-   ]
-  },
-  "positional": {
-   "score": 0.0008,
-   "note": "",
-   "pages": [
-    3,
-    3
-   ]
-  }
- },
- {
-  "name": "bug1708041.pdf",
-  "best": 0.0008,
-  "flow": {
-   "score": 0.0008,
-   "note": "pages 2≠6",
-   "pages": [
-    2,
-    6
-   ]
-  },
-  "positional": {
-   "score": 0.0008,
-   "note": "pages 2≠6",
-   "pages": [
-    2,
-    6
-   ]
-  }
- },
- {
-  "name": "bug1770750.pdf",
+  "name": "bug1963407.pdf",
   "best": 0.0008,
   "flow": {
    "score": 0.0008,
@@ -7420,10 +6800,10 @@
   }
  },
  {
-  "name": "bug1989304.pdf",
+  "name": "annotation-strikeout-without-appearance.pdf",
   "best": 0.0007,
   "flow": {
-   "score": 0.0007,
+   "score": 0.0027,
    "note": "",
    "pages": [
     1,
@@ -7431,17 +6811,337 @@
    ]
   },
   "positional": {
+   "score": 0.0007,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug793632.pdf",
+  "best": 0.0006,
+  "flow": {
+   "score": 0.0033,
+   "note": "pages 1≠4",
+   "pages": [
+    1,
+    4
+   ]
+  },
+  "positional": {
+   "score": 0.0006,
+   "note": "",
+   "pages": [
+    4,
+    4
+   ]
+  }
+ },
+ {
+  "name": "90ms_rksj_h_sample.pdf",
+  "best": 0.0006,
+  "flow": {
    "score": 0.0008,
    "note": "",
    "pages": [
     1,
     1
    ]
+  },
+  "positional": {
+   "score": 0.0006,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
   }
  },
  {
-  "name": "annotation-freetext.pdf",
-  "best": 0.0007,
+  "name": "annotation-squiggly.pdf",
+  "best": 0.0006,
+  "flow": {
+   "score": 0.0015,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0006,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1937438_from_word.pdf",
+  "best": 0.0006,
+  "flow": {
+   "score": 0.0024,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0006,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1708041.pdf",
+  "best": 0.0005,
+  "flow": {
+   "score": 0.0008,
+   "note": "pages 2≠6",
+   "pages": [
+    2,
+    6
+   ]
+  },
+  "positional": {
+   "score": 0.0005,
+   "note": "pages 2≠6",
+   "pages": [
+    2,
+    6
+   ]
+  }
+ },
+ {
+  "name": "bug854315.pdf",
+  "best": 0.0004,
+  "flow": {
+   "score": 0.0054,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0004,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "annotation-underline-without-appearance.pdf",
+  "best": 0.0004,
+  "flow": {
+   "score": 0.0028,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0004,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1539074.pdf",
+  "best": 0.0004,
+  "flow": {
+   "score": 0.0011,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0004,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug2004951.pdf",
+  "best": 0.0003,
+  "flow": {
+   "score": 0.0016,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0003,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "attachment.pdf",
+  "best": 0.0003,
+  "flow": {
+   "score": 0.0027,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0003,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1770750.pdf",
+  "best": 0.0003,
+  "flow": {
+   "score": 0.0003,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0003,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "firefox_stamp.pdf",
+  "best": 0.0003,
+  "flow": {
+   "score": 0.0003,
+   "note": "pages 1≠2",
+   "pages": [
+    1,
+    2
+   ]
+  },
+  "positional": {
+   "score": 0.0003,
+   "note": "pages 1≠2",
+   "pages": [
+    1,
+    2
+   ]
+  }
+ },
+ {
+  "name": "annotation-stamp.pdf",
+  "best": 0.0003,
+  "flow": {
+   "score": 0.0003,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "annotation-caret-ink.pdf",
+  "best": 0.0003,
+  "flow": {
+   "score": 0.0009,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0003,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "annotation-border-styles.pdf",
+  "best": 0.0003,
+  "flow": {
+   "score": 0.0015,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0003,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug2025674.pdf",
+  "best": 0.0002,
+  "flow": {
+   "score": 0.0008,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0002,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "annotation-polyline-polygon.pdf",
+  "best": 0.0002,
   "flow": {
    "score": 0.0007,
    "note": "",
@@ -7451,7 +7151,7 @@
    ]
   },
   "positional": {
-   "score": 0.0009,
+   "score": 0.0002,
    "note": "",
    "pages": [
     1,
@@ -7460,110 +7160,10 @@
   }
  },
  {
-  "name": "find_all.pdf",
-  "best": 0.0005,
-  "flow": {
-   "score": 0.0005,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0006,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "issue10301.pdf",
-  "best": 0.0005,
-  "flow": {
-   "score": 0.0006,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0005,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bug1851498.pdf",
-  "best": 0.0005,
-  "flow": {
-   "score": 0.0005,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0005,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bug1907000_reduced.pdf",
-  "best": 0.0003,
-  "flow": {
-   "score": 0.0003,
-   "note": "",
-   "pages": [
-    2,
-    2
-   ]
-  },
-  "positional": {
-   "score": 0.0003,
-   "note": "",
-   "pages": [
-    2,
-    2
-   ]
-  }
- },
- {
-  "name": "extract_link.pdf",
-  "best": 0.0003,
-  "flow": {
-   "score": 0.0003,
-   "note": "",
-   "pages": [
-    2,
-    2
-   ]
-  },
-  "positional": {
-   "score": 0.0003,
-   "note": "",
-   "pages": [
-    2,
-    2
-   ]
-  }
- },
- {
-  "name": "PDFJS-9279-reduced.pdf",
+  "name": "bug1796741.pdf",
   "best": 0.0002,
   "flow": {
-   "score": 0.0002,
+   "score": 0.0011,
    "note": "",
    "pages": [
     1,
@@ -7580,10 +7180,30 @@
   }
  },
  {
-  "name": "issue10402.pdf",
+  "name": "annotation-link-text-popup.pdf",
   "best": 0.0002,
   "flow": {
+   "score": 0.0008,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
    "score": 0.0002,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "issue10900.pdf",
+  "best": 0.0002,
+  "flow": {
+   "score": 0.0032,
    "note": "",
    "pages": [
     1,
@@ -7620,8 +7240,348 @@
   }
  },
  {
-  "name": "bug1473809.pdf",
+  "name": "bug1019475_2.pdf",
+  "best": 0.0002,
+  "flow": {
+   "score": 0.0015,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0002,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "annotation-freetext.pdf",
+  "best": 0.0002,
+  "flow": {
+   "score": 0.0007,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0002,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "annotation-fileattachment.pdf",
   "best": 0.0001,
+  "flow": {
+   "score": 0.0006,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0001,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1974436.pdf",
+  "best": 0.0001,
+  "flow": {
+   "score": 0.0038,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0001,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "find_all.pdf",
+  "best": 0.0001,
+  "flow": {
+   "score": 0.0005,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0001,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1989304.pdf",
+  "best": 0.0001,
+  "flow": {
+   "score": 0.0007,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0001,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "doc_1_3_pages.pdf",
+  "best": 0.0001,
+  "flow": {
+   "score": 0.0008,
+   "note": "",
+   "pages": [
+    3,
+    3
+   ]
+  },
+  "positional": {
+   "score": 0.0001,
+   "note": "",
+   "pages": [
+    3,
+    3
+   ]
+  }
+ },
+ {
+  "name": "bug1811510.pdf",
+  "best": 0.0001,
+  "flow": {
+   "score": 0.0015,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0001,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1782564.pdf",
+  "best": 0.0001,
+  "flow": {
+   "score": 0.001,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0001,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "doc_2_3_pages.pdf",
+  "best": 0.0001,
+  "flow": {
+   "score": 0.0008,
+   "note": "",
+   "pages": [
+    3,
+    3
+   ]
+  },
+  "positional": {
+   "score": 0.0001,
+   "note": "",
+   "pages": [
+    3,
+    3
+   ]
+  }
+ },
+ {
+  "name": "doc_3_3_pages.pdf",
+  "best": 0.0001,
+  "flow": {
+   "score": 0.0008,
+   "note": "",
+   "pages": [
+    3,
+    3
+   ]
+  },
+  "positional": {
+   "score": 0.0001,
+   "note": "",
+   "pages": [
+    3,
+    3
+   ]
+  }
+ },
+ {
+  "name": "issue10301.pdf",
+  "best": 0.0001,
+  "flow": {
+   "score": 0.0006,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0001,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "extract_link.pdf",
+  "best": 0.0001,
+  "flow": {
+   "score": 0.0003,
+   "note": "",
+   "pages": [
+    2,
+    2
+   ]
+  },
+  "positional": {
+   "score": 0.0001,
+   "note": "",
+   "pages": [
+    2,
+    2
+   ]
+  }
+ },
+ {
+  "name": "bug1907000_reduced.pdf",
+  "best": 0.0001,
+  "flow": {
+   "score": 0.0003,
+   "note": "",
+   "pages": [
+    2,
+    2
+   ]
+  },
+  "positional": {
+   "score": 0.0001,
+   "note": "",
+   "pages": [
+    2,
+    2
+   ]
+  }
+ },
+ {
+  "name": "annotation-line.pdf",
+  "best": 0.0001,
+  "flow": {
+   "score": 0.0002,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0001,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "PDFJS-9279-reduced.pdf",
+  "best": 0.0001,
+  "flow": {
+   "score": 0.0002,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0001,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "fraction-highlight.pdf",
+  "best": 0.0001,
+  "flow": {
+   "score": 0.003,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0001,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1473809.pdf",
+  "best": 0,
   "flow": {
    "score": 0.0001,
    "note": "",
@@ -7631,7 +7591,47 @@
    ]
   },
   "positional": {
-   "score": 0.0001,
+   "score": 0,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "issue10402.pdf",
+  "best": 0,
+  "flow": {
+   "score": 0.0002,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1851498.pdf",
+  "best": 0,
+  "flow": {
+   "score": 0.0005,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0,
    "note": "",
    "pages": [
     1,
