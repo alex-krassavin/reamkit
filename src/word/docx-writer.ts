@@ -902,6 +902,7 @@ function drawingFrame(
   head: string,
   graphic: string,
   state: WriteState,
+  rotation60k?: number,
 ): string {
   const WP_NS =
     ' xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"';
@@ -955,12 +956,43 @@ function drawingFrame(
     pos('wp:positionH', float.posH, 'column') +
     pos('wp:positionV', float.posV, 'paragraph') +
     `<wp:extent cx="${cx}" cy="${cy}"/>` +
-    '<wp:effectExtent l="0" t="0" r="0" b="0"/>' +
+    effectExtentXml(cx, cy, rotation60k) +
     wrap +
     head +
     graphic +
     '</wp:anchor></w:drawing>'
   );
+}
+
+/**
+ * §20.4.2.3 `wp:effectExtent` — how far the drawing reaches PAST the extent.
+ *
+ * `wp:extent` is the shape's own size, unrotated: fdo75722-dml.docx states
+ * 1964690 × 1240790 there and repeats it in `a:ext`, then carries the turn's
+ * overhang here (l 198120, t 433705, r 199390, b 430530). Written as zeroes —
+ * which they always were — a renderer reserves the flat box for a shape that
+ * draws across the turned one, and 160F-2019.pdf's "Nature", set on its side
+ * down the middle of a column, came back lying flat across it.
+ *
+ * A box `w × h` turned by θ about its centre spans `|w·cosθ| + |h·sinθ|`
+ * across and `|w·sinθ| + |h·cosθ|` down; half of each growth hangs off each
+ * side. A turn that makes the box no wider hangs off by nothing.
+ */
+function effectExtentXml(cx: number, cy: number, rotation60k: number | undefined): string {
+  const none = '<wp:effectExtent l="0" t="0" r="0" b="0"/>';
+  if (rotation60k === undefined || !Number.isFinite(rotation60k) || rotation60k % 21600000 === 0) {
+    return none;
+  }
+  const rad = ((rotation60k / 60000) * Math.PI) / 180;
+  const c = Math.abs(Math.cos(rad));
+  const s = Math.abs(Math.sin(rad));
+  const overhang = (span: number, turned: number): number =>
+    Math.max(0, Math.round((turned - span) / 2));
+  const h = overhang(cx, cx * c + cy * s);
+  const v = overhang(cy, cx * s + cy * c);
+  return h === 0 && v === 0
+    ? none
+    : `<wp:effectExtent l="${String(h)}" t="${String(v)}" r="${String(h)}" b="${String(v)}"/>`;
 }
 
 // Allocate (or reuse) a media part + image relationship for a resource, then
@@ -1039,6 +1071,7 @@ function shapeDrawingXml(
     `<wp:docPr id="${id}" name="Shape ${id}"${descr}/>`,
     graphic,
     state,
+    shape.transform?.rotation60k,
   );
 }
 

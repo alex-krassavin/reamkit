@@ -672,6 +672,23 @@ describe('a drawing that states where it goes is placed there (§20.4.2.3)', () 
     expect((xml.match(/<w:p>/gu) ?? []).length).toBe(1);
   });
 
+  it('reserves the area a turned drawing actually reaches (§20.4.2.3)', () => {
+    // `wp:extent` is the shape's own size, unrotated — fdo75722-dml.docx states
+    // it there and repeats it in `a:ext` — and the turn's overhang goes in
+    // `wp:effectExtent`. Written as zeroes, a renderer reserves the flat box
+    // for a shape that draws across the turned one.
+    const turned = {
+      ...floatingShape(0, 0),
+      transform: { rotation60k: 16200000 }, // a quarter turn, 270°
+    };
+    const xml = xmlOf([{ kind: 'shape' as const, shape: turned }]);
+    // 40 × 20 pt turned upright spans 20 × 40: it hangs 10pt off top and bottom
+    // and nothing off the sides.
+    expect(xml).toContain('<wp:effectExtent l="0" t="127000" r="0" b="127000"/>');
+    // The extent itself stays the shape's own size.
+    expect(xml).toContain(`<wp:extent cx="${String(40 * 12700)}" cy="${String(20 * 12700)}"/>`);
+  });
+
   it('leaves a drawing that states no placement inline', () => {
     const { float: _drop, ...flowing } = floatingShape(0, 0);
     const xml = xmlOf([{ kind: 'shape' as const, shape: flowing }]);
