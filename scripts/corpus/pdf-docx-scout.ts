@@ -27,8 +27,9 @@
 //   npx tsx scripts/corpus/pdf-docx-scout.ts corpus/external/pdfjs 60 0 --dpi 72
 //   npx tsx scripts/corpus/pdf-docx-scout.ts corpus/external/pdfjs --mode positional
 
-import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 
 import { colorDiff, parsePpm, rasterize, referenceToPdf, visualDiff } from './lib';
 import { corpusFontOptions } from './fonts';
@@ -132,9 +133,11 @@ async function main(): Promise<void> {
   const limit = Number(positional[1] ?? 1000);
   const offset = Number(positional[2] ?? 0);
 
-  const work = resolve(`corpus/.pdf-docx-${String(process.pid)}`);
-  rmSync(work, { recursive: true, force: true });
-  mkdirSync(work, { recursive: true });
+  // Outside the repo on purpose. A sweep takes long enough that the tree gets
+  // worked on while it runs, and a work directory under `corpus/` is one
+  // `rm -rf` away from every remaining file reporting ENOENT as if the
+  // converter had failed. This one cost a 400-file run.
+  const work = mkdtempSync(join(tmpdir(), 'ream-pdf-docx-'));
 
   const files = readdirSync(dir)
     .filter((f) => /\.pdf$/iu.test(f))

@@ -574,6 +574,84 @@ describe('docx writer (E-DOCX D2 skeleton)', () => {
   });
 });
 
+describe('a drawing that states where it goes is placed there (§20.4.2.3)', () => {
+  const floatingShape = (offsetXPt: number, offsetYPt: number) => ({
+    width: 40,
+    height: 20,
+    fill: { kind: 'solid' as const, colorHex: '336699' },
+    geometry: { kind: 'preset' as const, preset: 'rect' },
+    paragraphProperties: {},
+    float: {
+      wrap: 'none' as const,
+      posH: { relativeFrom: 'page' as const, offsetPt: offsetXPt },
+      posV: { relativeFrom: 'page' as const, offsetPt: offsetYPt },
+    },
+  });
+  const docWith = (body: ReadonlyArray<unknown>) => {
+    const { doc: flow } = readDocx(buildDocxFromBody('<w:p><w:r><w:t>x</w:t></w:r></w:p>'));
+    return { ...flow, body } as unknown as FlowDoc;
+  };
+  const xmlOf = (body: ReadonlyArray<unknown>) =>
+    decode(OpcPackage.open(writeDocx(docWith(body)).bytes).getMainDocument().data);
+
+  it('writes a wp:anchor, with everything CT_Anchor requires on it', () => {
+    // The model has carried the anchor since the reader learned to read one,
+    // and the writer threw it away: every drawing went out inline, so a page
+    // of placed artwork came back as a column of it in document order.
+    const xml = xmlOf([{ kind: 'shape' as const, shape: floatingShape(72, 144) }]);
+    expect(xml).toContain('<wp:anchor');
+    expect(xml).not.toContain('<wp:inline');
+    // Required attributes — Word refuses the document without them.
+    for (const attr of [
+      'simplePos=',
+      'relativeHeight=',
+      'behindDoc=',
+      'locked=',
+      'layoutInCell=',
+      'allowOverlap=',
+    ]) {
+      expect(xml).toContain(attr);
+    }
+    // And the placement itself, in EMU: 72pt is an inch is 914400.
+    expect(xml).toContain('<wp:positionH relativeFrom="page"><wp:posOffset>914400</wp:posOffset>');
+    expect(xml).toContain('<wp:positionV relativeFrom="page"><wp:posOffset>1828800</wp:posOffset>');
+    expect(xml).toContain('<wp:wrapNone/>');
+  });
+
+  it('reads its own anchor back', () => {
+    const bytes = writeDocx(
+      docWith([{ kind: 'shape' as const, shape: floatingShape(72, 144) }]),
+    ).bytes;
+    const { doc: again } = readDocx(bytes);
+    const shape = again.body.find((b) => b.kind === 'shape');
+    if (shape?.kind !== 'shape') throw new Error('expected a shape');
+    expect(shape.shape.float?.posH?.relativeFrom).toBe('page');
+    expect(shape.shape.float?.posH?.offsetPt).toBeCloseTo(72, 1);
+    expect(shape.shape.float?.posV?.offsetPt).toBeCloseTo(144, 1);
+  });
+
+  it('gathers consecutive placed drawings into one carrier paragraph', () => {
+    // A floating drawing is placed by its anchor, not by where its paragraph
+    // lands — so a paragraph each is a paragraph of FLOW each. 160F-2019.pdf is
+    // one page of 355 placed rules, and one paragraph apiece ran it to sixteen.
+    const xml = xmlOf(
+      Array.from({ length: 5 }, (_, i) => ({
+        kind: 'shape' as const,
+        shape: floatingShape(10 * i, 10 * i),
+      })),
+    );
+    expect((xml.match(/<wp:anchor/gu) ?? []).length).toBe(5);
+    expect((xml.match(/<w:p>/gu) ?? []).length).toBe(1);
+  });
+
+  it('leaves a drawing that states no placement inline', () => {
+    const { float: _drop, ...flowing } = floatingShape(0, 0);
+    const xml = xmlOf([{ kind: 'shape' as const, shape: flowing }]);
+    expect(xml).toContain('<wp:inline');
+    expect(xml).not.toContain('<wp:anchor');
+  });
+});
+
 describe('an attribute is written only where the schema admits its value', () => {
   // Word does not ignore an attribute it cannot read and does not round one it
   // could: it refuses the whole document, saying only that it "experienced an

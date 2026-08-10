@@ -1,5 +1,7665 @@
 [
  {
+  "name": "Type3WordSpacing.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "XiaoBiaoSong.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "ZapfDingbats.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "acroform_calculation_order.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "alphatrans.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "annotation-border-styles.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "annotation-button-widget.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "annotation-caret-ink.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "annotation-choice-widget.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "annotation-fileattachment.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "annotation-freetext.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "annotation-highlight-without-appearance.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "annotation-highlight.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "annotation-ink-without-appearance.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "annotation-line-without-appearance-empty-Rect.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "annotation-line-without-appearance.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "annotation-line.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "annotation-link-text-popup.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "annotation-polyline-polygon-without-appearance.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "annotation-polyline-polygon.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "annotation-square-circle-without-appearance.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "annotation-square-circle.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "annotation-squiggly-without-appearance.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "annotation-squiggly.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "annotation-stamp.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "annotation-strikeout-without-appearance.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "annotation-strikeout.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "annotation-text-widget.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "annotation-text-without-popup.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "annotation-tx.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "annotation-tx2.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "annotation-tx3.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "annotation-underline-without-appearance.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "annotation-underline.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "annotation_hidden_noview.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "annotation_hidden_print.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "arial_unicode_ab_cidfont.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "arial_unicode_en_cidfont.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "asciihexdecode.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "attachment.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "auth-event-ef-open.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "autoprint.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bad-PageLabels.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "basicapi.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bigboundingbox.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-composite-and-xnor-halftone.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-composite-and-xnor-refine.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-composite-and-xnor-text.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-composite-and-xnor.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-composite-or-xor-replace-halftone.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-composite-or-xor-replace-refine.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-composite-or-xor-replace-text.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-composite-or-xor-replace.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-customat-tpgdon.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-customat.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-halftone-10bpp-mmr.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-halftone-10bpp.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-halftone-composite.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-halftone-grid.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-halftone-refine.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-halftone-skip-dummy.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-halftone-skip-grid-template1.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-halftone-skip-grid-template2.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-halftone-skip-grid-template3.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-halftone-skip-grid.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-halftone-template1.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-halftone-template2.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-halftone-template3.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-halftone.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-initially-unknown-size.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-mmr.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-p32-eof.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-randomaccess.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-refine-customat-tpgron.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-refine-customat.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-refine-lossless.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-refine-page-subrect.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-refine-page.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-refine-refine.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-refine-template1-tpgron.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-refine-template1.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-refine-tpgron.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-refine.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-stripe-initially-unknown-height.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-stripe-last-implicit.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-stripe-single-no-end-of-stripe.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-stripe-single.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-stripe.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-big-segmentid.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-context-reuse.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-empty.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-negative-sbdsoffset.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-refine.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-symbolrefine-textrefine.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-symbolrefineone-customat.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-symbolrefineone-template1.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-symbolrefineone.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-symbolrefineseveral.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-symhuff-texthuff.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-symhuff-texthuffB10B13.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-symhuffB5B3-texthuffB7B9B12.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-symhuffcustom-texthuffcustom.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-symhuffrefine-textrefine.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-symhuffrefineone.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-symhuffrefineseveral.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-symhuffuncompressed-texthuff.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-textbottomleft.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-textbottomlefttranspose.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-textbottomright.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-textbottomrighttranspose.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-textcomposite.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-texthuffrefine.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-texthuffrefineB15.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-texthuffrefinecustom.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-texthuffrefinecustomdims.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-texthuffrefinecustompos.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-texthuffrefinecustomposdims.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-texthuffrefinecustomsize.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-textrefine-customat.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-textrefine-negative-delta-width.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-textrefine.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-texttopright.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-texttoprighttranspose.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-texttranspose.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-template1-customat-tpgdon.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-template1-customat.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-template1-tpgdon.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-template1.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-template2-customat-tpgdon.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-template2-customat.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-template2-tpgdon.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-template2.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-template3-customat-tpgdon.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-template3-customat.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-template3-tpgdon.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-template3.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-tpgdon.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-trailing-7fff-stripped-harder-refine.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-trailing-7fff-stripped-harder.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-trailing-7fff-stripped.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "blendmode.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bomb_giant.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "boundingBox_invalid.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1001080.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1011159.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1019475_1.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1019475_2.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1020226.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1020858.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1027533.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1028735.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1046314.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1050040.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1057544.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1065245.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1068432.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1108301.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1132849.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1146106.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1151216.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1157493.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1175962.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1186827.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1200096.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1245391_reduced.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1250079.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1252420.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1308536.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1337429.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1365930.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1392647.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1473809.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1513120_reduced.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1529502.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1538111.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1539074.1.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1539074.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1552113.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1606566.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: Unrecognized document format (readers: docx, doc",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: Unrecognized document format (readers: docx, doc",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1627427_reduced.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1650302_reduced.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1669097.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1669099.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1671312_ArialNarrow.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1671312_reduced.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1675139.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1703683_page2_reduced.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1708040.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1708041.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1721218_reduced.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1724918.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1727053.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1743245.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1755507.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1770750.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1771477.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1782186.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1782564.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1795263.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1796741.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1799927.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1802506.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1802888.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1811510.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1811668_reduced.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1811694.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1815476.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1820909.1.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1825002.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1844576.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1844583.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1851498.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1863910.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1865341.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1868759.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1871353.1.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1871353.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1872721.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1873345.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1883609.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1885505.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1889122.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1907000_reduced.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1918115.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1919513.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1922766.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1934157.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1937438_af_from_latex.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1937438_from_word.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1937438_mml_from_latex.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1942064.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1947248_forms.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1947248_text.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1953099.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1963407.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1974436.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1978317.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1980958.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1989304.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1992868.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1997343.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug2004951.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug2009627.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug2013793.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug2014080.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug2025674.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug2026037.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug2035197_1.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug2035197_2.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug766086.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug793632.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug816075.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug847420.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug850854.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug852992_reduced.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug854315.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug859204.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug860632.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug864847.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug866395.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug868745.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug878026.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug886717.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug893730.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug894572.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug898853.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug900822.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug903856.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug911034.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug920426.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug921409.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug946506.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug_jpx.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "calgray.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "calrgb.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "canvas.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "ccitt_EndOfBlock_false.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "cff_bluescale_small_zones.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "checkbox-bad-appearance.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "checkbox_no_appearance.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "chrome-text-selection-markedContent.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "cid_cff.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "cidfont_cmap_overflow.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "clippath.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "close-path-bug.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "cmykjpeg.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "colorkeymask.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "colors.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "colorspace_atan.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "colorspace_cos.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "colorspace_sin.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "comments.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "complex_ttf_font.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "coons-allflags-withfunction.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "copy_paste_ligatures.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "dates.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "dates_save.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "decodeACSuccessive.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "devicen.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "doc_1_3_pages.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "doc_2_3_pages.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "doc_3_3_pages.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "doc_actions.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "empty#hash.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "empty.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "empty_protected.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "encrypted-attachment.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "endchar.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "evaljs.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "extgstate.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "extractPages_null_in_array.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "extract_link.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "fields_order.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "file_pdfjs_form.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "file_pdfjs_test.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "file_url_link.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "filled-background.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "find_all.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "firefox_logo.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "firefox_stamp.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "font_ascent_descent.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "form_two_pages.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "fraction-highlight.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "franz.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "franz_2.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "freeculture.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "freetext_no_appearance.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "freetexts.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "french_diacritics.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "function_based_shading.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "function_based_shading_cmyk.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "german-umlaut-r.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "glyph_accent.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "gradientfill.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "hello_world_rotated.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "helloworld-bad.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "highlight.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "highlight_popup.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "highlights.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "image-rotated-black-white-ratio.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "images.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "images_1bit_grayscale.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "inks.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "inks_basic.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "issue1002.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "issue10084_reduced.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "issue10301.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "issue10339_reduced.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "issue10388_reduced.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "issue10402.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "issue10438_reduced.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "issue1045.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "issue10519_reduced.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "issue10529.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "issue10542_reduced.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "issue1055r.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "issue10572.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "issue10640.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "issue10665_reduced.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "issue10900.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "issue11016_reduced.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "issue11045.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "issue11124.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "issue11131_reduced.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "issue11144_reduced.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "issue11150_reduced.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "issue11242_reduced.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "issue11279.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "issue11362.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "issue11403_reduced.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "issue11442_reduced.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "issue11473.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "issue11477_reduced.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "issue11549_reduced.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "issue11555.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "TrueType_without_cmap.pdf",
+  "best": 98,
+  "flow": {
+   "score": 98,
+   "note": "soffice would not open our .docx",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: ENOENT: no such file or directory, open '/Users/",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "GHOSTSCRIPT-698804-1-fuzzed.pdf",
+  "best": 97,
+  "flow": {
+   "score": 97,
+   "note": "raster: Command failed: mutool draw -c rgb -F pnm -o",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 97,
+   "note": "raster: Command failed: mutool draw -c rgb -F pnm -o",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "Pages-tree-refs.pdf",
+  "best": 97,
+  "flow": {
+   "score": 97,
+   "note": "raster: Command failed: mutool draw -c rgb -F pnm -o",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 97,
+   "note": "raster: Command failed: mutool draw -c rgb -F pnm -o",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "REDHAT-1531897-0.pdf",
+  "best": 97,
+  "flow": {
+   "score": 97,
+   "note": "raster: Command failed: mutool draw -c rgb -F pnm -o",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 97,
+   "note": "raster: Command failed: mutool draw -c rgb -F pnm -o",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "TAMReview.pdf",
+  "best": 0.5337,
+  "flow": {
+   "score": 0.5337,
+   "note": "pages 1≠23",
+   "pages": [
+    1,
+    23
+   ]
+  },
+  "positional": {
+   "score": 0.5337,
+   "note": "pages 1≠23",
+   "pages": [
+    1,
+    23
+   ]
+  }
+ },
+ {
+  "name": "S2.pdf",
+  "best": 0.4817,
+  "flow": {
+   "score": 0.4817,
+   "note": "pages 3≠1",
+   "pages": [
+    3,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.4817,
+   "note": "pages 4≠1",
+   "pages": [
+    4,
+    1
+   ]
+  }
+ },
+ {
+  "name": "SimFang-variant.pdf",
+  "best": 0.4627,
+  "flow": {
+   "score": 0.4627,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.4627,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
   "name": "22060_A1_01_Plans.pdf",
   "best": 0.2191,
   "flow": {
@@ -15,6 +7675,26 @@
    "note": "pages 4≠1",
    "pages": [
     4,
+    1
+   ]
+  }
+ },
+ {
+  "name": "ShowText-ShadingPattern.pdf",
+  "best": 0.2176,
+  "flow": {
+   "score": 0.2176,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.2185,
+   "note": "",
+   "pages": [
+    1,
     1
    ]
   }
@@ -60,6 +7740,66 @@
   }
  },
  {
+  "name": "IndexedCS_negative_and_high.pdf",
+  "best": 0.1554,
+  "flow": {
+   "score": 0.1554,
+   "note": "pages 6≠1",
+   "pages": [
+    6,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.1554,
+   "note": "pages 6≠1",
+   "pages": [
+    6,
+    1
+   ]
+  }
+ },
+ {
+  "name": "ThuluthFeatures.pdf",
+  "best": 0.1469,
+  "flow": {
+   "score": 0.1469,
+   "note": "pages 4≠1",
+   "pages": [
+    4,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.1469,
+   "note": "pages 4≠1",
+   "pages": [
+    4,
+    1
+   ]
+  }
+ },
+ {
+  "name": "IdentityToUnicodeMap_charCodeOf.pdf",
+  "best": 0.0329,
+  "flow": {
+   "score": 0.0362,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0329,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
   "name": "ContentStreamCycleType3insideType3.pdf",
   "best": 0.0166,
   "flow": {
@@ -100,6 +7840,86 @@
   }
  },
  {
+  "name": "Test-plusminus.pdf",
+  "best": 0.0123,
+  "flow": {
+   "score": 0.0143,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0123,
+   "note": "pages 2≠1",
+   "pages": [
+    2,
+    1
+   ]
+  }
+ },
+ {
+  "name": "ContentStreamNoCycleType3insideType3.pdf",
+  "best": 0.0102,
+  "flow": {
+   "score": 0.0104,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0102,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "Embedded_font.pdf",
+  "best": 0.0051,
+  "flow": {
+   "score": 0.0051,
+   "note": "pages 2≠1",
+   "pages": [
+    2,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0069,
+   "note": "pages 2≠1",
+   "pages": [
+    2,
+    1
+   ]
+  }
+ },
+ {
+  "name": "PDFJS-7562-reduced.pdf",
+  "best": 0.0009,
+  "flow": {
+   "score": 0.0009,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0009,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
   "name": "90ms_rksj_h_sample.pdf",
   "best": 0.0008,
   "flow": {
@@ -112,6 +7932,66 @@
   },
   "positional": {
    "score": 0.0008,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "PDFJS-9279-reduced.pdf",
+  "best": 0.0002,
+  "flow": {
+   "score": 0.0002,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0002,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "PDFBOX-3148-2-fuzzed.pdf",
+  "best": 0,
+  "flow": {
+   "score": 0,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "PDFBOX-4352-0.pdf",
+  "best": 0,
+  "flow": {
+   "score": 0,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0,
    "note": "",
    "pages": [
     1,
