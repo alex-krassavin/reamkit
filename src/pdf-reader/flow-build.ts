@@ -16,11 +16,12 @@ import type {
 } from '@/core/document-model';
 import type { FlowDoc } from '@/core/ir/flow';
 import type { FontRegistry } from '@/core/font';
-import type { Loss } from '@/core/ir';
+import type { Loss, Pt } from '@/core/ir';
 
 import type { PdfImage } from './images';
 import type { PdfPage } from './document';
 import type { PdfVector } from './vector';
+import type { TextRun } from './content';
 import { ResourceStore, pt } from '@/core/ir';
 import { EMPTY_STYLE_SHEET, resolveBodyStyles } from '@/core/style-cascade';
 
@@ -344,15 +345,21 @@ export function shapeBlock(v: PdfVector, frame?: PageFrame, zOrder?: number): Bo
   // §20.4.2.3 — anchored to the PAGE at the position it was drawn at, y flipped
   // from PDF's upward axis.
   //
-  // Not `behind`: a path is not always under the pictures. 22060_A1_01_Plans.pdf
-  // backs its legend with a white box painted OVER a floor plan, and forced
-  // behind it, the plan and the title block read straight through the legend.
-  // `zOrder` carries the order the page painted in, which is the only thing
-  // that decides this.
+  // `behind` only where the page asked to DARKEN rather than paint (§11.3.5):
+  // no anchor blends, so a highlighter laid over its words would bury them, and
+  // under them it comes to the same picture — a yellow band with black text on
+  // it. annotation-highlight.pdf is exactly that and read back as a yellow bar.
+  //
+  // Otherwise not: a path is not always under the pictures.
+  // 22060_A1_01_Plans.pdf backs its legend with a white box painted OVER a
+  // floor plan, and forced behind it, the plan and the title block read
+  // straight through the legend. `zOrder` carries the order the page painted
+  // in, which is the only thing that decides this.
   const float: FloatAnchor | undefined =
     frame !== undefined
       ? {
           wrap: 'none',
+          ...(v.darkens === true ? { behind: true } : {}),
           ...(zOrder !== undefined ? { zOrder } : {}),
           posH: { relativeFrom: 'page', offsetPt: pt(v.minX - frame.left) },
           posV: { relativeFrom: 'page', offsetPt: pt(Math.max(0, frame.top - v.maxY)) },
@@ -408,6 +415,79 @@ export function sectionFromPdfPages(pages: ReadonlyArray<PdfPage>): SectionPrope
     margins: { top: pt(0), right: pt(0), bottom: pt(0), left: pt(0) },
     headers: [],
     footers: [],
+  };
+}
+
+/**
+ * The margins the SOURCE used, measured off where its words actually sit.
+ *
+ * A PDF states none — text is placed anywhere on the MediaBox — so the reader
+ * used to leave them at zero rather than invent an inch. But the words
+ * themselves say where the margin was: the leftmost glyph on the page is the
+ * left margin, and reflowing inside it keeps the measure the author set instead
+ * of running the text from edge to edge.
+ *
+ * Measured on the MEDIAN page rather than the extreme one, so a single full-
+ * bleed rule or a page number in the corner does not collapse the margin for
+ * the whole document, and clamped so a strange page cannot leave no text area
+ * at all.
+ *
+ * @param section  The section the page box gave, or `undefined`.
+ * @param shown    Each page as it is shown, for its own width and height.
+ * @param pageRuns Each page's runs, already placed on the shown page.
+ * @returns The section with measured margins, or `section` when nothing is
+ *          measurable.
+ */
+export function withMeasuredMargins(
+  section: SectionProperties | undefined,
+  shown: ReadonlyArray<{ width: number; height: number }>,
+  pageRuns: ReadonlyArray<ReadonlyArray<TextRun>>,
+): SectionProperties | undefined {
+  if (!section?.pageSize) return section;
+  const width = section.pageSize.width as number;
+  const height = section.pageSize.height as number;
+  const lefts: Array<number> = [];
+  const rights: Array<number> = [];
+  const tops: Array<number> = [];
+  const bottoms: Array<number> = [];
+  pageRuns.forEach((runs, i) => {
+    const page = shown[i];
+    if (!page || runs.length === 0) return;
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+    for (const r of runs) {
+      if (!Number.isFinite(r.x) || !Number.isFinite(r.y)) continue;
+      minX = Math.min(minX, r.x);
+      maxX = Math.max(maxX, r.endX);
+      minY = Math.min(minY, r.y);
+      maxY = Math.max(maxY, r.y);
+    }
+    if (!Number.isFinite(minX) || !Number.isFinite(minY)) return;
+    lefts.push(minX);
+    rights.push(page.width - maxX);
+    // Runs carry the PDF's own upward y, so the top margin is what is left
+    // above the highest baseline.
+    tops.push(page.height - maxY);
+    bottoms.push(minY);
+  });
+  if (lefts.length === 0) return section;
+  const median = (xs: Array<number>): number => {
+    const s = [...xs].sort((a, b) => a - b);
+    return s[Math.floor(s.length / 2)] ?? 0;
+  };
+  // Never more than a third of the sheet, never negative: a margin that eats
+  // the text area is worse than none.
+  const clamp = (v: number, span: number): Pt => pt(Math.max(0, Math.min(v, span / 3)));
+  return {
+    ...section,
+    margins: {
+      left: clamp(median(lefts), width),
+      right: clamp(median(rights), width),
+      top: clamp(median(tops), height),
+      bottom: clamp(median(bottoms), height),
+    },
   };
 }
 

@@ -18,6 +18,7 @@ import {
   positionedText,
   sectionFromPdfPages,
   shapeBlock,
+  withMeasuredMargins,
 } from './flow-build';
 import { displayOf, placeImages, placeRuns, placeVectors } from './display';
 import { collectEmbeddedFonts } from './embedded-fonts';
@@ -255,73 +256,6 @@ export function reconstructByLayout(
       collectEmbeddedFonts(file, pages),
     ),
     losses: dedupeLosses(losses),
-  };
-}
-
-/**
- * The margins the SOURCE used, measured off where its words actually sit.
- *
- * A PDF states none — text is placed anywhere on the MediaBox — so the reader
- * used to leave them at zero rather than invent an inch. But the words
- * themselves say where the margin was: the leftmost glyph on the page is the
- * left margin, and reflowing inside it keeps the measure the author set instead
- * of running the text from edge to edge.
- *
- * Measured on the MEDIAN page rather than the extreme one, so a single full-
- * bleed rule or a page number in the corner does not collapse the margin for
- * the whole document, and clamped so a strange page cannot leave no text area
- * at all.
- */
-function withMeasuredMargins(
-  section: SectionProperties | undefined,
-  shown: ReadonlyArray<{ width: number; height: number }>,
-  pageRuns: ReadonlyArray<ReadonlyArray<TextRun>>,
-): SectionProperties | undefined {
-  if (!section?.pageSize) return section;
-  const width = section.pageSize.width as number;
-  const height = section.pageSize.height as number;
-  const lefts: Array<number> = [];
-  const rights: Array<number> = [];
-  const tops: Array<number> = [];
-  const bottoms: Array<number> = [];
-  pageRuns.forEach((runs, i) => {
-    const page = shown[i];
-    if (!page || runs.length === 0) return;
-    let minX = Infinity;
-    let maxX = -Infinity;
-    let minY = Infinity;
-    let maxY = -Infinity;
-    for (const r of runs) {
-      if (!Number.isFinite(r.x) || !Number.isFinite(r.y)) continue;
-      minX = Math.min(minX, r.x);
-      maxX = Math.max(maxX, r.endX);
-      minY = Math.min(minY, r.y);
-      maxY = Math.max(maxY, r.y);
-    }
-    if (!Number.isFinite(minX) || !Number.isFinite(minY)) return;
-    lefts.push(minX);
-    rights.push(page.width - maxX);
-    // Runs carry the PDF's own upward y, so the top margin is what is left
-    // above the highest baseline.
-    tops.push(page.height - maxY);
-    bottoms.push(minY);
-  });
-  if (lefts.length === 0) return section;
-  const median = (xs: Array<number>): number => {
-    const s = [...xs].sort((a, b) => a - b);
-    return s[Math.floor(s.length / 2)] ?? 0;
-  };
-  // Never more than a third of the sheet, never negative: a margin that eats
-  // the text area is worse than none.
-  const clamp = (v: number, span: number): Pt => pt(Math.max(0, Math.min(v, span / 3)));
-  return {
-    ...section,
-    margins: {
-      left: clamp(median(lefts), width),
-      right: clamp(median(rights), width),
-      top: clamp(median(tops), height),
-      bottom: clamp(median(bottoms), height),
-    },
   };
 }
 

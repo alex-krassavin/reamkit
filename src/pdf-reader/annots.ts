@@ -80,10 +80,17 @@ function normalAppearance(file: PdfFile, annot: PdfDict): PdfStream | undefined 
   if (normal instanceof PdfStream) return normal;
   if (!(normal instanceof Map)) return undefined;
   const state = file.get(annot, 'AS');
-  const picked =
-    state instanceof PdfName ? file.resolve(normal.get(state.value) ?? PDF_NULL) : PDF_NULL;
-  if (picked instanceof PdfStream) return picked;
-  // No `/AS`, or it names nothing: a set of one is unambiguous anyway.
+  if (state instanceof PdfName) {
+    // The state in force, and only it. A set that does not carry the named
+    // state draws NOTHING — a check box whose author drew only the tick has
+    // nothing to draw when it is clear, and drawing the tick anyway ticks
+    // every box on the form. annotation-button-widget.pdf is three boxes and
+    // six radio buttons of which one box and one button are set; it came back
+    // with all nine filled in.
+    const picked = file.resolve(normal.get(state.value) ?? PDF_NULL);
+    return picked instanceof PdfStream ? picked : undefined;
+  }
+  // No `/AS` at all: a set of one is unambiguous anyway.
   const only = [...normal.values()]
     .map((v) => file.resolve(v))
     .filter((v) => v instanceof PdfStream);

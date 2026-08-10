@@ -14,8 +14,9 @@ import {
   paragraphFromRuns,
   sectionFromPdfPages,
   shapeBlock,
+  withMeasuredMargins,
 } from './flow-build';
-import { displayOf, placeVectors } from './display';
+import { displayOf, placeRuns, placeVectors } from './display';
 import { collectEmbeddedFonts } from './embedded-fonts';
 import { collectPageImages } from './images';
 import { collectPageVectors } from './vector';
@@ -57,10 +58,15 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
   if (!root) return undefined;
 
   const pages = file.pages();
+  // §14.11.1 — the pages as they are SHOWN, and every run placed on them. The
+  // tree says what the words ARE; where they sit is still the page's to say,
+  // and it is the only witness of the margins the author set.
+  const shown = pages.map((page) => displayOf(page));
+  const placedRuns = pages.map((page, i) => placeRuns(extractPageText(file, page), shown[i]!));
   // Per page: MCID → its runs, in show order (runs carry any hyperlink, EP8).
-  const pageRuns = pages.map((page) => {
+  const pageRuns = placedRuns.map((runs) => {
     const byMcid = new Map<number, Array<TextRun>>();
-    for (const run of extractPageText(file, page)) {
+    for (const run of runs) {
       if (run.mcid === undefined) continue;
       const list = byMcid.get(run.mcid);
       if (list) list.push(run);
@@ -68,8 +74,15 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
     }
     return byMcid;
   });
-  const runsOfMcid = (page: number, mcid: number): Array<TextRun> =>
-    pageRuns[page]?.get(mcid) ?? [];
+  // Every run the tree actually reached, for the check at the end: a tree that
+  // reaches almost none of a page's words is not a description of this
+  // document's text.
+  const claimed = new Set<TextRun>();
+  const runsOfMcid = (page: number, mcid: number): Array<TextRun> => {
+    const runs = pageRuns[page]?.get(mcid) ?? [];
+    for (const run of runs) claimed.add(run);
+    return runs;
+  };
 
   // Per page: the lifted images, indexed by their owning MCID (a /Figure's).
   const resources = new ResourceStore();
@@ -228,7 +241,7 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
   // supplies the reading order, the page supplies its own artwork.
   pages.forEach((page, index) => {
     // §14.11.1/§14.11.2 — the page as it is SHOWN, corner and turn together.
-    const display = displayOf(page);
+    const display = shown[index]!;
     const frame = { left: 0, top: display.height };
     const covered = (pageImages[index]?.images ?? []).map((img) => ({
       minX: img.x,
@@ -254,11 +267,30 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
   for (const { img } of orphans) body.push(imageBlock(img, resources));
 
   if (body.length === 0) return undefined;
+  // A tree that names words the page never marked describes nothing.
+  //
+  // annotation-choice-widget.pdf carries a structure tree and not one of its
+  // runs carries an MCID, so every node came back empty and the file converted
+  // to its list boxes with no text in them at all — while the artwork alone
+  // kept `body` non-empty, so the tagged reading still won. Marked content is
+  // what joins the tree to the page; where the join is missing the heuristic
+  // reading has the whole page to work from, and the words come back.
+  //
+  // Half, not all: a header, a footer and a page number are Artifacts by
+  // design and belong to no element, and a document is not untagged for
+  // leaving them out.
+  const onPage = placedRuns.flat().reduce((n, r) => n + r.text.length, 0);
+  const reached = [...claimed].reduce((n, r) => n + r.text.length, 0);
+  if (onPage > 0 && reached * 2 < onPage) return undefined;
   return {
     doc: buildFlowDoc(
       body,
       resources,
-      sectionFromPdfPages(pages),
+      // A tagged reading re-sets the words exactly as an untagged one does, so
+      // it needs the same margins: measured off where the source put them.
+      // Without this every tagged PDF came back with its text against all four
+      // edges of the paper.
+      withMeasuredMargins(sectionFromPdfPages(pages), shown, placedRuns),
       collectEmbeddedFonts(file, pages),
     ),
     losses: imageLosses,

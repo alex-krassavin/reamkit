@@ -19,12 +19,18 @@ import { PDF_NULL, PdfName, PdfStream } from '@/pdf/objects';
  * filled with `/Pattern cs /Pn scn`. The bare `sh` operator (clip-bounded) is
  * not captured.
  *
+ * @param file      The owning file.
+ * @param resources The resource dictionary in force — a page's, or the form or
+ *                  annotation appearance's own.
  * @returns A map from pattern resource name to its {@link ShapeGradient}.
  */
-export function buildShadingMap(file: PdfFile, page: PdfPage): Map<string, ShapeGradient> {
+export function buildShadingMap(
+  file: PdfFile,
+  resources: PdfDict | undefined,
+): Map<string, ShapeGradient> {
   const out = new Map<string, ShapeGradient>();
-  if (!page.resources) return out;
-  const patterns = file.get(page.resources, 'Pattern');
+  if (!resources) return out;
+  const patterns = file.get(resources, 'Pattern');
   if (!(patterns instanceof Map)) return out;
   for (const [nm, value] of patterns) {
     const pat = file.resolve(value);
@@ -195,22 +201,48 @@ function pushStop(stops: Array<GradientStop>, offset: number, colorHex: string):
  * a green band at `ca` 0.6, meant to be read THROUGH: painted solid, the floor
  * plan under each band disappears.
  *
- * @param file The owning file.
- * @param page The page whose `/ExtGState` resources are wanted.
- * @returns Name → fill alpha, for the states that state one below 1.
+ * §11.3.5 `/BM` comes off the same dictionary. A blend nothing downstream can
+ * perform is still worth knowing: `Multiply` and `Darken` both let dark ink
+ * under the paint show through, which is what a highlighter IS, and a mark that
+ * only darkens belongs UNDER the words rather than over them.
+ *
+ * @param file      The owning file.
+ * @param resources The resource dictionary in force — a page's, or the form or
+ *                  annotation appearance's own, since `gs` resolves against
+ *                  whichever is current.
+ * @returns Name → the fill alpha and blend worth carrying, for the states that
+ *          state one.
  */
-export function buildAlphaMap(file: PdfFile, page: PdfPage): Map<string, number> {
-  const out = new Map<string, number>();
-  if (!page.resources) return out;
-  const states = file.get(page.resources, 'ExtGState');
+export function buildAlphaMap(file: PdfFile, resources: PdfDict | undefined): Map<string, GsPaint> {
+  const out = new Map<string, GsPaint>();
+  if (!resources) return out;
+  const states = file.get(resources, 'ExtGState');
   if (!(states instanceof Map)) return out;
   for (const [name, value] of states) {
     const state = file.resolve(value);
     if (!(state instanceof Map)) continue;
     const ca = file.resolve(state.get('ca') ?? PDF_NULL);
-    if (typeof ca === 'number' && ca >= 0 && ca < 1) out.set(name, ca);
+    const alpha = typeof ca === 'number' && ca >= 0 && ca < 1 ? ca : undefined;
+    // `/BM` may be a name or an array of them, best first (§11.3.5).
+    const bm = file.resolve(state.get('BM') ?? PDF_NULL);
+    const first = Array.isArray(bm) ? file.resolve(bm[0] ?? PDF_NULL) : bm;
+    const mode = first instanceof PdfName ? first.value : undefined;
+    const darkens = mode === 'Multiply' || mode === 'Darken';
+    if (alpha === undefined && !darkens) continue;
+    out.set(name, {
+      ...(alpha !== undefined ? { alpha } : {}),
+      ...(darkens ? { darkens: true } : {}),
+    });
   }
   return out;
+}
+
+/** What a `/ExtGState` says about paint that the reconstruction can carry. */
+export interface GsPaint {
+  /** §11.6.4.4 `/ca` — the constant fill alpha, when it is below 1. */
+  readonly alpha?: number;
+  /** §11.3.5 `/BM` — the paint only darkens, so what it covers shows through. */
+  readonly darkens?: boolean;
 }
 
 /**
@@ -225,11 +257,20 @@ export interface ColorSpaceInfo {
   readonly components: number;
 }
 
-/** The spaces a page's `/ColorSpace` resources name, by name. */
-export function buildColorSpaceMap(file: PdfFile, page: PdfPage): Map<string, ColorSpaceInfo> {
+/**
+ * The spaces a `/ColorSpace` resource dictionary names, by name.
+ *
+ * @param file      The owning file.
+ * @param resources The resource dictionary in force.
+ * @returns Name → what the space comes to, for the spaces that are read.
+ */
+export function buildColorSpaceMap(
+  file: PdfFile,
+  resources: PdfDict | undefined,
+): Map<string, ColorSpaceInfo> {
   const out = new Map<string, ColorSpaceInfo>();
-  if (!page.resources) return out;
-  const spaces = file.get(page.resources, 'ColorSpace');
+  if (!resources) return out;
+  const spaces = file.get(resources, 'ColorSpace');
   if (!(spaces instanceof Map)) return out;
   for (const [name, value] of spaces) {
     const info = colorSpaceInfo(file, file.resolve(value));

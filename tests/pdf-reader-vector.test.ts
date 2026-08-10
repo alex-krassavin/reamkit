@@ -12,8 +12,8 @@ import { Ream } from '@/core/converter/ream';
 import { interpretContent } from '@/pdf-reader/content';
 import { PdfFile } from '@/pdf-reader/document';
 import { reconstructByLayout } from '@/pdf-reader/layout';
-import { collectPageVectors } from '@/pdf-reader/vector';
 import { shapeBlock } from '@/pdf-reader/flow-build';
+import { collectPageVectors } from '@/pdf-reader/vector';
 
 const FONTS = {
   regular: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Regular.ttf')),
@@ -101,6 +101,56 @@ function fillThenImage(): Uint8Array {
 }
 
 /**
+ * A page whose only mark is a check box whose `/AP` `/N` is a SET of states —
+ * one stream, named `/1` — while `/AS` names the state actually in force.
+ */
+function checkBoxPdf(state: string): Uint8Array {
+  const ap = '0 0 1 rg 0 0 10 10 re f';
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R ' +
+      `/Annots [<< /Type /Annot /Subtype /Widget /Rect [50 60 60 70] /AS /${state} ` +
+      '/AP << /N << /1 5 0 R >> >> >>] >>',
+    '<< /Length 0 >>\nstream\n\nendstream',
+    `<< /Type /XObject /Subtype /Form /BBox [0 0 10 10] /Length ${String(ap.length)} >>\n` +
+      `stream\n${ap}\nendstream`,
+  ];
+  return assemble(objects);
+}
+
+/**
+ * A page that writes a word and lays a band over it through a graphics state
+ * whose `/BM` is `/Multiply` — a highlighter, and nothing else.
+ */
+function highlighterPdf(): Uint8Array {
+  const content = 'q /Hi gs 1 1 0 rg 20 20 100 20 re f Q';
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R ' +
+      '/Resources << /ExtGState << /Hi << /Type /ExtGState /BM /Multiply >> >> >> >>',
+    `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+  ];
+  return assemble(objects);
+}
+
+/** The objects as a file: header, bodies, cross-reference table, trailer. */
+function assemble(objects: ReadonlyArray<string>): Uint8Array {
+  let pdf = '%PDF-1.7\n';
+  const offsets: Array<number> = [];
+  objects.forEach((body, i) => {
+    offsets.push(pdf.length);
+    pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+  });
+  const xref = pdf.length;
+  pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+  for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+  pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`;
+  return new TextEncoder().encode(pdf);
+}
+
+/**
  * A page whose only mark is a WIDGET annotation: nothing in its content stream,
  * a filled rectangle in the annotation's `/AP` `/N`.
  */
@@ -129,6 +179,17 @@ function widgetOnlyPdf(): Uint8Array {
 }
 
 describe('annotation appearances (§12.5.5)', () => {
+  it('paints the state /AS names, and nothing when the set has no such state', () => {
+    // A check box is drawn by its ON appearance and cleared by having none:
+    // annotation-button-widget.pdf carries `/N << /1 … >>` and `/AS /Off` for
+    // the boxes that are clear. Taking "the only stream in the set" for those
+    // ticked every box and filled every radio button on the form.
+    const on = PdfFile.parse(checkBoxPdf('1'));
+    expect(collectPageVectors(on, on.pages()[0]!).vectors).toHaveLength(1);
+    const off = PdfFile.parse(checkBoxPdf('Off'));
+    expect(collectPageVectors(off, off.pages()[0]!).vectors).toHaveLength(0);
+  });
+
   it('lifts what a widget draws, and fits it to the annotation’s /Rect', () => {
     // A form field paints nothing in the page's content stream: its tint, its
     // border and its value all live in the widget's own appearance. Read only
@@ -313,6 +374,17 @@ function alphaBandsPdf(): Uint8Array {
 }
 
 describe('constant fill alpha (§11.6.4.4)', () => {
+  it('marks a fill that only DARKENS, so what it covers reads through', () => {
+    // §11.3.5 — annotation-highlight.pdf lays its yellow band over the words
+    // with `/BM /Multiply`, which is how a highlighter works. Nothing anchored
+    // in a .docx blends, so a band read as paint buried the line it marked.
+    const file = PdfFile.parse(highlighterPdf());
+    const [band] = collectPageVectors(file, file.pages()[0]!).vectors;
+    expect(band?.darkens).toBe(true);
+    const block = shapeBlock(band!, { left: 0, top: 200 }, 0);
+    expect(block.kind === 'shape' && block.shape.float?.behind).toBe(true);
+  });
+
   it('reads /ca off the graphics state `gs` names, and lets `Q` take it back', () => {
     // §8.4.5 — `gs` sets a whole state at once. 22060_A1_01_Plans.pdf marks its
     // evacuation routes with a green band at `ca` 0.6, meant to be read
@@ -322,7 +394,7 @@ describe('constant fill alpha (§11.6.4.4)', () => {
       NO_FONTS,
       undefined,
       undefined,
-      new Map([['G0', 0.6]]),
+      new Map([['G0', { alpha: 0.6 }]]),
     );
     expect(vectors).toHaveLength(2);
     expect(vectors[0]!.alpha).toBeCloseTo(0.6, 5);
@@ -335,7 +407,7 @@ describe('constant fill alpha (§11.6.4.4)', () => {
       NO_FONTS,
       undefined,
       undefined,
-      new Map([['G0', 0.6]]),
+      new Map([['G0', { alpha: 0.6 }]]),
     );
     expect(vectors[0]!.alpha).toBeUndefined();
   });

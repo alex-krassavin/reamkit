@@ -10,7 +10,7 @@ import { IDENTITY, interpretContent, multiply } from './content';
 import { buildAlphaMap, buildColorSpaceMap, buildShadingMap } from './shading';
 import { collectPageAppearances } from './annots';
 import { buildFonts } from './text';
-import type { ColorSpaceInfo } from './shading';
+import type { ColorSpaceInfo, GsPaint } from './shading';
 import type {
   ContentFont,
   ImagePlacement,
@@ -39,15 +39,36 @@ import { FEATURES } from '@/core/ir';
  * The same walk `collectPageImages` already makes, with the same depth and
  * cycle guards, collecting paths instead of pictures.
  */
+/** The name-keyed state a resource dictionary supplies to the interpreter. */
+interface ResourceMaps {
+  readonly shadings: ReadonlyMap<string, ShapeGradient>;
+  readonly alphas: ReadonlyMap<string, GsPaint>;
+  readonly spaces: ReadonlyMap<string, ColorSpaceInfo>;
+}
+
 function paintedVectors(
   file: PdfFile,
   page: PdfPage,
-  shadings: ReadonlyMap<string, ShapeGradient>,
-  alphas: ReadonlyMap<string, number>,
-  spaces: ReadonlyMap<string, ColorSpaceInfo>,
 ): Array<VectorPlacement & { orderKey: ReadonlyArray<number> }> {
   const out: Array<VectorPlacement & { orderKey: ReadonlyArray<number> }> = [];
   const visiting = new Set<PdfStream>();
+  // §7.8.3 — a name resolves against the resources IN FORCE, which is the
+  // form's or the appearance's own where it has one. annotation-highlight.pdf
+  // keeps its `/Multiply` in the appearance's `/ExtGState` and nowhere else,
+  // and read against the page's it was never found at all. Cached per
+  // dictionary, since a page's forms nearly all share one.
+  const stateCache = new Map<PdfDict | undefined, ResourceMaps>();
+  const mapsOf = (resources: PdfDict | undefined): ResourceMaps => {
+    const had = stateCache.get(resources);
+    if (had) return had;
+    const made: ResourceMaps = {
+      shadings: buildShadingMap(file, resources),
+      alphas: buildAlphaMap(file, resources),
+      spaces: buildColorSpaceMap(file, resources),
+    };
+    stateCache.set(resources, made);
+    return made;
+  };
   const walk = (
     resources: PdfDict | undefined,
     content: Uint8Array,
@@ -58,13 +79,14 @@ function paintedVectors(
     if (out.length >= MAX_VECTORS) return;
     const xobjects = resources ? file.get(resources, 'XObject') : PDF_NULL;
     const xobjDict = xobjects instanceof Map ? xobjects : undefined;
+    const maps = mapsOf(resources);
     const result = interpretContent(
       content,
       buildFonts(file, resources),
       baseCtm,
-      shadings,
-      alphas,
-      spaces,
+      maps.shadings,
+      maps.alphas,
+      maps.spaces,
     );
 
     // §8.5.3 — later marks cover earlier ones, and a form is drawn where its
@@ -165,6 +187,11 @@ export interface PdfVector {
   readonly gradient?: ShapeGradient;
   /** §11.6.4.4 — how opaque the fill is, when the page asked for less than all. */
   readonly alpha?: number;
+  /**
+   * §11.3.5 — the fill only DARKENS what it covers, so the marks under it read
+   * through. A highlighter is this, and nothing on a page reads it as paint.
+   */
+  readonly darkens?: boolean;
   /** Present iff a qualifying stroke survived (EP11). */
   readonly strokeHex?: string;
   /** Stroke width in page-space points (EP11). */
@@ -220,15 +247,12 @@ export function collectPageVectors(
 ): PageVectors {
   const [px0, py0, px1, py1] = page.mediaBox;
   const pageArea = Math.max(1, Math.abs((px1 - px0) * (py1 - py0)));
-  const shadings = buildShadingMap(file, page);
-  const alphas = buildAlphaMap(file, page);
-  const spaces = buildColorSpaceMap(file, page);
   const out: Array<PdfVector> = [];
   // What the page has painted so far. White paint is invisible only over white:
   // over anything else it is the thing that HIDES it, and the caller seeds this
   // with the pictures it has already placed.
   const painted: Array<Box> = [...occupied];
-  const raws = paintedVectors(file, page, shadings, alphas, spaces);
+  const raws = paintedVectors(file, page);
   for (const raw of raws) {
     if (out.length >= MAX_VECTORS) break;
     const v = clipped(raw);
@@ -292,6 +316,7 @@ export function collectPageVectors(
             : {}
         : {}),
       ...(filled && v.alpha !== undefined ? { alpha: v.alpha } : {}),
+      ...(filled && v.darkens === true ? { darkens: true } : {}),
       ...(stroked
         ? {
             strokeHex: v.strokeHex,
