@@ -5,38 +5,13 @@
   "aligned": true
  },
  {
-  "name": "bitmap-symbol-symhuffrefine-textrefine.pdf",
-  "score": 1,
-  "aligned": true
- },
- {
   "name": "bitmap-symbol-symhuffrefineseveral.pdf",
   "score": 1,
   "aligned": true
  },
  {
-  "name": "bitmap-symbol-texthuffrefine.pdf",
-  "score": 1,
-  "aligned": true
- },
- {
-  "name": "bitmap-symbol-texthuffrefineB15.pdf",
-  "score": 1,
-  "aligned": true
- },
- {
-  "name": "bitmap-symbol-texthuffrefinecustomdims.pdf",
-  "score": 1,
-  "aligned": true
- },
- {
-  "name": "bitmap-symbol-texthuffrefinecustompos.pdf",
-  "score": 1,
-  "aligned": true
- },
- {
-  "name": "bitmap-symbol-texthuffrefinecustomsize.pdf",
-  "score": 1,
+  "name": "bitmap-symbol-symhuffrefine-textrefine.pdf",
+  "score": 0.9886,
   "aligned": true
  },
  {
@@ -95,13 +70,33 @@
   "aligned": true
  },
  {
-  "name": "bitmap-trailing-7fff-stripped-harder-refine.pdf",
+  "name": "bitmap-symbol-texthuffrefine.pdf",
   "score": 0.9314,
   "aligned": true
  },
  {
-  "name": "bitmap-symbol-symhuffrefineone.pdf",
-  "score": 0.0762,
+  "name": "bitmap-symbol-texthuffrefineB15.pdf",
+  "score": 0.9314,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-texthuffrefinecustomdims.pdf",
+  "score": 0.9314,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-texthuffrefinecustompos.pdf",
+  "score": 0.9314,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-texthuffrefinecustomsize.pdf",
+  "score": 0.9314,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-trailing-7fff-stripped-harder-refine.pdf",
+  "score": 0.9314,
   "aligned": true
  },
  {
@@ -115,27 +110,12 @@
   "aligned": true
  },
  {
-  "name": "bitmap-symbol-symhuff-texthuff.pdf",
+  "name": "bitmap-symbol-texthuffrefinecustom.pdf",
   "score": 0.0686,
   "aligned": true
  },
  {
-  "name": "bitmap-symbol-symhuff-texthuffB10B13.pdf",
-  "score": 0.0686,
-  "aligned": true
- },
- {
-  "name": "bitmap-symbol-symhuffB5B3-texthuffB7B9B12.pdf",
-  "score": 0.0686,
-  "aligned": true
- },
- {
-  "name": "bitmap-symbol-symhuffcustom-texthuffcustom.pdf",
-  "score": 0.0686,
-  "aligned": true
- },
- {
-  "name": "bitmap-symbol-symhuffuncompressed-texthuff.pdf",
+  "name": "bitmap-symbol-texthuffrefinecustomposdims.pdf",
   "score": 0.0686,
   "aligned": true
  },
@@ -157,6 +137,16 @@
  {
   "name": "bitmap-refine-page-subrect.pdf",
   "score": 0.0139,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-symhuffrefineone.pdf",
+  "score": 0.0102,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-symhuffB5B3-texthuffB7B9B12.pdf",
+  "score": 0.0026,
   "aligned": true
  },
  {
@@ -335,6 +325,26 @@
   "aligned": true
  },
  {
+  "name": "bitmap-symbol-symhuff-texthuff.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-symhuff-texthuffB10B13.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-symhuffcustom-texthuffcustom.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-symhuffuncompressed-texthuff.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
   "name": "bitmap-symbol-textbottomleft.pdf",
   "score": 0,
   "aligned": true
@@ -356,16 +366,6 @@
  },
  {
   "name": "bitmap-symbol-textcomposite.pdf",
-  "score": 0,
-  "aligned": true
- },
- {
-  "name": "bitmap-symbol-texthuffrefinecustom.pdf",
-  "score": 0,
-  "aligned": true
- },
- {
-  "name": "bitmap-symbol-texthuffrefinecustomposdims.pdf",
   "score": 0,
   "aligned": true
  },

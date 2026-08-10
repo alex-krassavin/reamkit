@@ -471,6 +471,378 @@ export function decodeRefinement(
   return bmp;
 }
 
+// ---------------------------------------------------------- Huffman decoding
+
+/**
+ * §B.1 — one line of a Huffman table: a prefix of `prefLen` bits, then
+ * `rangeLen` bits of magnitude added to `rangeLow`.
+ *
+ * `kind` marks the two lines that do not simply add: a LOWER range counts
+ * downward from its base, and OOB is the out-of-band signal that ends a run.
+ */
+interface HuffLine {
+  readonly prefLen: number;
+  readonly rangeLen: number;
+  readonly rangeLow: number;
+  readonly kind?: 'lower' | 'oob';
+}
+
+/** A table with its prefix codes assigned (§B.3). */
+interface HuffTable {
+  readonly lines: ReadonlyArray<HuffLine & { code: number }>;
+}
+
+/**
+ * §B.3 — assign a prefix code to every line from its length, shortest first,
+ * which is the canonical Huffman assignment and needs no code lengths stored.
+ */
+function buildHuffTable(lines: ReadonlyArray<HuffLine>): HuffTable {
+  const used = lines.filter((l) => l.prefLen > 0);
+  const maxLen = Math.max(0, ...used.map((l) => l.prefLen));
+  const countOf = new Array<number>(maxLen + 1).fill(0);
+  for (const l of used) countOf[l.prefLen] = (countOf[l.prefLen] ?? 0) + 1;
+  const firstCode = new Array<number>(maxLen + 2).fill(0);
+  for (let len = 1; len <= maxLen; len++) {
+    firstCode[len] = (firstCode[len - 1]! + (countOf[len - 1] ?? 0)) << 1;
+  }
+  const next = [...firstCode];
+  const out: Array<HuffLine & { code: number }> = [];
+  for (let len = 1; len <= maxLen; len++) {
+    for (const l of used) {
+      if (l.prefLen !== len) continue;
+      out.push({ ...l, code: next[len]! });
+      next[len]!++;
+    }
+  }
+  return { lines: out };
+}
+
+/** A most-significant-bit-first reader over a segment's data. */
+class BitReader {
+  private pos = 0;
+  private bit = 0;
+  constructor(private readonly d: Uint8Array) {}
+  read(): number {
+    if (this.pos >= this.d.length) return 0;
+    const v = ((this.d[this.pos] ?? 0) >> (7 - this.bit)) & 1;
+    if (++this.bit === 8) {
+      this.bit = 0;
+      this.pos++;
+    }
+    return v;
+  }
+  readBits(n: number): number {
+    let v = 0;
+    for (let i = 0; i < n; i++) v = v * 2 + this.read();
+    return v;
+  }
+  align(): void {
+    if (this.bit !== 0) {
+      this.bit = 0;
+      this.pos++;
+    }
+  }
+  get bytePos(): number {
+    return this.pos;
+  }
+  skipTo(byte: number): void {
+    this.pos = byte;
+    this.bit = 0;
+  }
+}
+
+/** §B.4 — read one value through a table, or OOB where the table has one. */
+function huffDecode(r: BitReader, t: HuffTable): number | typeof OOB {
+  let code = 0;
+  let len = 0;
+  for (let guard = 0; guard < 32; guard++) {
+    code = (code << 1) | r.read();
+    len++;
+    for (const line of t.lines) {
+      if (line.prefLen !== len || line.code !== code) continue;
+      if (line.kind === 'oob') return OOB;
+      if (line.rangeLen === 32) {
+        const v = r.readBits(32);
+        return line.kind === 'lower' ? line.rangeLow - v : line.rangeLow + v;
+      }
+      const v = r.readBits(line.rangeLen);
+      return line.kind === 'lower' ? line.rangeLow - v : line.rangeLow + v;
+    }
+  }
+  return OOB;
+}
+
+/**
+ * §B.5 Tables B.1–B.15 — the standard tables, as `[prefLen, rangeLen,
+ * rangeLow]` with `'lower'` and `'oob'` on the two lines that need them.
+ *
+ * They are transcribed rather than derived, and the corpus is what checks
+ * them: a table off by one line decodes rubble, and the suite says so at once.
+ */
+const STANDARD_TABLES: ReadonlyArray<ReadonlyArray<HuffLine>> = [
+  // B.1
+  [
+    { prefLen: 1, rangeLen: 4, rangeLow: 0 },
+    { prefLen: 2, rangeLen: 8, rangeLow: 16 },
+    { prefLen: 3, rangeLen: 16, rangeLow: 272 },
+    { prefLen: 3, rangeLen: 32, rangeLow: 65808 },
+  ],
+  // B.2
+  [
+    { prefLen: 1, rangeLen: 0, rangeLow: 0 },
+    { prefLen: 2, rangeLen: 0, rangeLow: 1 },
+    { prefLen: 3, rangeLen: 0, rangeLow: 2 },
+    { prefLen: 4, rangeLen: 3, rangeLow: 3 },
+    { prefLen: 5, rangeLen: 6, rangeLow: 11 },
+    { prefLen: 6, rangeLen: 32, rangeLow: 75 },
+    { prefLen: 6, rangeLen: 0, rangeLow: 0, kind: 'oob' },
+  ],
+  // B.3
+  [
+    { prefLen: 8, rangeLen: 8, rangeLow: -256 },
+    { prefLen: 1, rangeLen: 0, rangeLow: 0 },
+    { prefLen: 2, rangeLen: 0, rangeLow: 1 },
+    { prefLen: 3, rangeLen: 0, rangeLow: 2 },
+    { prefLen: 4, rangeLen: 3, rangeLow: 3 },
+    { prefLen: 5, rangeLen: 6, rangeLow: 11 },
+    { prefLen: 8, rangeLen: 32, rangeLow: -257, kind: 'lower' },
+    { prefLen: 7, rangeLen: 32, rangeLow: 75 },
+    { prefLen: 6, rangeLen: 0, rangeLow: 0, kind: 'oob' },
+  ],
+  // B.4
+  [
+    { prefLen: 1, rangeLen: 0, rangeLow: 1 },
+    { prefLen: 2, rangeLen: 0, rangeLow: 2 },
+    { prefLen: 3, rangeLen: 0, rangeLow: 3 },
+    { prefLen: 4, rangeLen: 3, rangeLow: 4 },
+    { prefLen: 5, rangeLen: 6, rangeLow: 12 },
+    { prefLen: 5, rangeLen: 32, rangeLow: 76 },
+  ],
+  // B.5
+  [
+    { prefLen: 7, rangeLen: 8, rangeLow: -255 },
+    { prefLen: 1, rangeLen: 0, rangeLow: 1 },
+    { prefLen: 2, rangeLen: 0, rangeLow: 2 },
+    { prefLen: 3, rangeLen: 0, rangeLow: 3 },
+    { prefLen: 4, rangeLen: 3, rangeLow: 4 },
+    { prefLen: 5, rangeLen: 6, rangeLow: 12 },
+    { prefLen: 7, rangeLen: 32, rangeLow: -256, kind: 'lower' },
+    { prefLen: 6, rangeLen: 32, rangeLow: 76 },
+  ],
+  // B.6
+  [
+    { prefLen: 5, rangeLen: 10, rangeLow: -2048 },
+    { prefLen: 4, rangeLen: 9, rangeLow: -1024 },
+    { prefLen: 4, rangeLen: 8, rangeLow: -512 },
+    { prefLen: 4, rangeLen: 7, rangeLow: -256 },
+    { prefLen: 5, rangeLen: 6, rangeLow: -128 },
+    { prefLen: 5, rangeLen: 5, rangeLow: -64 },
+    { prefLen: 4, rangeLen: 5, rangeLow: -32 },
+    { prefLen: 2, rangeLen: 7, rangeLow: 0 },
+    { prefLen: 3, rangeLen: 7, rangeLow: 128 },
+    { prefLen: 3, rangeLen: 8, rangeLow: 256 },
+    { prefLen: 4, rangeLen: 9, rangeLow: 512 },
+    { prefLen: 4, rangeLen: 10, rangeLow: 1024 },
+    { prefLen: 6, rangeLen: 32, rangeLow: -2049, kind: 'lower' },
+    { prefLen: 6, rangeLen: 32, rangeLow: 2048 },
+  ],
+  // B.7
+  [
+    { prefLen: 4, rangeLen: 9, rangeLow: -1024 },
+    { prefLen: 3, rangeLen: 8, rangeLow: -512 },
+    { prefLen: 4, rangeLen: 7, rangeLow: -256 },
+    { prefLen: 5, rangeLen: 6, rangeLow: -128 },
+    { prefLen: 5, rangeLen: 5, rangeLow: -64 },
+    { prefLen: 4, rangeLen: 5, rangeLow: -32 },
+    { prefLen: 4, rangeLen: 9, rangeLow: 0 },
+    { prefLen: 5, rangeLen: 10, rangeLow: 512 },
+    { prefLen: 3, rangeLen: 10, rangeLow: 1536 },
+    { prefLen: 5, rangeLen: 32, rangeLow: -1025, kind: 'lower' },
+    { prefLen: 5, rangeLen: 32, rangeLow: 2560 },
+  ],
+  // B.8
+  [
+    { prefLen: 8, rangeLen: 3, rangeLow: -15 },
+    { prefLen: 9, rangeLen: 1, rangeLow: -7 },
+    { prefLen: 8, rangeLen: 1, rangeLow: -5 },
+    { prefLen: 9, rangeLen: 0, rangeLow: -3 },
+    { prefLen: 7, rangeLen: 0, rangeLow: -2 },
+    { prefLen: 4, rangeLen: 0, rangeLow: -1 },
+    { prefLen: 2, rangeLen: 1, rangeLow: 0 },
+    { prefLen: 5, rangeLen: 0, rangeLow: 2 },
+    { prefLen: 6, rangeLen: 0, rangeLow: 3 },
+    { prefLen: 3, rangeLen: 4, rangeLow: 4 },
+    { prefLen: 6, rangeLen: 1, rangeLow: 20 },
+    { prefLen: 4, rangeLen: 4, rangeLow: 22 },
+    { prefLen: 4, rangeLen: 5, rangeLow: 38 },
+    { prefLen: 5, rangeLen: 6, rangeLow: 70 },
+    { prefLen: 5, rangeLen: 7, rangeLow: 134 },
+    { prefLen: 6, rangeLen: 7, rangeLow: 262 },
+    { prefLen: 7, rangeLen: 8, rangeLow: 390 },
+    { prefLen: 6, rangeLen: 10, rangeLow: 646 },
+    { prefLen: 9, rangeLen: 32, rangeLow: -16, kind: 'lower' },
+    { prefLen: 9, rangeLen: 32, rangeLow: 1670 },
+    { prefLen: 2, rangeLen: 0, rangeLow: 0, kind: 'oob' },
+  ],
+  // B.9
+  [
+    { prefLen: 8, rangeLen: 4, rangeLow: -31 },
+    { prefLen: 9, rangeLen: 2, rangeLow: -15 },
+    { prefLen: 8, rangeLen: 2, rangeLow: -11 },
+    { prefLen: 9, rangeLen: 1, rangeLow: -7 },
+    { prefLen: 7, rangeLen: 1, rangeLow: -5 },
+    { prefLen: 4, rangeLen: 1, rangeLow: -3 },
+    { prefLen: 3, rangeLen: 1, rangeLow: -1 },
+    { prefLen: 3, rangeLen: 1, rangeLow: 1 },
+    { prefLen: 5, rangeLen: 1, rangeLow: 3 },
+    { prefLen: 6, rangeLen: 1, rangeLow: 5 },
+    { prefLen: 3, rangeLen: 5, rangeLow: 7 },
+    { prefLen: 6, rangeLen: 2, rangeLow: 39 },
+    { prefLen: 4, rangeLen: 5, rangeLow: 43 },
+    { prefLen: 4, rangeLen: 6, rangeLow: 75 },
+    { prefLen: 5, rangeLen: 7, rangeLow: 139 },
+    { prefLen: 5, rangeLen: 8, rangeLow: 267 },
+    { prefLen: 6, rangeLen: 8, rangeLow: 523 },
+    { prefLen: 7, rangeLen: 9, rangeLow: 779 },
+    { prefLen: 6, rangeLen: 11, rangeLow: 1291 },
+    { prefLen: 9, rangeLen: 32, rangeLow: -32, kind: 'lower' },
+    { prefLen: 9, rangeLen: 32, rangeLow: 3339 },
+    { prefLen: 2, rangeLen: 0, rangeLow: 0, kind: 'oob' },
+  ],
+  // B.10
+  [
+    { prefLen: 7, rangeLen: 4, rangeLow: -21 },
+    { prefLen: 8, rangeLen: 0, rangeLow: -5 },
+    { prefLen: 7, rangeLen: 0, rangeLow: -4 },
+    { prefLen: 5, rangeLen: 0, rangeLow: -3 },
+    { prefLen: 2, rangeLen: 2, rangeLow: -2 },
+    { prefLen: 5, rangeLen: 0, rangeLow: 2 },
+    { prefLen: 6, rangeLen: 0, rangeLow: 3 },
+    { prefLen: 7, rangeLen: 0, rangeLow: 4 },
+    { prefLen: 8, rangeLen: 0, rangeLow: 5 },
+    { prefLen: 2, rangeLen: 6, rangeLow: 6 },
+    { prefLen: 5, rangeLen: 5, rangeLow: 70 },
+    { prefLen: 6, rangeLen: 5, rangeLow: 102 },
+    { prefLen: 7, rangeLen: 6, rangeLow: 134 },
+    { prefLen: 8, rangeLen: 7, rangeLow: 198 },
+    { prefLen: 8, rangeLen: 8, rangeLow: 326 },
+    { prefLen: 8, rangeLen: 9, rangeLow: 582 },
+    { prefLen: 8, rangeLen: 10, rangeLow: 1094 },
+    { prefLen: 7, rangeLen: 11, rangeLow: 2118 },
+    { prefLen: 8, rangeLen: 32, rangeLow: -22, kind: 'lower' },
+    { prefLen: 8, rangeLen: 32, rangeLow: 4166 },
+    { prefLen: 2, rangeLen: 0, rangeLow: 0, kind: 'oob' },
+  ],
+  // B.11
+  [
+    { prefLen: 1, rangeLen: 0, rangeLow: 1 },
+    { prefLen: 2, rangeLen: 1, rangeLow: 2 },
+    { prefLen: 4, rangeLen: 0, rangeLow: 4 },
+    { prefLen: 4, rangeLen: 1, rangeLow: 5 },
+    { prefLen: 5, rangeLen: 1, rangeLow: 7 },
+    { prefLen: 5, rangeLen: 2, rangeLow: 9 },
+    { prefLen: 6, rangeLen: 2, rangeLow: 13 },
+    { prefLen: 7, rangeLen: 2, rangeLow: 17 },
+    { prefLen: 7, rangeLen: 3, rangeLow: 21 },
+    { prefLen: 7, rangeLen: 4, rangeLow: 29 },
+    { prefLen: 7, rangeLen: 5, rangeLow: 45 },
+    { prefLen: 7, rangeLen: 6, rangeLow: 77 },
+    { prefLen: 7, rangeLen: 32, rangeLow: 141 },
+  ],
+  // B.12
+  [
+    { prefLen: 1, rangeLen: 0, rangeLow: 1 },
+    { prefLen: 2, rangeLen: 0, rangeLow: 2 },
+    { prefLen: 3, rangeLen: 1, rangeLow: 3 },
+    { prefLen: 5, rangeLen: 0, rangeLow: 5 },
+    { prefLen: 5, rangeLen: 1, rangeLow: 6 },
+    { prefLen: 6, rangeLen: 1, rangeLow: 8 },
+    { prefLen: 7, rangeLen: 0, rangeLow: 10 },
+    { prefLen: 7, rangeLen: 1, rangeLow: 11 },
+    { prefLen: 7, rangeLen: 2, rangeLow: 13 },
+    { prefLen: 7, rangeLen: 3, rangeLow: 17 },
+    { prefLen: 7, rangeLen: 4, rangeLow: 25 },
+    { prefLen: 8, rangeLen: 5, rangeLow: 41 },
+    { prefLen: 8, rangeLen: 32, rangeLow: 73 },
+  ],
+  // B.13
+  [
+    { prefLen: 1, rangeLen: 0, rangeLow: 1 },
+    { prefLen: 3, rangeLen: 0, rangeLow: 2 },
+    { prefLen: 4, rangeLen: 0, rangeLow: 3 },
+    { prefLen: 5, rangeLen: 0, rangeLow: 4 },
+    { prefLen: 4, rangeLen: 1, rangeLow: 5 },
+    { prefLen: 3, rangeLen: 3, rangeLow: 7 },
+    { prefLen: 6, rangeLen: 1, rangeLow: 15 },
+    { prefLen: 6, rangeLen: 2, rangeLow: 17 },
+    { prefLen: 6, rangeLen: 3, rangeLow: 21 },
+    { prefLen: 6, rangeLen: 4, rangeLow: 29 },
+    { prefLen: 6, rangeLen: 5, rangeLow: 45 },
+    { prefLen: 7, rangeLen: 6, rangeLow: 77 },
+    { prefLen: 7, rangeLen: 32, rangeLow: 141 },
+  ],
+  // B.14
+  [
+    { prefLen: 3, rangeLen: 0, rangeLow: -2 },
+    { prefLen: 3, rangeLen: 0, rangeLow: -1 },
+    { prefLen: 1, rangeLen: 0, rangeLow: 0 },
+    { prefLen: 3, rangeLen: 0, rangeLow: 1 },
+    { prefLen: 3, rangeLen: 0, rangeLow: 2 },
+  ],
+  // B.15
+  [
+    { prefLen: 7, rangeLen: 4, rangeLow: -24 },
+    { prefLen: 6, rangeLen: 2, rangeLow: -8 },
+    { prefLen: 5, rangeLen: 1, rangeLow: -4 },
+    { prefLen: 4, rangeLen: 0, rangeLow: -2 },
+    { prefLen: 3, rangeLen: 0, rangeLow: -1 },
+    { prefLen: 1, rangeLen: 0, rangeLow: 0 },
+    { prefLen: 3, rangeLen: 0, rangeLow: 1 },
+    { prefLen: 4, rangeLen: 0, rangeLow: 2 },
+    { prefLen: 5, rangeLen: 1, rangeLow: 3 },
+    { prefLen: 6, rangeLen: 2, rangeLow: 5 },
+    { prefLen: 7, rangeLen: 4, rangeLow: 9 },
+    { prefLen: 7, rangeLen: 32, rangeLow: -25, kind: 'lower' },
+    { prefLen: 7, rangeLen: 32, rangeLow: 25 },
+  ],
+];
+
+/** Table B.n, ready to read with. */
+function standardTable(n: number): HuffTable {
+  return buildHuffTable(STANDARD_TABLES[n - 1] ?? STANDARD_TABLES[0]!);
+}
+
+/** §B.2 — a custom table, from a type-53 segment. */
+function parseCustomTable(data: Uint8Array): HuffTable {
+  const r = new Reader(data);
+  const flags = r.u8();
+  const oob = (flags & 1) !== 0;
+  const prefLenSize = ((flags >> 1) & 7) + 1;
+  const rangeLenSize = ((flags >> 4) & 7) + 1;
+  const low = r.u32() | 0;
+  const high = r.u32() | 0;
+  const bits = new BitReader(data.subarray(r.pos));
+  const lines: Array<HuffLine> = [];
+  let cur = low;
+  while (cur < high) {
+    const prefLen = bits.readBits(prefLenSize);
+    const rangeLen = bits.readBits(rangeLenSize);
+    lines.push({ prefLen, rangeLen, rangeLow: cur });
+    cur += 1 << rangeLen;
+    if (lines.length > 4096) break;
+  }
+  lines.push({
+    prefLen: bits.readBits(prefLenSize),
+    rangeLen: 32,
+    rangeLow: low - 1,
+    kind: 'lower',
+  });
+  lines.push({ prefLen: bits.readBits(prefLenSize), rangeLen: 32, rangeLow: high });
+  if (oob)
+    lines.push({ prefLen: bits.readBits(prefLenSize), rangeLen: 0, rangeLow: 0, kind: 'oob' });
+  return buildHuffTable(lines);
+}
+
 // ------------------------------------------------- arithmetic integer decoding
 
 /** §A.2 returns this instead of a number when the coder signals out-of-band. */
@@ -779,6 +1151,244 @@ function decodeSymbolDictionary(
   return exported.length > 0 ? exported : newSymbols;
 }
 
+// --------------------------------------------- Huffman symbol dict + text
+
+/** The tables a Huffman-coded text region reads its placements through. */
+interface TextTables {
+  readonly fs: HuffTable;
+  readonly ds: HuffTable;
+  readonly dt: HuffTable;
+  readonly rdw: HuffTable;
+  readonly rdh: HuffTable;
+  readonly rdx: HuffTable;
+  readonly rdy: HuffTable;
+  readonly rsize: HuffTable;
+  readonly symbolIds: HuffTable;
+}
+
+/**
+ * §7.4.3.1.7 — the symbol ID codes, which are themselves Huffman-coded.
+ *
+ * A run of 35 four-bit lengths builds a table of RUN codes; those then say how
+ * long each symbol's own code is, with three of them meaning "repeat the last
+ * length", "repeat zero" and "repeat zero many times" — the same trick
+ * DEFLATE uses, for the same reason: most symbols share a length.
+ */
+function readSymbolIdTable(bits: BitReader, count: number): HuffTable {
+  const runLines: Array<HuffLine> = [];
+  for (let i = 0; i < 35; i++) {
+    runLines.push({ prefLen: bits.readBits(4), rangeLen: 0, rangeLow: i });
+  }
+  const runTable = buildHuffTable(runLines);
+  const lengths = new Array<number>(count).fill(0);
+  let prev = 0;
+  for (let i = 0; i < count; ) {
+    const code = huffDecode(bits, runTable);
+    if (code === OOB) break;
+    if (code < 32) {
+      lengths[i++] = code;
+      prev = code;
+    } else if (code === 32) {
+      const n = bits.readBits(2) + 3;
+      for (let k = 0; k < n && i < count; k++) lengths[i++] = prev;
+    } else if (code === 33) {
+      const n = bits.readBits(3) + 3;
+      for (let k = 0; k < n && i < count; k++) lengths[i++] = 0;
+    } else {
+      const n = bits.readBits(7) + 11;
+      for (let k = 0; k < n && i < count; k++) lengths[i++] = 0;
+    }
+  }
+  bits.align();
+  return buildHuffTable(lengths.map((prefLen, i) => ({ prefLen, rangeLen: 0, rangeLow: i })));
+}
+
+/**
+ * §6.4 — a Huffman-coded text region, the same placement walk as the
+ * arithmetic one with every number read through a table instead.
+ */
+function decodeTextRegionHuff(
+  bits: BitReader,
+  data: Uint8Array,
+  symbols: ReadonlyArray<Jbig2Bitmap>,
+  p: TextRegionParams,
+  stripsLog: number,
+  t: TextTables,
+): Jbig2Bitmap {
+  const bmp = makeBitmap(p.width, p.height, p.defPixel);
+  const strips = 1 << stripsLog;
+  const refineCx = newContexts(1 << 13);
+  const num = (v: number | typeof OOB): number => (v === OOB ? 0 : v);
+
+  let stripT = -num(huffDecode(bits, t.dt)) * strips;
+  let firstS = 0;
+  let placed = 0;
+  let guard = 0;
+  while (placed < p.instances && guard++ < 100000) {
+    stripT += num(huffDecode(bits, t.dt)) * strips;
+    firstS += num(huffDecode(bits, t.fs));
+    let curS = firstS;
+    for (;;) {
+      // §6.4.5 — with more than one row per strip the offset within it is a
+      // plain field, not a table.
+      const tOff = strips === 1 ? 0 : bits.readBits(stripsLog);
+      const id = num(huffDecode(bits, t.symbolIds));
+      let sym = symbols[id] ?? makeBitmap(1, 1);
+      if (p.refine && bits.read() !== 0) {
+        const rdw = num(huffDecode(bits, t.rdw));
+        const rdh = num(huffDecode(bits, t.rdh));
+        const rdx = num(huffDecode(bits, t.rdx));
+        const rdy = num(huffDecode(bits, t.rdy));
+        const size = num(huffDecode(bits, t.rsize));
+        bits.align();
+        const w = sym.width + rdw;
+        const h = sym.height + rdh;
+        const start = bits.bytePos;
+        if (w > 0 && h > 0 && w < 1 << 14 && h < 1 << 14) {
+          sym = decodeRefinement(
+            new MQDecoder(data.subarray(start)),
+            refineCx,
+            w,
+            h,
+            p.rTemplate,
+            sym,
+            (rdw >> 1) + rdx,
+            (rdh >> 1) + rdy,
+            p.rAt,
+            false,
+          );
+        }
+        // §6.4.11 — the refinement's own length is stated, so the reader steps
+        // over exactly that and does not have to unwind the arithmetic coder.
+        bits.skipTo(start + size);
+      }
+      const sw = sym.width;
+      const sh = sym.height;
+      const tt = stripT + tOff;
+      let x: number;
+      let y: number;
+      if (p.transposed) {
+        x = tt;
+        y = curS;
+        if (p.refCorner === Corner.TopRight || p.refCorner === Corner.BottomRight) x = tt - sw + 1;
+      } else {
+        x = curS;
+        y = tt;
+        if (p.refCorner === Corner.BottomLeft || p.refCorner === Corner.BottomRight)
+          y = tt - sh + 1;
+      }
+      compose(bmp, sym, x, y, p.combOp);
+      curS += (p.transposed ? sh : sw) - 1;
+      placed++;
+      if (placed >= p.instances) break;
+      const ids = huffDecode(bits, t.ds);
+      if (ids === OOB) break;
+      curS += ids + p.dsOffset;
+    }
+  }
+  return bmp;
+}
+
+/**
+ * §6.5.9 — a Huffman-coded symbol dictionary.
+ *
+ * The shapes of a height class are not coded one by one: their widths are read
+ * first, then the whole class arrives as ONE collective bitmap, which is cut
+ * apart by those widths. That is why a Huffman dictionary needs a size field
+ * the arithmetic one does not.
+ */
+function decodeSymbolDictionaryHuff(
+  bits: BitReader,
+  data: Uint8Array,
+  input: ReadonlyArray<Jbig2Bitmap>,
+  newCount: number,
+  exportCount: number,
+  dh: HuffTable,
+  dw: HuffTable,
+  bmSize: HuffTable,
+): Array<Jbig2Bitmap> {
+  const newSymbols: Array<Jbig2Bitmap> = [];
+  const num = (v: number | typeof OOB): number => (v === OOB ? 0 : v);
+  let height = 0;
+  let guard = 0;
+  while (newSymbols.length < newCount && guard++ < 10000) {
+    height += num(huffDecode(bits, dh));
+    if (height <= 0 || height > 1 << 14) break;
+    let width = 0;
+    let totalWidth = 0;
+    const widths: Array<number> = [];
+    for (;;) {
+      const d = huffDecode(bits, dw);
+      if (d === OOB) break;
+      width += d;
+      if (width <= 0 || width > 1 << 14 || newSymbols.length + widths.length >= newCount + 1) break;
+      widths.push(width);
+      totalWidth += width;
+    }
+    if (widths.length === 0) continue;
+    const size = num(huffDecode(bits, bmSize));
+    bits.align();
+    const start = bits.bytePos;
+    let collective: Jbig2Bitmap;
+    if (size === 0) {
+      // §6.5.9 — a size of zero means the rows are stored plainly, byte-aligned.
+      collective = makeBitmap(totalWidth, height);
+      const rowBytes = (totalWidth + 7) >> 3;
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < totalWidth; x++) {
+          const b = data[start + y * rowBytes + (x >> 3)] ?? 0;
+          collective.data[y * totalWidth + x] = (b >> (7 - (x & 7))) & 1;
+        }
+      }
+      bits.skipTo(start + rowBytes * height);
+    } else {
+      const packed = decodeCcitt(data.subarray(start, start + size), {
+        k: -1,
+        columns: totalWidth,
+        rows: height,
+        byteAlign: false,
+      });
+      collective = makeBitmap(totalWidth, height);
+      if (packed) {
+        const rowBytes = (totalWidth + 7) >> 3;
+        for (let y = 0; y < height; y++) {
+          for (let x = 0; x < totalWidth; x++) {
+            collective.data[y * totalWidth + x] =
+              (packed[y * rowBytes + (x >> 3)]! >> (7 - (x & 7))) & 1;
+          }
+        }
+      }
+      bits.skipTo(start + size);
+    }
+    let at = 0;
+    for (const w of widths) {
+      const cell = makeBitmap(w, height);
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < w; x++)
+          cell.data[y * w + x] = collective.data[y * totalWidth + at + x] ?? 0;
+      }
+      newSymbols.push(cell);
+      at += w;
+    }
+  }
+
+  // §6.5.10 — the export runs, read through Table B.1.
+  const all = [...input, ...newSymbols];
+  const exTable = standardTable(1);
+  const exported: Array<Jbig2Bitmap> = [];
+  let i = 0;
+  let exporting = false;
+  let steps = 0;
+  while (i < all.length && exported.length < exportCount && steps++ < 10000) {
+    const run = num(huffDecode(bits, exTable));
+    if (exporting) for (let k = 0; k < run && i + k < all.length; k++) exported.push(all[i + k]!);
+    i += run;
+    exporting = !exporting;
+    if (run === 0 && steps > all.length * 2 + 4) break;
+  }
+  return exported.length > 0 ? exported : newSymbols;
+}
+
 // ------------------------------------------------------ halftone + patterns
 
 /**
@@ -1053,6 +1663,8 @@ export function decodeJbig2(
   // §7.4.4 — what each pattern dictionary segment holds, for the halftone
   // regions that name it.
   const patternsBySegment = new Map<number, ReadonlyArray<Jbig2Bitmap>>();
+  // §7.4.13 — the custom Huffman tables a segment may refer to.
+  const tablesBySegment = new Map<number, HuffTable>();
 
   const run = (bytes: Uint8Array): void => {
     for (const seg of parseSegments(bytes)) {
@@ -1077,6 +1689,11 @@ export function decodeJbig2(
             page.height = Math.min(ph, height);
           }
           canvas = makeBitmap(width, height, page.defPixel);
+          continue;
+        }
+        // §7.4.13 — a custom Huffman table, for the segments that name it.
+        if (seg.type === 53) {
+          tablesBySegment.set(seg.number, parseCustomTable(bytes.subarray(seg.start, seg.end)));
           continue;
         }
         // §7.4.4 pattern dictionary — the cells a halftone tiles out of.
@@ -1191,11 +1808,39 @@ export function decodeJbig2(
           }
           const exportCount = r.u32();
           const newCount = r.u32();
-          // Huffman-coded dictionaries are a later stage; without their tables
-          // nothing here can be read, and guessing would draw rubbish.
-          if (huff || newCount > 10000) continue;
+          if (newCount > 10000) continue;
           const inherited = seg.referred.flatMap((n) => symbolsBySegment.get(n) ?? []);
           void ctxUsed;
+          if (huff) {
+            // §7.4.3.1.2 — which table each field is read through, chosen by
+            // the flags; `3` means one the segment refers to.
+            const custom = seg.referred
+              .map((n) => tablesBySegment.get(n))
+              .filter((t): t is HuffTable => t !== undefined);
+            let ci = 0;
+            const pick = (sel: number, choices: ReadonlyArray<number>): HuffTable =>
+              sel === 3
+                ? (custom[ci++] ?? standardTable(choices[0]!))
+                : standardTable(choices[sel] ?? choices[0]!);
+            const dhSel = (flags >> 2) & 3;
+            const dwSel = (flags >> 4) & 3;
+            const bmSel = (flags >> 6) & 1;
+            const bits = new BitReader(bytes.subarray(seg.start + r.pos, seg.end));
+            symbolsBySegment.set(
+              seg.number,
+              decodeSymbolDictionaryHuff(
+                bits,
+                bytes.subarray(seg.start + r.pos, seg.end),
+                inherited,
+                newCount,
+                exportCount,
+                pick(dhSel, [4, 5]),
+                pick(dwSel, [2, 3]),
+                bmSel === 1 ? (custom[ci++] ?? standardTable(1)) : standardTable(1),
+              ),
+            );
+            continue;
+          }
           symbolsBySegment.set(
             seg.number,
             decodeSymbolDictionary(
@@ -1226,7 +1871,7 @@ export function decodeJbig2(
           let dsOffset = (flags >> 10) & 0x1f;
           if (dsOffset > 15) dsOffset -= 32;
           const rTemplate = (flags >> 15) & 1;
-          if (huff) continue; // Huffman-coded text regions are a later stage.
+          const huffFlags = huff ? r.u16() : 0;
           const rAt: Array<At> = [];
           if (refine && rTemplate === 0) {
             for (let i = 0; i < 2; i++) rAt.push({ x: r.i8(), y: r.i8() });
@@ -1237,25 +1882,51 @@ export function decodeJbig2(
           const w = Math.min(info.width, 1 << 16);
           const h = Math.min(info.height, 1 << 16);
           if (w <= 0 || h <= 0) continue;
-          const bmp = decodeTextRegion(
-            new MQDecoder(bytes.subarray(seg.start + r.pos, seg.end)),
-            symbols,
-            {
-              width: w,
-              height: h,
-              instances,
-              stripT: 0,
-              refCorner,
-              transposed,
-              combOp,
-              defPixel,
-              dsOffset,
-              refine,
-              rTemplate,
-              rAt: rAt.length > 0 ? rAt : NOMINAL_AT_REFINE,
-            },
-            stripsLog,
-          );
+          const params = {
+            width: w,
+            height: h,
+            instances,
+            stripT: 0,
+            refCorner,
+            transposed,
+            combOp,
+            defPixel,
+            dsOffset,
+            refine,
+            rTemplate,
+            rAt: rAt.length > 0 ? rAt : NOMINAL_AT_REFINE,
+          };
+          const body = bytes.subarray(seg.start + r.pos, seg.end);
+          let bmp: Jbig2Bitmap;
+          if (huff) {
+            // §7.4.4.1.2 — the table each field is read through.
+            const custom = seg.referred
+              .map((n) => tablesBySegment.get(n))
+              .filter((t): t is HuffTable => t !== undefined);
+            let ci = 0;
+            const pick = (sel: number, choices: ReadonlyArray<number>): HuffTable =>
+              sel === 3
+                ? (custom[ci++] ?? standardTable(choices[0]!))
+                : standardTable(choices[sel] ?? choices[0]!);
+            const bits = new BitReader(body);
+            const tables: TextTables = {
+              fs: pick(huffFlags & 3, [6, 7]),
+              ds: pick((huffFlags >> 2) & 3, [8, 9, 10]),
+              dt: pick((huffFlags >> 4) & 3, [11, 12, 13]),
+              rdw: pick((huffFlags >> 6) & 3, [14, 15]),
+              rdh: pick((huffFlags >> 8) & 3, [14, 15]),
+              rdx: pick((huffFlags >> 10) & 3, [14, 15]),
+              rdy: pick((huffFlags >> 12) & 3, [14, 15]),
+              rsize:
+                ((huffFlags >> 14) & 1) === 1
+                  ? (custom[ci++] ?? standardTable(1))
+                  : standardTable(1),
+              symbolIds: readSymbolIdTable(bits, symbols.length),
+            };
+            bmp = decodeTextRegionHuff(bits, body, symbols, params, stripsLog, tables);
+          } else {
+            bmp = decodeTextRegion(new MQDecoder(body), symbols, params, stripsLog);
+          }
           if (seg.type === 4) buffers.set(seg.number, bmp);
           else {
             compose(canvas, bmp, info.x, info.y, info.combOp);
