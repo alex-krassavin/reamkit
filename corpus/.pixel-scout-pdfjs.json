@@ -10,18 +10,18 @@
   "aligned": true
  },
  {
-  "name": "ContentStreamCycleType3insideType3.pdf",
-  "score": 0.0081,
-  "aligned": true
- },
- {
   "name": "IdentityToUnicodeMap_charCodeOf.pdf",
   "score": 0.0068,
   "aligned": true
  },
  {
+  "name": "ContentStreamCycleType3insideType3.pdf",
+  "score": 0.0067,
+  "aligned": true
+ },
+ {
   "name": "ContentStreamNoCycleType3insideType3.pdf",
-  "score": 0.0065,
+  "score": 0.006,
   "aligned": true
  },
  {

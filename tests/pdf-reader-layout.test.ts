@@ -101,6 +101,10 @@ function onePagePdf(page: string, content: string): Uint8Array {
 const twoColumnLinePdf = (): Uint8Array =>
   onePagePdf('/MediaBox [0 0 400 800]', 'BT /F1 10 Tf 20 700 Td (Left) Tj 300 0 Td (Right) Tj ET');
 
+/** One word stamped twice, the second set down over the first's second half. */
+const stampedWordPdf = (): Uint8Array =>
+  onePagePdf('/MediaBox [0 0 400 800]', 'BT /F1 20 Tf 20 700 Td (Word) Tj 15 0 Td (Word) Tj ET');
+
 /** A word and a footnote mark set a size smaller and three quarters of an em up. */
 const superscriptPdf = (): Uint8Array =>
   onePagePdf(
@@ -174,6 +178,20 @@ describe('placed reconstruction (E-PDF EP4)', () => {
     // Both stand on the same baseline, so neither moved vertically.
     const tops = shapes.map((s) => s.float?.posV?.offsetPt ?? 0);
     expect(tops[0]).toBeCloseTo(tops[1]!, 5);
+  });
+
+  it('splits a baseline where two runs OVERLAP, which is a placement too', () => {
+    // ContentStream*Type3.pdf stamps one word three times at half its own
+    // width. Read as a single line the three were flowed end to end, and the
+    // line came out half again as wide as the page sets it — the same error as
+    // the column gap, in the other direction.
+    const placed = reconstructByLayout(PdfFile.parse(stampedWordPdf()), 'positional');
+    const shapes = placed.doc.body.filter((b) => b.kind === 'shape').map((b) => b.shape);
+    expect(shapes).toHaveLength(2);
+    const offsets = shapes.map((s) => s.float?.posH?.offsetPt ?? 0).sort((a, b) => a - b);
+    // Each stands where it was stamped: the second 15pt on, under a 40pt word.
+    expect(offsets[0]).toBeCloseTo(20, 0);
+    expect(offsets[1]).toBeCloseTo(35, 0);
   });
 
   it('keeps a mark set above the line above it, at its own size', () => {

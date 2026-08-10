@@ -421,9 +421,17 @@ function groupIntoLines(runs: ReadonlyArray<TextRun>, split = false): Array<Line
       // A right-to-left piece is set from its RIGHT edge, so a piece that holds
       // more than one word carries the whole line's width error into where the
       // last of them lands. Each run gets its own box and its own right edge.
+      // An OVERLAP is a placement by the same argument, and the argument runs
+      // the same way in both directions: a run that starts a quarter of an em
+      // before the one before it ended was set down ON it, not after it, and
+      // flowing the two end to end moves the second one out by the whole
+      // overlap. ContentStream*Type3.pdf stamps its inner word three times at
+      // half its own width — 36pt of step under 64.8pt of type — and read as one
+      // line the three came out side by side, half again as wide as the page
+      // sets them.
       const steps =
         last !== undefined &&
-        (run.x - last.endX > size * SPACE_GAP_EM ||
+        (Math.abs(run.x - last.endX) > size * SPACE_GAP_EM ||
           Math.abs(run.y - prev[0]!.y) > size * BASELINE_STEP_EM ||
           isRightToLeft(run.text) ||
           isRightToLeft(last.text));
