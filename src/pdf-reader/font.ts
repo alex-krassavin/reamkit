@@ -83,11 +83,36 @@ export function buildContentFont(file: PdfFile, fontDict: PdfDict): ContentFont 
     // its Latin-1 character, a composite font's to nothing (no sensible guess).
     decode: (codes) =>
       codes
-        .map((c) => unicode.get(c) ?? (bytesPerCode === 1 ? String.fromCharCode(c) : ''))
+        .map((c) => readable(unicode.get(c) ?? (bytesPerCode === 1 ? String.fromCharCode(c) : '')))
         .join(''),
     width,
     ...style,
   };
+}
+
+/**
+ * What a `/ToUnicode` gives, less what Unicode says is not a character.
+ *
+ * `U+FFFE` and `U+FFFF` are noncharacters and the `U+FDD0`–`U+FDEF` block with
+ * them; a lone surrogate is half of a pair that never came. A producer that
+ * maps its glyphs to any of these has said "no text here" in the only way the
+ * format lets it, and carrying them on writes bytes no reader can show —
+ * arial_unicode_ab_cidfont.pdf maps its four Arabic letters to `U+FFFF` and the
+ * page came back holding four of them. They become `U+FFFD`, which the
+ * reconstruction counts and reports rather than passing along.
+ */
+function readable(text: string): string {
+  let out = '';
+  for (const ch of text) {
+    const cp = ch.codePointAt(0) ?? 0;
+    const noncharacter =
+      (cp & 0xfffe) === 0xfffe ||
+      (cp >= 0xfdd0 && cp <= 0xfdef) ||
+      cp === 0 ||
+      (cp >= SURROGATE_FIRST && cp <= SURROGATE_LAST);
+    out += noncharacter ? '\uFFFD' : ch;
+  }
+  return out;
 }
 
 /** The last Unicode code point in the BMP, and the surrogate block inside it. */

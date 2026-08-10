@@ -89,6 +89,12 @@ export interface TextRun {
    * than in a substitute (see `./embedded-fonts`).
    */
   readonly fontName?: string;
+  /**
+   * §9.4.4 — the advance of this face's SPACE at the size the run was shown
+   * at, which is what says whether a gap between two runs was a word space.
+   * Absent where the face states no width for it.
+   */
+  readonly spaceWidthPt?: number;
   /** §9.8.1 — the face the glyphs were shown in is a bold one. */
   readonly bold?: boolean;
   /**
@@ -566,6 +572,7 @@ export function interpretContent(
     const text = logicalOrder(shown);
     if (text.length === 0) return;
     const scaleY = Math.hypot(origin[2], origin[3]) || 1;
+    const scaleX = (Math.hypot(origin[0], origin[1]) || 1) * state.hScale;
     const mcid = mcStack.length > 0 ? mcStack[mcStack.length - 1] : undefined;
     // §9.4.2 — the text matrix turns as well as moves. The baseline's own
     // direction is the first column of it; upright text leaves this at zero.
@@ -578,6 +585,14 @@ export function interpretContent(
       endY: end[5],
       ...(Math.abs(angle) > UPRIGHT_TOLERANCE_DEG ? { angleDeg: angle } : {}),
       fontSizePt: state.fontSize * scaleY,
+      // §9.4.4 — how far the pen moves for a SPACE here: the face's own width
+      // for it, plus the character and word spacing in force, which is exactly
+      // the advance `advanceGlyph` gives that code. basicapi.pdf sets its page
+      // number as thirty-one spaces and "page 1 / 3" in one run, and the ink in
+      // it starts only where those thirty-one advances end.
+      spaceWidthPt:
+        ((state.font.width(0x20) / 1000) * state.fontSize + state.charSpacing + state.wordSpacing) *
+        scaleX,
       fontKey: state.fontKey,
       ...(state.font.name !== undefined ? { fontName: state.font.name } : {}),
       ...(state.font.type3 ? { type3: true } : {}),

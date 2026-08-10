@@ -20,7 +20,7 @@ import { displayOf, placeRuns, placeVectors } from './display';
 import { collectEmbeddedFonts } from './embedded-fonts';
 import { collectPageImages } from './images';
 import { collectPageVectors } from './vector';
-import { endedParagraph } from './layout';
+import { UNMAPPED, endedParagraph } from './layout';
 import { markDrawnRules } from './text-rules';
 import { readStructTree } from './struct-tree';
 import { extractPageText } from './text';
@@ -32,7 +32,7 @@ import type { PdfFile } from './document';
 import type { Reconstruction, TextSpan } from './flow-build';
 import type { PdfImage } from './images';
 import type { StructNode } from './struct-tree';
-import { ResourceStore, pt } from '@/core/ir';
+import { FEATURES, ResourceStore, pt } from '@/core/ir';
 
 // Printable width assumed for a synthesized table grid (6.5"). The structure
 // tree carries no column widths, so the PROPORTIONS come from where the glyphs
@@ -145,7 +145,9 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
 
   /** One run as the span that carries everything the page showed it with. */
   const spanOf = (run: TextRun): TextSpan => ({
-    text: run.text,
+    // §9.10.2 — a glyph the face maps to no character says "no text here", and
+    // writing it on would put bytes no reader can show into the document.
+    text: run.text.replaceAll(UNMAPPED, ''),
     sizePt: run.fontSizePt,
     // Black is the default; carrying it would put a colour on every run.
     ...(run.colorHex !== '000000' ? { colorHex: run.colorHex } : {}),
@@ -415,6 +417,14 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
   // Half, not all: a header, a footer and a page number are Artifacts by
   // design and belong to no element, and a document is not untagged for
   // leaving them out.
+  if (placedRuns.some((page) => page.some((r) => r.text.includes(UNMAPPED)))) {
+    imageLosses.push({
+      severity: 'dropped',
+      feature: FEATURES.text,
+      detail:
+        'some glyphs map to no character — the font states no /ToUnicode and its program says nothing either, so that text is unrecoverable',
+    });
+  }
   const onPage = placedRuns.flat().reduce((n, r) => n + r.text.length, 0);
   const reached = [...claimed].reduce((n, r) => n + r.text.length, 0);
   if (onPage > 0 && reached * 2 < onPage) return undefined;

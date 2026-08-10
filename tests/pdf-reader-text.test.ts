@@ -634,3 +634,70 @@ describe('the margins a page\u2019s words say it had', () => {
     expect((large?.margins?.top ?? 0) as number).toBeCloseTo(792 - 700 - 24, 3);
   });
 });
+
+describe('the space a page steps across but never writes', () => {
+  /**
+   * A page of `count` short runs, each `gapEm` past where the last one ended.
+   * With our flat metrics a glyph is half its size wide, so the arithmetic is
+   * exact and the test measures the RULE rather than a font.
+   */
+  const steppedPdf = (count: number, gapEm: number, drawsSpaces: boolean): Uint8Array => {
+    const size = 10;
+    const word = drawsSpaces ? 'ab ' : 'ab';
+    const advance = word.length * size * 0.5;
+    let x = 40;
+    let content = '';
+    for (let i = 0; i < count; i++) {
+      content += `BT /F1 ${String(size)} Tf ${String(x)} 720 Td (${word}) Tj ET `;
+      x += advance + gapEm * size;
+    }
+    const objects = [
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] ' +
+        '/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>',
+      `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+      '<< /Type /Font /Subtype /TrueType /BaseFont /Arial /FirstChar 32 /LastChar 255 ' +
+        '/Encoding /WinAnsiEncoding >>',
+    ];
+    let pdf = '%PDF-1.7\n';
+    const offsets: Array<number> = [];
+    objects.forEach((body, i) => {
+      offsets.push(pdf.length);
+      pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+    });
+    const xref = pdf.length;
+    pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+    for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+    pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\n`;
+    pdf += `startxref\n${String(xref)}\n%%EOF\n`;
+    return new TextEncoder().encode(pdf);
+  };
+
+  const flowText = (bytes: Uint8Array): string =>
+    reconstructByLayout(PdfFile.parse(bytes))
+      .doc.body.flatMap((b) =>
+        b.kind === 'paragraph' ? [b.paragraph.runs.map((r) => r.text).join('')] : [],
+      )
+      .join(' ')
+      .replace(/\s+/gu, ' ')
+      .trim();
+
+  const TEN = 'ab ab ab ab ab ab ab ab ab ab';
+
+  it('reads a step narrower than a quarter em as the space it is', () => {
+    // bigboundingbox.pdf steps 0.226 em between its words and never writes a
+    // space, so at a quarter em its every line ran together —
+    // "OrangeDemoInc.", "Whenpayingbycheck,pleasecompletethispaymentadvice".
+    expect(flowText(steppedPdf(10, 0.2, false))).toBe(TEN);
+  });
+
+  it('leaves a narrow step alone where the page writes its own spaces', () => {
+    // A page that draws spaces has already said where its words divide, and a
+    // gap between two of its runs is a column or a placement — 160F-2019.pdf
+    // is ruled into fields a quarter-inch apart. At a fifth of an em the pieces
+    // run together, which is what the page shows.
+    expect(flowText(steppedPdf(10, 0.2, true))).toBe(TEN);
+    expect(flowText(steppedPdf(10, 0.05, false))).toBe('abababababababababab');
+  });
+});

@@ -35,6 +35,9 @@ import type { PdfFile, PdfPage } from './document';
 import type { Reconstruction, TextSpan } from './flow-build';
 import { FEATURES, ResourceStore, pt } from '@/core/ir';
 
+/** §9.10.2 — a glyph the face maps to no character (see `./font`). */
+export const UNMAPPED = '\uFFFD';
+
 interface Line {
   readonly y: number; // baseline (page space, y-up)
   readonly fontSize: number;
@@ -83,6 +86,18 @@ export function reconstructByLayout(
   // the pattern's own density and loses its shape: a run carries one colour, not
   // a content stream, so a hatch that alternates ink and paper becomes the flat
   // tint the two average to.
+  // §9.10.2 — glyphs whose face maps them to nothing a reader can show. The
+  // words are unrecoverable, and a page that silently comes back blank is the
+  // one loss this reader must never take without saying so:
+  // arial_unicode_ab_cidfont.pdf is four Arabic letters and nothing else.
+  if (pageRuns.some((page) => page.some((r) => r.text.includes(UNMAPPED)))) {
+    losses.push({
+      severity: 'dropped',
+      feature: FEATURES.text,
+      detail:
+        'some glyphs map to no character — the font states no /ToUnicode and its program says nothing either, so that text is unrecoverable',
+    });
+  }
   if (pageRuns.some((page) => page.some((r) => r.fillPatternName !== undefined))) {
     losses.push({
       severity: 'degraded',
@@ -100,6 +115,9 @@ export function reconstructByLayout(
     // independently, then the left column's blocks precede the right's.
     const pageWidth = display.width;
     const gutter = detectGutter(runs, pageWidth);
+    // Whether this page steps between its words or writes spaces of its own,
+    // which decides how wide a gap has to be to mean one.
+    const stepped = stepsBetweenWords(runs);
     // Blocks carry a column key so the final sort reads column-by-column: left
     // column top-to-bottom, then right column.
     const blocks: Array<{ col: number; top: number; el: BodyElement }> = [];
@@ -127,7 +145,7 @@ export function reconstructByLayout(
         // on its side down the middle of a column, and read flat it joined the
         // row it happened to cross.
         for (const [angle, runs] of byAngle(colRuns)) {
-          for (const line of groupIntoLines(rotate(runs, -angle), true)) {
+          for (const line of groupIntoLines(rotate(runs, -angle), true, stepped)) {
             if (line.text.length === 0) continue;
             const box = turnedBox(line, angle, pageWidth);
             placed.push({
@@ -143,7 +161,7 @@ export function reconstructByLayout(
         }
         return;
       }
-      const lines = groupIntoLines(colRuns).filter((l) => l.text.length > 0);
+      const lines = groupIntoLines(colRuns, false, stepped).filter((l) => l.text.length > 0);
       // The column the paragraphs were set in — its own edges, not the page's,
       // so a two-column page judges each side against the side it belongs to.
       const measure =
@@ -415,7 +433,7 @@ const BASELINE_STEP_EM = 0.05;
 // With `split`, a cluster is cut wherever a column-wide gap opens or a baseline
 // steps, so each piece keeps its own x and its own y instead of being dragged
 // against its neighbour.
-function groupIntoLines(runs: ReadonlyArray<TextRun>, split = false): Array<Line> {
+function groupIntoLines(runs: ReadonlyArray<TextRun>, split = false, stepped = false): Array<Line> {
   const sorted = [...runs].sort((a, b) => b.y - a.y || a.x - b.x);
   const clusters: Array<{ y: number; fontSize: number; runs: Array<TextRun> }> = [];
   for (const run of sorted) {
@@ -431,7 +449,7 @@ function groupIntoLines(runs: ReadonlyArray<TextRun>, split = false): Array<Line
   return clusters.flatMap((c) => {
     const ordered = c.runs.sort((a, b) => a.x - b.x);
     const fontSize = c.fontSize || 10;
-    if (!split) return [lineOf(ordered, c.y, fontSize)];
+    if (!split) return [lineOf(ordered, c.y, fontSize, stepped)];
     const pieces: Array<Array<TextRun>> = [[]];
     for (const run of ordered) {
       const prev = pieces[pieces.length - 1]!;
@@ -469,14 +487,48 @@ function groupIntoLines(runs: ReadonlyArray<TextRun>, split = false): Array<Line
     // Each piece stands on its own baseline, at its own size — a mark lifted
     // out of a line of eleven-point text is not eleven points tall.
     return pieces.map((piece) =>
-      lineOf(piece, piece[0]!.y, Math.max(...piece.map((r) => r.fontSizePt || 0)) || fontSize),
+      lineOf(
+        piece,
+        piece[0]!.y,
+        Math.max(...piece.map((r) => r.fontSizePt || 0)) || fontSize,
+        stepped,
+      ),
     );
   });
 }
 
+/**
+ * Where a line's INK is, which is not how far its pen travelled.
+ *
+ * A run of spaces advances the pen and marks nothing. basicapi.pdf sets its
+ * page number as thirty-one spaces and "page 1 / 3" in ONE run, reaching 635pt
+ * across a 595pt sheet — and the measure taken off that line was wide enough
+ * that the centred title in the same column no longer looked centred.
+ *
+ * The blanks are deducted at the face's own space width, which the run carries
+ * (§9.4.4); where the face states none, at a quarter of the size.
+ */
+function inkSpan(runs: ReadonlyArray<TextRun>): { x: number; width: number } {
+  const marked = runs.filter((r) => r.text.trim().length > 0);
+  if (marked.length === 0) {
+    const x = runs[0]!.x;
+    return { x, width: runs[runs.length - 1]!.endX - x };
+  }
+  const first = marked[0]!;
+  const last = marked[marked.length - 1]!;
+  const space = (r: TextRun): number =>
+    r.spaceWidthPt !== undefined && r.spaceWidthPt > 0
+      ? r.spaceWidthPt
+      : (r.fontSizePt || 10) * 0.25;
+  const lead = (/^\s*/u.exec(first.text)?.[0].length ?? 0) * space(first);
+  const trail = (/\s*$/u.exec(last.text)?.[0].length ?? 0) * space(last);
+  const x = first.x + lead;
+  return { x, width: Math.max(0, last.endX - trail - x) };
+}
+
 /** One run of runs, left to right on a shared baseline, as a {@link Line}. */
-function lineOf(runs: ReadonlyArray<TextRun>, y: number, fontSize: number): Line {
-  const ordered = lineSpans(runs, fontSize);
+function lineOf(runs: ReadonlyArray<TextRun>, y: number, fontSize: number, stepped: boolean): Line {
+  const ordered = lineSpans(runs, fontSize, stepped);
   // §9.4 — the runs came off the page in the order they were PAINTED, which is
   // left to right whatever the script. `logicalOrder` turned each run's own
   // letters back the right way round; the runs themselves are still in visual
@@ -485,10 +537,10 @@ function lineOf(runs: ReadonlyArray<TextRun>, y: number, fontSize: number): Line
   const spans = ordered.every((s) => s.text.trim() === '' || isRightToLeft(s.text))
     ? [...ordered].reverse()
     : ordered;
-  const x = runs[0]!.x;
+  const ink = inkSpan(runs);
   return {
-    x,
-    width: runs[runs.length - 1]!.endX - x,
+    x: ink.x,
+    width: ink.width,
     y,
     fontSize,
     text: spans
@@ -500,13 +552,59 @@ function lineOf(runs: ReadonlyArray<TextRun>, y: number, fontSize: number): Line
   };
 }
 
+/**
+ * The gap between two runs that means a WORD SPACE stood there.
+ *
+ * A page that draws its own spaces has already said where its words divide, and
+ * a gap between two of its runs is a COLUMN or a placement — 160F-2019.pdf is
+ * ruled into fields a quarter-inch apart and a generous threshold keeps them
+ * apart. A page that draws none has said nothing, and every word boundary on it
+ * is a gap: bigboundingbox.pdf steps 0.226 em between words and never writes a
+ * space, so at a quarter em its every line ran together — "OrangeDemoInc.",
+ * "Whenpayingbycheck,pleasecompletethispaymentadvice".
+ *
+ * The two want different thresholds, and the page says which it is (see
+ * {@link stepsBetweenWords}). The tight one still clears the gaps a producer
+ * leaves INSIDE a word when it splits one for kerning, which measure eight
+ * hundredths of an em at their widest across this corpus.
+ */
+function spaceGap(prev: TextRun, fontSize: number, stepped: boolean): number {
+  return (prev.fontSizePt || fontSize) * (stepped ? STEPPED_SPACE_EM : DRAWN_SPACE_EM);
+}
+
+/** A page that writes its own spaces: only a wide gap means anything more. */
+const DRAWN_SPACE_EM = 0.25;
+
+/** A page that writes none: the step between its words is all there is. */
+const STEPPED_SPACE_EM = 0.12;
+
+/**
+ * Whether this page STEPS between its words rather than writing spaces.
+ *
+ * Counted rather than guessed: bigboundingbox.pdf writes a space in one run in
+ * a hundred, TAMReview.pdf in a third of them, and no page does a little of
+ * both. A page with almost no text says nothing either way and keeps the
+ * cautious reading.
+ */
+function stepsBetweenWords(runs: ReadonlyArray<TextRun>): boolean {
+  if (runs.length < 8) return false;
+  const drawn = runs.filter((r) => /\s/u.test(r.text)).length;
+  return drawn / runs.length < 0.05;
+}
+
 // A line's runs as spans, inserting a (link-free) space where a horizontal gap
 // suggests one.
-function lineSpans(runs: ReadonlyArray<TextRun>, fontSize: number): Array<TextSpan> {
+function lineSpans(
+  runs: ReadonlyArray<TextRun>,
+  fontSize: number,
+  stepped: boolean,
+): Array<TextSpan> {
   const spans: Array<TextSpan> = [];
-  let prevEnd: number | undefined;
+  let prev: TextRun | undefined;
   for (const run of runs) {
-    if (prevEnd !== undefined && run.x - prevEnd > fontSize * 0.25) spans.push({ text: ' ' });
+    if (prev !== undefined && run.x - prev.endX > spaceGap(prev, fontSize, stepped)) {
+      spans.push({ text: ' ' });
+    }
     // §9.3.1/§8.6.8 — the size and colour the page showed the glyphs at. The
     // tagged path has carried these since it learned to; this one never did, so
     // every line it read came back at the 11pt default in black. Placed, that
@@ -514,7 +612,7 @@ function lineSpans(runs: ReadonlyArray<TextRun>, fontSize: number): Array<TextSp
     // in 7pt nine and a half apart, and drawn at eleven they climbed over each
     // other.
     spans.push({
-      text: run.text,
+      text: run.text.replaceAll(UNMAPPED, ''),
       sizePt: run.fontSizePt,
       ...(run.colorHex !== '000000' ? { colorHex: run.colorHex } : {}),
       ...(run.fontName !== undefined ? { fontName: run.fontName } : {}),
@@ -526,7 +624,7 @@ function lineSpans(runs: ReadonlyArray<TextRun>, fontSize: number): Array<TextSp
       ...(run.markup !== undefined ? { markup: run.markup } : {}),
       ...(run.href !== undefined ? { href: run.href } : {}),
     });
-    prevEnd = run.endX;
+    prev = run;
   }
   return spans;
 }
