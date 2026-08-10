@@ -1,0 +1,172 @@
+[
+ {
+  "name": "SimFang-variant.pdf",
+  "score": 0.4641,
+  "aligned": true
+ },
+ {
+  "name": "issue11144_reduced.pdf",
+  "score": 0.1953,
+  "aligned": true
+ },
+ {
+  "name": "bug1844576.pdf",
+  "score": 0.151,
+  "aligned": true
+ },
+ {
+  "name": "bug1844583.pdf",
+  "score": 0.097,
+  "aligned": true
+ },
+ {
+  "name": "bug1157493.pdf",
+  "score": 0.067,
+  "aligned": true
+ },
+ {
+  "name": "Type3WordSpacing.pdf",
+  "score": 0.064,
+  "aligned": true
+ },
+ {
+  "name": "devicen.pdf",
+  "score": 0.0586,
+  "aligned": true
+ },
+ {
+  "name": "bug1151216.pdf",
+  "score": 0.0504,
+  "aligned": true
+ },
+ {
+  "name": "bug1027533.pdf",
+  "score": 0.0494,
+  "aligned": true
+ },
+ {
+  "name": "bug1871353.1.pdf",
+  "score": 0.0366,
+  "aligned": true
+ },
+ {
+  "name": "canvas.pdf",
+  "score": 0.0326,
+  "aligned": true
+ },
+ {
+  "name": "bug1011159.pdf",
+  "score": 0.0306,
+  "aligned": true
+ },
+ {
+  "name": "annotation_hidden_noview.pdf",
+  "score": 0.0294,
+  "aligned": true
+ },
+ {
+  "name": "bug1811668_reduced.pdf",
+  "score": 0.0213,
+  "aligned": true
+ },
+ {
+  "name": "issue10640.pdf",
+  "score": 0.0165,
+  "aligned": true
+ },
+ {
+  "name": "issue11403_reduced.pdf",
+  "score": 0.0137,
+  "aligned": true
+ },
+ {
+  "name": "issue11016_reduced.pdf",
+  "score": 0.009,
+  "aligned": true
+ },
+ {
+  "name": "franz.pdf",
+  "score": 0.0084,
+  "aligned": true
+ },
+ {
+  "name": "ContentStreamCycleType3insideType3.pdf",
+  "score": 0.0067,
+  "aligned": true
+ },
+ {
+  "name": "inks.pdf",
+  "score": 0.0064,
+  "aligned": true
+ },
+ {
+  "name": "annotation-text-without-popup.pdf",
+  "score": 0.0063,
+  "aligned": true
+ },
+ {
+  "name": "ContentStreamNoCycleType3insideType3.pdf",
+  "score": 0.006,
+  "aligned": true
+ },
+ {
+  "name": "bug1539074.1.pdf",
+  "score": 0.0049,
+  "aligned": true
+ },
+ {
+  "name": "freetexts.pdf",
+  "score": 0.0042,
+  "aligned": true
+ },
+ {
+  "name": "issue1045.pdf",
+  "score": 0.0031,
+  "aligned": true
+ },
+ {
+  "name": "bug1001080.pdf",
+  "score": 0.002,
+  "aligned": true
+ },
+ {
+  "name": "annotation-tx.pdf",
+  "score": 0.0007,
+  "aligned": true
+ },
+ {
+  "name": "form_two_pages.pdf",
+  "score": 0.0006,
+  "aligned": true
+ },
+ {
+  "name": "bug1727053.pdf",
+  "score": 0.0006,
+  "aligned": true
+ },
+ {
+  "name": "bug1539074.pdf",
+  "score": 0.0003,
+  "aligned": true
+ },
+ {
+  "name": "bug1796741.pdf",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "bug1782564.pdf",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "bug1770750.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "PDFBOX-3148-2-fuzzed.pdf",
+  "score": 0,
+  "aligned": true
+ }
+]
