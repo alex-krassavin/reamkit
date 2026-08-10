@@ -4,6 +4,7 @@
 
 import { parseToUnicodeCMap } from './cmap';
 import { textForGlyphName } from './glyph-names';
+import { standardFace, standardWidth } from './standard-widths';
 import { embeddedFontName } from './embedded-fonts';
 import type { PdfDict, PdfValue } from '@/pdf/objects';
 import type { ContentFont, Matrix, Type3Face } from './content';
@@ -65,7 +66,11 @@ export function buildContentFont(file: PdfFile, fontDict: PdfDict): ContentFont 
       ? type3Face(file, fontDict)
       : undefined;
 
-  const simple = simpleWidths(file, fontDict);
+  // §9.6.2.2 — a standard face need not carry a `/Widths` array at all, and
+  // where it does not the reader's own metrics are the only ones there are.
+  const decodeOne = (code: number): string =>
+    unicode.get(code) ?? (bytesPerCode === 1 ? String.fromCharCode(code) : '');
+  const simple = simpleWidths(file, fontDict, decodeOne);
   // §9.6.5 — a Type 3 font states its widths in GLYPH space, which its
   // `/FontMatrix` maps to text space; every other font states them in
   // thousandths. Scaling here keeps the advance arithmetic (§9.4.4) one rule.
@@ -329,7 +334,11 @@ function descendantFont(file: PdfFile, fontDict: PdfDict): PdfDict {
 }
 
 // §9.6.2.1 — a simple font's /Widths array is indexed by (code − /FirstChar).
-function simpleWidths(file: PdfFile, fontDict: PdfDict): (code: number) => number {
+function simpleWidths(
+  file: PdfFile,
+  fontDict: PdfDict,
+  decodeOne: (code: number) => string,
+): (code: number) => number {
   const first = asNumber(file.resolve(fontDict.get('FirstChar') ?? PDF_NULL), 0);
   const widthsVal = file.resolve(fontDict.get('Widths') ?? PDF_NULL);
   const widths = Array.isArray(widthsVal) ? widthsVal : [];
@@ -338,9 +347,16 @@ function simpleWidths(file: PdfFile, fontDict: PdfDict): (code: number) => numbe
     descriptor instanceof Map
       ? asNumber(file.resolve(descriptor.get('MissingWidth') ?? PDF_NULL), 0)
       : 0;
+  // §9.6.2.2 — the built-in metrics, for the face this one asks to be measured
+  // as. Consulted only where the file itself states no width: a file that says
+  // its Helvetica is 700 wide has said so, however unlike Helvetica that is.
+  const face = standardFace(asName(file.resolve(fontDict.get('BaseFont') ?? PDF_NULL)));
   return (code) => {
     const w = widths[code - first];
-    return typeof w === 'number' ? w : missing > 0 ? missing : 500;
+    if (typeof w === 'number') return w;
+    const built = face === undefined ? undefined : standardWidth(face, code, decodeOne(code));
+    if (built !== undefined) return built;
+    return missing > 0 ? missing : 500;
   };
 }
 

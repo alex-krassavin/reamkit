@@ -657,8 +657,10 @@ describe('the space a page steps across but never writes', () => {
       '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] ' +
         '/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>',
       `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
-      '<< /Type /Font /Subtype /TrueType /BaseFont /Arial /FirstChar 32 /LastChar 255 ' +
-        '/Encoding /WinAnsiEncoding >>',
+      // Every glyph exactly half its size, stated by the file: the arithmetic
+      // above is then exact and the test measures the RULE, not a face.
+      '<< /Type /Font /Subtype /TrueType /BaseFont /Flat /FirstChar 32 /LastChar 126 ' +
+        `/Widths [${new Array(95).fill('500').join(' ')}] /Encoding /WinAnsiEncoding >>`,
     ];
     let pdf = '%PDF-1.7\n';
     const offsets: Array<number> = [];
@@ -699,5 +701,89 @@ describe('the space a page steps across but never writes', () => {
     // run together, which is what the page shows.
     expect(flowText(steppedPdf(10, 0.2, true))).toBe(TEN);
     expect(flowText(steppedPdf(10, 0.05, false))).toBe('abababababababababab');
+  });
+});
+
+describe('the metrics of a face the file does not measure (§9.6.2.2)', () => {
+  /** A page that shows `text` in `baseFont`, stating no `/Widths` at all. */
+  const unmeasuredPdf = (baseFont: string, text: string): Uint8Array => {
+    const content = `BT /F1 12 Tf 72 720 Td (${text}) Tj ET`;
+    const objects = [
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] ' +
+        '/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>',
+      `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+      `<< /Type /Font /Subtype /Type1 /BaseFont /${baseFont} >>`,
+    ];
+    let pdf = '%PDF-1.7\n';
+    const offsets: Array<number> = [];
+    objects.forEach((body, i) => {
+      offsets.push(pdf.length);
+      pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+    });
+    const xref = pdf.length;
+    pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+    for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+    pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\n`;
+    pdf += `startxref\n${String(xref)}\n%%EOF\n`;
+    return new TextEncoder().encode(pdf);
+  };
+
+  const advance = (baseFont: string, text: string): number => {
+    const file = PdfFile.parse(unmeasuredPdf(baseFont, text));
+    const [run] = extractPageText(file, file.pages()[0]!);
+    return (run?.endX ?? 0) - (run?.x ?? 0);
+  };
+
+  it('measures a standard face by Adobe’s own numbers, not by a flat guess', () => {
+    // "Chapter 1 " is 4669/1000 of an em in Helvetica, 4890 in Helvetica-Bold
+    // and 4166 in Times-Roman; a flat 500 a glyph made it 5000 in all three,
+    // and every line width, run gap, alignment and column came off that.
+    expect(advance('Helvetica', 'Chapter 1 ')).toBeCloseTo((4669 / 1000) * 12, 2);
+    expect(advance('Helvetica-Bold', 'Chapter 1 ')).toBeCloseTo((4890 / 1000) * 12, 2);
+    // Times is not Helvetica, and the file said nothing about either.
+    expect(advance('Times-Roman', 'Chapter 1 ')).toBeCloseTo((4166 / 1000) * 12, 2);
+    // A typewriter face is one width throughout.
+    expect(advance('Courier', 'Chapter 1 ')).toBeCloseTo((6000 / 1000) * 12, 2);
+    expect(advance('Courier-BoldOblique', 'iiii')).toBeCloseTo((2400 / 1000) * 12, 2);
+  });
+
+  it('measures Arial as Helvetica, which is what it is standing in for', () => {
+    // A file that names Arial and embeds nothing is asking for the
+    // metric-compatible face every reader substitutes.
+    expect(advance('ArialMT', 'Chapter 1 ')).toBeCloseTo(advance('Helvetica', 'Chapter 1 '), 5);
+    expect(advance('Arial-BoldMT', 'Chapter 1 ')).toBeCloseTo(
+      advance('Helvetica-Bold', 'Chapter 1 '),
+      5,
+    );
+  });
+
+  it('leaves a face the file DOES measure alone', () => {
+    // A file that says its Helvetica is 700 wide has said so, however unlike
+    // Helvetica that is.
+    const content = 'BT /F1 12 Tf 72 720 Td (AA) Tj ET';
+    const objects = [
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] ' +
+        '/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>',
+      `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+      '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /FirstChar 65 /LastChar 65 ' +
+        '/Widths [700] >>',
+    ];
+    let pdf = '%PDF-1.7\n';
+    const offsets: Array<number> = [];
+    objects.forEach((body, i) => {
+      offsets.push(pdf.length);
+      pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+    });
+    const xref = pdf.length;
+    pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+    for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+    pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`;
+    const file = PdfFile.parse(new TextEncoder().encode(pdf));
+    const [run] = extractPageText(file, file.pages()[0]!);
+    expect((run?.endX ?? 0) - (run?.x ?? 0)).toBeCloseTo((1400 / 1000) * 12, 2);
   });
 });

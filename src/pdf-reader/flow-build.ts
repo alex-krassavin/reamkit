@@ -474,6 +474,9 @@ export function sectionFromPdfPages(pages: ReadonlyArray<PdfPage>): SectionPrope
  * @returns The section with measured margins, or `section` when nothing is
  *          measurable.
  */
+/** What the measure gives back, so the widest line still fits when re-set. */
+const SLACK = 0.01;
+
 /** How far a face's ascender stands above its baseline, as a fraction of the size. */
 const ASCENDER = 0.8;
 
@@ -543,7 +546,13 @@ export function withMeasuredMargins(
     ...section,
     margins: {
       left: clamp(median(lefts), width),
-      right: clamp(median(rights), width),
+      // The right margin gives back a little of what it measured. The page was
+      // set in faces this reader does not have, and re-setting it in
+      // substitutes cannot come out narrower everywhere — so a measure exactly
+      // as wide as the widest line wraps that line's last word onto the next.
+      // basicapi.pdf's contents line runs 504.5pt across a 504.5pt measure, and
+      // its page number came back at the head of the line below.
+      right: clamp(median(rights) - width * SLACK, width),
       top: clamp(median(tops), height),
       bottom: clamp(median(bottoms), height),
     },
