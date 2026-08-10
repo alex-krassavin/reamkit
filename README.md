@@ -191,10 +191,12 @@ preview, flowed HTML export, and **docx + xlsx output** (write WordprocessingML
 tagged PDF from its structure tree (headings, tables, lists, reading order), an
 untagged one heuristically from glyph positions (lines, paragraphs, headings,
 and a clean two-column split). It lifts back the text (via each font's
-`/ToUnicode`, or the embedded program's own `cmap` where there is none), the
+`/ToUnicode`, or the embedded program's own `cmap` where there is none, or the
+glyph names its `/Encoding` states — which is all a PDF from TeX gives), the
 font programs themselves, raster images (JPEG verbatim; PNG/Flate/LZW/CCITT-fax
-decoded and re-encoded), `/Link` hyperlinks, form-XObject content, annotation
-appearances, and the page's artwork: filled / stroked / gradient shapes,
+and **JBIG2** decoded and re-encoded), `/Link` hyperlinks, form-XObject content,
+annotation appearances, colour set through a named space, and the page's
+artwork: filled / stroked / gradient shapes,
 clipping paths, tiling patterns, constant alpha, and the Type 3 glyphs that are
 drawings rather than letters. It reads modern compressed files (cross-reference
 + object streams) and encrypted ones (RC4 / AES — the user password is passed to

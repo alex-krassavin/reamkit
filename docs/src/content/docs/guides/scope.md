@@ -33,13 +33,20 @@ its structure tree — headings, paragraphs, tables, list items, reading order; 
 baseline, paragraphs by spacing, headings by relative font size, and a clean
 two-column page split at its central gutter), which is approximate. Text comes
 back via each font's `/ToUnicode` map, or — where a composite font ships none —
-from the reverse `cmap` of the program it embeds (§9.10.2); the weight and slant
+from the reverse `cmap` of the program it embeds (§9.10.2), or — where a SIMPLE
+font ships none, which is every PDF from TeX — from the glyph NAMES its
+`/Encoding /Differences` states (§9.6.6.1); the weight and slant
 come from the `/FontDescriptor`, and the embedded font programs themselves are
 carried into the output, so a rebuilt page is set in the type it was set in.
 **Raster images, hyperlinks and vector artwork** are lifted back out too (JPEG
-verbatim, other images re-encoded as PNG with soft-mask alpha, `/Link` URIs
+verbatim, other images re-encoded as PNG with soft-mask alpha — including
+JBIG2, the bilevel coding a scanner stores a page of text in (ISO/IEC 14492:
+generic, refinement, symbol-dictionary, text and halftone regions, arithmetic
+and Huffman) — `/Link` URIs
 re-attached to the text, filled paths, stroked lines and shading-pattern
-gradients turned into shapes), along with clipping paths (§8.5.4 `W` / `W*`,
+gradients turned into shapes), colour set through a named space (§8.6.8 `cs` /
+`sc`, which is how every PDF a browser prints states it), along with clipping
+paths (§8.5.4 `W` / `W*`,
 applied to paths and pictures alike), tiling patterns (§8.7.3 — drawn as a
 picture where they fill a shape, read as a tint at the tile's own density where
 they fill type), constant alpha (§11.6.4.4 `/ca` through the `gs` operator),
@@ -56,7 +63,11 @@ Markdown), `convert('docx')` (write WordprocessingML back out) and
 in-browser editing, and round-tripping. The docx round-trip is semantic, not
 byte-exact, but complete — text, tables, images, lists, links, headers/footers,
 multi-section geometry, footnotes/endnotes, charts and OfficeMath all write
-back. The xlsx round-trip preserves the whole grid surface — cells, styles,
+back, and a drawing that states where on the page it belongs is written back as
+the `wp:anchor` that puts it there (§20.4.2.3) rather than flattened into the
+text flow. No image part the format cannot show goes into the package: JPEG
+2000 is not among the parts §15.2.14 admits, and is dropped with a loss that
+names it rather than written as a hole. The xlsx round-trip preserves the whole grid surface — cells, styles,
 merges, the print model, conditional formatting, sparklines, tables and embedded
 charts — and is byte-stable across a read↔write loop.
 
@@ -72,7 +83,7 @@ Ream.parse(pdf, { filters: { BrotliDecode: (b) => brotliDecompressSync(b) } });
 
 Absent, or throwing, the filter is reported unreadable by name rather than
 producing an empty document silently. FlateDecode, LZW, RunLength, ASCII85,
-ASCIIHex, CCITT, DCT and JPX need nothing supplied.
+ASCIIHex, CCITT, DCT, JPX and JBIG2 need nothing supplied.
 
 **Placed PDF reading (`Ream.parse(bytes, { pdfLayout: 'positional' })`)** — a PDF
 is read as a re-flowable document by default: paragraphs and tables in reading
