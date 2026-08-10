@@ -15,6 +15,7 @@
 import { unzlibSync } from 'fflate';
 
 import { decodeCcitt } from './ccitt';
+import { decodeJbig2 } from './jbig2';
 import { decodeJpeg } from './jpeg';
 import { reversePredictor } from './predictor';
 import type { PngColor } from '@/core/png-encode';
@@ -103,7 +104,15 @@ export function decodePdfImage(file: PdfFile, stream: PdfStream): DecodedImage {
     };
   }
   if (last === 'JBIG2Decode') {
-    return fail('dropped', 'JBIG2-encoded image not decoded');
+    const raster = decodeJbig2Image(file, stream, filters, width, height);
+    if (typeof raster === 'string') return fail('dropped', raster);
+    return {
+      ok: true,
+      bytes: encodePng(width, height, raster.color, raster.samples),
+      format: 'png',
+      widthPx: width,
+      heightPx: height,
+    };
   }
 
   const isCcitt = last === 'CCITTFaxDecode' || last === 'CCF';
@@ -152,6 +161,35 @@ function decodeToSamples(
 
 // E-PDF EP15 — decode a /CCITTFaxDecode image to DeviceGray samples (black → 0,
 // white → 255). Any filters wrapping the fax codestream are stripped first.
+/**
+ * §7.4.7 — a `/JBIG2Decode` image: the stream's own segments, plus the shared
+ * ones a `/JBIG2Globals` holds (the symbol dictionary a scanned book stores
+ * once for all its pages).
+ */
+function decodeJbig2Image(
+  file: PdfFile,
+  stream: PdfStream,
+  filters: ReadonlyArray<string>,
+  width: number,
+  height: number,
+): RawColor | string {
+  const parms = decodeParmsOf(file, stream.dict);
+  const globalsVal = parms ? file.get(parms, 'JBIG2Globals') : undefined;
+  const globalsStream = globalsVal instanceof PdfStream ? globalsVal : undefined;
+  const globals = globalsStream ? file.streamData(globalsStream) : undefined;
+  const packed = decodeJbig2(applyChainExceptLast(filters, stream.data), globals, width, height);
+  if (!packed) return 'JBIG2 image not decoded';
+  const rowBytes = (width + 7) >> 3;
+  const samples = new Uint8Array(width * height);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      // JBIG2 codes 1 as BLACK; DeviceGray reads 0 as black.
+      samples[y * width + x] = (packed[y * rowBytes + (x >> 3)]! >> (7 - (x & 7))) & 1 ? 0 : 255;
+    }
+  }
+  return { color: 'gray', samples };
+}
+
 function decodeCcittImage(
   file: PdfFile,
   stream: PdfStream,
