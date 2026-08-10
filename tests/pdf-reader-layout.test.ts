@@ -328,9 +328,24 @@ describe('heuristic layout reconstruction (E-PDF EP4)', () => {
     expect(section?.pageSize?.width).toBe(1000);
     expect(section?.pageSize?.height).toBe(600);
     expect(section?.pageSize?.orientation).toBe('landscape');
-    // A PDF has no margin model — the page box is the content box.
-    expect(section?.margins?.left).toBe(0);
-    expect(section?.margins?.top).toBe(0);
+    // A PDF states no margins, but its WORDS say where they were: the leftmost
+    // glyph is the left margin. Left at zero — which is what this used to do,
+    // on the argument that the page box is the content box — a reflowed
+    // document prints its text against the edge of the paper, which is what
+    // every converted PDF looked like.
+    expect(section?.margins?.left).toBeGreaterThan(0);
+    expect(section?.margins?.top).toBeGreaterThan(0);
+    // Never more than a third of the sheet: a margin that eats the text area
+    // is worse than none.
+    expect(section?.margins?.left).toBeLessThanOrEqual(1000 / 3);
+    expect(section?.margins?.top).toBeLessThanOrEqual(600 / 3);
+  });
+
+  it('keeps a PLACED reading at zero margins, where every mark is anchored', () => {
+    // The anchors are measured from the page, so a margin would move them all.
+    const placed = reconstructByLayout(PdfFile.parse(twoColumnLinePdf()), 'positional');
+    expect(placed.doc.section?.margins?.left).toBe(0);
+    expect(placed.doc.section?.margins?.top).toBe(0);
   });
 
   it('marks a line far larger than the median as a heading', async () => {
