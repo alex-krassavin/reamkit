@@ -645,16 +645,33 @@ function alignmentOf(
   if (!column || lines.length === 0) return {};
   const width = column.right - column.left;
   if (!(width > 0)) return {};
-  const leads = lines.map((l) => l.x - column.left);
-  const trails = lines.map((l) => column.right - (l.x + l.width));
-  const lead = Math.min(...leads);
-  const trail = Math.min(...trails);
+  const insets = lines.map((l) => ({
+    lead: l.x - column.left,
+    trail: column.right - (l.x + l.width),
+  }));
   // A tenth of the measure is the smallest inset worth calling a placement:
-  // below it every ragged line would read as centred.
+  // below it every ragged line would read as placed.
   const meaningful = width * 0.1;
-  if (lead < meaningful && trail < meaningful) return {};
-  if (Math.abs(lead - trail) <= width * 0.06) return { alignment: 'center' };
-  if (lead > meaningful && trail < meaningful) return { alignment: 'right' };
+  const even = width * 0.06;
+  // Judged line by line and only then as a whole. Taking the smallest inset
+  // over the whole paragraph makes a CENTRED block read as a full one the
+  // moment any of its lines nearly fills the measure — and a two-line title
+  // whose first line runs the width is exactly that.
+  if (
+    insets.every((i) => Math.abs(i.lead - i.trail) <= even) &&
+    Math.max(...insets.map((i) => Math.min(i.lead, i.trail))) >= meaningful
+  ) {
+    return { alignment: 'center' };
+  }
+  // Flush right: every line ends at the measure and at least one starts well
+  // inside it. A justified paragraph fails this on its last line, which is the
+  // only place the two differ at all.
+  if (
+    insets.every((i) => i.trail <= even) &&
+    Math.max(...insets.map((i) => i.lead)) >= meaningful
+  ) {
+    return { alignment: 'right' };
+  }
   return {};
 }
 
