@@ -1,0 +1,482 @@
+[
+ {
+  "name": "bitmap-symbol-context-reuse.pdf",
+  "score": 1,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-symhuffrefineseveral.pdf",
+  "score": 1,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-symhuffrefine-textrefine.pdf",
+  "score": 0.9886,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-composite-and-xnor-refine.pdf",
+  "score": 0.9314,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-composite-or-xor-replace-refine.pdf",
+  "score": 0.9314,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-halftone-refine.pdf",
+  "score": 0.9314,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-refine-customat-tpgron.pdf",
+  "score": 0.9314,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-refine-customat.pdf",
+  "score": 0.9314,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-refine-lossless.pdf",
+  "score": 0.9314,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-refine-refine.pdf",
+  "score": 0.9314,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-refine-template1-tpgron.pdf",
+  "score": 0.9314,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-refine-template1.pdf",
+  "score": 0.9314,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-refine-tpgron.pdf",
+  "score": 0.9314,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-refine.pdf",
+  "score": 0.9314,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-texthuffrefine.pdf",
+  "score": 0.9314,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-texthuffrefineB15.pdf",
+  "score": 0.9314,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-texthuffrefinecustomdims.pdf",
+  "score": 0.9314,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-texthuffrefinecustompos.pdf",
+  "score": 0.9314,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-texthuffrefinecustomsize.pdf",
+  "score": 0.9314,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-trailing-7fff-stripped-harder-refine.pdf",
+  "score": 0.9314,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-big-segmentid.pdf",
+  "score": 0.0686,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-symbolrefineseveral.pdf",
+  "score": 0.0686,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-texthuffrefinecustom.pdf",
+  "score": 0.0686,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-texthuffrefinecustomposdims.pdf",
+  "score": 0.0686,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-halftone-10bpp-mmr.pdf",
+  "score": 0.0664,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-symbolrefine-textrefine.pdf",
+  "score": 0.0285,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-halftone-composite.pdf",
+  "score": 0.02,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-refine-page-subrect.pdf",
+  "score": 0.0139,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-symhuffrefineone.pdf",
+  "score": 0.0102,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-symhuffB5B3-texthuffB7B9B12.pdf",
+  "score": 0.0026,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-composite-and-xnor-halftone.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-composite-and-xnor-text.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-composite-and-xnor.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-composite-or-xor-replace-halftone.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-composite-or-xor-replace-text.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-composite-or-xor-replace.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-customat-tpgdon.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-customat.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-halftone-10bpp.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-halftone-grid.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-halftone-skip-dummy.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-halftone-skip-grid-template1.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-halftone-skip-grid-template2.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-halftone-skip-grid-template3.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-halftone-skip-grid.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-halftone-template1.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-halftone-template2.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-halftone-template3.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-halftone.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-initially-unknown-size.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-mmr.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-p32-eof.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-randomaccess.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-refine-page.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-stripe-initially-unknown-height.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-stripe-last-implicit.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-stripe-single-no-end-of-stripe.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-stripe-single.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-stripe.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-empty.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-negative-sbdsoffset.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-refine.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-symbolrefineone-customat.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-symbolrefineone-template1.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-symbolrefineone.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-symhuff-texthuff.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-symhuff-texthuffB10B13.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-symhuffcustom-texthuffcustom.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-symhuffuncompressed-texthuff.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-textbottomleft.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-textbottomlefttranspose.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-textbottomright.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-textbottomrighttranspose.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-textcomposite.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-textrefine-customat.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-textrefine-negative-delta-width.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-textrefine.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-texttopright.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-texttoprighttranspose.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-texttranspose.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-template1-customat-tpgdon.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-template1-customat.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-template1-tpgdon.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-template1.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-template2-customat-tpgdon.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-template2-customat.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-template2-tpgdon.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-template2.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-template3-customat-tpgdon.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-template3-customat.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-template3-tpgdon.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-template3.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-tpgdon.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-trailing-7fff-stripped-harder.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-trailing-7fff-stripped.pdf",
+  "score": 0,
+  "aligned": true
+ }
+]

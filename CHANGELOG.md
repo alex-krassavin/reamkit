@@ -3,6 +3,79 @@
 All notable changes to **Ream** (`reamkit`) are documented here. The project
 follows [Semantic Versioning](https://semver.org/).
 
+## 1.26.0
+
+A release about what a converted PDF actually looks like when you open it.
+
+1.25.0 taught the reader the page. This one asks the next question — what
+reaches the `.docx` — and the answer, on a corpus of four hundred real PDFs
+measured end to end (the file's own rendering against the file through Ream,
+through LibreOffice, back to pixels), was: not much. A page of placed artwork
+came back as a column of drawings stacked in document order; a page a browser
+printed came back a black rectangle; a paper written in LaTeX came back with
+its layout right to the point and every word on it rubble; a scanned page came
+back empty.
+
+Over the 389 files comparable across the work, the summed worst-page difference
+went 53.28 to 39.13 — 27% less wrong — and the count of files under 0.01, a
+converted page nobody would need to open, went 114 to 224.
+
+### Added
+
+- **A drawing that states where it goes is placed there.** §20.4.2.3 — the docx
+  writer emitted `wp:inline` for everything and said so in its own comment. The
+  model has carried the anchor since the reader learned to read one, and the
+  PDF reconstruction fills it in for every line and rule it lifts off a page;
+  all of it was thrown away, so a converted page came back as a column of
+  drawings in document order. Now `wp:anchor` with the position, the wrap, the
+  stand-off, `behindDoc` and the z-order it names. Consecutive placed drawings
+  ride ONE carrier paragraph — a floating drawing is placed by its anchor and
+  not by where its paragraph lands, so a paragraph each is a paragraph of FLOW
+  each: a one-page form of 355 placed rules ran to sixteen pages of empty lines
+  with the artwork anchored to them, and now comes back as the form.
+
+- **JBIG2 (ISO/IEC 14492), the coding a scanner stores a page of text in.**
+  `/JBIG2Decode` passed through unread, so such a page came back not degraded
+  but absent — a quarter of the pdf.js corpus scored a flat 1.000 against its
+  own rendering. Implemented: the MQ arithmetic decoder (§E.3); generic regions
+  (§6.2, templates 0–3 with their adaptive pixels, TPGDON, and MMR through the
+  fax decoder); refinement regions (§6.3, both templates, TPGRON); the symbol
+  dictionary and text region (§6.5, §6.4) — the point of the format, a
+  dictionary of the glyph shapes on the page plus a list of where each one
+  goes; pattern dictionaries and halftone regions (§6.7, §6.6, Gray-coded
+  bitplanes); the Huffman path (Annex B, all fifteen standard tables, custom
+  table segments, and the run-coded symbol IDs); and page composition (§7.4).
+  83 of the suite's 96 files now come back right.
+
+- **A font that names its glyphs is read by those names.** §9.6.6.1 — a simple
+  font that ships no `/ToUnicode` still says what its codes are, in
+  `/Encoding /Differences`. A PDF from TeX is nothing but this, and read as
+  Latin-1 a paper's title came back as "!48 SUPPORT" where it reads "LaTeX
+  support". The table is the practical part of the Adobe Glyph List, with the
+  variant suffixes, the underscore-joined ligatures and the `uniXXXX` forms.
+
+### Fixed
+
+- **Colour in a named space is read as colour.** §8.6.8 — the interpreter had
+  no case for `cs` at all, and `sc` with numbers did nothing whatsoever, so the
+  fill kept whatever colour was standing, which at the top of a page is black.
+  Every PDF a browser prints states its colour this way: one such page, white
+  with a screenshot on it, came back a black rectangle. The space now resolves
+  from the page's resources, and where it could not be read the operand COUNT
+  decides — three numbers are RGB and four are CMYK on every device space there
+  is. One number is left alone unless the space said what it means, since it is
+  grey in a device space and the strength of a colorant in a Separation.
+
+- **The package carries no picture the format cannot show.** §15.2.14 admits no
+  JPEG 2000 image part, and no consumer of a `.docx` displays one; six of them
+  went into one file and came back blank in Word and LibreOffice alike. They
+  are dropped, and the loss says which picture and why instead of "image bytes
+  missing".
+
+- **A turned drawing reserves the area it actually reaches.** §20.4.2.3 —
+  `wp:extent` is the shape's unrotated size and the turn's overhang belongs in
+  `wp:effectExtent`, which was four zeroes for every drawing.
+
 ## 1.25.1
 
 Word refused the documents Ream writes, saying only that it "experienced an

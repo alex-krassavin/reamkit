@@ -10,6 +10,7 @@ import { Ream } from '@/core/converter/ream';
 import { parseToUnicodeCMap } from '@/pdf-reader/cmap';
 import { PdfFile } from '@/pdf-reader/document';
 import { collectEmbeddedFonts } from '@/pdf-reader/embedded-fonts';
+import { textForGlyphName } from '@/pdf-reader/glyph-names';
 import { patternTint } from '@/pdf-reader/pattern-tint';
 import { extractPageText } from '@/pdf-reader/text';
 import { reconstructByLayout } from '@/pdf-reader/layout';
@@ -132,6 +133,72 @@ const styleOf = (baseFont: string, descriptor?: string) => {
   const run = extractPageText(file, file.pages()[0]!)[0];
   return { bold: run?.bold, italic: run?.italic };
 };
+
+/**
+ * A simple Type1 font that states NO `/ToUnicode` and says what its codes are
+ * only through `/Encoding /Differences` — the shape every PDF from TeX takes.
+ * The codes start at 5 because a subset font's codes start wherever the subset
+ * does, not at any character's value.
+ */
+function namedGlyphPdf(): Uint8Array {
+  const content = 'BT /F1 12 Tf 72 720 Td <050607080905> Tj ET';
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] ' +
+      '/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>',
+    `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+    '<< /Type /Font /Subtype /Type1 /BaseFont /KUEKMM+OpenSans ' +
+      '/FirstChar 5 /LastChar 10 /Encoding 6 0 R >>',
+    '<< /Type /Encoding /Differences [5 /L /a /T /e /X /five.os] >>',
+  ];
+  let pdf = '%PDF-1.7\n';
+  const offsets: Array<number> = [];
+  objects.forEach((body, i) => {
+    offsets.push(pdf.length);
+    pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+  });
+  const xref = pdf.length;
+  pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+  for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+  pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\n`;
+  pdf += `startxref\n${String(xref)}\n%%EOF\n`;
+  return new TextEncoder().encode(pdf);
+}
+
+describe('a font that names its glyphs rather than mapping them (§9.6.6.1)', () => {
+  it('reads the names, where reading the codes gives rubble', () => {
+    // issue10640.pdf is a LaTeX document: a subset font whose codes start at 5,
+    // and not a /ToUnicode in the file. Read as Latin-1 — all that is left
+    // without the names — its title came back as "!48 SUPPORT" where it reads
+    // "LaTeX support", and its author as "-OHAMED %LORABITY".
+    const file = PdfFile.parse(namedGlyphPdf());
+    const run = extractPageText(file, file.pages()[0]!)[0];
+    // Codes 5,6,7,8,9 are L,a,T,e,X; code 5 again closes it.
+    expect(run?.text).toBe('LaTeXL');
+  });
+
+  it('reads a variant suffix as the shape it is, not a character', () => {
+    // `five.os` is the oldstyle five — a shape, and still a "5".
+    expect(textForGlyphName('five.os')).toBe('5');
+    expect(textForGlyphName('a.sc')).toBe('a');
+  });
+
+  it('composes an accented name, and joins a ligature name', () => {
+    expect(textForGlyphName('eacute')).toBe('é');
+    expect(textForGlyphName('ccedilla')).toBe('ç');
+    expect(textForGlyphName('f_i')).toBe('fi');
+    expect(textForGlyphName('ff')).toBe('ﬀ');
+  });
+
+  it('reads the algorithmic names, and says nothing for a slot number', () => {
+    expect(textForGlyphName('uni0041')).toBe('A');
+    expect(textForGlyphName('uni00410042')).toBe('AB');
+    expect(textForGlyphName('u1F600')).toBe('😀');
+    // `g42` names a slot in the program, not a character.
+    expect(textForGlyphName('g42')).toBeUndefined();
+  });
+});
 
 describe('the face a run was shown in (§9.8.1)', () => {
   it('reads the weight and the slant off the descriptor', () => {

@@ -84,6 +84,45 @@ describe('content-stream interpreter (E-PDF EP2)', () => {
   });
 });
 
+describe('colour in a named space (§8.6.8)', () => {
+  const fill = (cs: string) => {
+    const v = interpretContent(new TextEncoder().encode(cs), new Map()).vectors[0];
+    return v?.fillHex;
+  };
+
+  it('reads the components a named space gives, instead of leaving the fill alone', () => {
+    // bug1771477.pdf paints its whole sheet with `/Cs1 cs 1 1 1 sc` — which is
+    // WHITE. `sc` with numbers did nothing at all, so the fill stayed at the
+    // black it starts on and the page came back a black rectangle.
+    expect(fill('/DeviceRGB cs 1 1 1 sc 0 0 10 10 re f')).toBe('FFFFFF');
+    expect(fill('/DeviceRGB cs 1 0 0 sc 0 0 10 10 re f')).toBe('FF0000');
+  });
+
+  it('takes the count as the witness where the space was not read', () => {
+    // Three numbers are RGB and four are CMYK in every device space there is,
+    // so an unresolved name still yields the colour.
+    expect(fill('/Unknown cs 0 0 1 sc 0 0 10 10 re f')).toBe('0000FF');
+    expect(fill('/Unknown cs 0 0 0 0 sc 0 0 10 10 re f')).toBe('FFFFFF');
+  });
+
+  it('leaves a lone component alone where the space did not say what it means', () => {
+    // One number is grey in a device space and the strength of a colorant in a
+    // Separation, where 1 is the ink at full and reads DARK. Guessing inverts
+    // half the cases, so an unread space keeps the colour it had.
+    expect(fill('/Unknown cs 1 sc 0 0 10 10 re f')).toBe('000000');
+    // Named as a device space, it is grey and 1 is white.
+    expect(fill('/DeviceGray cs 1 sc 0 0 10 10 re f')).toBe('FFFFFF');
+  });
+
+  it('sets the stroke colour the same way', () => {
+    const v = interpretContent(
+      new TextEncoder().encode('/DeviceRGB CS 0 1 0 SC 2 w 0 0 m 10 10 l S'),
+      new Map(),
+    ).vectors[0];
+    expect(v?.strokeHex).toBe('00FF00');
+  });
+});
+
 describe('how the glyphs are painted, if at all (§9.3.6)', () => {
   it('marks the invisible modes, which is what an OCR layer uses', () => {
     // A scanned page carries its recognised words under the picture of the

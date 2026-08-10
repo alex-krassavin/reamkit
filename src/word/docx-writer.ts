@@ -35,6 +35,7 @@ import type {
   Chart,
   ChartBlock,
   Comment,
+  FloatAnchor,
   FontFamilyMap,
   Numbering,
   NumberingLevel,
@@ -122,13 +123,33 @@ const CHART_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.drawin
 const EMU_PER_PT = 12700;
 
 // The raster formats the PDF path embeds (detectImageFormat) → media naming.
+//
+// JPEG 2000 is deliberately absent. §15.2.14 lists the image parts a
+// WordprocessingML package may carry and it is not among them: no consumer of a
+// .docx displays one. Written anyway — which it was — the picture is a hole in
+// the page and the file carries the bytes for nothing. S2.pdf put six of them
+// in, and both of its plates came back blank in Word and in LibreOffice alike.
 const RASTER_MEDIA: Readonly<Record<string, { ext: string; contentType: string }>> = {
   png: { ext: 'png', contentType: 'image/png' },
   jpeg: { ext: 'jpeg', contentType: 'image/jpeg' },
-  jpeg2000: { ext: 'jp2', contentType: 'image/jp2' },
   gif: { ext: 'gif', contentType: 'image/gif' },
   bmp: { ext: 'bmp', contentType: 'image/bmp' },
 };
+
+/**
+ * Why an image was not written, in terms of the image — for the loss report,
+ * which used to say "image bytes missing" whatever the reason, including for
+ * bytes that were all there and in a format the format does not admit.
+ */
+function imageRefusal(resource: ResourceId | undefined, state: WriteState): string {
+  const bytes = resource === undefined ? undefined : state.resources.get(resource);
+  if (!bytes) return 'image bytes missing';
+  const format = detectImageFormat(bytes);
+  if (format === 'jpeg2000') {
+    return 'JPEG 2000 picture dropped — §15.2.14 admits no such image part, and no reader of a .docx shows one';
+  }
+  return `picture dropped — ${format ?? 'an unrecognised'} is not an image part a .docx may carry`;
+}
 
 // The writer round-trips a docx; it transfers image bytes verbatim, so it
 // names media files for EVERY OOXML image format — including the vector /
@@ -279,9 +300,7 @@ export function writeDocx(flow: FlowDoc): WriteResult {
     else sectPrByClosingIndex.set(sec.endIndex - 1, sp);
   });
 
-  flow.body.forEach((el, idx) => {
-    emitBlock(body, el, losses, state, docScope, sectPrByClosingIndex.get(idx));
-  });
+  emitBody(body, flow.body, losses, state, docScope, sectPrByClosingIndex);
   if (finalSectPr) body.push(finalSectPr);
 
   const documentXml =
@@ -663,6 +682,85 @@ export const docxWriter: DocumentWriter<FlowDoc> = {
   write: (doc) => writeDocx(doc),
 };
 
+/**
+ * The document body, with consecutive floating drawings gathered into one
+ * carrier paragraph.
+ *
+ * §20.4.2.3 — a floating drawing is placed by its anchor and not by where its
+ * paragraph lands, so the paragraph is only somewhere for the anchor to hang
+ * from. Given one paragraph EACH, a page of placed artwork is that many
+ * paragraphs of flow: 160F-2019.pdf's one-page form is 355 drawings, and Word
+ * ran it to sixteen pages of empty lines with the artwork anchored to them.
+ * Gathered, the page costs one paragraph however much is placed on it.
+ *
+ * A block that closes a section keeps its own paragraph — the section break
+ * rides that paragraph's properties, and it must be the last one in the
+ * section.
+ */
+function emitBody(
+  out: Array<string>,
+  blocks: ReadonlyArray<BodyElement>,
+  losses: Array<Loss>,
+  state: WriteState,
+  scope: PartScope,
+  sectPrByClosingIndex: ReadonlyMap<number, string>,
+): void {
+  let carried: Array<string> = [];
+  const flush = (): void => {
+    if (carried.length > 0) out.push(`<w:p>${carried.join('')}</w:p>`);
+    carried = [];
+  };
+  blocks.forEach((el, idx) => {
+    const closing = sectPrByClosingIndex.get(idx);
+    const anchored =
+      closing === undefined ? floatingDrawingRun(el, losses, state, scope) : undefined;
+    if (anchored !== undefined) {
+      carried.push(anchored);
+      return;
+    }
+    flush();
+    emitBlock(out, el, losses, state, scope, closing);
+  });
+  flush();
+}
+
+/**
+ * The run holding one block's drawing, when that block states where on the page
+ * it goes — `undefined` for everything that flows, which the ordinary block
+ * emitter handles.
+ */
+function floatingDrawingRun(
+  el: BodyElement,
+  losses: Array<Loss>,
+  state: WriteState,
+  scope: PartScope,
+): string | undefined {
+  if (el.kind === 'image' && el.image.float) {
+    const drawing = drawingXml(
+      el.image.resource,
+      el.image.width,
+      el.image.height,
+      el.image.altText,
+      state,
+      scope,
+      el.image.float,
+    );
+    if (drawing === '') {
+      losses.push({
+        severity: 'dropped',
+        feature: FEATURES.images,
+        detail: imageRefusal(el.image.resource, state),
+      });
+      return '';
+    }
+    return `<w:r>${drawing}</w:r>`;
+  }
+  if (el.kind === 'shape' && el.shape.float) {
+    return `<w:r>${shapeDrawingXml(el.shape, losses, state, scope)}</w:r>`;
+  }
+  return undefined;
+}
+
 function emitBlock(
   out: Array<string>,
   el: BodyElement,
@@ -690,6 +788,7 @@ function emitBlock(
       el.image.altText,
       state,
       scope,
+      el.image.float,
     );
     if (drawing) {
       // An image is emitted as a paragraph, so a closing section break rides
@@ -699,7 +798,11 @@ function emitBlock(
         `<w:p>${pPrWithSect(el.image.paragraphProperties, closingSectPr)}<w:r>${drawing}</w:r></w:p>`,
       );
     } else {
-      losses.push({ severity: 'dropped', feature: FEATURES.images, detail: 'image bytes missing' });
+      losses.push({
+        severity: 'dropped',
+        feature: FEATURES.images,
+        detail: imageRefusal(el.image.resource, state),
+      });
       if (closingSectPr) out.push(`<w:p><w:pPr>${closingSectPr}</w:pPr></w:p>`);
     }
     return;
@@ -768,8 +871,132 @@ function chartBlockXml(
   );
 }
 
+/**
+ * §20.4.2.3 — the frame a drawing is placed by: `wp:anchor` where the block
+ * states where on the page it belongs, `wp:inline` where it belongs in the run
+ * of text.
+ *
+ * Everything used to be inline. The document model has carried the anchor since
+ * the reader learned to read one, and the PDF reconstruction fills it in for
+ * every line and rule it lifts off a page — and all of it was thrown away here,
+ * so a converted page came out as a column of drawings stacked in document
+ * order. S2.pdf's two colour wheels marched down the left margin as eighteen
+ * separate wedges; 160F-2019.pdf's one-page form ran to sixteen pages, because
+ * each of its 355 drawings took a paragraph of its own in the flow.
+ *
+ * The attribute list is not decoration: CT_Anchor requires `simplePos`,
+ * `relativeHeight`, `behindDoc`, `locked`, `layoutInCell` and `allowOverlap`,
+ * and the children are a SEQUENCE — position, extent, wrap, docPr, graphic —
+ * that Word refuses out of order.
+ *
+ * @param float The placement, or `undefined` for a drawing that flows.
+ * @param cx    Width in EMU.
+ * @param cy    Height in EMU.
+ * @param head  The `wp:docPr` (and anything else) that precedes the graphic.
+ * @param graphic The `a:graphic` element the frame carries.
+ */
+function drawingFrame(
+  float: FloatAnchor | undefined,
+  cx: number,
+  cy: number,
+  head: string,
+  graphic: string,
+  state: WriteState,
+  rotation60k?: number,
+): string {
+  const WP_NS =
+    ' xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"';
+  if (!float) {
+    return `<w:drawing><wp:inline${WP_NS}><wp:extent cx="${cx}" cy="${cy}"/>${head}${graphic}</wp:inline></w:drawing>`;
+  }
+  const emu = (pt: number | undefined): number =>
+    Number.isFinite(pt) ? Math.round((pt ?? 0) * EMU_PER_PT) : 0;
+  const d = float.wrapDist;
+  const dist =
+    ` distT="${String(emu(d?.topPt))}" distB="${String(emu(d?.bottomPt))}"` +
+    ` distL="${String(emu(d?.leftPt))}" distR="${String(emu(d?.rightPt))}"`;
+  // §20.4.2.3 — the z-order among the page's floats. A drawing that states none
+  // still needs a number, and one that rises with document order keeps the
+  // painting order the source had.
+  const z = float.zOrder ?? ++state.drawingSeq;
+  const attrs =
+    `${dist} simplePos="0" relativeHeight="${String(z)}"` +
+    ` behindDoc="${float.behind ? '1' : '0'}" locked="0"` +
+    ` layoutInCell="${float.inCell === false ? '0' : '1'}" allowOverlap="1"`;
+  const pos = (
+    tag: 'wp:positionH' | 'wp:positionV',
+    p: { relativeFrom: string; offsetPt?: number; align?: string } | undefined,
+    fallback: string,
+  ): string => {
+    const from = p?.relativeFrom ?? fallback;
+    // An offset is the precise answer and an alignment the coarse one; a
+    // drawing that states neither sits at the origin of what it is measured in.
+    const body =
+      p?.align !== undefined
+        ? `<wp:align>${p.align}</wp:align>`
+        : `<wp:posOffset>${String(emu(p?.offsetPt))}</wp:posOffset>`;
+    return `<${tag} relativeFrom="${escapeAttr(from)}">${body}</${tag}>`;
+  };
+  // `notBeside` is the FRAME's mode — the drawing keeps its place and no text
+  // may stand beside it, which of the anchor's wraps is topAndBottom.
+  const side = ` wrapText="${float.wrapSide ?? 'bothSides'}"`;
+  const wrap =
+    float.wrap === 'square'
+      ? `<wp:wrapSquare${side}/>`
+      : float.wrap === 'tight'
+        ? `<wp:wrapTight${side}/>`
+        : float.wrap === 'through'
+          ? `<wp:wrapThrough${side}/>`
+          : float.wrap === 'topAndBottom' || float.wrap === 'notBeside'
+            ? '<wp:wrapTopAndBottom/>'
+            : '<wp:wrapNone/>';
+  return (
+    `<w:drawing><wp:anchor${WP_NS}${attrs}>` +
+    '<wp:simplePos x="0" y="0"/>' +
+    pos('wp:positionH', float.posH, 'column') +
+    pos('wp:positionV', float.posV, 'paragraph') +
+    `<wp:extent cx="${cx}" cy="${cy}"/>` +
+    effectExtentXml(cx, cy, rotation60k) +
+    wrap +
+    head +
+    graphic +
+    '</wp:anchor></w:drawing>'
+  );
+}
+
+/**
+ * §20.4.2.3 `wp:effectExtent` — how far the drawing reaches PAST the extent.
+ *
+ * `wp:extent` is the shape's own size, unrotated: fdo75722-dml.docx states
+ * 1964690 × 1240790 there and repeats it in `a:ext`, then carries the turn's
+ * overhang here (l 198120, t 433705, r 199390, b 430530). Written as zeroes —
+ * which they always were — a renderer reserves the flat box for a shape that
+ * draws across the turned one, and 160F-2019.pdf's "Nature", set on its side
+ * down the middle of a column, came back lying flat across it.
+ *
+ * A box `w × h` turned by θ about its centre spans `|w·cosθ| + |h·sinθ|`
+ * across and `|w·sinθ| + |h·cosθ|` down; half of each growth hangs off each
+ * side. A turn that makes the box no wider hangs off by nothing.
+ */
+function effectExtentXml(cx: number, cy: number, rotation60k: number | undefined): string {
+  const none = '<wp:effectExtent l="0" t="0" r="0" b="0"/>';
+  if (rotation60k === undefined || !Number.isFinite(rotation60k) || rotation60k % 21600000 === 0) {
+    return none;
+  }
+  const rad = ((rotation60k / 60000) * Math.PI) / 180;
+  const c = Math.abs(Math.cos(rad));
+  const s = Math.abs(Math.sin(rad));
+  const overhang = (span: number, turned: number): number =>
+    Math.max(0, Math.round((turned - span) / 2));
+  const h = overhang(cx, cx * c + cy * s);
+  const v = overhang(cy, cx * s + cy * c);
+  return h === 0 && v === 0
+    ? none
+    : `<wp:effectExtent l="${String(h)}" t="${String(v)}" r="${String(h)}" b="${String(v)}"/>`;
+}
+
 // Allocate (or reuse) a media part + image relationship for a resource, then
-// emit the w:drawing/wp:inline markup the reader round-trips. Returns '' when
+// emit the w:drawing markup the reader round-trips. Returns '' when
 // the resource has no bytes (an unresolved image — the caller drops it).
 function drawingXml(
   resource: ResourceId | undefined,
@@ -778,6 +1005,7 @@ function drawingXml(
   altText: string | undefined,
   state: WriteState,
   scope: PartScope,
+  float?: FloatAnchor,
 ): string {
   if (resource === undefined) return '';
   const relId = mediaRelId(resource, state, scope);
@@ -786,11 +1014,7 @@ function drawingXml(
   const cy = Math.round(heightPt * EMU_PER_PT);
   const id = ++state.drawingSeq;
   const descr = altText ? ` descr="${escapeAttr(altText)}"` : '';
-  return (
-    '<w:drawing>' +
-    '<wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">' +
-    `<wp:extent cx="${cx}" cy="${cy}"/>` +
-    `<wp:docPr id="${id}" name="Image ${id}"${descr}/>` +
+  const graphic =
     '<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">' +
     '<a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">' +
     '<pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">' +
@@ -799,7 +1023,14 @@ function drawingXml(
     '<pic:spPr><a:xfrm><a:off x="0" y="0"/>' +
     `<a:ext cx="${cx}" cy="${cy}"/></a:xfrm>` +
     '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr>' +
-    '</pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing>'
+    '</pic:pic></a:graphicData></a:graphic>';
+  return drawingFrame(
+    float,
+    cx,
+    cy,
+    `<wp:docPr id="${id}" name="Image ${id}"${descr}/>`,
+    graphic,
+    state,
   );
 }
 
@@ -824,11 +1055,7 @@ function shapeDrawingXml(
     `<wps:spPr>${xfrmXml(shape.transform, cx, cy)}${geomXml(shape.geometry)}` +
     `${fillXml(shape.fill)}${shape.line ? lineXml(shape.line) : ''}</wps:spPr>`;
   const txbx = shape.text ? txbxXml(shape.text, losses, state, scope) : '';
-  return (
-    '<w:drawing>' +
-    '<wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">' +
-    `<wp:extent cx="${cx}" cy="${cy}"/>` +
-    `<wp:docPr id="${id}" name="Shape ${id}"${descr}/>` +
+  const graphic =
     '<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">' +
     `<a:graphicData uri="${WPS_URI}">` +
     '<wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">' +
@@ -836,7 +1063,15 @@ function shapeDrawingXml(
     spPr +
     txbx +
     bodyPrXml(shape.text) +
-    '</wps:wsp></a:graphicData></a:graphic></wp:inline></w:drawing>'
+    '</wps:wsp></a:graphicData></a:graphic>';
+  return drawingFrame(
+    shape.float,
+    cx,
+    cy,
+    `<wp:docPr id="${id}" name="Shape ${id}"${descr}/>`,
+    graphic,
+    state,
+    shape.transform?.rotation60k,
   );
 }
 

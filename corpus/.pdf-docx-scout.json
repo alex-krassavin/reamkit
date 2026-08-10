@@ -1,0 +1,8002 @@
+[
+ {
+  "name": "bug1606566.pdf",
+  "best": 99,
+  "flow": {
+   "score": 99,
+   "note": "convert: Unrecognized document format (readers: docx, doc",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 99,
+   "note": "convert: Unrecognized document format (readers: docx, doc",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "GHOSTSCRIPT-698804-1-fuzzed.pdf",
+  "best": 97,
+  "flow": {
+   "score": 97,
+   "note": "raster: Command failed: mutool draw -c rgb -F pnm -o",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 97,
+   "note": "raster: Command failed: mutool draw -c rgb -F pnm -o",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "Pages-tree-refs.pdf",
+  "best": 97,
+  "flow": {
+   "score": 97,
+   "note": "raster: Command failed: mutool draw -c rgb -F pnm -o",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 97,
+   "note": "raster: Command failed: mutool draw -c rgb -F pnm -o",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "REDHAT-1531897-0.pdf",
+  "best": 97,
+  "flow": {
+   "score": 97,
+   "note": "raster: Command failed: mutool draw -c rgb -F pnm -o",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 97,
+   "note": "raster: Command failed: mutool draw -c rgb -F pnm -o",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "auth-event-ef-open.pdf",
+  "best": 97,
+  "flow": {
+   "score": 97,
+   "note": "raster: Command failed: mutool draw -c rgb -F pnm -o",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 97,
+   "note": "raster: Command failed: mutool draw -c rgb -F pnm -o",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bomb_giant.pdf",
+  "best": 97,
+  "flow": {
+   "score": 97,
+   "note": "raster: spawnSync mutool ETIMEDOUT",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 97,
+   "note": "raster: spawnSync mutool ETIMEDOUT",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1020226.pdf",
+  "best": 97,
+  "flow": {
+   "score": 97,
+   "note": "raster: Command failed: mutool draw -c rgb -F pnm -o",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 97,
+   "note": "raster: Command failed: mutool draw -c rgb -F pnm -o",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug1782186.pdf",
+  "best": 97,
+  "flow": {
+   "score": 97,
+   "note": "raster: Command failed: mutool draw -c rgb -F pnm -o",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 97,
+   "note": "raster: Command failed: mutool draw -c rgb -F pnm -o",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bug_jpx.pdf",
+  "best": 97,
+  "flow": {
+   "score": 97,
+   "note": "raster: Command failed: mutool draw -c rgb -F pnm -o",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 97,
+   "note": "raster: Command failed: mutool draw -c rgb -F pnm -o",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "encrypted-attachment.pdf",
+  "best": 97,
+  "flow": {
+   "score": 97,
+   "note": "raster: Command failed: mutool draw -c rgb -F pnm -o",
+   "pages": [
+    0,
+    0
+   ]
+  },
+  "positional": {
+   "score": 97,
+   "note": "raster: Command failed: mutool draw -c rgb -F pnm -o",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-context-reuse.pdf",
+  "best": 1,
+  "flow": {
+   "score": 1,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 1,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-symhuffrefineseveral.pdf",
+  "best": 1,
+  "flow": {
+   "score": 1,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 1,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "filled-background.pdf",
+  "best": 1,
+  "flow": {
+   "score": 1,
+   "note": "pages 1≠3",
+   "pages": [
+    1,
+    3
+   ]
+  },
+  "positional": {
+   "score": 1,
+   "note": "pages 1≠3",
+   "pages": [
+    1,
+    3
+   ]
+  }
+ },
+ {
+  "name": "issue11124.pdf",
+  "best": 1,
+  "flow": {
+   "score": 1,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 1,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-symhuffrefine-textrefine.pdf",
+  "best": 0.9969,
+  "flow": {
+   "score": 0.9969,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.9969,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "franz_2.pdf",
+  "best": 0.94,
+  "flow": {
+   "score": 0.9768,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.94,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-composite-and-xnor-refine.pdf",
+  "best": 0.9349,
+  "flow": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-composite-or-xor-replace-refine.pdf",
+  "best": 0.9349,
+  "flow": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-halftone-refine.pdf",
+  "best": 0.9349,
+  "flow": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-refine-customat-tpgron.pdf",
+  "best": 0.9349,
+  "flow": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-refine-customat.pdf",
+  "best": 0.9349,
+  "flow": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-refine-lossless.pdf",
+  "best": 0.9349,
+  "flow": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-refine-refine.pdf",
+  "best": 0.9349,
+  "flow": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-refine-template1-tpgron.pdf",
+  "best": 0.9349,
+  "flow": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-refine-template1.pdf",
+  "best": 0.9349,
+  "flow": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-refine-tpgron.pdf",
+  "best": 0.9349,
+  "flow": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-refine.pdf",
+  "best": 0.9349,
+  "flow": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-texthuffrefine.pdf",
+  "best": 0.9349,
+  "flow": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-texthuffrefineB15.pdf",
+  "best": 0.9349,
+  "flow": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-texthuffrefinecustomdims.pdf",
+  "best": 0.9349,
+  "flow": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-texthuffrefinecustompos.pdf",
+  "best": 0.9349,
+  "flow": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-texthuffrefinecustomsize.pdf",
+  "best": 0.9349,
+  "flow": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-trailing-7fff-stripped-harder-refine.pdf",
+  "best": 0.9349,
+  "flow": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug946506.pdf",
+  "best": 0.8974,
+  "flow": {
+   "score": 0.9135,
+   "note": "pages 2≠1",
+   "pages": [
+    2,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.8974,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1755507.pdf",
+  "best": 0.8439,
+  "flow": {
+   "score": 0.8455,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.8439,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "calgray.pdf",
+  "best": 0.6727,
+  "flow": {
+   "score": 0.6759,
+   "note": "",
+   "pages": [
+    3,
+    3
+   ]
+  },
+  "positional": {
+   "score": 0.6727,
+   "note": "",
+   "pages": [
+    3,
+    3
+   ]
+  }
+ },
+ {
+  "name": "calrgb.pdf",
+  "best": 0.6408,
+  "flow": {
+   "score": 0.6533,
+   "note": "",
+   "pages": [
+    17,
+    17
+   ]
+  },
+  "positional": {
+   "score": 0.6408,
+   "note": "",
+   "pages": [
+    17,
+    17
+   ]
+  }
+ },
+ {
+  "name": "bug852992_reduced.pdf",
+  "best": 0.5926,
+  "flow": {
+   "score": 0.5926,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.5926,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "issue10339_reduced.pdf",
+  "best": 0.5801,
+  "flow": {
+   "score": 0.5801,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.5801,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "ccitt_EndOfBlock_false.pdf",
+  "best": 0.5683,
+  "flow": {
+   "score": 0.5683,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.5683,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "TAMReview.pdf",
+  "best": 0.534,
+  "flow": {
+   "score": 0.534,
+   "note": "pages 1≠23",
+   "pages": [
+    1,
+    23
+   ]
+  },
+  "positional": {
+   "score": 0.534,
+   "note": "pages 1≠23",
+   "pages": [
+    1,
+    23
+   ]
+  }
+ },
+ {
+  "name": "SimFang-variant.pdf",
+  "best": 0.4621,
+  "flow": {
+   "score": 0.4621,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.4634,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "function_based_shading.pdf",
+  "best": 0.4578,
+  "flow": {
+   "score": 0.4578,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.4578,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "S2.pdf",
+  "best": 0.4558,
+  "flow": {
+   "score": 0.4559,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.4558,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "XiaoBiaoSong.pdf",
+  "best": 0.4502,
+  "flow": {
+   "score": 0.4502,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.4756,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "function_based_shading_cmyk.pdf",
+  "best": 0.4414,
+  "flow": {
+   "score": 0.4414,
+   "note": "pages 1≠2",
+   "pages": [
+    1,
+    2
+   ]
+  },
+  "positional": {
+   "score": 0.4414,
+   "note": "pages 1≠2",
+   "pages": [
+    1,
+    2
+   ]
+  }
+ },
+ {
+  "name": "endchar.pdf",
+  "best": 0.3836,
+  "flow": {
+   "score": 0.3836,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.3836,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "copy_paste_ligatures.pdf",
+  "best": 0.3786,
+  "flow": {
+   "score": 0.3786,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.3786,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "chrome-text-selection-markedContent.pdf",
+  "best": 0.3096,
+  "flow": {
+   "score": 0.4187,
+   "note": "pages 4≠1",
+   "pages": [
+    4,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.3096,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "highlights.pdf",
+  "best": 0.2783,
+  "flow": {
+   "score": 0.2783,
+   "note": "pages 1≠14",
+   "pages": [
+    1,
+    14
+   ]
+  },
+  "positional": {
+   "score": 0.2783,
+   "note": "pages 1≠14",
+   "pages": [
+    1,
+    14
+   ]
+  }
+ },
+ {
+  "name": "comments.pdf",
+  "best": 0.2716,
+  "flow": {
+   "score": 0.2716,
+   "note": "pages 5≠14",
+   "pages": [
+    5,
+    14
+   ]
+  },
+  "positional": {
+   "score": 0.2716,
+   "note": "pages 5≠14",
+   "pages": [
+    5,
+    14
+   ]
+  }
+ },
+ {
+  "name": "freeculture.pdf",
+  "best": 0.2432,
+  "flow": {
+   "score": 0.2432,
+   "note": "",
+   "pages": [
+    352,
+    352
+   ]
+  },
+  "positional": {
+   "score": 98,
+   "note": "soffice would not open our .docx",
+   "pages": [
+    0,
+    0
+   ]
+  }
+ },
+ {
+  "name": "canvas.pdf",
+  "best": 0.2023,
+  "flow": {
+   "score": 0.2023,
+   "note": "",
+   "pages": [
+    2,
+    2
+   ]
+  },
+  "positional": {
+   "score": 0.2067,
+   "note": "",
+   "pages": [
+    2,
+    2
+   ]
+  }
+ },
+ {
+  "name": "alphatrans.pdf",
+  "best": 0.1874,
+  "flow": {
+   "score": 0.1874,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.1876,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1844576.pdf",
+  "best": 0.1815,
+  "flow": {
+   "score": 0.1815,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.1819,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "Brotli-Prototype-FileA.pdf",
+  "best": 0.179,
+  "flow": {
+   "score": 0.179,
+   "note": "pages 1≠25",
+   "pages": [
+    1,
+    25
+   ]
+  },
+  "positional": {
+   "score": 0.179,
+   "note": "pages 1≠25",
+   "pages": [
+    1,
+    25
+   ]
+  }
+ },
+ {
+  "name": "issue10572.pdf",
+  "best": 0.1787,
+  "flow": {
+   "score": 0.1787,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.1787,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "coons-allflags-withfunction.pdf",
+  "best": 0.1711,
+  "flow": {
+   "score": 0.1711,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.1711,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug911034.pdf",
+  "best": 0.1669,
+  "flow": {
+   "score": 0.1669,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.1669,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "issue10084_reduced.pdf",
+  "best": 0.1624,
+  "flow": {
+   "score": 0.1624,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.1781,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1992868.pdf",
+  "best": 0.1526,
+  "flow": {
+   "score": 0.1526,
+   "note": "pages 1≠14",
+   "pages": [
+    1,
+    14
+   ]
+  },
+  "positional": {
+   "score": 0.1526,
+   "note": "pages 1≠14",
+   "pages": [
+    1,
+    14
+   ]
+  }
+ },
+ {
+  "name": "bug1922766.pdf",
+  "best": 0.1467,
+  "flow": {
+   "score": 0.1467,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.1479,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "issue10519_reduced.pdf",
+  "best": 0.1351,
+  "flow": {
+   "score": 0.1672,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.1351,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1802506.pdf",
+  "best": 0.1316,
+  "flow": {
+   "score": 0.1316,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.1316,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "blendmode.pdf",
+  "best": 0.1249,
+  "flow": {
+   "score": 0.1249,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.125,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1885505.pdf",
+  "best": 0.1206,
+  "flow": {
+   "score": 0.1206,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.1206,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1844583.pdf",
+  "best": 0.12,
+  "flow": {
+   "score": 0.1201,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.12,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1934157.pdf",
+  "best": 0.1132,
+  "flow": {
+   "score": 0.1132,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.1137,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "image-rotated-black-white-ratio.pdf",
+  "best": 0.1131,
+  "flow": {
+   "score": 0.1131,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.1131,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1669099.pdf",
+  "best": 0.11,
+  "flow": {
+   "score": 0.1444,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.11,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-symhuffB5B3-texthuffB7B9B12.pdf",
+  "best": 0.1089,
+  "flow": {
+   "score": 0.1089,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.1089,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "issue11144_reduced.pdf",
+  "best": 0.1059,
+  "flow": {
+   "score": 0.1059,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.1059,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1151216.pdf",
+  "best": 0.1037,
+  "flow": {
+   "score": 0.1037,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.1037,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1872721.pdf",
+  "best": 0.1021,
+  "flow": {
+   "score": 0.1021,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.1021,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-symbolrefine-textrefine.pdf",
+  "best": 0.1019,
+  "flow": {
+   "score": 0.1019,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.1019,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "issue11362.pdf",
+  "best": 0.1006,
+  "flow": {
+   "score": 0.1198,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.1006,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-halftone-composite.pdf",
+  "best": 0.0963,
+  "flow": {
+   "score": 0.0963,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0963,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "issue11549_reduced.pdf",
+  "best": 0.0952,
+  "flow": {
+   "score": 0.0952,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0952,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "ThuluthFeatures.pdf",
+  "best": 0.0947,
+  "flow": {
+   "score": 0.0947,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0947,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "Type3WordSpacing.pdf",
+  "best": 0.0912,
+  "flow": {
+   "score": 0.1205,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0912,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug898853.pdf",
+  "best": 0.091,
+  "flow": {
+   "score": 0.091,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.091,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1308536.pdf",
+  "best": 0.0902,
+  "flow": {
+   "score": 0.1506,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0902,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1868759.pdf",
+  "best": 0.0901,
+  "flow": {
+   "score": 0.0901,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0983,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1175962.pdf",
+  "best": 0.0882,
+  "flow": {
+   "score": 0.1186,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0882,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1799927.pdf",
+  "best": 0.0836,
+  "flow": {
+   "score": 0.0836,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0836,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1650302_reduced.pdf",
+  "best": 0.0813,
+  "flow": {
+   "score": 0.0813,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0813,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1108301.pdf",
+  "best": 0.0802,
+  "flow": {
+   "score": 0.0806,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0802,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "issue11131_reduced.pdf",
+  "best": 0.0753,
+  "flow": {
+   "score": 0.0753,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0753,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug894572.pdf",
+  "best": 0.0749,
+  "flow": {
+   "score": 0.097,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0749,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "cff_bluescale_small_zones.pdf",
+  "best": 0.0732,
+  "flow": {
+   "score": 0.0732,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0732,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "IndexedCS_negative_and_high.pdf",
+  "best": 0.0731,
+  "flow": {
+   "score": 0.0731,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0731,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "gradientfill.pdf",
+  "best": 0.073,
+  "flow": {
+   "score": 0.073,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.073,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-texthuffrefinecustom.pdf",
+  "best": 0.0728,
+  "flow": {
+   "score": 0.0728,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0728,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-texthuffrefinecustomposdims.pdf",
+  "best": 0.0728,
+  "flow": {
+   "score": 0.0728,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0728,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-big-segmentid.pdf",
+  "best": 0.0727,
+  "flow": {
+   "score": 0.0727,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0727,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-symbolrefineseveral.pdf",
+  "best": 0.0727,
+  "flow": {
+   "score": 0.0727,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0727,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-halftone-10bpp-mmr.pdf",
+  "best": 0.07,
+  "flow": {
+   "score": 0.07,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.07,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "highlight_popup.pdf",
+  "best": 0.0672,
+  "flow": {
+   "score": 0.0672,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0676,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1671312_reduced.pdf",
+  "best": 0.0648,
+  "flow": {
+   "score": 0.0648,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0648,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "cidfont_cmap_overflow.pdf",
+  "best": 0.0636,
+  "flow": {
+   "score": 0.0872,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0636,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "images.pdf",
+  "best": 0.0623,
+  "flow": {
+   "score": 0.0654,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0623,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "issue11242_reduced.pdf",
+  "best": 0.0617,
+  "flow": {
+   "score": 0.0617,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0617,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug920426.pdf",
+  "best": 0.0609,
+  "flow": {
+   "score": 0.1697,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0609,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "annotation-square-circle-without-appearance.pdf",
+  "best": 0.0607,
+  "flow": {
+   "score": 0.0607,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0608,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "devicen.pdf",
+  "best": 0.0594,
+  "flow": {
+   "score": 0.0594,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0594,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "cmykjpeg.pdf",
+  "best": 0.0575,
+  "flow": {
+   "score": 0.0575,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0575,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "22060_A1_01_Plans.pdf",
+  "best": 0.0562,
+  "flow": {
+   "score": 0.0562,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0562,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1863910.pdf",
+  "best": 0.0555,
+  "flow": {
+   "score": 0.0555,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0555,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug859204.pdf",
+  "best": 0.052,
+  "flow": {
+   "score": 0.057,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.052,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1027533.pdf",
+  "best": 0.0502,
+  "flow": {
+   "score": 0.0516,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0502,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1978317.pdf",
+  "best": 0.049,
+  "flow": {
+   "score": 0.0506,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.049,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "issue11403_reduced.pdf",
+  "best": 0.0478,
+  "flow": {
+   "score": 0.1015,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0478,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1157493.pdf",
+  "best": 0.0431,
+  "flow": {
+   "score": 0.0533,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0431,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "images_1bit_grayscale.pdf",
+  "best": 0.0424,
+  "flow": {
+   "score": 0.0424,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0424,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1871353.1.pdf",
+  "best": 0.0396,
+  "flow": {
+   "score": 0.0396,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0396,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "complex_ttf_font.pdf",
+  "best": 0.0393,
+  "flow": {
+   "score": 0.0393,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0393,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1538111.pdf",
+  "best": 0.0378,
+  "flow": {
+   "score": 0.0378,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0378,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "ShowText-ShadingPattern.pdf",
+  "best": 0.0372,
+  "flow": {
+   "score": 0.0509,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0372,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "issue10665_reduced.pdf",
+  "best": 0.0367,
+  "flow": {
+   "score": 0.0782,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0367,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1721218_reduced.pdf",
+  "best": 0.0355,
+  "flow": {
+   "score": 0.0355,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0362,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "font_ascent_descent.pdf",
+  "best": 0.0348,
+  "flow": {
+   "score": 0.0348,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0348,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1337429.pdf",
+  "best": 0.0345,
+  "flow": {
+   "score": 0.0829,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0345,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "colorkeymask.pdf",
+  "best": 0.034,
+  "flow": {
+   "score": 0.034,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.034,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug850854.pdf",
+  "best": 0.0339,
+  "flow": {
+   "score": 0.0771,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0339,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "annotation_hidden_noview.pdf",
+  "best": 0.0336,
+  "flow": {
+   "score": 0.0354,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0336,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-refine-page-subrect.pdf",
+  "best": 0.0335,
+  "flow": {
+   "score": 0.0335,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0335,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug2026037.pdf",
+  "best": 0.0306,
+  "flow": {
+   "score": 0.0306,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0306,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1889122.pdf",
+  "best": 0.0302,
+  "flow": {
+   "score": 0.0302,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0302,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1186827.pdf",
+  "best": 0.0288,
+  "flow": {
+   "score": 0.0843,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0288,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1245391_reduced.pdf",
+  "best": 0.0287,
+  "flow": {
+   "score": 0.0287,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.066,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1252420.pdf",
+  "best": 0.0284,
+  "flow": {
+   "score": 0.0984,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0284,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1011159.pdf",
+  "best": 0.0282,
+  "flow": {
+   "score": 0.0282,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0341,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1050040.pdf",
+  "best": 0.0267,
+  "flow": {
+   "score": 0.0643,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0267,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1068432.pdf",
+  "best": 0.0262,
+  "flow": {
+   "score": 0.0262,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0262,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1703683_page2_reduced.pdf",
+  "best": 0.0261,
+  "flow": {
+   "score": 0.0261,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0261,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "ZapfDingbats.pdf",
+  "best": 0.0255,
+  "flow": {
+   "score": 0.086,
+   "note": "",
+   "pages": [
+    2,
+    2
+   ]
+  },
+  "positional": {
+   "score": 0.0255,
+   "note": "",
+   "pages": [
+    2,
+    2
+   ]
+  }
+ },
+ {
+  "name": "bug1942064.pdf",
+  "best": 0.0254,
+  "flow": {
+   "score": 0.0254,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0254,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1019475_1.pdf",
+  "best": 0.0239,
+  "flow": {
+   "score": 0.0686,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0239,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1065245.pdf",
+  "best": 0.0235,
+  "flow": {
+   "score": 0.0235,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0235,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1552113.pdf",
+  "best": 0.0235,
+  "flow": {
+   "score": 0.1162,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0235,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "issue10542_reduced.pdf",
+  "best": 0.022,
+  "flow": {
+   "score": 0.061,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.022,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "clippath.pdf",
+  "best": 0.0214,
+  "flow": {
+   "score": 0.0214,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0214,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "glyph_accent.pdf",
+  "best": 0.0208,
+  "flow": {
+   "score": 0.0292,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0208,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1132849.pdf",
+  "best": 0.02,
+  "flow": {
+   "score": 0.0468,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.02,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug878026.pdf",
+  "best": 0.0195,
+  "flow": {
+   "score": 0.0649,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0195,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "highlight.pdf",
+  "best": 0.019,
+  "flow": {
+   "score": 0.0211,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.019,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-symhuffrefineone.pdf",
+  "best": 0.0179,
+  "flow": {
+   "score": 0.0179,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0179,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "issue1002.pdf",
+  "best": 0.0164,
+  "flow": {
+   "score": 0.0296,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0164,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "ArabicCIDTrueType.pdf",
+  "best": 0.0162,
+  "flow": {
+   "score": 0.0162,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0163,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1771477.pdf",
+  "best": 0.0161,
+  "flow": {
+   "score": 0.0161,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0197,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1669097.pdf",
+  "best": 0.015,
+  "flow": {
+   "score": 0.015,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.015,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "franz.pdf",
+  "best": 0.0144,
+  "flow": {
+   "score": 0.0716,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0144,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug886717.pdf",
+  "best": 0.0143,
+  "flow": {
+   "score": 0.044,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0143,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "160F-2019.pdf",
+  "best": 0.0141,
+  "flow": {
+   "score": 0.0467,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0141,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1627427_reduced.pdf",
+  "best": 0.0138,
+  "flow": {
+   "score": 0.0612,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0138,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "freetext_no_appearance.pdf",
+  "best": 0.0138,
+  "flow": {
+   "score": 0.5748,
+   "note": "pages 352≠1",
+   "pages": [
+    352,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0138,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1046314.pdf",
+  "best": 0.0137,
+  "flow": {
+   "score": 0.0254,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0137,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1671312_ArialNarrow.pdf",
+  "best": 0.0137,
+  "flow": {
+   "score": 0.0739,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0137,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1146106.pdf",
+  "best": 0.0136,
+  "flow": {
+   "score": 0.0136,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0136,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1250079.pdf",
+  "best": 0.0131,
+  "flow": {
+   "score": 0.0565,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0131,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug866395.pdf",
+  "best": 0.013,
+  "flow": {
+   "score": 0.0455,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.013,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "issue11477_reduced.pdf",
+  "best": 0.0128,
+  "flow": {
+   "score": 0.086,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0128,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1873345.pdf",
+  "best": 0.0123,
+  "flow": {
+   "score": 0.0585,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0123,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "issue10640.pdf",
+  "best": 0.0122,
+  "flow": {
+   "score": 0.0407,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0122,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "issue10438_reduced.pdf",
+  "best": 0.0121,
+  "flow": {
+   "score": 0.0489,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0121,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "arial_unicode_en_cidfont.pdf",
+  "best": 0.0119,
+  "flow": {
+   "score": 0.0119,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0119,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "issue11150_reduced.pdf",
+  "best": 0.0118,
+  "flow": {
+   "score": 0.0505,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0118,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "issue1055r.pdf",
+  "best": 0.0117,
+  "flow": {
+   "score": 0.0281,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0117,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "german-umlaut-r.pdf",
+  "best": 0.0108,
+  "flow": {
+   "score": 0.0267,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0108,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1743245.pdf",
+  "best": 0.0108,
+  "flow": {
+   "score": 0.0108,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0108,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "file_url_link.pdf",
+  "best": 0.0107,
+  "flow": {
+   "score": 0.0851,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0107,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "annotation-text-widget.pdf",
+  "best": 0.0105,
+  "flow": {
+   "score": 0.0238,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0105,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug893730.pdf",
+  "best": 0.0104,
+  "flow": {
+   "score": 0.051,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0104,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bigboundingbox.pdf",
+  "best": 0.0102,
+  "flow": {
+   "score": 0.0362,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0102,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "annotation-polyline-polygon-without-appearance.pdf",
+  "best": 0.01,
+  "flow": {
+   "score": 0.0101,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.01,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1883609.pdf",
+  "best": 0.01,
+  "flow": {
+   "score": 0.0307,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.01,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1865341.pdf",
+  "best": 0.0099,
+  "flow": {
+   "score": 0.0099,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0099,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug847420.pdf",
+  "best": 0.0097,
+  "flow": {
+   "score": 0.0902,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0097,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1811668_reduced.pdf",
+  "best": 0.0096,
+  "flow": {
+   "score": 0.0666,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0096,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug766086.pdf",
+  "best": 0.0096,
+  "flow": {
+   "score": 0.0907,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0096,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1997343.pdf",
+  "best": 0.0093,
+  "flow": {
+   "score": 0.0259,
+   "note": "",
+   "pages": [
+    2,
+    2
+   ]
+  },
+  "positional": {
+   "score": 0.0093,
+   "note": "",
+   "pages": [
+    2,
+    2
+   ]
+  }
+ },
+ {
+  "name": "bug1020858.pdf",
+  "best": 0.0093,
+  "flow": {
+   "score": 0.0238,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0093,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "boundingBox_invalid.pdf",
+  "best": 0.0092,
+  "flow": {
+   "score": 0.0093,
+   "note": "",
+   "pages": [
+    3,
+    3
+   ]
+  },
+  "positional": {
+   "score": 0.0092,
+   "note": "",
+   "pages": [
+    3,
+    3
+   ]
+  }
+ },
+ {
+  "name": "TrueType_without_cmap.pdf",
+  "best": 0.009,
+  "flow": {
+   "score": 0.0093,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.009,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "issue11016_reduced.pdf",
+  "best": 0.0088,
+  "flow": {
+   "score": 0.0222,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0088,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug903856.pdf",
+  "best": 0.0088,
+  "flow": {
+   "score": 0.013,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0088,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "ContentStreamNoCycleType3insideType3.pdf",
+  "best": 0.0088,
+  "flow": {
+   "score": 0.0088,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0088,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "file_pdfjs_test.pdf",
+  "best": 0.0085,
+  "flow": {
+   "score": 0.0683,
+   "note": "",
+   "pages": [
+    5,
+    5
+   ]
+  },
+  "positional": {
+   "score": 0.0085,
+   "note": "",
+   "pages": [
+    5,
+    5
+   ]
+  }
+ },
+ {
+  "name": "bug1795263.pdf",
+  "best": 0.0084,
+  "flow": {
+   "score": 0.0085,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0084,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "issue11442_reduced.pdf",
+  "best": 0.0084,
+  "flow": {
+   "score": 0.0801,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0084,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug860632.pdf",
+  "best": 0.0084,
+  "flow": {
+   "score": 0.0208,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0084,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug921409.pdf",
+  "best": 0.008,
+  "flow": {
+   "score": 0.0157,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.008,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "issue11279.pdf",
+  "best": 0.0079,
+  "flow": {
+   "score": 0.008,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0079,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "colors.pdf",
+  "best": 0.0076,
+  "flow": {
+   "score": 0.0076,
+   "note": "",
+   "pages": [
+    2,
+    2
+   ]
+  },
+  "positional": {
+   "score": 0.0076,
+   "note": "",
+   "pages": [
+    2,
+    2
+   ]
+  }
+ },
+ {
+  "name": "inks.pdf",
+  "best": 0.0076,
+  "flow": {
+   "score": 0.0077,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0076,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "ContentStreamCycleType3insideType3.pdf",
+  "best": 0.0075,
+  "flow": {
+   "score": 0.009,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0075,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1815476.pdf",
+  "best": 0.0072,
+  "flow": {
+   "score": 0.0343,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0072,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bad-PageLabels.pdf",
+  "best": 0.0071,
+  "flow": {
+   "score": 0.0744,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0071,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1919513.pdf",
+  "best": 0.0069,
+  "flow": {
+   "score": 0.0156,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0069,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1392647.pdf",
+  "best": 0.0068,
+  "flow": {
+   "score": 0.0131,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0068,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "annotation-text-without-popup.pdf",
+  "best": 0.0068,
+  "flow": {
+   "score": 0.0106,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0068,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "IdentityToUnicodeMap_charCodeOf.pdf",
+  "best": 0.0067,
+  "flow": {
+   "score": 0.0362,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0067,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "Test-plusminus.pdf",
+  "best": 0.0062,
+  "flow": {
+   "score": 0.0102,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0062,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1200096.pdf",
+  "best": 0.0061,
+  "flow": {
+   "score": 0.081,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0061,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1028735.pdf",
+  "best": 0.006,
+  "flow": {
+   "score": 0.006,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.006,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "checkbox_no_appearance.pdf",
+  "best": 0.0058,
+  "flow": {
+   "score": 0.0058,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0058,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug900822.pdf",
+  "best": 0.0054,
+  "flow": {
+   "score": 0.0153,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0054,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1513120_reduced.pdf",
+  "best": 0.0054,
+  "flow": {
+   "score": 0.0054,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0065,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1820909.1.pdf",
+  "best": 0.0053,
+  "flow": {
+   "score": 0.0093,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0053,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "inks_basic.pdf",
+  "best": 0.0051,
+  "flow": {
+   "score": 0.0051,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0051,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug2014080.pdf",
+  "best": 0.0051,
+  "flow": {
+   "score": 0.0113,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0051,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1539074.1.pdf",
+  "best": 0.005,
+  "flow": {
+   "score": 0.005,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.005,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1953099.pdf",
+  "best": 0.005,
+  "flow": {
+   "score": 0.025,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.005,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "hello_world_rotated.pdf",
+  "best": 0.0049,
+  "flow": {
+   "score": 0.0055,
+   "note": "",
+   "pages": [
+    5,
+    5
+   ]
+  },
+  "positional": {
+   "score": 0.0049,
+   "note": "",
+   "pages": [
+    5,
+    5
+   ]
+  }
+ },
+ {
+  "name": "bug2013793.pdf",
+  "best": 0.0047,
+  "flow": {
+   "score": 0.0289,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0047,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "issue10388_reduced.pdf",
+  "best": 0.0045,
+  "flow": {
+   "score": 0.0109,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0045,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "issue11473.pdf",
+  "best": 0.0044,
+  "flow": {
+   "score": 0.0045,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0044,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "extgstate.pdf",
+  "best": 0.0044,
+  "flow": {
+   "score": 0.0044,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0044,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "annotation-line-without-appearance-empty-Rect.pdf",
+  "best": 0.0043,
+  "flow": {
+   "score": 0.0044,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0043,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "annotation-tx2.pdf",
+  "best": 0.0038,
+  "flow": {
+   "score": 0.0038,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0053,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "basicapi.pdf",
+  "best": 0.0038,
+  "flow": {
+   "score": 0.0048,
+   "note": "",
+   "pages": [
+    3,
+    3
+   ]
+  },
+  "positional": {
+   "score": 0.0038,
+   "note": "",
+   "pages": [
+    3,
+    3
+   ]
+  }
+ },
+ {
+  "name": "issue1045.pdf",
+  "best": 0.0037,
+  "flow": {
+   "score": 0.0174,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0037,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "annotation-highlight-without-appearance.pdf",
+  "best": 0.0037,
+  "flow": {
+   "score": 0.0048,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0037,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "freetexts.pdf",
+  "best": 0.0037,
+  "flow": {
+   "score": 0.0152,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0037,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "annotation-tx3.pdf",
+  "best": 0.0036,
+  "flow": {
+   "score": 0.0036,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0061,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug868745.pdf",
+  "best": 0.0036,
+  "flow": {
+   "score": 0.0463,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0036,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1365930.pdf",
+  "best": 0.0035,
+  "flow": {
+   "score": 0.0052,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0035,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "annotation-choice-widget.pdf",
+  "best": 0.0034,
+  "flow": {
+   "score": 0.0086,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0034,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "Embedded_font.pdf",
+  "best": 0.0034,
+  "flow": {
+   "score": 0.0035,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0034,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "issue11555.pdf",
+  "best": 0.0029,
+  "flow": {
+   "score": 0.0029,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0029,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "evaljs.pdf",
+  "best": 0.0028,
+  "flow": {
+   "score": 0.0033,
+   "note": "",
+   "pages": [
+    2,
+    2
+   ]
+  },
+  "positional": {
+   "score": 0.0028,
+   "note": "",
+   "pages": [
+    2,
+    2
+   ]
+  }
+ },
+ {
+  "name": "bug864847.pdf",
+  "best": 0.0026,
+  "flow": {
+   "score": 0.009,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0026,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "annotation-strikeout.pdf",
+  "best": 0.0026,
+  "flow": {
+   "score": 0.0034,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0026,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1947248_forms.pdf",
+  "best": 0.0025,
+  "flow": {
+   "score": 0.0025,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0025,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "asciihexdecode.pdf",
+  "best": 0.0025,
+  "flow": {
+   "score": 0.0025,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0025,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "close-path-bug.pdf",
+  "best": 0.0024,
+  "flow": {
+   "score": 0.0024,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0024,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1727053.pdf",
+  "best": 0.0024,
+  "flow": {
+   "score": 0.0061,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0024,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "dates_save.pdf",
+  "best": 0.0023,
+  "flow": {
+   "score": 0.0029,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0023,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1708040.pdf",
+  "best": 0.0023,
+  "flow": {
+   "score": 0.2575,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0023,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "annotation-ink-without-appearance.pdf",
+  "best": 0.0022,
+  "flow": {
+   "score": 0.0038,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0022,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "fields_order.pdf",
+  "best": 0.0022,
+  "flow": {
+   "score": 0.0022,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0022,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "issue10529.pdf",
+  "best": 0.0022,
+  "flow": {
+   "score": 0.0045,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0022,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "dates.pdf",
+  "best": 0.0022,
+  "flow": {
+   "score": 0.0022,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0022,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1937438_af_from_latex.pdf",
+  "best": 0.0021,
+  "flow": {
+   "score": 0.0043,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0021,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1937438_mml_from_latex.pdf",
+  "best": 0.0019,
+  "flow": {
+   "score": 0.0036,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0019,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "annotation-line-without-appearance.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0019,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1675139.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0026,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-composite-and-xnor-halftone.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-composite-and-xnor-text.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-composite-and-xnor.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-composite-or-xor-replace-halftone.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-composite-or-xor-replace-text.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-composite-or-xor-replace.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-customat-tpgdon.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-customat.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-halftone-10bpp.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-halftone-grid.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-halftone-skip-dummy.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-halftone-skip-grid-template1.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-halftone-skip-grid-template2.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-halftone-skip-grid-template3.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-halftone-skip-grid.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-halftone-template1.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-halftone-template2.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-halftone-template3.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-halftone.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-initially-unknown-size.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-mmr.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-p32-eof.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-randomaccess.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-refine-page.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-stripe-initially-unknown-height.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-stripe-last-implicit.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-stripe-single-no-end-of-stripe.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-stripe-single.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-stripe.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-empty.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-negative-sbdsoffset.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-refine.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-symbolrefineone-customat.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-symbolrefineone-template1.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-symbolrefineone.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-symhuff-texthuff.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-symhuff-texthuffB10B13.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-symhuffcustom-texthuffcustom.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-symhuffuncompressed-texthuff.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-textbottomleft.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-textbottomlefttranspose.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-textbottomright.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-textbottomrighttranspose.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-textcomposite.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-textrefine-customat.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-textrefine-negative-delta-width.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-textrefine.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-texttopright.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-texttoprighttranspose.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-texttranspose.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-template1-customat-tpgdon.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-template1-customat.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-template1-tpgdon.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-template1.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-template2-customat-tpgdon.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-template2-customat.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-template2-tpgdon.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-template2.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-template3-customat-tpgdon.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-template3-customat.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-template3-tpgdon.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-template3.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-tpgdon.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-trailing-7fff-stripped-harder.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-trailing-7fff-stripped.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "file_pdfjs_form.pdf",
+  "best": 0.0017,
+  "flow": {
+   "score": 0.0025,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0017,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "french_diacritics.pdf",
+  "best": 0.0017,
+  "flow": {
+   "score": 0.0017,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0021,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "annotation-highlight.pdf",
+  "best": 0.0016,
+  "flow": {
+   "score": 0.0025,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0016,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1811694.pdf",
+  "best": 0.0016,
+  "flow": {
+   "score": 0.0016,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0016,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "annotation-underline.pdf",
+  "best": 0.0016,
+  "flow": {
+   "score": 0.0024,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0016,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1825002.pdf",
+  "best": 0.0015,
+  "flow": {
+   "score": 0.0015,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0015,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "annotation-square-circle.pdf",
+  "best": 0.0014,
+  "flow": {
+   "score": 0.0014,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0014,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1001080.pdf",
+  "best": 0.0014,
+  "flow": {
+   "score": 0.0014,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0022,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "annotation-button-widget.pdf",
+  "best": 0.0014,
+  "flow": {
+   "score": 0.0054,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0014,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "decodeACSuccessive.pdf",
+  "best": 0.0012,
+  "flow": {
+   "score": 0.0012,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0012,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1724918.pdf",
+  "best": 0.0012,
+  "flow": {
+   "score": 0.0012,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0012,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "cid_cff.pdf",
+  "best": 0.0012,
+  "flow": {
+   "score": 0.0035,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0012,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug2009627.pdf",
+  "best": 0.0012,
+  "flow": {
+   "score": 0.0044,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0012,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "checkbox-bad-appearance.pdf",
+  "best": 0.0011,
+  "flow": {
+   "score": 0.002,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0011,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "helloworld-bad.pdf",
+  "best": 0.0011,
+  "flow": {
+   "score": 0.0066,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0011,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "form_two_pages.pdf",
+  "best": 0.0011,
+  "flow": {
+   "score": 0.0012,
+   "note": "",
+   "pages": [
+    2,
+    2
+   ]
+  },
+  "positional": {
+   "score": 0.0011,
+   "note": "",
+   "pages": [
+    2,
+    2
+   ]
+  }
+ },
+ {
+  "name": "issue11045.pdf",
+  "best": 0.001,
+  "flow": {
+   "score": 0.0043,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.001,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1529502.pdf",
+  "best": 0.001,
+  "flow": {
+   "score": 0.0078,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.001,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1802888.pdf",
+  "best": 0.001,
+  "flow": {
+   "score": 0.0013,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.001,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "acroform_calculation_order.pdf",
+  "best": 0.001,
+  "flow": {
+   "score": 0.0041,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.001,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1057544.pdf",
+  "best": 0.0009,
+  "flow": {
+   "score": 0.0047,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0009,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "arial_unicode_ab_cidfont.pdf",
+  "best": 0.0009,
+  "flow": {
+   "score": 0.0009,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0009,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "PDFJS-7562-reduced.pdf",
+  "best": 0.0009,
+  "flow": {
+   "score": 0.0009,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0009,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1947248_text.pdf",
+  "best": 0.0009,
+  "flow": {
+   "score": 0.0009,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0009,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "annotation-squiggly-without-appearance.pdf",
+  "best": 0.0008,
+  "flow": {
+   "score": 0.0028,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0008,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1918115.pdf",
+  "best": 0.0008,
+  "flow": {
+   "score": 0.0021,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0008,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "firefox_logo.pdf",
+  "best": 0.0008,
+  "flow": {
+   "score": 0.0008,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0008,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1963407.pdf",
+  "best": 0.0008,
+  "flow": {
+   "score": 0.0008,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0008,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "annotation-tx.pdf",
+  "best": 0.0007,
+  "flow": {
+   "score": 0.0007,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0007,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "annotation-strikeout-without-appearance.pdf",
+  "best": 0.0007,
+  "flow": {
+   "score": 0.0027,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0007,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug793632.pdf",
+  "best": 0.0006,
+  "flow": {
+   "score": 0.0033,
+   "note": "pages 1≠4",
+   "pages": [
+    1,
+    4
+   ]
+  },
+  "positional": {
+   "score": 0.0006,
+   "note": "",
+   "pages": [
+    4,
+    4
+   ]
+  }
+ },
+ {
+  "name": "90ms_rksj_h_sample.pdf",
+  "best": 0.0006,
+  "flow": {
+   "score": 0.0008,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0006,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "annotation-squiggly.pdf",
+  "best": 0.0006,
+  "flow": {
+   "score": 0.0015,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0006,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1937438_from_word.pdf",
+  "best": 0.0006,
+  "flow": {
+   "score": 0.0024,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0006,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1708041.pdf",
+  "best": 0.0005,
+  "flow": {
+   "score": 0.0008,
+   "note": "pages 2≠6",
+   "pages": [
+    2,
+    6
+   ]
+  },
+  "positional": {
+   "score": 0.0005,
+   "note": "pages 2≠6",
+   "pages": [
+    2,
+    6
+   ]
+  }
+ },
+ {
+  "name": "bug854315.pdf",
+  "best": 0.0004,
+  "flow": {
+   "score": 0.0054,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0004,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "annotation-underline-without-appearance.pdf",
+  "best": 0.0004,
+  "flow": {
+   "score": 0.0028,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0004,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1539074.pdf",
+  "best": 0.0004,
+  "flow": {
+   "score": 0.0011,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0004,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug2004951.pdf",
+  "best": 0.0003,
+  "flow": {
+   "score": 0.0016,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0003,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "attachment.pdf",
+  "best": 0.0003,
+  "flow": {
+   "score": 0.0027,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0003,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1770750.pdf",
+  "best": 0.0003,
+  "flow": {
+   "score": 0.0003,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0003,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "firefox_stamp.pdf",
+  "best": 0.0003,
+  "flow": {
+   "score": 0.0003,
+   "note": "pages 1≠2",
+   "pages": [
+    1,
+    2
+   ]
+  },
+  "positional": {
+   "score": 0.0003,
+   "note": "pages 1≠2",
+   "pages": [
+    1,
+    2
+   ]
+  }
+ },
+ {
+  "name": "annotation-stamp.pdf",
+  "best": 0.0003,
+  "flow": {
+   "score": 0.0003,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "annotation-caret-ink.pdf",
+  "best": 0.0003,
+  "flow": {
+   "score": 0.0009,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0003,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "annotation-border-styles.pdf",
+  "best": 0.0003,
+  "flow": {
+   "score": 0.0015,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0003,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug2025674.pdf",
+  "best": 0.0002,
+  "flow": {
+   "score": 0.0008,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0002,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "annotation-polyline-polygon.pdf",
+  "best": 0.0002,
+  "flow": {
+   "score": 0.0007,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0002,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1796741.pdf",
+  "best": 0.0002,
+  "flow": {
+   "score": 0.0011,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0002,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "annotation-link-text-popup.pdf",
+  "best": 0.0002,
+  "flow": {
+   "score": 0.0008,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0002,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "issue10900.pdf",
+  "best": 0.0002,
+  "flow": {
+   "score": 0.0032,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0002,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1871353.pdf",
+  "best": 0.0002,
+  "flow": {
+   "score": 0.0002,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0002,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1019475_2.pdf",
+  "best": 0.0002,
+  "flow": {
+   "score": 0.0015,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0002,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "annotation-freetext.pdf",
+  "best": 0.0002,
+  "flow": {
+   "score": 0.0007,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0002,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "annotation-fileattachment.pdf",
+  "best": 0.0001,
+  "flow": {
+   "score": 0.0006,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0001,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1974436.pdf",
+  "best": 0.0001,
+  "flow": {
+   "score": 0.0038,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0001,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "find_all.pdf",
+  "best": 0.0001,
+  "flow": {
+   "score": 0.0005,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0001,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1989304.pdf",
+  "best": 0.0001,
+  "flow": {
+   "score": 0.0007,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0001,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "doc_1_3_pages.pdf",
+  "best": 0.0001,
+  "flow": {
+   "score": 0.0008,
+   "note": "",
+   "pages": [
+    3,
+    3
+   ]
+  },
+  "positional": {
+   "score": 0.0001,
+   "note": "",
+   "pages": [
+    3,
+    3
+   ]
+  }
+ },
+ {
+  "name": "bug1811510.pdf",
+  "best": 0.0001,
+  "flow": {
+   "score": 0.0015,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0001,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1782564.pdf",
+  "best": 0.0001,
+  "flow": {
+   "score": 0.001,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0001,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "doc_2_3_pages.pdf",
+  "best": 0.0001,
+  "flow": {
+   "score": 0.0008,
+   "note": "",
+   "pages": [
+    3,
+    3
+   ]
+  },
+  "positional": {
+   "score": 0.0001,
+   "note": "",
+   "pages": [
+    3,
+    3
+   ]
+  }
+ },
+ {
+  "name": "doc_3_3_pages.pdf",
+  "best": 0.0001,
+  "flow": {
+   "score": 0.0008,
+   "note": "",
+   "pages": [
+    3,
+    3
+   ]
+  },
+  "positional": {
+   "score": 0.0001,
+   "note": "",
+   "pages": [
+    3,
+    3
+   ]
+  }
+ },
+ {
+  "name": "issue10301.pdf",
+  "best": 0.0001,
+  "flow": {
+   "score": 0.0006,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0001,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "extract_link.pdf",
+  "best": 0.0001,
+  "flow": {
+   "score": 0.0003,
+   "note": "",
+   "pages": [
+    2,
+    2
+   ]
+  },
+  "positional": {
+   "score": 0.0001,
+   "note": "",
+   "pages": [
+    2,
+    2
+   ]
+  }
+ },
+ {
+  "name": "bug1907000_reduced.pdf",
+  "best": 0.0001,
+  "flow": {
+   "score": 0.0003,
+   "note": "",
+   "pages": [
+    2,
+    2
+   ]
+  },
+  "positional": {
+   "score": 0.0001,
+   "note": "",
+   "pages": [
+    2,
+    2
+   ]
+  }
+ },
+ {
+  "name": "annotation-line.pdf",
+  "best": 0.0001,
+  "flow": {
+   "score": 0.0002,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0001,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "PDFJS-9279-reduced.pdf",
+  "best": 0.0001,
+  "flow": {
+   "score": 0.0002,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0001,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "fraction-highlight.pdf",
+  "best": 0.0001,
+  "flow": {
+   "score": 0.003,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0001,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1473809.pdf",
+  "best": 0,
+  "flow": {
+   "score": 0.0001,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "issue10402.pdf",
+  "best": 0,
+  "flow": {
+   "score": 0.0002,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1851498.pdf",
+  "best": 0,
+  "flow": {
+   "score": 0.0005,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug816075.pdf",
+  "best": 0,
+  "flow": {
+   "score": 0,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "PDFBOX-3148-2-fuzzed.pdf",
+  "best": 0,
+  "flow": {
+   "score": 0,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "PDFBOX-4352-0.pdf",
+  "best": 0,
+  "flow": {
+   "score": 0,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "annotation_hidden_print.pdf",
+  "best": 0,
+  "flow": {
+   "score": 0,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "autoprint.pdf",
+  "best": 0,
+  "flow": {
+   "score": 0,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1980958.pdf",
+  "best": 0,
+  "flow": {
+   "score": 0,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug2035197_1.pdf",
+  "best": 0,
+  "flow": {
+   "score": 0,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug2035197_2.pdf",
+  "best": 0,
+  "flow": {
+   "score": 0,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "colorspace_atan.pdf",
+  "best": 0,
+  "flow": {
+   "score": 0,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "colorspace_cos.pdf",
+  "best": 0,
+  "flow": {
+   "score": 0,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "colorspace_sin.pdf",
+  "best": 0,
+  "flow": {
+   "score": 0,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "doc_actions.pdf",
+  "best": 0,
+  "flow": {
+   "score": 0,
+   "note": "pages 1≠3",
+   "pages": [
+    1,
+    3
+   ]
+  },
+  "positional": {
+   "score": 0,
+   "note": "pages 1≠3",
+   "pages": [
+    1,
+    3
+   ]
+  }
+ },
+ {
+  "name": "empty#hash.pdf",
+  "best": 0,
+  "flow": {
+   "score": 0,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "empty.pdf",
+  "best": 0,
+  "flow": {
+   "score": 0,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "empty_protected.pdf",
+  "best": 0,
+  "flow": {
+   "score": 0,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "extractPages_null_in_array.pdf",
+  "best": 0,
+  "flow": {
+   "score": 0,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ }
+]

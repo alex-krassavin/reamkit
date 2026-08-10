@@ -574,6 +574,129 @@ describe('docx writer (E-DOCX D2 skeleton)', () => {
   });
 });
 
+describe('the package carries no picture the format cannot show', () => {
+  it('drops a JPEG 2000 picture and says why, rather than writing a hole', () => {
+    // §15.2.14 lists the image parts a WordprocessingML package may carry, and
+    // JPEG 2000 is not among them. S2.pdf put six of them in a .docx and both
+    // of its plates came back blank — in Word and in LibreOffice alike — with
+    // the loss report saying only "image bytes missing", which they were not.
+    const jp2 = new Uint8Array([
+      0, 0, 0, 0x0c, 0x6a, 0x50, 0x20, 0x20, 0x0d, 0x0a, 0x87, 0x0a, 0, 0, 0, 0,
+    ]);
+    const { doc: flow } = readDocx(buildDocxFromBody('<w:p><w:r><w:t>x</w:t></w:r></w:p>'));
+    const withJp2 = {
+      ...flow,
+      resources: new Map([['r1', jp2]]),
+      body: [
+        {
+          kind: 'image' as const,
+          image: { resource: 'r1', width: 40, height: 20, paragraphProperties: {} },
+        },
+      ],
+    } as unknown as FlowDoc;
+    const { bytes, losses } = writeDocx(withJp2);
+    const pkg = OpcPackage.open(bytes);
+    expect(pkg.listParts().some((path) => path.endsWith('.jp2'))).toBe(false);
+    const dropped = losses.find((l) => l.detail.includes('JPEG 2000'));
+    expect(dropped?.severity).toBe('dropped');
+  });
+});
+
+describe('a drawing that states where it goes is placed there (§20.4.2.3)', () => {
+  const floatingShape = (offsetXPt: number, offsetYPt: number) => ({
+    width: 40,
+    height: 20,
+    fill: { kind: 'solid' as const, colorHex: '336699' },
+    geometry: { kind: 'preset' as const, preset: 'rect' },
+    paragraphProperties: {},
+    float: {
+      wrap: 'none' as const,
+      posH: { relativeFrom: 'page' as const, offsetPt: offsetXPt },
+      posV: { relativeFrom: 'page' as const, offsetPt: offsetYPt },
+    },
+  });
+  const docWith = (body: ReadonlyArray<unknown>) => {
+    const { doc: flow } = readDocx(buildDocxFromBody('<w:p><w:r><w:t>x</w:t></w:r></w:p>'));
+    return { ...flow, body } as unknown as FlowDoc;
+  };
+  const xmlOf = (body: ReadonlyArray<unknown>) =>
+    decode(OpcPackage.open(writeDocx(docWith(body)).bytes).getMainDocument().data);
+
+  it('writes a wp:anchor, with everything CT_Anchor requires on it', () => {
+    // The model has carried the anchor since the reader learned to read one,
+    // and the writer threw it away: every drawing went out inline, so a page
+    // of placed artwork came back as a column of it in document order.
+    const xml = xmlOf([{ kind: 'shape' as const, shape: floatingShape(72, 144) }]);
+    expect(xml).toContain('<wp:anchor');
+    expect(xml).not.toContain('<wp:inline');
+    // Required attributes — Word refuses the document without them.
+    for (const attr of [
+      'simplePos=',
+      'relativeHeight=',
+      'behindDoc=',
+      'locked=',
+      'layoutInCell=',
+      'allowOverlap=',
+    ]) {
+      expect(xml).toContain(attr);
+    }
+    // And the placement itself, in EMU: 72pt is an inch is 914400.
+    expect(xml).toContain('<wp:positionH relativeFrom="page"><wp:posOffset>914400</wp:posOffset>');
+    expect(xml).toContain('<wp:positionV relativeFrom="page"><wp:posOffset>1828800</wp:posOffset>');
+    expect(xml).toContain('<wp:wrapNone/>');
+  });
+
+  it('reads its own anchor back', () => {
+    const bytes = writeDocx(
+      docWith([{ kind: 'shape' as const, shape: floatingShape(72, 144) }]),
+    ).bytes;
+    const { doc: again } = readDocx(bytes);
+    const shape = again.body.find((b) => b.kind === 'shape');
+    if (shape?.kind !== 'shape') throw new Error('expected a shape');
+    expect(shape.shape.float?.posH?.relativeFrom).toBe('page');
+    expect(shape.shape.float?.posH?.offsetPt).toBeCloseTo(72, 1);
+    expect(shape.shape.float?.posV?.offsetPt).toBeCloseTo(144, 1);
+  });
+
+  it('gathers consecutive placed drawings into one carrier paragraph', () => {
+    // A floating drawing is placed by its anchor, not by where its paragraph
+    // lands — so a paragraph each is a paragraph of FLOW each. 160F-2019.pdf is
+    // one page of 355 placed rules, and one paragraph apiece ran it to sixteen.
+    const xml = xmlOf(
+      Array.from({ length: 5 }, (_, i) => ({
+        kind: 'shape' as const,
+        shape: floatingShape(10 * i, 10 * i),
+      })),
+    );
+    expect((xml.match(/<wp:anchor/gu) ?? []).length).toBe(5);
+    expect((xml.match(/<w:p>/gu) ?? []).length).toBe(1);
+  });
+
+  it('reserves the area a turned drawing actually reaches (§20.4.2.3)', () => {
+    // `wp:extent` is the shape's own size, unrotated — fdo75722-dml.docx states
+    // it there and repeats it in `a:ext` — and the turn's overhang goes in
+    // `wp:effectExtent`. Written as zeroes, a renderer reserves the flat box
+    // for a shape that draws across the turned one.
+    const turned = {
+      ...floatingShape(0, 0),
+      transform: { rotation60k: 16200000 }, // a quarter turn, 270°
+    };
+    const xml = xmlOf([{ kind: 'shape' as const, shape: turned }]);
+    // 40 × 20 pt turned upright spans 20 × 40: it hangs 10pt off top and bottom
+    // and nothing off the sides.
+    expect(xml).toContain('<wp:effectExtent l="0" t="127000" r="0" b="127000"/>');
+    // The extent itself stays the shape's own size.
+    expect(xml).toContain(`<wp:extent cx="${String(40 * 12700)}" cy="${String(20 * 12700)}"/>`);
+  });
+
+  it('leaves a drawing that states no placement inline', () => {
+    const { float: _drop, ...flowing } = floatingShape(0, 0);
+    const xml = xmlOf([{ kind: 'shape' as const, shape: flowing }]);
+    expect(xml).toContain('<wp:inline');
+    expect(xml).not.toContain('<wp:anchor');
+  });
+});
+
 describe('an attribute is written only where the schema admits its value', () => {
   // Word does not ignore an attribute it cannot read and does not round one it
   // could: it refuses the whole document, saying only that it "experienced an

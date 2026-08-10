@@ -3,6 +3,7 @@
 // glyph advances from a simple font's /Widths or a composite font's /W array.
 
 import { parseToUnicodeCMap } from './cmap';
+import { textForGlyphName } from './glyph-names';
 import { embeddedFontName } from './embedded-fonts';
 import type { PdfDict, PdfValue } from '@/pdf/objects';
 import type { ContentFont, Matrix, Type3Face } from './content';
@@ -46,7 +47,15 @@ export function buildContentFont(file: PdfFile, fontDict: PdfDict): ContentFont 
   // Brotli-Prototype-FileA.pdf sets a floor plan's room names in one, and
   // "LIVING ROOM" and "DINING" never reached the page at all.
   const fromProgram = isType0 && toUnicode.size === 0 ? embeddedCmap(file, fontDict) : undefined;
-  const unicode = fromProgram ?? toUnicode;
+  // §9.6.6.1 — a SIMPLE font that states no `/ToUnicode` still says what its
+  // codes are, in `/Encoding /Differences`: a list of glyph NAMES. A PDF from
+  // TeX is nothing but this — a subset font whose codes start wherever the
+  // subset does, and not a `/ToUnicode` in the file. Read as Latin-1, which is
+  // all that is left without the names, issue10640.pdf's title came back as
+  // "!48 SUPPORT" where it reads "LaTeX support", and its author as
+  // "-OHAMED %LORABITY".
+  const fromNames = !isType0 ? namedGlyphs(file, fontDict) : undefined;
+  const unicode = fromProgram ?? (toUnicode.size > 0 ? toUnicode : (fromNames ?? toUnicode));
 
   const bytesPerCode = codeBytes;
   const style = faceStyle(file, fontDict, isType0);
@@ -179,6 +188,24 @@ function fontMatrix(file: PdfFile, fontDict: PdfDict): Matrix {
   if (!Array.isArray(m) || m.length !== 6) return [0.001, 0, 0, 0.001, 0, 0];
   const n = m.map((v) => asNumber(file.resolve(v), 0));
   return [n[0]!, n[1]!, n[2]!, n[3]!, n[4]!, n[5]!];
+}
+
+/**
+ * §9.6.6.1 — code → text for a simple font, out of the glyph names its
+ * `/Encoding /Differences` gives.
+ *
+ * Returns `undefined` where the font names nothing, so the caller keeps its
+ * Latin-1 reading rather than replacing it with an empty map.
+ */
+function namedGlyphs(file: PdfFile, fontDict: PdfDict): Map<number, string> | undefined {
+  const names = differences(file, fontDict);
+  if (names.size === 0) return undefined;
+  const out = new Map<number, string>();
+  for (const [code, name] of names) {
+    const text = textForGlyphName(name);
+    if (text !== undefined) out.set(code, text);
+  }
+  return out.size > 0 ? out : undefined;
 }
 
 /** §9.6.6.1 `/Encoding` `/Differences` — code → glyph name, as the array runs. */
