@@ -215,18 +215,22 @@ export function reconstructByLayout(
     // other. 22060_A1_01_Plans.pdf backs a legend with a white box painted over
     // a floor plan AND draws a key icon over a red swatch: pictures under paths
     // loses the key, paths under pictures loses the legend.
+    // In a FLOWING reading the words are re-set and the artwork is not, so no
+    // mark may cover them: the page's own painting order still ranks the marks
+    // against each other, but all of them sit under the text.
+    const under = mode !== 'positional';
     const marks = [
       ...imgs.images.map((img) => ({
         key: img.orderKey,
         col: colOf(img.x + img.widthPt / 2),
         top: img.y + img.heightPt,
-        make: (z: number): BodyElement => imageBlock(img, resources, undefined, frame, z),
+        make: (z: number): BodyElement => imageBlock(img, resources, undefined, frame, z, under),
       })),
       ...vectors.map((v) => ({
         key: v.orderKey,
         col: colOf((v.minX + v.maxX) / 2),
         top: v.maxY,
-        make: (z: number): BodyElement => shapeBlock(v, frame, z),
+        make: (z: number): BodyElement => shapeBlock(v, frame, z, under),
       })),
       ...placed,
     ].sort((a, b) => compareOrder(a.key, b.key));
@@ -546,7 +550,11 @@ function groupIntoParagraphs(
   for (const line of lines) {
     const gap = prev !== undefined ? prev.y - line.y : 0;
     const opened = prev !== undefined && gap > line.fontSize * 1.5;
-    if (groups.length === 0 || opened || (prev !== undefined && ended(prev, line, column))) {
+    if (
+      groups.length === 0 ||
+      opened ||
+      (prev !== undefined && endedParagraph(prev, line, column))
+    ) {
       groups.push([]);
       gaps.push(prev === undefined ? 0 : gap);
     }
@@ -592,10 +600,15 @@ function groupIntoParagraphs(
  * Only where both lines start at the same edge. Where they do not, the block is
  * placed rather than set — a centred title's every line is short of the measure
  * and none of them ends anything.
+ *
+ * @param prev   The line before: where it starts, how wide it is, its face.
+ * @param next   The line after — only where it starts matters.
+ * @param column The measure both were set in, when it is known.
+ * @returns Whether the first line ended a paragraph.
  */
-function ended(
-  prev: Line,
-  next: Line,
+export function endedParagraph(
+  prev: { x: number; width: number; fontSize: number },
+  next: { x: number },
   column: { left: number; right: number } | undefined,
 ): boolean {
   if (!column) return false;

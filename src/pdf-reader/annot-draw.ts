@@ -17,7 +17,7 @@
 
 import type { PdfDict, PdfValue } from '@/pdf/objects';
 import type { PdfFile } from './document';
-import { PdfName, PdfStream } from '@/pdf/objects';
+import { PDF_NULL, PdfName, PdfStream } from '@/pdf/objects';
 
 /** The circle constant: how far a Bézier handle reaches to round a quarter. */
 const KAPPA = 0.5523;
@@ -47,6 +47,10 @@ interface Drawing {
 export function drawnAppearance(file: PdfFile, annot: PdfDict): PdfStream | undefined {
   const subtype = file.get(annot, 'Subtype');
   if (!(subtype instanceof PdfName)) return undefined;
+  // §12.7.3.3 — a field whose appearance was never generated still HAS its
+  // value, and the value is the form's content. 160F-2019.pdf files seven of
+  // them and every one was lost.
+  if (subtype.value === 'Widget') return typedValue(file, annot);
   const pen = borderWidth(file, annot);
   const drawing = pathFor(file, annot, subtype.value, pen);
   if (!drawing || drawing.ops.length === 0) return undefined;
@@ -62,6 +66,150 @@ export function drawnAppearance(file: PdfFile, annot: PdfDict): PdfStream | unde
     'Q',
   ].join('\n');
   return new PdfStream(new Map(), new TextEncoder().encode(body));
+}
+
+/**
+ * §12.7.2 `/DR` — the resources a generated field appearance draws with.
+ *
+ * The `/DA` string names a font (`/Helv 12 Tf`) and that name means nothing
+ * without the form's own default resource dictionary, which is where every
+ * field's face lives.
+ *
+ * @param file  The owning file.
+ * @param annot The annotation the appearance was generated for.
+ * @returns The form's `/DR`, or `undefined` when there is none.
+ */
+export function drawnResources(file: PdfFile, annot: PdfDict): PdfDict | undefined {
+  const subtype = file.get(annot, 'Subtype');
+  if (!(subtype instanceof PdfName) || subtype.value !== 'Widget') return undefined;
+  const acro = file.get(file.catalog, 'AcroForm');
+  if (!(acro instanceof Map)) return undefined;
+  const dr = file.get(acro, 'DR');
+  return dr instanceof Map ? dr : undefined;
+}
+
+/**
+ * §12.7.3.3 — the text a form field holds, set the way its `/DA` asks.
+ *
+ * A widget normally carries the picture of its value in `/AP`, and a viewer
+ * that fills a field regenerates it. One that does not — or a file flagged
+ * `NeedAppearances` — leaves only `/V`, and reading the appearances alone gives
+ * a form with every box empty. The field's own default appearance string names
+ * the face, the size and the colour; the rest is arithmetic on `/Rect`.
+ *
+ * Only a TEXT field: a button's value is a state, and a choice field's list is
+ * drawn from `/Opt` rather than typed into a box.
+ */
+function typedValue(file: PdfFile, annot: PdfDict): PdfStream | undefined {
+  if (inherited(file, annot, 'FT') !== 'Tx') return undefined;
+  const value = inheritedString(file, annot, 'V');
+  if (value === undefined || value.length === 0) return undefined;
+  const rect = rectangle(file.get(annot, 'Rect'));
+  if (!rect) return undefined;
+  const da = defaultAppearance(file, annot);
+  const flags = inheritedNumber(file, annot, 'Ff') ?? 0;
+  const multiline = (flags & MULTILINE) !== 0;
+  const box = inset(rect, borderWidth(file, annot) + 1);
+  const height = box[3] - box[1];
+  const width = box[2] - box[0];
+  if (!(width > 0 && height > 0)) return undefined;
+  // A size of zero asks the viewer to fit the box (§12.7.3.3). One line in it,
+  // or a readable twelve where there are many.
+  const size = da.size > 0 ? da.size : multiline ? 12 : Math.min(12, height * 0.66);
+  const lines = multiline ? value.split(/\r\n|[\r\n]/u) : [value.replace(/[\r\n]+/gu, ' ')];
+  const leading = size * 1.16;
+  // The first baseline: one line sits on the box's middle, many start at its top.
+  const first = multiline ? box[3] - size : box[1] + (height - size) / 2 + size * 0.22;
+  const ops: Array<string> = ['q', 'BT', `${da.font} ${num(size)} Tf`, `${da.color} rg`];
+  lines.forEach((line, i) => {
+    const y = first - i * leading;
+    if (y < box[1] - size) return;
+    ops.push(
+      `1 0 0 1 ${num(box[0] + indent(line, size, width, quadding(file, annot)))} ${num(y)} Tm`,
+    );
+    ops.push(`(${escapeText(line)}) Tj`);
+  });
+  ops.push('ET', 'Q');
+  return new PdfStream(new Map(), new TextEncoder().encode(ops.join('\n')));
+}
+
+/** §12.7.4.3 — the field is a multi-line text box (bit 13 of `/Ff`). */
+const MULTILINE = 1 << 12;
+
+/**
+ * §12.7.3.1 `/Q` — 0 left, 1 centred, 2 right. Where it is not left the line
+ * has to be measured, and the face is not in hand: half the size per character
+ * is what Helvetica averages, and a field's value is short enough that the
+ * error stays under a character.
+ */
+function indent(line: string, size: number, width: number, q: number): number {
+  if (q !== 1 && q !== 2) return 0;
+  const guess = Math.min(width, line.length * size * 0.5);
+  return q === 1 ? (width - guess) / 2 : width - guess;
+}
+
+/** §12.7.3.1 `/Q`, inherited from the field's parent. */
+function quadding(file: PdfFile, annot: PdfDict): number {
+  return inheritedNumber(file, annot, 'Q') ?? 0;
+}
+
+/**
+ * §12.7.3.3 `/DA` — the default appearance string, from the field or the form.
+ * Only the `Tf` and the colour are read; the rest is a content stream fragment
+ * this reader does not need to run.
+ */
+function defaultAppearance(
+  file: PdfFile,
+  annot: PdfDict,
+): { font: string; size: number; color: string } {
+  const acro = file.get(file.catalog, 'AcroForm');
+  const own = inheritedString(file, annot, 'DA');
+  const form = acro instanceof Map ? file.get(acro, 'DA') : undefined;
+  const da = own ?? (typeof form === 'string' ? form : '');
+  const tf = /\/([^\s/]+)\s+([\d.]+)\s+Tf/u.exec(da);
+  const rgb = /([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+rg/u.exec(da);
+  const gray = /(^|\s)([\d.]+)\s+g(\s|$)/u.exec(da);
+  const color = rgb
+    ? `${num(Number(rgb[1]))} ${num(Number(rgb[2]))} ${num(Number(rgb[3]))}`
+    : gray
+      ? `${num(Number(gray[2]))} ${num(Number(gray[2]))} ${num(Number(gray[2]))}`
+      : '0 0 0';
+  return { font: `/${tf?.[1] ?? 'Helv'}`, size: Number(tf?.[2] ?? 0), color };
+}
+
+/** §7.3.4.2 — the characters a literal string may not carry unescaped. */
+function escapeText(s: string): string {
+  return s.replace(/[\\()]/gu, (c) => `\\${c}`).replace(/[\r\n]/gu, ' ');
+}
+
+/** A field entry, from the widget or the field tree above it (§12.7.3.1). */
+function inherited(file: PdfFile, annot: PdfDict, key: string): string | undefined {
+  const found = climb(file, annot, key);
+  return found instanceof PdfName ? found.value : undefined;
+}
+
+/** The same, for an entry stated as a string. */
+function inheritedString(file: PdfFile, annot: PdfDict, key: string): string | undefined {
+  const found = climb(file, annot, key);
+  return typeof found === 'string' ? found : undefined;
+}
+
+/** The same, for a number. */
+function inheritedNumber(file: PdfFile, annot: PdfDict, key: string): number | undefined {
+  const found = climb(file, annot, key);
+  return typeof found === 'number' ? found : undefined;
+}
+
+/** Walk `/Parent` until the entry is found, or the tree ends. */
+function climb(file: PdfFile, annot: PdfDict, key: string): PdfValue | undefined {
+  let at: PdfDict | undefined = annot;
+  for (let depth = 0; at && depth < 32; depth++) {
+    const here = file.get(at, key);
+    if (here !== PDF_NULL) return here;
+    const up: PdfValue = file.get(at, 'Parent');
+    at = up instanceof Map ? up : undefined;
+  }
+  return undefined;
 }
 
 /**

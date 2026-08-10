@@ -211,6 +211,7 @@ export function imageBlock(
   alt?: string,
   frame?: PageFrame,
   zOrder?: number,
+  behind = false,
 ): BodyElement {
   const resource = resources.put(image.bytes);
   // §20.4.2.3 — anchored where the page placed it, for the same reason a lifted
@@ -221,6 +222,7 @@ export function imageBlock(
     frame !== undefined
       ? {
           wrap: 'none',
+          ...(behind ? { behind: true } : {}),
           ...(zOrder !== undefined ? { zOrder } : {}),
           posH: { relativeFrom: 'page', offsetPt: pt(image.x - frame.left) },
           posV: {
@@ -317,7 +319,12 @@ export function dedupeLosses(losses: ReadonlyArray<Loss>): Array<Loss> {
  * a paragraph: 22060_A1_01_Plans.pdf is one A3 sheet of vectors, and stacking
  * its forty-nine paths one under another spilled it onto a second page.
  */
-export function shapeBlock(v: PdfVector, frame?: PageFrame, zOrder?: number): BodyElement {
+export function shapeBlock(
+  v: PdfVector,
+  frame?: PageFrame,
+  zOrder?: number,
+  behind = false,
+): BodyElement {
   const w = v.maxX - v.minX;
   const h = v.maxY - v.minY;
   const fx = (x: number): number => x - v.minX;
@@ -373,21 +380,22 @@ export function shapeBlock(v: PdfVector, frame?: PageFrame, zOrder?: number): Bo
   // §20.4.2.3 — anchored to the PAGE at the position it was drawn at, y flipped
   // from PDF's upward axis.
   //
-  // `behind` only where the page asked to DARKEN rather than paint (§11.3.5):
-  // no anchor blends, so a highlighter laid over its words would bury them, and
-  // under them it comes to the same picture — a yellow band with black text on
-  // it. annotation-highlight.pdf is exactly that and read back as a yellow bar.
+  // `behind` is about the TEXT, and `zOrder` about the other marks: a legend's
+  // white box still covers the floor plan it backs, because both are behind and
+  // the order the page painted them in still ranks them. What `behind` decides
+  // is whether artwork may cover WORDS, and in a flowing reading it may not —
+  // there the words have moved and the artwork has not, so anything over them
+  // covers text it never covered. annotation-tx3.pdf is a form field filled
+  // pale blue with four lines typed in it, and the fill buried all four.
   //
-  // Otherwise not: a path is not always under the pictures.
-  // 22060_A1_01_Plans.pdf backs its legend with a white box painted OVER a
-  // floor plan, and forced behind it, the plan and the title block read
-  // straight through the legend. `zOrder` carries the order the page painted
-  // in, which is the only thing that decides this.
+  // §11.3.5 also puts a mark that only DARKENS behind the text wherever it is
+  // read: no anchor blends, so a highlighter over its words would bury them,
+  // and under them it comes to the same picture.
   const float: FloatAnchor | undefined =
     frame !== undefined
       ? {
           wrap: 'none',
-          ...(v.darkens === true ? { behind: true } : {}),
+          ...(behind || v.darkens === true ? { behind: true } : {}),
           ...(zOrder !== undefined ? { zOrder } : {}),
           posH: { relativeFrom: 'page', offsetPt: pt(v.minX - frame.left) },
           posV: { relativeFrom: 'page', offsetPt: pt(Math.max(0, frame.top - v.maxY)) },

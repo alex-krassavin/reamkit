@@ -20,6 +20,7 @@ import { displayOf, placeRuns, placeVectors } from './display';
 import { collectEmbeddedFonts } from './embedded-fonts';
 import { collectPageImages } from './images';
 import { collectPageVectors } from './vector';
+import { endedParagraph } from './layout';
 import { markDrawnRules } from './text-rules';
 import { readStructTree } from './struct-tree';
 import { extractPageText } from './text';
@@ -137,25 +138,26 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
     const spans: Array<TextSpan> = [];
     node.mcids.forEach(({ page, mcid }, i) => {
       if (i > 0) spans.push({ text: ' ' });
-      for (const run of runsOfMcid(page, mcid)) {
-        spans.push({
-          text: run.text,
-          sizePt: run.fontSizePt,
-          // Black is the default; carrying it would put a colour on every run.
-          ...(run.colorHex !== '000000' ? { colorHex: run.colorHex } : {}),
-          ...(run.fontName !== undefined ? { fontName: run.fontName } : {}),
-          ...(run.outlineHex !== undefined
-            ? { outline: { colorHex: run.outlineHex, widthPt: pt(run.outlineWidthPt ?? 1) } }
-            : {}),
-          ...(run.bold ? { bold: true } : {}),
-          ...(run.italic ? { italic: true } : {}),
-          ...(run.markup !== undefined ? { markup: run.markup } : {}),
-          ...(run.href !== undefined ? { href: run.href } : {}),
-        });
-      }
+      for (const run of runsOfMcid(page, mcid)) spans.push(spanOf(run));
     });
     return spans;
   };
+
+  /** One run as the span that carries everything the page showed it with. */
+  const spanOf = (run: TextRun): TextSpan => ({
+    text: run.text,
+    sizePt: run.fontSizePt,
+    // Black is the default; carrying it would put a colour on every run.
+    ...(run.colorHex !== '000000' ? { colorHex: run.colorHex } : {}),
+    ...(run.fontName !== undefined ? { fontName: run.fontName } : {}),
+    ...(run.outlineHex !== undefined
+      ? { outline: { colorHex: run.outlineHex, widthPt: pt(run.outlineWidthPt ?? 1) } }
+      : {}),
+    ...(run.bold ? { bold: true } : {}),
+    ...(run.italic ? { italic: true } : {}),
+    ...(run.markup !== undefined ? { markup: run.markup } : {}),
+    ...(run.href !== undefined ? { href: run.href } : {}),
+  });
 
   // All text under a node, in reading order (a list item's label + body).
   const collectText = (node: StructNode): string =>
@@ -186,6 +188,95 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
       : undefined;
   }
 
+  /**
+   * The element's own lines, gathered into the paragraphs they were SET as.
+   *
+   * A tree names elements, not lines, and a producer may put a whole page under
+   * one: annotation-underline.pdf marks every glyph on its page with the same
+   * id, so a heading, a blank line and a body line came back as one paragraph
+   * and re-wrapped into a single run-together line. The page still says where
+   * one ended — a line stopping well short of the measure stopped because its
+   * author stopped it — and that is the rule the heuristic reading already uses
+   * ({@link endedParagraph}). A properly tagged paragraph's inner lines all
+   * reach the measure, so nothing there changes.
+   */
+  function settingsOf(node: StructNode): Array<{ spans: Array<TextSpan>; set: Setting }> {
+    const spans = spansOf(node);
+    const lines = linesOf(node);
+    if (lines.length < 2) {
+      const set = baselinesOf(node);
+      return set ? [{ spans, set }] : [];
+    }
+    const measure = {
+      left: Math.min(...lines.map((l) => l.x)),
+      right: Math.max(...lines.map((l) => l.x + l.width)),
+    };
+    const groups: Array<Array<(typeof lines)[number]>> = [];
+    let prev: (typeof lines)[number] | undefined;
+    for (const line of lines) {
+      const gap = prev === undefined ? 0 : prev.y - line.y;
+      const opened = prev !== undefined && gap > line.fontSize * 1.5;
+      if (groups.length === 0 || opened || (prev && endedParagraph(prev, line, measure))) {
+        groups.push([]);
+      }
+      groups[groups.length - 1]!.push(line);
+      prev = line;
+    }
+    return groups.map((g) => ({
+      spans: g.flatMap((l, i) => (i > 0 ? [{ text: ' ' }, ...l.spans] : [...l.spans])),
+      set: {
+        top: g[0]!.y,
+        bottom: g[g.length - 1]!.y,
+        size: Math.max(...g.map((l) => l.fontSize)),
+      },
+    }));
+  }
+
+  /** The node's runs clustered onto the baselines they were shown on. */
+  function linesOf(
+    node: StructNode,
+  ): Array<{ y: number; x: number; width: number; fontSize: number; spans: Array<TextSpan> }> {
+    const rows: Array<{ y: number; size: number; runs: Array<TextRun> }> = [];
+    const visit = (n: StructNode): void => {
+      for (const { page, mcid } of n.mcids) {
+        for (const run of runsOfMcid(page, mcid)) {
+          if (run.angleDeg !== undefined) return;
+          // A superscript sits off the baseline it belongs to and is set
+          // SMALLER, so the tolerance has to come from the LINE's face and not
+          // the mark's: measured against its own 7pt, bug2013793.pdf's "240th"
+          // made a line of its own out of two raised "th"s and cut the
+          // paragraph in half around it.
+          const row = rows.find(
+            (r) => Math.abs(r.y - run.y) <= Math.max(r.size, run.fontSizePt) * 0.5,
+          );
+          if (row) {
+            row.runs.push(run);
+            row.size = Math.max(row.size, run.fontSizePt);
+            // The baseline is the one most of the line stands on, which is the
+            // lowest of them: a raised mark never lowers it.
+            row.y = Math.min(row.y, run.y);
+          } else rows.push({ y: run.y, size: run.fontSizePt, runs: [run] });
+        }
+      }
+      for (const child of n.children) visit(child);
+    };
+    visit(node);
+    return rows
+      .sort((a, b) => b.y - a.y)
+      .map(({ y, runs }) => {
+        const ordered = [...runs].sort((a, b) => a.x - b.x);
+        const x = Math.min(...ordered.map((r) => r.x));
+        return {
+          y,
+          x,
+          width: Math.max(...ordered.map((r) => r.endX)) - x,
+          fontSize: Math.max(...ordered.map((r) => r.fontSizePt)),
+          spans: ordered.map((r) => spanOf(r)),
+        };
+      })
+      .filter((l) => l.spans.some((sp) => sp.text.trim().length > 0));
+  }
+
   function emit(node: StructNode, out: Array<BodyElement>): void {
     if (node.type === 'Table') {
       const table = buildTable(node);
@@ -206,10 +297,11 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
     }
     if (node.children.length === 0) {
       if (textOf(node).length > 0) {
-        const el = paragraphFromRuns(spansOf(node), headingLevel(node.type));
-        const set = baselinesOf(node);
-        if (set) setting.set(el, set);
-        out.push(el);
+        for (const part of settingsOf(node)) {
+          const el = paragraphFromRuns(part.spans, headingLevel(node.type));
+          setting.set(el, part.set);
+          out.push(el);
+        }
       }
       return;
     }
@@ -296,7 +388,7 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
     for (const v of pageVectors[index] ?? []) {
       // A bar that became a run's underline is not also a bar on the page.
       if (taken?.has(v) === true) continue;
-      body.push(shapeBlock(v, frame, zOrder++));
+      body.push(shapeBlock(v, frame, zOrder++, true));
     }
   });
 

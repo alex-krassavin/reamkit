@@ -13,7 +13,7 @@
 // the rectangle.
 
 import { IDENTITY, multiply } from './content';
-import { drawnAppearance, textMarkupOf } from './annot-draw';
+import { drawnAppearance, drawnResources, textMarkupOf } from './annot-draw';
 import type { Matrix } from './content';
 import type { PdfDict, PdfValue } from '@/pdf/objects';
 import type { PdfFile, PdfPage } from './document';
@@ -68,7 +68,7 @@ export function collectPageAppearances(file: PdfFile, page: PdfPage): Array<Appe
       // §12.5.5 — no appearance to paint, so one is written from the geometry
       // the annotation states. Already in page space, so it is placed as it is.
       const drawn = drawnAppearance(file, annot);
-      if (drawn) out.push({ stream: drawn, ctm: IDENTITY, resources: undefined });
+      if (drawn) out.push({ stream: drawn, ctm: IDENTITY, resources: drawnResources(file, annot) });
       continue;
     }
     const rect = rectangle(file.get(annot, 'Rect'));
