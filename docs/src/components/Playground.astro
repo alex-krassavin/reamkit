@@ -18,7 +18,7 @@
   <header class="rk-play-head">
     <h1 class="rk-play-title">Convert a document in your browser</h1>
     <p class="rk-play-lede">
-      Drop a file and convert it to PDF, SVG, HTML, DOCX or XLSX — the whole thing runs on this page.
+      Drop a file and convert it to PDF, SVG, HTML, Markdown, DOCX or XLSX — the whole thing runs on this page.
       <strong>Your document never leaves the browser</strong>: no upload, no server, no account.
     </p>
   </header>
@@ -96,6 +96,7 @@
         <button class="rk-fmt is-on" data-fmt="pdf" type="button">PDF</button>
         <button class="rk-fmt" data-fmt="svg" type="button">SVG</button>
         <button class="rk-fmt" data-fmt="html" type="button">HTML</button>
+        <button class="rk-fmt" data-fmt="md" type="button">MD</button>
         <button class="rk-fmt" data-fmt="docx" type="button">DOCX</button>
         <button class="rk-fmt" data-fmt="xlsx" type="button" data-sheet-only="1">XLSX</button>
       </div>
@@ -685,16 +686,80 @@
 
   type RK = typeof import('reamkit');
 
-  type Target = 'pdf' | 'svg' | 'html' | 'docx' | 'xlsx';
+  type Target = 'pdf' | 'svg' | 'html' | 'md' | 'docx' | 'xlsx';
 
   const MIME: Record<Target, string> = {
     pdf: 'application/pdf',
     svg: 'image/svg+xml',
     html: 'text/html',
+    md: 'text/markdown',
     docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   };
-  const PREVIEWABLE = new Set<Target>(['pdf', 'svg', 'html']);
+  const PREVIEWABLE = new Set<Target>(['pdf', 'svg', 'html', 'md']);
+
+  /** The stylesheet the rendered Markdown preview is dressed in. */
+  const MD_CSS = `
+    :root { color-scheme: light dark; --fg:#1f1c19; --muted:#6b625a; --bg:#fdfcfa;
+            --rule:#e5ded5; --accent:#b4531f; --code:#f4efe9; }
+    @media (prefers-color-scheme: dark) {
+      :root { --fg:#e9e4dd; --muted:#a49a90; --bg:#171513; --rule:#332e29;
+              --accent:#e0894f; --code:#231f1c; }
+    }
+    * { box-sizing: border-box; }
+    body { margin:0; padding:2rem 2.25rem 4rem; background:var(--bg); color:var(--fg);
+           font:16px/1.7 ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif;
+           overflow-wrap:break-word; }
+    h1,h2,h3,h4,h5,h6 { line-height:1.25; margin:2em 0 .6em; font-weight:650; }
+    h1 { font-size:1.9rem; margin-top:0; }
+    h2 { font-size:1.45rem; padding-bottom:.3em; border-bottom:1px solid var(--rule); }
+    h3 { font-size:1.2rem; } h4,h5,h6 { font-size:1rem; }
+    p,ul,ol,blockquote,table,pre { margin:0 0 1.1em; }
+    a { color:var(--accent); }
+    ul,ol { padding-left:1.5em; } li { margin:.25em 0; }
+    li > ul, li > ol { margin:.25em 0; }
+    blockquote { margin-left:0; padding:.1em 1em; border-left:3px solid var(--rule); color:var(--muted); }
+    hr { height:1px; border:0; background:var(--rule); margin:2em 0; }
+    img { max-width:100%; height:auto; }
+    code { background:var(--code); padding:.15em .35em; border-radius:4px;
+           font:.88em/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; }
+    pre { background:var(--code); padding:1em; border-radius:8px; overflow-x:auto; }
+    pre code { background:none; padding:0; }
+    /* A wide table scrolls inside itself rather than widening the page. */
+    .rk-md-table { overflow-x:auto; margin:0 0 1.1em; }
+    table { border-collapse:collapse; width:auto; min-width:60%; }
+    th,td { border:1px solid var(--rule); padding:.45em .8em; text-align:left; vertical-align:top; }
+    th { background:var(--code); font-weight:650; }
+    .footnotes { margin-top:2.5em; padding-top:1em; border-top:1px solid var(--rule);
+                 font-size:.9rem; color:var(--muted); }
+    .rk-md-empty { color:var(--muted); font-style:italic; }
+  `;
+
+  /**
+   * The bytes a target is PREVIEWED as, where those are not the bytes it
+   * downloads. Markdown downloads as its source and is SHOWN as what that
+   * source means: a `text/markdown` blob is a download in most browsers rather
+   * than a view, and markup is not what a reader of it sees. The renderer is
+   * fetched only when someone actually converts to Markdown.
+   */
+  async function previewBlobFor(target: Target, bytes: Uint8Array, downloaded: Blob) {
+    if (target !== 'md') return downloaded;
+    const [{ Marked }, { default: footnote }] = await Promise.all([
+      import('marked'),
+      import('marked-footnote'),
+    ]);
+    const source = new TextDecoder().decode(bytes);
+    const body = await new Marked({ gfm: true }).use(footnote()).parse(source);
+    const shown = body.trim() || '<p class="rk-md-empty">The document said nothing Markdown can hold.</p>';
+    // Tables are wrapped so a wide one scrolls in its own box.
+    const wrapped = shown.replace(/<table[\s\S]*?<\/table>/gu, (t) => `<div class="rk-md-table">${t}</div>`);
+    return new Blob(
+      [`<!doctype html><html><head><meta charset="utf-8">
+        <meta name="viewport" content="width=device-width,initial-scale=1">
+        <style>${MD_CSS}</style></head><body>${wrapped}</body></html>`],
+      { type: 'text/html' },
+    );
+  }
   const SHEET_SOURCES = new Set(['xlsx', 'xls']);
 
   const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -731,6 +796,7 @@
     let baseName = 'document';
     let target: Target = 'pdf';
     let blobUrl: string | null = null;
+    let previewUrl: string | null = null;
 
     async function loadReam(): Promise<RK> {
       if (!rk) rk = await import('reamkit');
@@ -751,10 +817,11 @@
     }
     function clearResult() {
       result.hidden = true;
-      if (blobUrl) {
-        URL.revokeObjectURL(blobUrl);
-        blobUrl = null;
-      }
+      // A Set, because the two are the same object URL for every target that
+      // previews as what it downloads as.
+      for (const url of new Set([blobUrl, previewUrl])) if (url) URL.revokeObjectURL(url);
+      blobUrl = null;
+      previewUrl = null;
       preview.removeAttribute('src');
     }
 
@@ -887,6 +954,8 @@
         // Copy into a fresh ArrayBuffer so the Blob owns plain bytes.
         const blob = new Blob([bytes.slice()], { type: MIME[target] });
         blobUrl = URL.createObjectURL(blob);
+        const shownBlob = await previewBlobFor(target, bytes, blob);
+        previewUrl = shownBlob === blob ? blobUrl : URL.createObjectURL(shownBlob);
 
         downloadEl.href = blobUrl;
         downloadEl.download = outName;
@@ -894,11 +963,12 @@
         $('rk-result-size').textContent = fmtKB(blob.size);
 
         if (PREVIEWABLE.has(target)) {
-          // Sandbox the untrusted HTML/SVG output (block scripts); PDF renders in
-          // the browser's built-in viewer, which the sandbox would suppress.
+          // Sandbox the untrusted HTML/SVG/Markdown output (block scripts); PDF
+          // renders in the browser's built-in viewer, which the sandbox would
+          // suppress.
           if (target === 'pdf') preview.removeAttribute('sandbox');
           else preview.setAttribute('sandbox', '');
-          preview.src = blobUrl;
+          preview.src = previewUrl;
           preview.hidden = false;
           noPreview.hidden = true;
         } else {
