@@ -105,11 +105,6 @@
   "aligned": true
  },
  {
-  "name": "bitmap-composite-or-xor-replace-text.pdf",
-  "score": 0.5147,
-  "aligned": true
- },
- {
   "name": "bitmap-halftone-composite.pdf",
   "score": 0.0886,
   "aligned": true
@@ -121,11 +116,6 @@
  },
  {
   "name": "bitmap-composite-and-xnor-halftone.pdf",
-  "score": 0.0686,
-  "aligned": true
- },
- {
-  "name": "bitmap-composite-and-xnor-text.pdf",
   "score": 0.0686,
   "aligned": true
  },
@@ -195,31 +185,6 @@
   "aligned": true
  },
  {
-  "name": "bitmap-symbol-negative-sbdsoffset.pdf",
-  "score": 0.0686,
-  "aligned": true
- },
- {
-  "name": "bitmap-symbol-symbolrefine-textrefine.pdf",
-  "score": 0.0686,
-  "aligned": true
- },
- {
-  "name": "bitmap-symbol-symbolrefineone-customat.pdf",
-  "score": 0.0686,
-  "aligned": true
- },
- {
-  "name": "bitmap-symbol-symbolrefineone-template1.pdf",
-  "score": 0.0686,
-  "aligned": true
- },
- {
-  "name": "bitmap-symbol-symbolrefineone.pdf",
-  "score": 0.0686,
-  "aligned": true
- },
- {
   "name": "bitmap-symbol-symbolrefineseveral.pdf",
   "score": 0.0686,
   "aligned": true
@@ -250,68 +215,8 @@
   "aligned": true
  },
  {
-  "name": "bitmap-symbol-textbottomleft.pdf",
-  "score": 0.0686,
-  "aligned": true
- },
- {
-  "name": "bitmap-symbol-textbottomlefttranspose.pdf",
-  "score": 0.0686,
-  "aligned": true
- },
- {
-  "name": "bitmap-symbol-textbottomright.pdf",
-  "score": 0.0686,
-  "aligned": true
- },
- {
-  "name": "bitmap-symbol-textbottomrighttranspose.pdf",
-  "score": 0.0686,
-  "aligned": true
- },
- {
-  "name": "bitmap-symbol-textrefine-customat.pdf",
-  "score": 0.0686,
-  "aligned": true
- },
- {
-  "name": "bitmap-symbol-textrefine-negative-delta-width.pdf",
-  "score": 0.0686,
-  "aligned": true
- },
- {
-  "name": "bitmap-symbol-textrefine.pdf",
-  "score": 0.0686,
-  "aligned": true
- },
- {
-  "name": "bitmap-symbol-texttopright.pdf",
-  "score": 0.0686,
-  "aligned": true
- },
- {
-  "name": "bitmap-symbol-texttoprighttranspose.pdf",
-  "score": 0.0686,
-  "aligned": true
- },
- {
-  "name": "bitmap-symbol-texttranspose.pdf",
-  "score": 0.0686,
-  "aligned": true
- },
- {
-  "name": "bitmap-symbol.pdf",
-  "score": 0.0686,
-  "aligned": true
- },
- {
-  "name": "bitmap-symbol-refine.pdf",
-  "score": 0.0631,
-  "aligned": true
- },
- {
-  "name": "bitmap-symbol-textcomposite.pdf",
-  "score": 0.0573,
+  "name": "bitmap-symbol-symbolrefine-textrefine.pdf",
+  "score": 0.0285,
   "aligned": true
  },
  {
@@ -320,7 +225,17 @@
   "aligned": true
  },
  {
+  "name": "bitmap-composite-and-xnor-text.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
   "name": "bitmap-composite-and-xnor.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-composite-or-xor-replace-text.pdf",
   "score": 0,
   "aligned": true
  },
@@ -395,12 +310,97 @@
   "aligned": true
  },
  {
+  "name": "bitmap-symbol-negative-sbdsoffset.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-refine.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-symbolrefineone-customat.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-symbolrefineone-template1.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-symbolrefineone.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-textbottomleft.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-textbottomlefttranspose.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-textbottomright.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-textbottomrighttranspose.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-textcomposite.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
   "name": "bitmap-symbol-texthuffrefinecustom.pdf",
   "score": 0,
   "aligned": true
  },
  {
   "name": "bitmap-symbol-texthuffrefinecustomposdims.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-textrefine-customat.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-textrefine-negative-delta-width.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-textrefine.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-texttopright.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-texttoprighttranspose.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-texttranspose.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol.pdf",
   "score": 0,
   "aligned": true
  },

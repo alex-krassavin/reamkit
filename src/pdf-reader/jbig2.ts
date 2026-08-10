@@ -471,6 +471,314 @@ export function decodeRefinement(
   return bmp;
 }
 
+// ------------------------------------------------- arithmetic integer decoding
+
+/** §A.2 returns this instead of a number when the coder signals out-of-band. */
+const OOB = Symbol('OOB');
+
+/**
+ * §A.2 — the integer decoding procedure.
+ *
+ * Every count, coordinate and delta in a symbol dictionary or text region comes
+ * through here: a sign bit, then a prefix that says how many magnitude bits
+ * follow and what to add to them. The context is a walk down a binary tree of
+ * the bits read so far, which is why each kind of integer (IADH, IADW, IADT …)
+ * needs a context set of its own.
+ */
+class IntDecoder {
+  private readonly cx = newContexts(512);
+  constructor(private readonly mq: MQDecoder) {}
+
+  decode(): number | typeof OOB {
+    let prev = 1;
+    const bit = (): number => {
+      const b = this.mq.decode(this.cx, prev);
+      prev = prev < 256 ? (prev << 1) | b : ((((prev << 1) | b) & 511) | 256) >>> 0;
+      return b;
+    };
+    const sign = bit();
+    // §A.2 — the prefix is a run of up to five 1-bits, and each one read means
+    // a longer magnitude field with a bigger base added to it.
+    const FIELDS: ReadonlyArray<readonly [number, number]> = [
+      [2, 0],
+      [4, 4],
+      [6, 20],
+      [8, 84],
+      [12, 340],
+      [32, 4436],
+    ];
+    let level = 0;
+    while (level < 5 && bit() === 1) level++;
+    const [n, offset] = FIELDS[level]!;
+    let v = 0;
+    for (let i = 0; i < n; i++) v = (v << 1) | bit();
+    v += offset;
+    if (sign === 0) return v;
+    // §A.2 — a negative zero is the out-of-band signal that ends a run.
+    return v === 0 ? OOB : -v;
+  }
+}
+
+/** §A.3 — the symbol ID decoder, a fixed-width code down its own context tree. */
+class IdDecoder {
+  private readonly cx: Cx;
+  constructor(
+    private readonly mq: MQDecoder,
+    private readonly codeLen: number,
+  ) {
+    this.cx = newContexts(1 << (codeLen + 1));
+  }
+
+  decode(): number {
+    let prev = 1;
+    for (let i = 0; i < this.codeLen; i++) prev = (prev << 1) | this.mq.decode(this.cx, prev);
+    return prev - (1 << this.codeLen);
+  }
+}
+
+// --------------------------------------------------- symbol dictionary + text
+
+/** How a text region places each instance against the point it names (§6.4.5). */
+const enum Corner {
+  BottomLeft = 0,
+  TopLeft = 1,
+  BottomRight = 2,
+  TopRight = 3,
+}
+
+/** The parameters a text region needs, however they were coded. */
+interface TextRegionParams {
+  readonly width: number;
+  readonly height: number;
+  readonly instances: number;
+  readonly stripT: number;
+  readonly refCorner: Corner;
+  readonly transposed: boolean;
+  readonly combOp: number;
+  readonly defPixel: number;
+  readonly dsOffset: number;
+  readonly refine: boolean;
+  readonly rTemplate: number;
+  readonly rAt: ReadonlyArray<At>;
+}
+
+/**
+ * §6.4.5 — draw a text region: a run of strips, each holding instances of the
+ * symbols in `symbols`, placed by running coordinates rather than absolute ones.
+ *
+ * This is what JBIG2 is for. A scanned page is not stored as pixels but as "the
+ * shape called 37, here; the shape called 12, four pixels on" — so the letter
+ * "e" costs its bitmap once and a few bits per occurrence after that.
+ */
+function decodeTextRegion(
+  mq: MQDecoder,
+  symbols: ReadonlyArray<Jbig2Bitmap>,
+  p: TextRegionParams,
+  stripsLog: number,
+): Jbig2Bitmap {
+  const bmp = makeBitmap(p.width, p.height, p.defPixel);
+  const strips = 1 << stripsLog;
+  const codeLen = Math.max(1, Math.ceil(Math.log2(Math.max(symbols.length, 1))));
+  const iadt = new IntDecoder(mq);
+  const iafs = new IntDecoder(mq);
+  const iads = new IntDecoder(mq);
+  const iait = new IntDecoder(mq);
+  const iari = new IntDecoder(mq);
+  const iardw = new IntDecoder(mq);
+  const iardh = new IntDecoder(mq);
+  const iardx = new IntDecoder(mq);
+  const iardy = new IntDecoder(mq);
+  const iaid = new IdDecoder(mq, codeLen);
+  const refineCx = newContexts(1 << 13);
+
+  const num = (v: number | typeof OOB): number => (v === OOB ? 0 : v);
+  let stripT = -num(iadt.decode()) * strips;
+  let firstS = 0;
+  let placed = 0;
+
+  while (placed < p.instances) {
+    stripT += num(iadt.decode()) * strips;
+    firstS += num(iafs.decode());
+    let curS = firstS;
+    for (;;) {
+      const t = strips === 1 ? 0 : num(iait.decode());
+      const tt = stripT + t;
+      const id = iaid.decode();
+      let sym = symbols[id] ?? makeBitmap(1, 1);
+      if (p.refine && num(iari.decode()) !== 0) {
+        // §6.4.11 — this instance is not the dictionary's shape but a
+        // refinement of it, which is how a scan keeps the one "e" that smudged.
+        const rdw = num(iardw.decode());
+        const rdh = num(iardh.decode());
+        const rdx = num(iardx.decode());
+        const rdy = num(iardy.decode());
+        const w = sym.width + rdw;
+        const h = sym.height + rdh;
+        if (w > 0 && h > 0 && w < 1 << 14 && h < 1 << 14) {
+          sym = decodeRefinement(
+            mq,
+            refineCx,
+            w,
+            h,
+            p.rTemplate,
+            sym,
+            (rdw >> 1) + rdx,
+            (rdh >> 1) + rdy,
+            p.rAt,
+            false,
+          );
+        }
+      }
+      const sw = sym.width;
+      const sh = sym.height;
+      // §6.4.5 step 3(c)(x) — where the instance's own box goes, given which
+      // of its corners the running coordinates name.
+      let x: number;
+      let y: number;
+      if (p.transposed) {
+        x = tt;
+        y = curS;
+        if (p.refCorner === Corner.BottomLeft || p.refCorner === Corner.BottomRight) {
+          // nothing: in transposed placement S runs down and T across
+        }
+        if (p.refCorner === Corner.TopRight || p.refCorner === Corner.BottomRight) x = tt - sw + 1;
+      } else {
+        x = curS;
+        y = tt;
+        if (p.refCorner === Corner.BottomLeft || p.refCorner === Corner.BottomRight) {
+          y = tt - sh + 1;
+        }
+      }
+      compose(bmp, sym, x, y, p.combOp);
+      curS += (p.transposed ? sh : sw) - 1;
+      placed++;
+      if (placed >= p.instances) break;
+      const ids = iads.decode();
+      if (ids === OOB) break; // the strip ends
+      curS += ids + p.dsOffset;
+    }
+  }
+  return bmp;
+}
+
+/**
+ * §6.5 — decode a symbol dictionary: the shapes a text region will place.
+ *
+ * Shapes come in HEIGHT CLASSES, tallest dimension first: one delta says how
+ * much taller this class is than the last, then a run of widths within it, each
+ * ending when the width decoder signals out-of-band.
+ *
+ * @param input The symbols this dictionary inherits from the ones it refers to.
+ */
+function decodeSymbolDictionary(
+  mq: MQDecoder,
+  input: ReadonlyArray<Jbig2Bitmap>,
+  newCount: number,
+  exportCount: number,
+  template: number,
+  at: ReadonlyArray<At>,
+  refAgg: boolean,
+  rTemplate: number,
+  rAt: ReadonlyArray<At>,
+): Array<Jbig2Bitmap> {
+  const iadh = new IntDecoder(mq);
+  const iadw = new IntDecoder(mq);
+  const iaex = new IntDecoder(mq);
+  const iaai = new IntDecoder(mq);
+  const iardx = new IntDecoder(mq);
+  const iardy = new IntDecoder(mq);
+  const genericCx = newContexts(1 << 16);
+  const refineCx = newContexts(1 << 13);
+  const newSymbols: Array<Jbig2Bitmap> = [];
+  const num = (v: number | typeof OOB): number => (v === OOB ? 0 : v);
+
+  let height = 0;
+  let guard = 0;
+  while (newSymbols.length < newCount && guard++ < 10000) {
+    height += num(iadh.decode());
+    let width = 0;
+    for (;;) {
+      const dw = iadw.decode();
+      if (dw === OOB) break;
+      width += dw;
+      if (newSymbols.length >= newCount) break;
+      if (width <= 0 || height <= 0 || width > 1 << 14 || height > 1 << 14) {
+        newSymbols.push(makeBitmap(1, 1));
+        continue;
+      }
+      if (!refAgg) {
+        newSymbols.push(decodeGenericRegion(mq, genericCx, width, height, template, at, false));
+      } else {
+        const instances = num(iaai.decode());
+        if (instances === 1) {
+          // §6.5.8.2.2 — one instance: the new shape is a refinement of an
+          // existing one, which is how a dictionary stores a family of glyphs.
+          const all = [...input, ...newSymbols];
+          const codeLen = Math.max(1, Math.ceil(Math.log2(Math.max(all.length + newCount, 1))));
+          const id = new IdDecoder(mq, codeLen).decode();
+          const rdx = num(iardx.decode());
+          const rdy = num(iardy.decode());
+          newSymbols.push(
+            decodeRefinement(
+              mq,
+              refineCx,
+              width,
+              height,
+              rTemplate,
+              all[id] ?? makeBitmap(1, 1),
+              rdx,
+              rdy,
+              rAt,
+              false,
+            ),
+          );
+        } else {
+          // §6.5.8.2 — several instances: the shape is a little text region
+          // drawn from the symbols known so far.
+          const all = [...input, ...newSymbols];
+          newSymbols.push(
+            decodeTextRegion(
+              mq,
+              all,
+              {
+                width,
+                height,
+                instances,
+                stripT: 0,
+                refCorner: Corner.TopLeft,
+                transposed: false,
+                combOp: 0,
+                defPixel: 0,
+                dsOffset: 0,
+                refine: true,
+                rTemplate,
+                rAt,
+              },
+              0,
+            ),
+          );
+        }
+      }
+    }
+  }
+
+  // §6.5.10 — the export flags: alternating runs of "not exported" and
+  // "exported" over the input symbols followed by the new ones.
+  const all = [...input, ...newSymbols];
+  const exported: Array<Jbig2Bitmap> = [];
+  let i = 0;
+  let exporting = false;
+  let steps = 0;
+  while (i < all.length && exported.length < exportCount && steps++ < 10000) {
+    const run = num(iaex.decode());
+    if (exporting) for (let k = 0; k < run && i + k < all.length; k++) exported.push(all[i + k]!);
+    i += run;
+    exporting = !exporting;
+    if (run === 0 && steps > all.length * 2 + 4) break;
+  }
+  return exported.length > 0 ? exported : newSymbols;
+}
+
 // ------------------------------------------------------------------ segments
 
 /** §7.2 — one segment's header, and where its data lies in the stream. */
@@ -620,6 +928,9 @@ export function decodeJbig2(
   // painting the intermediate onto the page put the unrefined bitmap there and
   // then refined the page against itself.
   const buffers = new Map<number, Jbig2Bitmap>();
+  // §7.4.3 — what each symbol dictionary segment exported, for the text
+  // regions that name it.
+  const symbolsBySegment = new Map<number, ReadonlyArray<Jbig2Bitmap>>();
 
   const run = (bytes: Uint8Array): void => {
     for (const seg of parseSegments(bytes)) {
@@ -644,6 +955,98 @@ export function decodeJbig2(
             page.height = Math.min(ph, height);
           }
           canvas = makeBitmap(width, height, page.defPixel);
+          continue;
+        }
+        // §7.4.3 symbol dictionary — the shapes, kept for the text regions
+        // that refer to this segment.
+        if (seg.type === 0) {
+          const flags = r.u16();
+          const huff = (flags & 1) !== 0;
+          const refAgg = (flags & 2) !== 0;
+          const template = (flags >> 10) & 3;
+          const rTemplate = (flags >> 12) & 1;
+          const ctxUsed = (flags & 0x0100) !== 0;
+          const at: Array<At> = [];
+          if (!huff) {
+            const n = template === 0 ? 4 : 1;
+            for (let i = 0; i < n; i++) at.push({ x: r.i8(), y: r.i8() });
+          }
+          const rAt: Array<At> = [];
+          if (refAgg && rTemplate === 0) {
+            for (let i = 0; i < 2; i++) rAt.push({ x: r.i8(), y: r.i8() });
+          }
+          const exportCount = r.u32();
+          const newCount = r.u32();
+          // Huffman-coded dictionaries are a later stage; without their tables
+          // nothing here can be read, and guessing would draw rubbish.
+          if (huff || newCount > 10000) continue;
+          const inherited = seg.referred.flatMap((n) => symbolsBySegment.get(n) ?? []);
+          void ctxUsed;
+          symbolsBySegment.set(
+            seg.number,
+            decodeSymbolDictionary(
+              new MQDecoder(bytes.subarray(seg.start + r.pos, seg.end)),
+              inherited,
+              newCount,
+              exportCount,
+              template,
+              at.length > 0 ? at : (NOMINAL_AT[template] ?? []),
+              refAgg,
+              rTemplate,
+              rAt.length > 0 ? rAt : NOMINAL_AT_REFINE,
+            ),
+          );
+          continue;
+        }
+        // §7.4.4 text region — where each of those shapes goes.
+        if (seg.type === 4 || seg.type === 6 || seg.type === 7) {
+          const info = readRegionInfo(r);
+          const flags = r.u16();
+          const huff = (flags & 1) !== 0;
+          const refine = (flags & 2) !== 0;
+          const stripsLog = (flags >> 2) & 3;
+          const refCorner = (flags >> 4) & 3;
+          const transposed = (flags & 0x40) !== 0;
+          const combOp = (flags >> 7) & 3;
+          const defPixel = (flags >> 9) & 1;
+          let dsOffset = (flags >> 10) & 0x1f;
+          if (dsOffset > 15) dsOffset -= 32;
+          const rTemplate = (flags >> 15) & 1;
+          if (huff) continue; // Huffman-coded text regions are a later stage.
+          const rAt: Array<At> = [];
+          if (refine && rTemplate === 0) {
+            for (let i = 0; i < 2; i++) rAt.push({ x: r.i8(), y: r.i8() });
+          }
+          const instances = r.u32();
+          const symbols = seg.referred.flatMap((n) => symbolsBySegment.get(n) ?? []);
+          if (symbols.length === 0 || instances > 100000) continue;
+          const w = Math.min(info.width, 1 << 16);
+          const h = Math.min(info.height, 1 << 16);
+          if (w <= 0 || h <= 0) continue;
+          const bmp = decodeTextRegion(
+            new MQDecoder(bytes.subarray(seg.start + r.pos, seg.end)),
+            symbols,
+            {
+              width: w,
+              height: h,
+              instances,
+              stripT: 0,
+              refCorner,
+              transposed,
+              combOp,
+              defPixel,
+              dsOffset,
+              refine,
+              rTemplate,
+              rAt: rAt.length > 0 ? rAt : NOMINAL_AT_REFINE,
+            },
+            stripsLog,
+          );
+          if (seg.type === 4) buffers.set(seg.number, bmp);
+          else {
+            compose(canvas, bmp, info.x, info.y, info.combOp);
+            painted.regions++;
+          }
           continue;
         }
         // Immediate generic region (38, 39) and its intermediate form (36).
