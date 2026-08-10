@@ -20,26 +20,6 @@
   }
  },
  {
-  "name": "freetext_no_appearance.pdf",
-  "best": 98,
-  "flow": {
-   "score": 98,
-   "note": "soffice would not open our .docx",
-   "pages": [
-    0,
-    0
-   ]
-  },
-  "positional": {
-   "score": 98,
-   "note": "soffice would not open our .docx",
-   "pages": [
-    0,
-    0
-   ]
-  }
- },
- {
   "name": "GHOSTSCRIPT-698804-1-fuzzed.pdf",
   "best": 97,
   "flow": {
@@ -220,226 +200,6 @@
   }
  },
  {
-  "name": "bitmap-composite-and-xnor-refine.pdf",
-  "best": 1,
-  "flow": {
-   "score": 1,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 1,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-composite-or-xor-replace-refine.pdf",
-  "best": 1,
-  "flow": {
-   "score": 1,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 1,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-halftone-refine.pdf",
-  "best": 1,
-  "flow": {
-   "score": 1,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 1,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-refine-customat-tpgron.pdf",
-  "best": 1,
-  "flow": {
-   "score": 1,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 1,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-refine-customat.pdf",
-  "best": 1,
-  "flow": {
-   "score": 1,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 1,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-refine-lossless.pdf",
-  "best": 1,
-  "flow": {
-   "score": 1,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 1,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-refine-refine.pdf",
-  "best": 1,
-  "flow": {
-   "score": 1,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 1,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-refine-template1-tpgron.pdf",
-  "best": 1,
-  "flow": {
-   "score": 1,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 1,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-refine-template1.pdf",
-  "best": 1,
-  "flow": {
-   "score": 1,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 1,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-refine-tpgron.pdf",
-  "best": 1,
-  "flow": {
-   "score": 1,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 1,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-refine.pdf",
-  "best": 1,
-  "flow": {
-   "score": 1,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 1,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
   "name": "bitmap-symbol-context-reuse.pdf",
   "best": 1,
   "flow": {
@@ -460,147 +220,7 @@
   }
  },
  {
-  "name": "bitmap-symbol-symhuffrefine-textrefine.pdf",
-  "best": 1,
-  "flow": {
-   "score": 1,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 1,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
   "name": "bitmap-symbol-symhuffrefineseveral.pdf",
-  "best": 1,
-  "flow": {
-   "score": 1,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 1,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-symbol-texthuffrefine.pdf",
-  "best": 1,
-  "flow": {
-   "score": 1,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 1,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-symbol-texthuffrefineB15.pdf",
-  "best": 1,
-  "flow": {
-   "score": 1,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 1,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-symbol-texthuffrefinecustomdims.pdf",
-  "best": 1,
-  "flow": {
-   "score": 1,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 1,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-symbol-texthuffrefinecustompos.pdf",
-  "best": 1,
-  "flow": {
-   "score": 1,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 1,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-symbol-texthuffrefinecustomsize.pdf",
-  "best": 1,
-  "flow": {
-   "score": 1,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 1,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-trailing-7fff-stripped-harder-refine.pdf",
   "best": 1,
   "flow": {
    "score": 1,
@@ -660,10 +280,10 @@
   }
  },
  {
-  "name": "bug1755507.pdf",
-  "best": 0.9907,
+  "name": "bitmap-symbol-symhuffrefine-textrefine.pdf",
+  "best": 0.9969,
   "flow": {
-   "score": 0.991,
+   "score": 0.9969,
    "note": "",
    "pages": [
     1,
@@ -671,7 +291,7 @@
    ]
   },
   "positional": {
-   "score": 0.9907,
+   "score": 0.9969,
    "note": "",
    "pages": [
     1,
@@ -700,6 +320,346 @@
   }
  },
  {
+  "name": "bitmap-composite-and-xnor-refine.pdf",
+  "best": 0.9349,
+  "flow": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-composite-or-xor-replace-refine.pdf",
+  "best": 0.9349,
+  "flow": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-halftone-refine.pdf",
+  "best": 0.9349,
+  "flow": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-refine-customat-tpgron.pdf",
+  "best": 0.9349,
+  "flow": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-refine-customat.pdf",
+  "best": 0.9349,
+  "flow": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-refine-lossless.pdf",
+  "best": 0.9349,
+  "flow": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-refine-refine.pdf",
+  "best": 0.9349,
+  "flow": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-refine-template1-tpgron.pdf",
+  "best": 0.9349,
+  "flow": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-refine-template1.pdf",
+  "best": 0.9349,
+  "flow": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-refine-tpgron.pdf",
+  "best": 0.9349,
+  "flow": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-refine.pdf",
+  "best": 0.9349,
+  "flow": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-texthuffrefine.pdf",
+  "best": 0.9349,
+  "flow": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-texthuffrefineB15.pdf",
+  "best": 0.9349,
+  "flow": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-texthuffrefinecustomdims.pdf",
+  "best": 0.9349,
+  "flow": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-texthuffrefinecustompos.pdf",
+  "best": 0.9349,
+  "flow": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-texthuffrefinecustomsize.pdf",
+  "best": 0.9349,
+  "flow": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-trailing-7fff-stripped-harder-refine.pdf",
+  "best": 0.9349,
+  "flow": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.9349,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
   "name": "bug946506.pdf",
   "best": 0.8974,
   "flow": {
@@ -720,50 +680,10 @@
   }
  },
  {
-  "name": "comments.pdf",
-  "best": 0.879,
+  "name": "bug1755507.pdf",
+  "best": 0.8439,
   "flow": {
-   "score": 0.879,
-   "note": "pages 5≠14",
-   "pages": [
-    5,
-    14
-   ]
-  },
-  "positional": {
-   "score": 0.879,
-   "note": "pages 5≠14",
-   "pages": [
-    5,
-    14
-   ]
-  }
- },
- {
-  "name": "canvas.pdf",
-  "best": 0.8647,
-  "flow": {
-   "score": 0.8647,
-   "note": "pages 17≠2",
-   "pages": [
-    17,
-    2
-   ]
-  },
-  "positional": {
-   "score": 0.8647,
-   "note": "pages 17≠2",
-   "pages": [
-    17,
-    2
-   ]
-  }
- },
- {
-  "name": "bug1771477.pdf",
-  "best": 0.8081,
-  "flow": {
-   "score": 0.812,
+   "score": 0.8455,
    "note": "",
    "pages": [
     1,
@@ -771,7 +691,7 @@
    ]
   },
   "positional": {
-   "score": 0.8081,
+   "score": 0.8439,
    "note": "",
    "pages": [
     1,
@@ -781,9 +701,9 @@
  },
  {
   "name": "calgray.pdf",
-  "best": 0.7684,
+  "best": 0.6727,
   "flow": {
-   "score": 0.7716,
+   "score": 0.6759,
    "note": "",
    "pages": [
     3,
@@ -791,7 +711,7 @@
    ]
   },
   "positional": {
-   "score": 0.7684,
+   "score": 0.6727,
    "note": "",
    "pages": [
     3,
@@ -801,9 +721,9 @@
  },
  {
   "name": "calrgb.pdf",
-  "best": 0.7634,
+  "best": 0.6408,
   "flow": {
-   "score": 0.7758,
+   "score": 0.6533,
    "note": "",
    "pages": [
     17,
@@ -811,7 +731,7 @@
    ]
   },
   "positional": {
-   "score": 0.7634,
+   "score": 0.6408,
    "note": "",
    "pages": [
     17,
@@ -1001,9 +921,9 @@
  },
  {
   "name": "endchar.pdf",
-  "best": 0.3838,
+  "best": 0.3836,
   "flow": {
-   "score": 0.3839,
+   "score": 0.3836,
    "note": "",
    "pages": [
     1,
@@ -1011,7 +931,7 @@
    ]
   },
   "positional": {
-   "score": 0.3838,
+   "score": 0.3836,
    "note": "",
    "pages": [
     1,
@@ -1021,9 +941,9 @@
  },
  {
   "name": "copy_paste_ligatures.pdf",
-  "best": 0.3785,
+  "best": 0.3786,
   "flow": {
-   "score": 0.3785,
+   "score": 0.3786,
    "note": "",
    "pages": [
     1,
@@ -1080,6 +1000,26 @@
   }
  },
  {
+  "name": "comments.pdf",
+  "best": 0.2716,
+  "flow": {
+   "score": 0.2716,
+   "note": "pages 5≠14",
+   "pages": [
+    5,
+    14
+   ]
+  },
+  "positional": {
+   "score": 0.2716,
+   "note": "pages 5≠14",
+   "pages": [
+    5,
+    14
+   ]
+  }
+ },
+ {
   "name": "freeculture.pdf",
   "best": 0.2432,
   "flow": {
@@ -1100,22 +1040,22 @@
   }
  },
  {
-  "name": "issue10640.pdf",
-  "best": 0.2132,
+  "name": "canvas.pdf",
+  "best": 0.2023,
   "flow": {
-   "score": 0.2132,
+   "score": 0.2023,
    "note": "",
    "pages": [
-    1,
-    1
+    2,
+    2
    ]
   },
   "positional": {
-   "score": 0.2132,
+   "score": 0.2067,
    "note": "",
    "pages": [
-    1,
-    1
+    2,
+    2
    ]
   }
  },
@@ -1460,10 +1400,10 @@
   }
  },
  {
-  "name": "bitmap-halftone-composite.pdf",
-  "best": 0.106,
+  "name": "bitmap-symbol-symhuffB5B3-texthuffB7B9B12.pdf",
+  "best": 0.1089,
   "flow": {
-   "score": 0.106,
+   "score": 0.1089,
    "note": "",
    "pages": [
     1,
@@ -1471,7 +1411,7 @@
    ]
   },
   "positional": {
-   "score": 0.106,
+   "score": 0.1089,
    "note": "",
    "pages": [
     1,
@@ -1520,26 +1460,6 @@
   }
  },
  {
-  "name": "bitmap-refine-page-subrect.pdf",
-  "best": 0.1029,
-  "flow": {
-   "score": 0.1029,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.1029,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
   "name": "bug1872721.pdf",
   "best": 0.1021,
   "flow": {
@@ -1560,6 +1480,26 @@
   }
  },
  {
+  "name": "bitmap-symbol-symbolrefine-textrefine.pdf",
+  "best": 0.1019,
+  "flow": {
+   "score": 0.1019,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.1019,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
   "name": "issue11362.pdf",
   "best": 0.1006,
   "flow": {
@@ -1572,6 +1512,26 @@
   },
   "positional": {
    "score": 0.1006,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-halftone-composite.pdf",
+  "best": 0.0963,
+  "flow": {
+   "score": 0.0963,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0963,
    "note": "",
    "pages": [
     1,
@@ -1712,26 +1672,6 @@
   },
   "positional": {
    "score": 0.0882,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-symbol-symhuffrefineone.pdf",
-  "best": 0.0878,
-  "flow": {
-   "score": 0.0878,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0878,
    "note": "",
    "pages": [
     1,
@@ -1900,10 +1840,10 @@
   }
  },
  {
-  "name": "bitmap-composite-and-xnor-halftone.pdf",
-  "best": 0.0727,
+  "name": "bitmap-symbol-texthuffrefinecustom.pdf",
+  "best": 0.0728,
   "flow": {
-   "score": 0.0727,
+   "score": 0.0728,
    "note": "",
    "pages": [
     1,
@@ -1911,7 +1851,7 @@
    ]
   },
   "positional": {
-   "score": 0.0727,
+   "score": 0.0728,
    "note": "",
    "pages": [
     1,
@@ -1920,10 +1860,10 @@
   }
  },
  {
-  "name": "bitmap-composite-and-xnor-text.pdf",
-  "best": 0.0727,
+  "name": "bitmap-symbol-texthuffrefinecustomposdims.pdf",
+  "best": 0.0728,
   "flow": {
-   "score": 0.0727,
+   "score": 0.0728,
    "note": "",
    "pages": [
     1,
@@ -1931,567 +1871,7 @@
    ]
   },
   "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-composite-and-xnor.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-composite-or-xor-replace-halftone.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-composite-or-xor-replace-text.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-composite-or-xor-replace.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-customat-tpgdon.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-customat.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-halftone-10bpp-mmr.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-halftone-10bpp.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-halftone-grid.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-halftone-skip-dummy.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-halftone-skip-grid-template1.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-halftone-skip-grid-template2.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-halftone-skip-grid-template3.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-halftone-skip-grid.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-halftone-template1.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-halftone-template2.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-halftone-template3.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-halftone.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-initially-unknown-size.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-mmr.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-p32-eof.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-randomaccess.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-refine-page.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-stripe-initially-unknown-height.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-stripe-last-implicit.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-stripe-single-no-end-of-stripe.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-stripe-single.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-stripe.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
+   "score": 0.0728,
    "note": "",
    "pages": [
     1,
@@ -2501,146 +1881,6 @@
  },
  {
   "name": "bitmap-symbol-big-segmentid.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-symbol-empty.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-symbol-negative-sbdsoffset.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-symbol-refine.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-symbol-symbolrefine-textrefine.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-symbol-symbolrefineone-customat.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-symbol-symbolrefineone-template1.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-symbol-symbolrefineone.pdf",
   "best": 0.0727,
   "flow": {
    "score": 0.0727,
@@ -2680,10 +1920,10 @@
   }
  },
  {
-  "name": "bitmap-symbol-symhuff-texthuff.pdf",
-  "best": 0.0727,
+  "name": "bitmap-halftone-10bpp-mmr.pdf",
+  "best": 0.07,
   "flow": {
-   "score": 0.0727,
+   "score": 0.07,
    "note": "",
    "pages": [
     1,
@@ -2691,627 +1931,7 @@
    ]
   },
   "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-symbol-symhuff-texthuffB10B13.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-symbol-symhuffB5B3-texthuffB7B9B12.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-symbol-symhuffcustom-texthuffcustom.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-symbol-symhuffuncompressed-texthuff.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-symbol-textbottomleft.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-symbol-textbottomlefttranspose.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-symbol-textbottomright.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-symbol-textbottomrighttranspose.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-symbol-textcomposite.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-symbol-textrefine-customat.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-symbol-textrefine-negative-delta-width.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-symbol-textrefine.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-symbol-texttopright.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-symbol-texttoprighttranspose.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-symbol-texttranspose.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-symbol.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-template1-customat-tpgdon.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-template1-customat.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-template1-tpgdon.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-template1.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-template2-customat-tpgdon.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-template2-customat.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-template2-tpgdon.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-template2.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-template3-customat-tpgdon.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-template3-customat.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-template3-tpgdon.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-template3.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-tpgdon.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-trailing-7fff-stripped-harder.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-trailing-7fff-stripped.pdf",
-  "best": 0.0727,
-  "flow": {
-   "score": 0.0727,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0727,
+   "score": 0.07,
    "note": "",
    "pages": [
     1,
@@ -3600,26 +2220,6 @@
   }
  },
  {
-  "name": "bug1157493.pdf",
-  "best": 0.0489,
-  "flow": {
-   "score": 0.0489,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0489,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
   "name": "issue11403_reduced.pdf",
   "best": 0.0478,
   "flow": {
@@ -3632,6 +2232,26 @@
   },
   "positional": {
    "score": 0.0478,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1157493.pdf",
+  "best": 0.0431,
+  "flow": {
+   "score": 0.0533,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0431,
    "note": "",
    "pages": [
     1,
@@ -3880,6 +2500,26 @@
   }
  },
  {
+  "name": "bitmap-refine-page-subrect.pdf",
+  "best": 0.0335,
+  "flow": {
+   "score": 0.0335,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0335,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
   "name": "bug2026037.pdf",
   "best": 0.0306,
   "flow": {
@@ -4012,26 +2652,6 @@
   },
   "positional": {
    "score": 0.0267,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "issue11016_reduced.pdf",
-  "best": 0.0264,
-  "flow": {
-   "score": 0.0264,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0264,
    "note": "",
    "pages": [
     1,
@@ -4300,6 +2920,26 @@
   }
  },
  {
+  "name": "bitmap-symbol-symhuffrefineone.pdf",
+  "best": 0.0179,
+  "flow": {
+   "score": 0.0179,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0179,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
   "name": "issue1002.pdf",
   "best": 0.0164,
   "flow": {
@@ -4332,6 +2972,26 @@
   },
   "positional": {
    "score": 0.0163,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1771477.pdf",
+  "best": 0.0161,
+  "flow": {
+   "score": 0.0161,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0197,
    "note": "",
    "pages": [
     1,
@@ -4440,18 +3100,18 @@
   }
  },
  {
-  "name": "bug1873345.pdf",
-  "best": 0.0137,
+  "name": "freetext_no_appearance.pdf",
+  "best": 0.0138,
   "flow": {
-   "score": 0.0591,
-   "note": "",
+   "score": 0.5748,
+   "note": "pages 352≠1",
    "pages": [
-    1,
+    352,
     1
    ]
   },
   "positional": {
-   "score": 0.0137,
+   "score": 0.0138,
    "note": "",
    "pages": [
     1,
@@ -4501,26 +3161,6 @@
  },
  {
   "name": "bug1146106.pdf",
-  "best": 0.0136,
-  "flow": {
-   "score": 0.0136,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0136,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "inks.pdf",
   "best": 0.0136,
   "flow": {
    "score": 0.0136,
@@ -4592,6 +3232,46 @@
   },
   "positional": {
    "score": 0.0128,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bug1873345.pdf",
+  "best": 0.0123,
+  "flow": {
+   "score": 0.0585,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0123,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "issue10640.pdf",
+  "best": 0.0122,
+  "flow": {
+   "score": 0.0407,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0122,
    "note": "",
    "pages": [
     1,
@@ -4672,6 +3352,26 @@
   },
   "positional": {
    "score": 0.0117,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "german-umlaut-r.pdf",
+  "best": 0.0108,
+  "flow": {
+   "score": 0.0267,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0108,
    "note": "",
    "pages": [
     1,
@@ -4980,10 +3680,10 @@
   }
  },
  {
-  "name": "german-umlaut-r.pdf",
+  "name": "issue11016_reduced.pdf",
   "best": 0.0088,
   "flow": {
-   "score": 0.0267,
+   "score": 0.0222,
    "note": "",
    "pages": [
     1,
@@ -5180,6 +3880,26 @@
   }
  },
  {
+  "name": "inks.pdf",
+  "best": 0.0076,
+  "flow": {
+   "score": 0.0077,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0076,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
   "name": "ContentStreamCycleType3insideType3.pdf",
   "best": 0.0075,
   "flow": {
@@ -5201,9 +3921,9 @@
  },
  {
   "name": "bug1815476.pdf",
-  "best": 0.0074,
+  "best": 0.0072,
   "flow": {
-   "score": 0.0322,
+   "score": 0.0343,
    "note": "",
    "pages": [
     1,
@@ -5211,7 +3931,7 @@
    ]
   },
   "positional": {
-   "score": 0.0074,
+   "score": 0.0072,
    "note": "",
    "pages": [
     1,
@@ -5312,26 +4032,6 @@
   },
   "positional": {
    "score": 0.0067,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "freetexts.pdf",
-  "best": 0.0063,
-  "flow": {
-   "score": 0.0156,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0063,
    "note": "",
    "pages": [
     1,
@@ -5600,26 +4300,6 @@
   }
  },
  {
-  "name": "cid_cff.pdf",
-  "best": 0.0047,
-  "flow": {
-   "score": 0.0047,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0047,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
   "name": "issue10388_reduced.pdf",
   "best": 0.0045,
   "flow": {
@@ -5764,6 +4444,26 @@
   "best": 0.0037,
   "flow": {
    "score": 0.0048,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0037,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "freetexts.pdf",
+  "best": 0.0037,
+  "flow": {
+   "score": 0.0152,
    "note": "",
    "pages": [
     1,
@@ -6020,10 +4720,10 @@
   }
  },
  {
-  "name": "dates_save.pdf",
-  "best": 0.0023,
+  "name": "bug1727053.pdf",
+  "best": 0.0024,
   "flow": {
-   "score": 0.0029,
+   "score": 0.0061,
    "note": "",
    "pages": [
     1,
@@ -6031,7 +4731,7 @@
    ]
   },
   "positional": {
-   "score": 0.0023,
+   "score": 0.0024,
    "note": "",
    "pages": [
     1,
@@ -6040,10 +4740,10 @@
   }
  },
  {
-  "name": "bug1727053.pdf",
+  "name": "dates_save.pdf",
   "best": 0.0023,
   "flow": {
-   "score": 0.0061,
+   "score": 0.0029,
    "note": "",
    "pages": [
     1,
@@ -6107,26 +4807,6 @@
    "note": "",
    "pages": [
     1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0.0022,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bug1001080.pdf",
-  "best": 0.0022,
-  "flow": {
-   "score": 0.0039,
-   "note": "pages 3≠1",
-   "pages": [
-    3,
     1
    ]
   },
@@ -6244,6 +4924,1326 @@
   "best": 0.0018,
   "flow": {
    "score": 0.0026,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-composite-and-xnor-halftone.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-composite-and-xnor-text.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-composite-and-xnor.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-composite-or-xor-replace-halftone.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-composite-or-xor-replace-text.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-composite-or-xor-replace.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-customat-tpgdon.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-customat.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-halftone-10bpp.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-halftone-grid.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-halftone-skip-dummy.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-halftone-skip-grid-template1.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-halftone-skip-grid-template2.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-halftone-skip-grid-template3.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-halftone-skip-grid.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-halftone-template1.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-halftone-template2.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-halftone-template3.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-halftone.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-initially-unknown-size.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-mmr.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-p32-eof.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-randomaccess.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-refine-page.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-stripe-initially-unknown-height.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-stripe-last-implicit.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-stripe-single-no-end-of-stripe.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-stripe-single.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-stripe.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-empty.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-negative-sbdsoffset.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-refine.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-symbolrefineone-customat.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-symbolrefineone-template1.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-symbolrefineone.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-symhuff-texthuff.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-symhuff-texthuffB10B13.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-symhuffcustom-texthuffcustom.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-symhuffuncompressed-texthuff.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-textbottomleft.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-textbottomlefttranspose.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-textbottomright.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-textbottomrighttranspose.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-textcomposite.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-textrefine-customat.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-textrefine-negative-delta-width.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-textrefine.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-texttopright.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-texttoprighttranspose.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol-texttranspose.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-symbol.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-template1-customat-tpgdon.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-template1-customat.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-template1-tpgdon.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-template1.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-template2-customat-tpgdon.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-template2-customat.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-template2-tpgdon.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-template2.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-template3-customat-tpgdon.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-template3-customat.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-template3-tpgdon.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-template3.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-tpgdon.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-trailing-7fff-stripped-harder.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0018,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "bitmap-trailing-7fff-stripped.pdf",
+  "best": 0.0018,
+  "flow": {
+   "score": 0.0018,
    "note": "",
    "pages": [
     1,
@@ -6400,6 +6400,26 @@
   }
  },
  {
+  "name": "bug1001080.pdf",
+  "best": 0.0014,
+  "flow": {
+   "score": 0.0014,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0022,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
   "name": "annotation-button-widget.pdf",
   "best": 0.0014,
   "flow": {
@@ -6444,6 +6464,26 @@
   "best": 0.0012,
   "flow": {
    "score": 0.0012,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  },
+  "positional": {
+   "score": 0.0012,
+   "note": "",
+   "pages": [
+    1,
+    1
+   ]
+  }
+ },
+ {
+  "name": "cid_cff.pdf",
+  "best": 0.0012,
+  "flow": {
+   "score": 0.0035,
    "note": "",
    "pages": [
     1,
@@ -7721,46 +7761,6 @@
  },
  {
   "name": "autoprint.pdf",
-  "best": 0,
-  "flow": {
-   "score": 0,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-symbol-texthuffrefinecustom.pdf",
-  "best": 0,
-  "flow": {
-   "score": 0,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  },
-  "positional": {
-   "score": 0,
-   "note": "",
-   "pages": [
-    1,
-    1
-   ]
-  }
- },
- {
-  "name": "bitmap-symbol-texthuffrefinecustomposdims.pdf",
   "best": 0,
   "flow": {
    "score": 0,
