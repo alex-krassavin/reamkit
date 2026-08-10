@@ -21,7 +21,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync
 import { fileURLToPath } from 'node:url';
 import { basename, dirname, resolve } from 'node:path';
 
-import { referenceToPdf } from './lib';
+import { parseOptions, referenceToPdf } from './lib';
 import { corpusFontOptions } from './fonts';
 import { Ream } from '@/core/converter/ream';
 
@@ -125,7 +125,7 @@ async function main(): Promise<void> {
   const ourPdf = resolve(workDir, 'ours.pdf');
   writeFileSync(
     ourPdf,
-    await Ream.parse(new Uint8Array(readFileSync(input))).convert('pdf', {
+    await Ream.parse(new Uint8Array(readFileSync(input)), parseOptions(input)).convert('pdf', {
       // The document's own families (see ./fonts). CJK included: the library
       // fetches a face per SCRIPT now, which is also what pixel-scout measures —
       // a host face substituted here instead showed a Japanese sheet in a Korean
@@ -135,7 +135,13 @@ async function main(): Promise<void> {
     }),
   );
   const ours = rasterize(ourPdf, 'ours');
-  const refs = rasterize(referenceToPdf(input, workDir), 'ref');
+  // A PDF is its own reference — the same oracle pixel-scout uses. Asking
+  // LibreOffice to "convert" one runs it through Draw, which REDRAWS the page
+  // rather than reporting it: Brotli-Prototype-FileA.pdf came back as one page
+  // of twenty-five, and 160F-2019.pdf came back without the button it draws.
+  // Read against that, the picture and the number disagree about the same file.
+  const isPdf = /\.pdf$/iu.test(input);
+  const refs = rasterize(isPdf ? input : referenceToPdf(input, workDir), 'ref');
 
   const count = Math.max(ours.length, refs.length);
   const wanted = only ?? Array.from({ length: count }, (_, i) => i + 1);
@@ -159,7 +165,10 @@ async function main(): Promise<void> {
     const layers: Array<Record<string, unknown>> = [
       { input: label(`OURS  ${name}  page ${p}/${ours.length}`, wa || 1), top: 0, left: 0 },
       {
-        input: label(`LIBREOFFICE  page ${p}/${refs.length}`, wb || 1),
+        input: label(
+          `${isPdf ? 'THE FILE ITSELF' : 'LIBREOFFICE'}  page ${p}/${refs.length}`,
+          wb || 1,
+        ),
         top: 0,
         left: wa + GAP,
       },

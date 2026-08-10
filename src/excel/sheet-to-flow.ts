@@ -98,6 +98,16 @@ export interface ProjectSheetOptions {
    * supplies it; absent, the code is dropped exactly as before.
    */
   readonly fileName?: string;
+  /**
+   * Open each printed sheet with a heading carrying its NAME.
+   *
+   * Off by default, and deliberately: a printed page shows no tab name — Excel
+   * and Calc both emit it nowhere — so the paginated targets must not see one.
+   * A flowed target has no pages to tell one sheet from the next by, and a
+   * workbook rendered without them is a pile of tables with nothing to say
+   * which is which; markdown asks for this, and gets `# Sheet1`.
+   */
+  readonly sheetHeadings?: boolean;
 }
 
 /**
@@ -217,8 +227,18 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
 
     // Each sheet after the first starts on its own PDF page. We do NOT print the
     // sheet name (Calc/Excel `--convert-to pdf` emit it nowhere), so the page
-    // break is an empty page-break-only paragraph.
-    if (printed > 0) {
+    // break is an empty page-break-only paragraph — unless the caller asked for
+    // the names, in which case the heading is the paragraph and carries the
+    // break itself, and there is no empty one to keep beside it.
+    if (options.sheetHeadings === true) {
+      body.push({
+        kind: 'paragraph',
+        paragraph: {
+          properties: { outlineLevel: 0, ...(printed > 0 ? { pageBreakBefore: true } : {}) },
+          runs: [{ text: ws.name, properties: {} }],
+        },
+      });
+    } else if (printed > 0) {
       body.push({ kind: 'paragraph', paragraph: PAGE_BREAK_PARAGRAPH });
     }
 

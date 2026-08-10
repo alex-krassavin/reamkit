@@ -5,7 +5,7 @@ description: Install Ream and convert your first document to PDF.
 
 Ream reads Word, Excel, PowerPoint and PDF — the modern `.docx` / `.xlsx` / `.pptx` /
 `.pdf` and the legacy binary `.doc` / `.xls` / `.ppt` — and converts any of them to
-PDF, SVG, HTML, DOCX or XLSX, implemented from the ECMA-376 and ISO 32000
+PDF, SVG, HTML, Markdown, DOCX or XLSX, implemented from the ECMA-376 and ISO 32000
 specifications. It works on `Uint8Array` in and `Uint8Array` out, so the same code
 runs in the browser, Node.js, serverless and edge runtimes.
 
@@ -41,6 +41,7 @@ const doc = Ream.parse(bytes);          // docx, xlsx, pptx or pdf — sniffed
 const pdf = await doc.convert('pdf');   // async — fetches a font if needed
 const svg = await doc.convert('svg');   // same parse, different target
 const html = await doc.convert('html');  // flowed HTML — needs no fonts at all
+const md   = await doc.convert('md');    // GitHub-Flavored Markdown — same, narrower
 const docx = await doc.convert('docx');  // WordprocessingML back out
 const xlsx = await doc.convert('xlsx');  // SpreadsheetML back out (xlsx source)
 

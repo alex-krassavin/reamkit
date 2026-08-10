@@ -160,14 +160,14 @@
   "aligned": false
  },
  {
+  "name": "NoFillAttrInImagedata.docx",
+  "score": 0.0431,
+  "aligned": true
+ },
+ {
   "name": "tdf119054.docx",
   "score": 0.0429,
   "aligned": false
- },
- {
-  "name": "NoFillAttrInImagedata.docx",
-  "score": 0.0428,
-  "aligned": true
  },
  {
   "name": "tdf114308.docx",
@@ -371,7 +371,7 @@
  },
  {
   "name": "fdo73247.docx",
-  "score": 0.0169,
+  "score": 0.0171,
   "aligned": true
  },
  {

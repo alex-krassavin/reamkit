@@ -87,6 +87,18 @@ export interface RunProperties {
    * (negative tightens). Word states it in twentieths of a point.
    */
   readonly letterSpacingPt?: Pt;
+  /**
+   * §21.1.2.3.9 `a:rPr/a:ln` — a line drawn round the glyphs themselves, which
+   * DrawingML puts on a run and ISO 32000-1 §9.3.6 calls a text rendering mode
+   * that strokes as well as fills.
+   */
+  readonly textOutline?: TextOutline;
+}
+
+/** A line drawn round a run's glyphs: its colour and how wide the pen is. */
+export interface TextOutline {
+  readonly colorHex: string;
+  readonly widthPt: Pt;
 }
 
 /**
@@ -1325,6 +1337,12 @@ export interface ShapeTextBody {
    * quarter clockwise), `vert270` bottom-to-top.
    */
   readonly vertical?: 'vert' | 'vert270';
+  /**
+   * §20.1.10.55 `a:bodyPr @upright` — the words stay level however far the
+   * shape is turned. bnc762542.xlsx turns each legend label a quarter and asks
+   * for this, and every reader draws those labels lying flat.
+   */
+  readonly upright?: boolean;
   /**
    * §20.1.10.28 `a:spAutoFit` — the SHAPE follows its text: its height is
    * whatever the text needs, whatever the stated box says.

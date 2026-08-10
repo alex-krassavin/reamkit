@@ -70,6 +70,7 @@ export type {
   TabStop,
   Run,
   RunProperties,
+  TextOutline,
   RowConditionalFormat,
   RowProperties,
   Section,

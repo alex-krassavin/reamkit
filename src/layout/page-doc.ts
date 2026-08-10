@@ -505,14 +505,24 @@ export function paintPlan(commands: ReadonlyArray<PageItem>): PagePaintPlan {
     // A picture inside such a page is still one thing: its own items keep
     // travelling together, at the place in the order its first item names.
     //
-    // A TABLE and the page's WORDS are the exceptions. The text pass is where a
-    // tagged PDF brackets each line in its structure element and where the
-    // page's links are collected, and nothing on a slide is drawn over its own
-    // text anyway. A table is its cell shading and its rules, and those two
-    // passes have to stay in step with each other — the rules are stroked in
-    // one batched run, and a rule pulled out of it and painted before the
-    // shading it edges simply disappears.
-    if (c.z !== undefined && c.type !== 'line' && c.type !== 'fill' && c.type !== 'border') {
+    // A TABLE and the PAGE's OWN WORDS are the exceptions. The text pass is
+    // where a tagged PDF brackets each line in its structure element and where
+    // the page's links are collected. A table is its cell shading and its
+    // rules, and those two passes have to stay in step with each other — the
+    // rules are stroked in one batched run, and a rule pulled out of it and
+    // painted before the shading it edges simply disappears.
+    //
+    // A PICTURE's words are not the page's: they belong to the drawing and
+    // paint in ITS order, over the shapes it draws under them. Sent to the text
+    // pass they were painted before every picture on the page, and each of
+    // activex_picture.pptx's thirteen buttons then covered its own caption with
+    // its own face.
+    if (
+      c.z !== undefined &&
+      c.type !== 'fill' &&
+      c.type !== 'border' &&
+      (c.type !== 'line' || c.pictureId !== undefined)
+    ) {
       const key = c.pictureId !== undefined ? `p${c.pictureId}` : `i${orderOf.size}`;
       const run = ordered.get(key);
       if (run) run.push(c);

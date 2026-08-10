@@ -5,6 +5,8 @@
 
 import { IDENTITY, interpretContent, multiply } from './content';
 import { buildContentFont } from './font';
+import { collectPageAppearances } from './annots';
+import { patternTint } from './pattern-tint';
 import type { ContentFont, Matrix, TextRun } from './content';
 import type { PdfDict } from '@/pdf/objects';
 import type { PdfFile, PdfPage, Rectangle } from './document';
@@ -27,6 +29,21 @@ const MAX_FORM_DEPTH = 8;
 export function extractPageText(file: PdfFile, page: PdfPage): Array<TextRun> {
   const runs: Array<TextRun> = [];
   collectRuns(file, page.resources, file.pageContent(page), IDENTITY, 0, new Set(), runs);
+  // §12.5.5 — an annotation draws in its own appearance stream, and the words
+  // it draws are the page's words too: a field's value, a button's caption.
+  // Only its ARTWORK was being lifted, so 160F-2019.pdf's reset button arrived
+  // as a tinted rectangle with nothing written on it.
+  for (const appearance of collectPageAppearances(file, page)) {
+    collectRuns(
+      file,
+      appearance.resources ?? page.resources,
+      file.streamData(appearance.stream),
+      appearance.ctm,
+      1,
+      new Set([appearance.stream]),
+      runs,
+    );
+  }
   const links = collectLinks(file, page);
   if (links.length === 0) return runs;
   return runs.map((run) => {
@@ -48,8 +65,26 @@ function collectRuns(
   out: Array<TextRun>,
 ): void {
   const result = interpretContent(content, buildFonts(file, resources), baseCtm);
-  out.push(...result.texts);
-  if (depth >= MAX_FORM_DEPTH || !resources) return;
+  out.push(...result.texts.map((r) => withPatternColour(file, resources, r, visiting)));
+  if (depth >= MAX_FORM_DEPTH) return;
+  // §9.6.5 — a Type 3 glyph's procedure may show text of its own, and it is
+  // text the page shows. ContentStreamCycleType3insideType3.pdf sets a word
+  // inside the glyph of another word.
+  for (const glyph of result.glyphs) {
+    if (visiting.has(glyph.stream)) continue;
+    visiting.add(glyph.stream);
+    collectRuns(
+      file,
+      glyph.resources ?? resources,
+      file.streamData(glyph.stream),
+      glyph.ctm,
+      depth + 1,
+      visiting,
+      out,
+    );
+    visiting.delete(glyph.stream);
+  }
+  if (!resources) return;
   const xobjects = file.get(resources, 'XObject');
   if (!(xobjects instanceof Map)) return;
   for (const placement of result.images) {
@@ -72,7 +107,75 @@ function collectRuns(
   }
 }
 
-function buildFonts(file: PdfFile, resources: PdfDict | undefined): Map<string, ContentFont> {
+/**
+ * §8.6.6.2 — a run whose glyphs the page fills with a tiling PATTERN, given the
+ * pattern's own colour.
+ *
+ * A pattern is a content stream, not a colour, and type cannot be filled with
+ * one here: what a run carries is a single colour. Painting it in whatever was
+ * set before the pattern was is simply wrong — it comes out black where the
+ * page shows magenta. The pattern's first mark says what colour the page meant,
+ * and the glyphs take that. A documented approximation: the shape of the
+ * pattern is lost, its colour is not.
+ *
+ * @param file      The owning file.
+ * @param resources The resources the run was drawn with.
+ * @param run       The run, which may name a fill pattern.
+ * @param visiting  The streams already being interpreted, against a cycle.
+ * @returns The run, its colour taken from the pattern where there is one.
+ */
+function withPatternColour(
+  file: PdfFile,
+  resources: PdfDict | undefined,
+  run: TextRun,
+  visiting: Set<PdfStream>,
+): TextRun {
+  const name = run.fillPatternName;
+  if (name === undefined || !resources) return run;
+  const patterns = file.get(resources, 'Pattern');
+  if (!(patterns instanceof Map)) return run;
+  const stream = file.resolve(patterns.get(name) ?? PDF_NULL);
+  if (!(stream instanceof PdfStream) || visiting.has(stream)) return run;
+  visiting.add(stream);
+  try {
+    const tint = patternTint(file, resources, name);
+    // The pattern's colour at the pattern's own strength: a tile that covers a
+    // third of its cell reads as a third-strength tint, and painting it solid
+    // is as wrong in the other direction as painting it black was.
+    return tint ? { ...run, colorHex: tintedHex(tint.colorHex, tint.coverage) } : run;
+  } catch {
+    return run; // A pattern the reader cannot run says nothing about colour.
+  } finally {
+    visiting.delete(stream);
+  }
+}
+
+/** A colour laid over white paper at `coverage` strength, as a 6-hex string. */
+function tintedHex(colorHex: string, coverage: number): string {
+  const k = Math.min(1, Math.max(0, coverage));
+  if (k >= 1) return colorHex;
+  const channel = (at: number): string => {
+    const c = Number.parseInt(colorHex.slice(at, at + 2), 16);
+    const mixed = Math.round(255 - (255 - (Number.isFinite(c) ? c : 0)) * k);
+    return mixed.toString(16).toUpperCase().padStart(2, '0');
+  };
+  return `${channel(0)}${channel(2)}${channel(4)}`;
+}
+
+/**
+ * The `/Font` resources of one dictionary, built into interpreter fonts. Shared
+ * with the path and picture walks, which need them for one thing only: a Type 3
+ * font's glyphs are content streams (§9.6.5), and a walk that interprets with
+ * no fonts at all cannot see that there is anything to run.
+ *
+ * @param file      The owning file.
+ * @param resources The resource dictionary to read `/Font` from.
+ * @returns Resource name → font, skipping any the reader cannot build.
+ */
+export function buildFonts(
+  file: PdfFile,
+  resources: PdfDict | undefined,
+): Map<string, ContentFont> {
   const fonts = new Map<string, ContentFont>();
   if (!resources) return fonts;
   const fontContainer = file.get(resources, 'Font');

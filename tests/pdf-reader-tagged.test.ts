@@ -100,6 +100,49 @@ describe('tagged-PDF reconstruction (E-PDF EP3)', () => {
     }
   });
 
+  it('reads the column grid from where the cells sit, not in equal shares', async () => {
+    // A structure tree states no widths, so an equal share was the old answer.
+    // It is right only for a table whose columns really are equal: here the
+    // first is four times the second, and a form's are further apart still.
+    const cell = (t: string): string => `<w:tc><w:p><w:r><w:t>${t}</w:t></w:r></w:p></w:tc>`;
+    const tbl =
+      '<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr>' +
+      '<w:tblGrid><w:gridCol w:w="6400"/><w:gridCol w:w="1600"/></w:tblGrid>' +
+      `<w:tr>${cell('WideColumnHere')}${cell('Nx')}</w:tr>` +
+      `<w:tr>${cell('AlsoWideHere')}${cell('Ny')}</w:tr></w:tbl>`;
+    const flow = await taggedFlow(tbl);
+    const table = flow.body.find((b) => b.kind === 'table');
+    if (table?.kind !== 'table') throw new Error('expected a table');
+    const [first, second] = table.table.grid;
+    expect(first).toBeDefined();
+    expect(second).toBeDefined();
+    expect(first!).toBeGreaterThan(second!);
+  });
+
+  it('keeps the colour the glyphs were painted in', async () => {
+    // §8.6.8. Dropped, 160F-2019.pdf's blue field labels and its red warning
+    // all came back plain black.
+    const flow = await taggedFlow(
+      '<w:p><w:r><w:rPr><w:color w:val="0000FF"/></w:rPr><w:t>BlueText</w:t></w:r></w:p>',
+    );
+    const colours = flow.body.flatMap((b) =>
+      b.kind === 'paragraph' ? b.paragraph.runs.map((r) => r.properties.colorHex) : [],
+    );
+    expect(colours).toContain('0000FF');
+  });
+
+  it('keeps the size the glyphs were shown at', async () => {
+    // §9.3.1 Tf. Dropped, every run came back at the 11pt default, and a form
+    // set in 7pt grew by half again — 160F-2019.pdf rebuilt one page as five.
+    const flow = await taggedFlow(
+      '<w:p><w:r><w:rPr><w:sz w:val="14"/></w:rPr><w:t>SevenPointText</w:t></w:r></w:p>',
+    );
+    const sizes = flow.body.flatMap((b) =>
+      b.kind === 'paragraph' ? b.paragraph.runs.map((r) => r.properties.fontSizePt) : [],
+    );
+    expect(sizes.some((s) => s !== undefined && Math.abs(s - 7) < 0.5)).toBe(true);
+  });
+
   it('reconstructs list items as paragraphs carrying their text (EP3b)', async () => {
     const numbering =
       '<w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:numFmt w:val="bullet"/>' +

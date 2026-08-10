@@ -24,6 +24,7 @@ import type { Loss } from '@/core/ir';
 import type { DocumentReader } from '@/core/ir/adapters';
 import type { FlowDoc } from '@/core/ir/flow';
 import type { SheetDoc } from '@/core/ir/sheet';
+import type { StreamFilters } from '@/pdf-reader/document';
 import type { SignatureOptions, StyledRenderOptions } from '@/pdf';
 import { DEFAULT_READERS, resolveFontsViaChain, toFlowDoc } from '@/core/converter/facade';
 import { flowRenderOptions } from '@/core/converter/project';
@@ -37,12 +38,13 @@ import { writeDocx } from '@/word/docx-writer';
 import { projectSheetDoc } from '@/excel/sheet-to-flow';
 import { writeXlsx } from '@/excel/xlsx-writer';
 import { writeHtml } from '@/html/html-writer';
+import { writeMarkdown } from '@/markdown/markdown-writer';
 import { layoutStyledDocument } from '@/layout/styled-layout';
 import { renderStyledPdf, renderStyledPdfEncrypted, signPdf } from '@/pdf';
 import { writeSvg } from '@/svg/svg-writer';
 
 /** The output formats {@link Ream.convert} can produce. */
-export type ReamTarget = 'pdf' | 'svg' | 'html' | 'docx' | 'xlsx';
+export type ReamTarget = 'pdf' | 'svg' | 'html' | 'md' | 'docx' | 'xlsx';
 
 /**
  * The point size Excel's column-width unit is quoted at — its default theme
@@ -61,6 +63,30 @@ export interface ReamParseOptions {
    * encryption (EP14); an encrypted OOXML package always names a password.
    */
   readonly password?: string;
+  /**
+   * PDF only: what to read out of the page. `'flow'` (the default) reconstructs
+   * a re-flowable document — paragraphs and tables in reading order, from the
+   * structure tree where the file has one. `'positional'` keeps the page as a
+   * page: every line stands where its glyphs stand, beside the rules and fills
+   * the page draws. A form or a drawing needs the second; a report to be edited
+   * or converted to markdown needs the first.
+   */
+  readonly pdfLayout?: 'flow' | 'positional';
+  /**
+   * PDF only: decoders for `/Filter` names the reader does not implement
+   * (§7.4). A filter it cannot undo leaves that stream unread — and when the
+   * unread one is the cross-reference, the whole document is missing — so a
+   * caller who needs such a file supplies the decoder rather than the library
+   * carrying one for every filter anyone might write:
+   *
+   * ```ts
+   * import { brotliDecompressSync } from 'node:zlib';
+   * Ream.parse(pdf, { filters: { BrotliDecode: (b) => brotliDecompressSync(b) } });
+   * ```
+   *
+   * Absent, or throwing, the filter is reported unreadable by name.
+   */
+  readonly filters?: StreamFilters;
 }
 
 /**
@@ -104,6 +130,25 @@ export interface ReamConvertOptions extends Omit<StyledRenderOptions, 'registry'
    * the code resolves, and omitted it is dropped exactly as before.
    */
   readonly fileName?: string;
+  /**
+   * Markdown only: how a picture reaches the output — inlined as a `data:` URI
+   * (the default), named under `./media/` for a caller that writes the bytes
+   * itself, or dropped. See {@link MarkdownWriteOptions}.
+   */
+  readonly images?: 'dataUri' | 'link' | 'drop';
+  /**
+   * Markdown only: what a page break becomes — nothing (the default), or the
+   * `---` thematic break a slide deck wants between its slides. See
+   * {@link MarkdownWriteOptions}.
+   */
+  readonly pageBreaks?: 'rule' | 'drop';
+  /**
+   * Markdown from a SPREADSHEET only: open each sheet with a heading carrying
+   * its tab name. On by default — markdown has no pages to tell one sheet from
+   * the next by, so without them a workbook is a pile of tables with nothing to
+   * say which is which. Set `false` for the bare tables.
+   */
+  readonly sheetNames?: boolean;
 }
 
 /** OOXML / legacy MIME types by reader id, for the PDF/A-3 embedded source file. */
@@ -183,7 +228,11 @@ export class Ream {
         `Unrecognized document format (readers: ${readers.map((r) => r.id).join(', ')})`,
       );
     }
-    const { doc, losses } = reader.read(source, { password: options.password });
+    const { doc, losses } = reader.read(source, {
+      password: options.password,
+      ...(options.pdfLayout ? { pdfLayout: options.pdfLayout } : {}),
+      ...(options.filters ? { filters: options.filters } : {}),
+    });
     // The reader's native tree — a SheetDoc for spreadsheets — is projected to
     // the FlowDoc the render path consumes; the SheetDoc is kept for inspection.
     const sheet = doc.kind === 'sheet' ? doc : undefined;
@@ -210,9 +259,9 @@ export class Ream {
   /**
    * Convert the parsed document to `to`, returning the output bytes together with
    * the accumulated {@link Loss} report (read-time losses plus any added while
-   * writing). HTML, DOCX and XLSX are produced straight from the interlayer — no
-   * layout, no fonts, zero I/O; SVG and PDF run the layout engine and resolve
-   * fonts first.
+   * writing). HTML, Markdown, DOCX and XLSX are produced straight from the
+   * interlayer — no layout, no fonts, zero I/O; SVG and PDF run the layout
+   * engine and resolve fonts first.
    *
    * @param to      The target format. `'xlsx'` requires a spreadsheet source.
    * @param options Font resolution and target-specific options.
@@ -243,6 +292,30 @@ export class Ream {
       losses.push(...html.losses);
       this.enforceStrict(options, losses);
       return { bytes: html.bytes, losses };
+    }
+
+    if (to === 'md') {
+      // Flow medium as well, and the narrowest of them: markdown keeps the
+      // document's structure and drops its geometry, reporting each omission.
+      //
+      // A workbook re-projects, because markdown has no pages to tell one sheet
+      // from the next by: the projection is asked for the tab NAMES, which it
+      // withholds from a printed page because Excel and Calc print none.
+      const source =
+        this.sheet && options.sheetNames !== false
+          ? projectSheetDoc(this.sheet, {
+              ...(options.now ? { now: options.now } : {}),
+              ...(options.fileName ? { fileName: options.fileName } : {}),
+              sheetHeadings: true,
+            })
+          : flow;
+      const markdown = writeMarkdown(source, {
+        ...(options.images ? { images: options.images } : {}),
+        ...(options.pageBreaks ? { pageBreaks: options.pageBreaks } : {}),
+      });
+      losses.push(...markdown.losses);
+      this.enforceStrict(options, losses);
+      return { bytes: markdown.bytes, losses };
     }
 
     if (to === 'docx') {

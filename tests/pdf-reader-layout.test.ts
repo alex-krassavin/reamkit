@@ -35,6 +35,271 @@ const paragraphs = (flow: { body: ReadonlyArray<{ kind: string }> }) =>
     } => b.kind === 'paragraph',
   );
 
+describe('a heuristic line keeps how it looked (E-PDF EP4)', () => {
+  it('carries each run’s size and colour, not just its letters', async () => {
+    // The tagged path has carried these since it learned to; this one never
+    // did, so every line came back at the 11pt default in black. Placed, that
+    // is not a wrong shade but a wrong SHAPE: 160F-2019.pdf's footnotes are set
+    // in 7pt nine and a half apart, and drawn at eleven they climbed over each
+    // other.
+    const docx = buildDocxFromBody(
+      '<w:p><w:r><w:rPr><w:sz w:val="14"/><w:color w:val="FF0000"/></w:rPr>' +
+        '<w:t>SmallRedText</w:t></w:r></w:p>',
+    );
+    const pdf = await Ream.parse(docx).convert('pdf', { fonts: FONTS });
+    const flow = reconstructByLayout(PdfFile.parse(pdf)).doc;
+    const runs = flow.body.flatMap((b) => (b.kind === 'paragraph' ? b.paragraph.runs : []));
+    const small = runs.find((r) => r.text.includes('SmallRed'));
+    expect(small).toBeDefined();
+    expect(small!.properties.fontSizePt).toBeCloseTo(7, 0);
+    expect(small!.properties.colorHex).toBe('FF0000');
+  });
+});
+
+describe('a multi-page PDF keeps its pages (E-PDF EP4)', () => {
+  it('opens an output page for each source page after the first', async () => {
+    // Flowed, the layout repaginates and this hardly shows. PLACED, every mark
+    // is anchored to "the page", so without a break all twenty-five pages of
+    // Brotli-Prototype-FileA.pdf stacked onto one.
+    const docx = buildDocxFromBody(
+      '<w:p><w:r><w:t>PageOne</w:t></w:r></w:p>' +
+        '<w:p><w:pPr><w:pageBreakBefore/></w:pPr><w:r><w:t>PageTwo</w:t></w:r></w:p>',
+    );
+    const pdf = await Ream.parse(docx).convert('pdf', { fonts: FONTS });
+    const file = PdfFile.parse(pdf);
+    expect(file.pages().length).toBe(2);
+    const placed = reconstructByLayout(file, 'positional').doc;
+    const breaks = placed.body.filter(
+      (b) => b.kind === 'paragraph' && b.paragraph.properties.pageBreakBefore === true,
+    );
+    expect(breaks).toHaveLength(file.pages().length - 1);
+  });
+});
+
+/** A one-page PDF of hand-written objects; `page` is the page dict's body. */
+function onePagePdf(page: string, content: string): Uint8Array {
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    `<< /Type /Page /Parent 2 0 R /Contents 4 0 R ${page} >>`,
+    `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+  ];
+  let pdf = '%PDF-1.7\n';
+  const offsets: Array<number> = [];
+  objects.forEach((body, i) => {
+    offsets.push(pdf.length);
+    pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+  });
+  const xref = pdf.length;
+  pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+  for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+  pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`;
+  return new TextEncoder().encode(pdf);
+}
+
+/** Two words on one baseline, three hundred points apart — a table row. */
+const twoColumnLinePdf = (): Uint8Array =>
+  onePagePdf('/MediaBox [0 0 400 800]', 'BT /F1 10 Tf 20 700 Td (Left) Tj 300 0 Td (Right) Tj ET');
+
+/** One word stamped twice, the second set down over the first's second half. */
+const stampedWordPdf = (): Uint8Array =>
+  onePagePdf('/MediaBox [0 0 400 800]', 'BT /F1 20 Tf 20 700 Td (Word) Tj 15 0 Td (Word) Tj ET');
+
+/** A word and a footnote mark set a size smaller and three quarters of an em up. */
+const superscriptPdf = (): Uint8Array =>
+  onePagePdf(
+    '/MediaBox [0 0 400 800]',
+    'BT /F1 10 Tf 20 700 Td (Word) Tj /F1 6 Tf 45 7.5 Td (1\\)) Tj ET',
+  );
+
+/**
+ * A landscape sheet drawn sideways in a portrait box and stood up by `/Rotate`
+ * — the shape all twenty-five pages of Brotli-Prototype-FileA.pdf take. The
+ * text matrix turns the words a quarter the other way, so the page's own turn
+ * is what sets them level.
+ */
+const turnedPagePdf = (rotate: number): Uint8Array =>
+  onePagePdf(
+    `/MediaBox [0 0 400 800] /Rotate ${String(rotate)}`,
+    'BT /F1 10 Tf 0 -1 1 0 100 600 Tm (Side) Tj ET',
+  );
+
+/** A page whose `/MediaBox` starts twelve points off the origin, as 160F's does. */
+const offsetBoxPdf = (): Uint8Array =>
+  onePagePdf(
+    '/MediaBox [-12 12 388 812]',
+    'BT /F1 10 Tf 20 700 Td (Hello) Tj ET 0 0 1 rg 20 100 50 30 re f',
+  );
+
+/**
+ * A flat line and, a quarter turn from it, a label set on its side — the shape
+ * 160F-2019.pdf's "Nature" takes down the middle of a column. The two share a
+ * baseline y within a line's height, which is exactly the trap.
+ */
+const turnedLabelPdf = (): Uint8Array =>
+  onePagePdf(
+    '/MediaBox [0 0 400 800]',
+    'BT /F1 10 Tf 20 700 Td (Flat) Tj ET BT /F1 10 Tf 0 1 -1 0 200 698 Tm (Side) Tj ET',
+  );
+
+describe('placed reconstruction (E-PDF EP4)', () => {
+  it('anchors every line where its glyphs stand, instead of flowing them', async () => {
+    // A form is a grid of ruled boxes with a label in each: flowed, the labels
+    // land an inch from the boxes they label, because the artwork is placed and
+    // the words are not. 160F-2019.pdf is that document.
+    const docx = buildDocxFromBody(
+      '<w:p><w:r><w:t>FirstLine</w:t></w:r></w:p><w:p><w:r><w:t>SecondLine</w:t></w:r></w:p>',
+    );
+    const pdf = await Ream.parse(docx).convert('pdf', { fonts: FONTS });
+    const placed = reconstructByLayout(PdfFile.parse(pdf), 'positional');
+
+    const shapes = placed.doc.body.filter((b) => b.kind === 'shape').map((b) => b.shape);
+    expect(shapes.length).toBeGreaterThanOrEqual(2);
+    // Each carries its words and an anchor of its own on the page.
+    for (const shape of shapes) {
+      expect(shape.float?.posV?.relativeFrom).toBe('page');
+      expect(shape.text?.content.length).toBeGreaterThan(0);
+    }
+    // The first line sits higher on the page, so its offset from the top is less.
+    const offsets = shapes.map((shape) => shape.float?.posV?.offsetPt ?? 0);
+    expect(offsets[0]!).toBeLessThan(offsets[1]!);
+  });
+
+  it('splits a baseline where a column gap opens, so each piece keeps its x', () => {
+    // 160F-2019.pdf sets a line number, a label and a right-hand column on one
+    // baseline. Read as a single line, the right-hand text was dragged left
+    // against its neighbour with one space between: "sous-total: n° dossier:".
+    const placed = reconstructByLayout(PdfFile.parse(twoColumnLinePdf()), 'positional');
+    const shapes = placed.doc.body.filter((b) => b.kind === 'shape').map((b) => b.shape);
+    expect(shapes).toHaveLength(2);
+    const offsets = shapes.map((s) => s.float?.posH?.offsetPt ?? 0).sort((a, b) => a - b);
+    expect(offsets[0]).toBeCloseTo(20, 0);
+    expect(offsets[1]).toBeCloseTo(320, 0);
+    // Both stand on the same baseline, so neither moved vertically.
+    const tops = shapes.map((s) => s.float?.posV?.offsetPt ?? 0);
+    expect(tops[0]).toBeCloseTo(tops[1]!, 5);
+  });
+
+  it('splits a baseline where two runs OVERLAP, which is a placement too', () => {
+    // ContentStream*Type3.pdf stamps one word three times at half its own
+    // width. Read as a single line the three were flowed end to end, and the
+    // line came out half again as wide as the page sets it — the same error as
+    // the column gap, in the other direction.
+    const placed = reconstructByLayout(PdfFile.parse(stampedWordPdf()), 'positional');
+    const shapes = placed.doc.body.filter((b) => b.kind === 'shape').map((b) => b.shape);
+    expect(shapes).toHaveLength(2);
+    const offsets = shapes.map((s) => s.float?.posH?.offsetPt ?? 0).sort((a, b) => a - b);
+    // Each stands where it was stamped: the second 15pt on, under a 40pt word.
+    expect(offsets[0]).toBeCloseTo(20, 0);
+    expect(offsets[1]).toBeCloseTo(35, 0);
+  });
+
+  it('keeps a mark set above the line above it, at its own size', () => {
+    // 160F-2019.pdf sets its footnote marks a size smaller and three quarters
+    // of an em up. Read as one line they came down flat onto the words.
+    const placed = reconstructByLayout(PdfFile.parse(superscriptPdf()), 'positional');
+    const shapes = placed.doc.body.filter((b) => b.kind === 'shape').map((b) => b.shape);
+    expect(shapes).toHaveLength(2);
+    const words = (s: (typeof shapes)[number]): string => {
+      const first = s.text?.content[0];
+      return first?.kind === 'paragraph' ? first.paragraph.runs.map((r) => r.text).join('') : '';
+    };
+    const word = shapes.find((s) => words(s) === 'Word');
+    const mark = shapes.find((s) => words(s) === '1)');
+    expect(word).toBeDefined();
+    expect(mark).toBeDefined();
+    // The mark stands higher on the page, so its offset from the top is less.
+    const top = (s: (typeof shapes)[number]): number => s.float?.posV?.offsetPt ?? 0;
+    expect(top(mark!)).toBeLessThan(top(word!));
+    // And it is a six-point mark, not a ten-point one.
+    expect(mark!.height).toBeLessThan(word!.height);
+  });
+
+  it('reads one flowing line across the same gap', () => {
+    // A paragraph is meant to be read across: only the placed reading splits.
+    const flowed = reconstructByLayout(PdfFile.parse(twoColumnLinePdf()));
+    const paras = paragraphs(flowed.doc);
+    expect(paras).toHaveLength(1);
+    expect(paras[0]!.paragraph.runs.map((r) => r.text).join('')).toBe('Left Right');
+  });
+
+  it('stands a turned page up, and its words with it (§14.11.1)', () => {
+    // Brotli-Prototype-FileA.pdf is twenty-five landscape sheets drawn sideways
+    // in portrait boxes with /Rotate 270. Read as the box says, every one came
+    // back portrait with its words running down the page.
+    const placed = reconstructByLayout(PdfFile.parse(turnedPagePdf(270)), 'positional');
+    expect(placed.doc.section?.pageSize?.width).toBeCloseTo(800, 5);
+    expect(placed.doc.section?.pageSize?.height).toBeCloseTo(400, 5);
+    expect(placed.doc.section?.pageSize?.orientation).toBe('landscape');
+    const shape = placed.doc.body.find((b) => b.kind === 'shape');
+    expect(shape?.kind).toBe('shape');
+    if (shape?.kind !== 'shape') return;
+    // The matrix turns the words a quarter one way and the page the other, so
+    // what is left is level type.
+    expect(shape.shape.transform?.rotation60k).toBeUndefined();
+    // (100, 600) on a 400×800 box, turned 270°: x = 800 − 600, y = 100.
+    expect(shape.shape.float?.posH?.offsetPt).toBeCloseTo(200, 5);
+  });
+
+  it('leaves a page its box describes exactly where it stands', () => {
+    // The same file with no turn: portrait, and the words still on their side.
+    const placed = reconstructByLayout(PdfFile.parse(turnedPagePdf(0)), 'positional');
+    expect(placed.doc.section?.pageSize?.orientation).toBe('portrait');
+    const shape = placed.doc.body.find((b) => b.kind === 'shape');
+    if (shape?.kind !== 'shape') throw new Error('expected a placed line');
+    expect(shape.shape.transform?.rotation60k).toBe(90 * 60000);
+  });
+
+  it('measures a placed mark off the page’s own corner, not off the origin', () => {
+    // §14.11.2 — a /MediaBox need not start at (0, 0), and 160F-2019.pdf's is
+    // [-11.96 11.99 583.24 853.67]. Taking the corner for the origin put every
+    // line and every rule twelve points up and to the left of the page's own.
+    const placed = reconstructByLayout(PdfFile.parse(offsetBoxPdf()), 'positional');
+    const text = placed.doc.body.find((b) => b.kind === 'shape' && b.shape.text !== undefined);
+    const rule = placed.doc.body.find((b) => b.kind === 'shape' && b.shape.text === undefined);
+    expect(text?.kind).toBe('shape');
+    expect(rule?.kind).toBe('shape');
+    if (text?.kind !== 'shape' || rule?.kind !== 'shape') return;
+    // Text at x 20 on a box whose left edge is −12 stands 32pt in from the page.
+    expect(text.shape.float?.posH?.offsetPt).toBeCloseTo(32, 5);
+    // Baseline 700, box top 812: 812 − (700 − 2.5) − 12.5.
+    expect(text.shape.float?.posV?.offsetPt).toBeCloseTo(102, 5);
+    expect(rule.shape.float?.posH?.offsetPt).toBeCloseTo(32, 5);
+    expect(rule.shape.float?.posV?.offsetPt).toBeCloseTo(682, 5); // 812 − 130
+  });
+
+  it('keeps a turned baseline turned, and out of the flat line it crosses', () => {
+    // §9.4.2 — the text matrix turns as well as moves. 160F-2019.pdf sets
+    // "Nature" on its side down the middle of a column; read flat, it joined
+    // the row it happened to cross and lay across it.
+    const placed = reconstructByLayout(PdfFile.parse(turnedLabelPdf()), 'positional');
+    const shapes = placed.doc.body.filter((b) => b.kind === 'shape').map((b) => b.shape);
+    expect(shapes).toHaveLength(2);
+    const words = (s: (typeof shapes)[number]): string => {
+      const first = s.text?.content[0];
+      return first?.kind === 'paragraph' ? first.paragraph.runs.map((r) => r.text).join('') : '';
+    };
+    const flat = shapes.find((s) => words(s) === 'Flat');
+    const side = shapes.find((s) => words(s) === 'Side');
+    expect(flat).toBeDefined();
+    expect(side).toBeDefined();
+    // §20.1.7.6 — a shape turns clockwise, and this baseline runs up the page.
+    expect(flat!.transform?.rotation60k).toBeUndefined();
+    expect(side!.transform?.rotation60k).toBe(270 * 60000);
+  });
+
+  it('still flows by default, so a PDF reads back as a document', async () => {
+    // The placed reading is opt-in: it has no reading order, no paragraphs and
+    // no tables — which is exactly what a docx or a markdown conversion needs,
+    // so the default must stay the flowed one.
+    const docx = buildDocxFromBody('<w:p><w:r><w:t>FirstLine</w:t></w:r></w:p>');
+    const pdf = await Ream.parse(docx).convert('pdf', { fonts: FONTS });
+    const flowed = reconstructByLayout(PdfFile.parse(pdf));
+    expect(flowed.doc.body.some((b) => b.kind === 'paragraph')).toBe(true);
+    expect(flowed.doc.body.some((b) => b.kind === 'shape')).toBe(false);
+  });
+});
+
 describe('heuristic layout reconstruction (E-PDF EP4)', () => {
   it('groups untagged text into paragraphs in reading order', async () => {
     const flow = await layoutFlow(

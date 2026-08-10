@@ -31,22 +31,81 @@ case). A **tagged** PDF (including the ones Ream writes) is rebuilt from
 its structure tree — headings, paragraphs, tables, list items, reading order; an
 **untagged** PDF is reconstructed heuristically from glyph positions (lines by
 baseline, paragraphs by spacing, headings by relative font size, and a clean
-two-column page split at its central gutter), which is approximate. Text comes back via each font's `/ToUnicode` map; **raster images,
-hyperlinks and vector shapes** are lifted back out too (JPEG verbatim, other
-images re-encoded as PNG with soft-mask alpha, `/Link` URIs re-attached to the
-text, filled paths, stroked lines and shading-pattern gradients turned into
-shapes). Clipping paths and clip-bounded (`sh`) shadings are not read.
+two-column page split at its central gutter), which is approximate. Text comes
+back via each font's `/ToUnicode` map, or — where a composite font ships none —
+from the reverse `cmap` of the program it embeds (§9.10.2); the weight and slant
+come from the `/FontDescriptor`, and the embedded font programs themselves are
+carried into the output, so a rebuilt page is set in the type it was set in.
+**Raster images, hyperlinks and vector artwork** are lifted back out too (JPEG
+verbatim, other images re-encoded as PNG with soft-mask alpha, `/Link` URIs
+re-attached to the text, filled paths, stroked lines and shading-pattern
+gradients turned into shapes), along with clipping paths (§8.5.4 `W` / `W*`,
+applied to paths and pictures alike), tiling patterns (§8.7.3 — drawn as a
+picture where they fill a shape, read as a tint at the tile's own density where
+they fill type), constant alpha (§11.6.4.4 `/ca` through the `gs` operator),
+Type 3 glyphs (§9.6.5 — content streams, drawn as the artwork they are),
+annotation appearance streams (§12.5.5, so a form field draws itself), the text
+render modes (§9.3.6 `Tr` — stroked type keeps its outline, and the invisible
+modes an OCR layer uses are marked rather than painted) and the page's own
+`/Rotate` (§14.11.1). Clip-bounded (`sh`) shadings are not read.
 
 **Output** — `convert('pdf')`, `convert('svg')` (a page-stack preview),
-`convert('html')` (flowed, needs no fonts), `convert('docx')` (write
-WordprocessingML back out) and `convert('xlsx')` (write SpreadsheetML back out —
-spreadsheet input only). The writers are for normalization, sanitization,
+`convert('html')` (flowed, needs no fonts), `convert('md')` (GitHub-Flavored
+Markdown), `convert('docx')` (write WordprocessingML back out) and
+`convert('xlsx')` (write SpreadsheetML back out — spreadsheet input only). The writers are for normalization, sanitization,
 in-browser editing, and round-tripping. The docx round-trip is semantic, not
 byte-exact, but complete — text, tables, images, lists, links, headers/footers,
 multi-section geometry, footnotes/endnotes, charts and OfficeMath all write
 back. The xlsx round-trip preserves the whole grid surface — cells, styles,
 merges, the print model, conditional formatting, sparklines, tables and embedded
 charts — and is byte-stable across a read↔write loop.
+
+**Stream filters the reader does not implement (§7.4)** — a filter it cannot
+undo leaves that stream unread, and when the unread one is the cross-reference
+the whole document is missing. Rather than carry a decoder for every filter
+anyone might write, `Ream.parse(bytes, { filters })` takes one from the caller:
+
+```ts
+import { brotliDecompressSync } from 'node:zlib';
+Ream.parse(pdf, { filters: { BrotliDecode: (b) => brotliDecompressSync(b) } });
+```
+
+Absent, or throwing, the filter is reported unreadable by name rather than
+producing an empty document silently. FlateDecode, LZW, RunLength, ASCII85,
+ASCIIHex, CCITT, DCT and JPX need nothing supplied.
+
+**Placed PDF reading (`Ream.parse(bytes, { pdfLayout: 'positional' })`)** — a PDF
+is read as a re-flowable document by default: paragraphs and tables in reading
+order, from the structure tree where the file has one. A form or a drawing is
+not that document — its rules, boxes and tints are placed absolutely, and text
+that flows beside them lines up with none of it. `'positional'` keeps the page:
+every line stands where its glyphs stand, beside the artwork. It has no reading
+order, no paragraphs and no tables, so use it for re-rendering a page and the
+default for anything converted onward to DOCX, Markdown or HTML.
+
+**Markdown (`convert('md')`)** — GitHub-Flavored Markdown, a flow medium like
+HTML: no pagination, no layout, no fonts, zero I/O. It keeps what a document
+*says* and drops how it *looks*. Kept: headings (from `w:outlineLvl`, falling
+back to a `Heading N` / `Title` style id), bold, italic, strikethrough, ordered
+and bullet lists with their real numbers and nesting, tables as GFM pipe tables
+with per-column alignment, hyperlinks (through the same scheme allowlist the
+HTML writer uses), pictures, footnotes and endnotes as GFM footnotes, review
+comments as footnotes attributed to their author, bookmarks as inline anchors,
+and the text inside shapes. A spreadsheet opens each sheet with a heading
+carrying its tab name — markdown has no pages to tell one sheet from the next
+by, so `{ sheetNames: false }` is there for the bare tables. Underline and super/subscript survive as `<u>` /
+`<sup>` / `<sub>`, which GFM parses as inline html.
+
+Dropped, each reported once in the loss report rather than silently: alignment,
+indents, colour, font family and size, tab stops, page and column breaks,
+headers and footers, charts, shape geometry, and math. A page break can be kept
+instead — `{ pageBreaks: 'rule' }` writes the `---` thematic break a slide deck
+wants, since the `.pptx` and `.ppt` readers mark each slide boundary with one
+and it is the only structure a deck has. Merged cells flatten —
+markdown's table is a plain grid — and a nested table flattens into the cell
+that holds it. Pictures are inlined as `data:` URIs by default; pass
+`{ images: 'link' }` to reference them under `./media/` and write the bytes
+yourself, or `{ images: 'drop' }` to omit them.
 
 **Password-protected packages (ECMA-376 §2.3, MS-OFFCRYPTO)**
 - An encrypted `.docx` / `.xlsx` / `.pptx` is not a zip at all: the whole OPC

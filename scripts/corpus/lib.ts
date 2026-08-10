@@ -2,6 +2,7 @@
 // mutool, reference rendering via soffice, and diff metrics. No external npm
 // deps — we parse mutool's P6 PPM and stext XML ourselves.
 
+import { brotliDecompressSync } from 'node:zlib';
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -519,4 +520,43 @@ export function listCorpus(dir: string): Array<string> {
     )
     .sort()
     .map((f) => resolve(dir, f));
+}
+
+/**
+ * How the corpus tools read a source before re-rendering it.
+ *
+ * The measurement is a PAGE against a page: our render beside the reference's,
+ * pixel for pixel. So a PDF is read as the page it is — every line where its
+ * glyphs stand, beside the rules and fills the page paints — and not as the
+ * re-flowable document the default reading recovers for a docx or a markdown
+ * conversion. Reading a form as prose and then measuring the picture asked the
+ * scores to answer for a difference nobody was trying to remove.
+ *
+ * @param input Path to the source file.
+ * @returns The parse options for it (empty for everything that is not a PDF).
+ */
+export function parseOptions(input: string): ParseOptions {
+  return /\.pdf$/i.test(input)
+    ? { pdfLayout: 'positional', filters: { BrotliDecode: brotli } }
+    : {};
+}
+
+/** What the corpus tools hand `Ream.parse`. */
+interface ParseOptions {
+  readonly pdfLayout?: 'flow' | 'positional';
+  readonly filters?: Readonly<Record<string, (bytes: Uint8Array) => Uint8Array>>;
+}
+
+/**
+ * §7.4 `/BrotliDecode`, from the runtime rather than the library.
+ *
+ * Ream carries no Brotli — RFC 7932 is a static dictionary of 122 KB in every
+ * bundle for a filter almost nothing writes — and takes one from the caller
+ * instead. The harness is a caller with `node:zlib` to hand, and without it
+ * Brotli-Prototype-FileA.pdf has no cross-reference, hence no pages, and its
+ * corpus row measures nothing at all. With it the row measures what it is for:
+ * how the twenty-five pages we then read come out.
+ */
+function brotli(bytes: Uint8Array): Uint8Array {
+  return new Uint8Array(brotliDecompressSync(bytes));
 }

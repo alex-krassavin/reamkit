@@ -661,6 +661,60 @@ describe('WMF (MS-WMF)', () => {
     expect(plan.lines).toHaveLength(0);
   });
 
+  it('keeps a picture’s own words with the picture on a page that states an order', () => {
+    // §19.3.1 — a slide states the order its shapes paint in, and a PICTURE on
+    // one is still one thing: the words it draws belong to it, not to the page,
+    // and paint over the shapes it draws under them. Sent to the page's text
+    // pass instead they were painted before every picture on the slide, and
+    // activex_picture.pptx's thirteen buttons each covered its own caption with
+    // its own face.
+    const panel: Uint8Array = new Bytes().i16(50).i16(100).i16(0).i16(0).build();
+    const bytes = wmf(
+      [
+        meta(0x0521, new Bytes().u16(2).ascii('hi').i16(20).i16(4).build()), // TEXTOUT
+        meta(0x02fc, new Bytes().u16(0).u32(0x00ff00).u16(0).build()), // CREATEBRUSH
+        meta(0x012d, new Bytes().u16(0).build()),
+        meta(0x041b, panel), // RECTANGLE over it
+      ],
+      [0, 0, 100, 50],
+    );
+    const store = new ResourceStore();
+    const resource = store.put(bytes);
+    const laid = layoutStyledDocument(
+      [
+        {
+          kind: 'image',
+          image: {
+            resource,
+            width: pt(100),
+            height: pt(50),
+            // A float with a zOrder is what makes the page state an order.
+            float: {
+              wrap: 'none',
+              zOrder: 3,
+              posH: { relativeFrom: 'page', offsetPt: pt(0) },
+              posV: { relativeFrom: 'page', offsetPt: pt(0) },
+            },
+            paragraphProperties: {},
+          },
+        },
+      ],
+      {
+        registry: FontRegistry.fromBytes({
+          regular: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Regular.ttf')),
+        }),
+        resources: store,
+        styles: { defaultRunProperties: {}, defaultParagraphProperties: {}, styles: new Map() },
+      },
+    );
+    const plan = paintPlan(laid.pages[0]!.commands);
+    // The word and the panel travel together, in the metafile's own order …
+    expect(plan.ordered.flat().map((c) => c.type)).toEqual(['line', 'shape']);
+    // … and neither is left in a pass that would reorder them.
+    expect(plan.lines).toHaveLength(0);
+    expect(plan.shapes).toHaveLength(0);
+  });
+
   it('draws a polygon closed and a polyline open', () => {
     const pts = new Bytes().u16(3).i16(0).i16(0).i16(10).i16(0).i16(10).i16(10).build();
     const poly = readWmf(wmf([meta(0x0324, pts)], [0, 0, 20, 20]));

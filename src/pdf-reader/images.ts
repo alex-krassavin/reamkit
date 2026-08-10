@@ -9,6 +9,7 @@
 
 import { interpretContent, multiply } from './content';
 import { decodePdfImage } from './image-decode';
+import { collectPageAppearances } from './annots';
 import type { ContentFont, Matrix } from './content';
 import type { PdfDict, PdfValue } from '@/pdf/objects';
 import type { Loss } from '@/core/ir';
@@ -34,6 +35,12 @@ export interface PdfImage {
   readonly y: number;
   /** Enclosing marked-content id, if the placement was inside a `/Figure`. */
   readonly mcid?: number;
+  /**
+   * §8.5.3 — where this was painted, as the chain of positions leading to it.
+   * The same key a lifted path carries, so the two can be ordered against each
+   * other: a picture drawn over a filled box has the larger key.
+   */
+  readonly orderKey: ReadonlyArray<number>;
 }
 
 /** The images lifted off one page plus any losses for images that could not be reconstructed. */
@@ -72,10 +79,44 @@ export function collectPageImages(file: PdfFile, page: PdfPage): PageImages {
     baseCtm: Matrix,
     depth: number,
     inheritedMcid: number | undefined,
+    prefix: ReadonlyArray<number>,
   ): void => {
     const xobjects = resources ? file.get(resources, 'XObject') : PDF_NULL;
     const xobjDict = xobjects instanceof Map ? xobjects : undefined;
-    for (const placement of interpretContent(content, NO_FONTS, baseCtm).images) {
+    const result = interpretContent(content, NO_FONTS, baseCtm);
+
+    // §8.7.3.1 — a path filled with a TILING pattern shows that pattern's own
+    // content stream, drawn through the pattern's `/Matrix`. It is a call like
+    // a form's, so it is walked like one: 22060_A1_01_Plans.pdf draws all four
+    // of its floor plans this way, as one JPEG apiece inside a pattern, and
+    // nothing else on the page refers to those images at all.
+    const patterns = resources ? file.get(resources, 'Pattern') : PDF_NULL;
+    const patternDict = patterns instanceof Map ? patterns : undefined;
+    for (const vector of result.vectors) {
+      if (vector.patternName === undefined || depth >= MAX_FORM_DEPTH) continue;
+      const stream = patternDict
+        ? file.resolve(patternDict.get(vector.patternName) ?? PDF_NULL)
+        : PDF_NULL;
+      if (!(stream instanceof PdfStream) || visiting.has(stream)) continue;
+      // Type 1 only: a type-2 (shading) pattern is a gradient, and the vector
+      // path already carries it.
+      if (file.get(stream.dict, 'PatternType') !== 1) continue;
+      visiting.add(stream);
+      const patternRes = file.get(stream.dict, 'Resources');
+      // A pattern paints where its FILL stands, so its marks take the fill's
+      // place in the order.
+      walk(
+        patternRes instanceof Map ? patternRes : resources,
+        file.streamData(stream),
+        multiply(matrixOf(file, stream.dict), baseCtm),
+        depth + 1,
+        inheritedMcid,
+        [...prefix, vector.order],
+      );
+      visiting.delete(stream);
+    }
+
+    for (const placement of result.images) {
       if (images.length >= MAX_IMAGES) return;
       const stream = xobjDict ? file.resolve(xobjDict.get(placement.name) ?? PDF_NULL) : PDF_NULL;
       if (!(stream instanceof PdfStream)) continue;
@@ -84,7 +125,10 @@ export function collectPageImages(file: PdfFile, page: PdfPage): PageImages {
       if (subtype === 'Image') {
         const decoded = decodePdfImage(file, stream);
         if (decoded.ok) {
-          images.push(geometry(placement.ctm, decoded, mcid));
+          images.push({
+            ...geometry(placement.ctm, decoded, mcid),
+            orderKey: [...prefix, placement.order],
+          });
           if (decoded.degraded) addLoss('degraded', decoded.degraded);
         } else {
           addLoss(decoded.severity, decoded.detail);
@@ -98,13 +142,26 @@ export function collectPageImages(file: PdfFile, page: PdfPage): PageImages {
           multiply(matrixOf(file, stream.dict), placement.ctm),
           depth + 1,
           mcid,
+          [...prefix, placement.order],
         );
         visiting.delete(stream);
       }
     }
   };
 
-  walk(page.resources, file.pageContent(page), [1, 0, 0, 1, 0, 0], 0, undefined);
+  walk(page.resources, file.pageContent(page), [1, 0, 0, 1, 0, 0], 0, undefined, []);
+  // §12.5.5 — the same for a widget's appearance: a scanned signature or a
+  // field's icon lives there and nowhere in the page's own stream.
+  collectPageAppearances(file, page).forEach((appearance, index) => {
+    walk(
+      appearance.resources ?? page.resources,
+      file.streamData(appearance.stream),
+      appearance.ctm,
+      1,
+      undefined,
+      [Number.MAX_SAFE_INTEGER, index],
+    );
+  });
   return { images, losses: [...lossByDetail.values()] };
 }
 
@@ -112,7 +169,7 @@ function geometry(
   ctm: Matrix,
   decoded: { bytes: Uint8Array; format: 'png' | 'jpeg' | 'jpeg2000' },
   mcid: number | undefined,
-): PdfImage {
+): Omit<PdfImage, 'orderKey'> {
   return {
     bytes: decoded.bytes,
     format: decoded.format,

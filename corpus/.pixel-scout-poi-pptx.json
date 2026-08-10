@@ -110,21 +110,6 @@
   "aligned": true
  },
  {
-  "name": "45541_Footer.pptx",
-  "score": 0.0622,
-  "aligned": true
- },
- {
-  "name": "45541_Header.pptx",
-  "score": 0.0622,
-  "aligned": true
- },
- {
-  "name": "45545_Comment.pptx",
-  "score": 0.0622,
-  "aligned": true
- },
- {
   "name": "backgrounds.pptx",
   "score": 0.0619,
   "aligned": true
@@ -132,11 +117,6 @@
  {
   "name": "highlight-test-case.pptx",
   "score": 0.0572,
-  "aligned": true
- },
- {
-  "name": "customGeo.pptx",
-  "score": 0.0489,
   "aligned": true
  },
  {
@@ -162,6 +142,11 @@
  {
   "name": "chart-texture-bg.pptx",
   "score": 0.0384,
+  "aligned": true
+ },
+ {
+  "name": "customGeo.pptx",
+  "score": 0.0378,
   "aligned": true
  },
  {
@@ -240,6 +225,21 @@
   "aligned": true
  },
  {
+  "name": "45541_Footer.pptx",
+  "score": 0.0139,
+  "aligned": true
+ },
+ {
+  "name": "45541_Header.pptx",
+  "score": 0.0139,
+  "aligned": true
+ },
+ {
+  "name": "45545_Comment.pptx",
+  "score": 0.0139,
+  "aligned": true
+ },
+ {
   "name": "table-with-different-font-colors.pptx",
   "score": 0.0133,
   "aligned": true
@@ -260,11 +260,6 @@
   "aligned": true
  },
  {
-  "name": "bug54570.pptx",
-  "score": 0.0109,
-  "aligned": true
- },
- {
   "name": "radar-chart.pptx",
   "score": 0.0102,
   "aligned": true
@@ -272,6 +267,11 @@
  {
   "name": "ececapstonespring2012.pptx",
   "score": 0.0097,
+  "aligned": true
+ },
+ {
+  "name": "bug54570.pptx",
+  "score": 0.0091,
   "aligned": true
  },
  {

@@ -23,6 +23,9 @@ const FOOTNOTES_TYPE_OVERRIDE =
 const ENDNOTES_TYPE_OVERRIDE =
   '<Override PartName="/word/endnotes.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.endnotes+xml"/>';
 
+const COMMENTS_TYPE_OVERRIDE =
+  '<Override PartName="/word/comments.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml"/>';
+
 const SETTINGS_TYPE_OVERRIDE =
   '<Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/>';
 const THEME_TYPE_OVERRIDE =
@@ -69,6 +72,8 @@ export interface BuildDocxOptions {
   readonly footnotesXml?: string;
   /** Inner XML of word/endnotes.xml (the <w:endnote> elements). */
   readonly endnotesXml?: string;
+  /** Inner XML of word/comments.xml (the <w:comment> elements). */
+  readonly commentsXml?: string;
   // Default header/footer (legacy fields, rId10 / rId11).
   readonly headerXml?: string;
   readonly footerXml?: string;
@@ -151,6 +156,7 @@ ${bodyInnerXml}
     (options.stylesXml ? STYLES_TYPE_OVERRIDE : '') +
     (options.footnotesXml ? FOOTNOTES_TYPE_OVERRIDE : '') +
     (options.endnotesXml ? ENDNOTES_TYPE_OVERRIDE : '') +
+    (options.commentsXml ? COMMENTS_TYPE_OVERRIDE : '') +
     (options.settingsXml ? SETTINGS_TYPE_OVERRIDE : '') +
     (options.themeXml ? THEME_TYPE_OVERRIDE : '') +
     headerSlots.map((s) => headerOverride(s.idx)).join('') +
@@ -187,6 +193,15 @@ ${options.footnotesXml}
 <w:endnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
 ${options.endnotesXml}
 </w:endnotes>`,
+    );
+  }
+
+  if (options.commentsXml) {
+    entries['word/comments.xml'] = encoder.encode(
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:comments xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+${options.commentsXml}
+</w:comments>`,
     );
   }
 

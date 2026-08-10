@@ -3,6 +3,169 @@
 All notable changes to **Ream** (`reamkit`) are documented here. The project
 follows [Semantic Versioning](https://semver.org/).
 
+## 1.25.0
+
+A release about reading PDF, and about a sixth thing to write.
+
+Ream has read PDF since 1.18.0, but it read a PDF the way it reads a report:
+words in order, and whatever the structure tree names. A form is not that
+document. A drawing is not that document. Their rules, boxes, tints and
+hatchings are placed absolutely, and a label an inch from the box it labels
+says nothing at all. So the reader learned the page — the clipping, the
+patterns, the alpha, the Type 3 glyphs that are drawings rather than letters,
+the appearance an annotation carries, the way up the page is shown — and gained
+a placed reading (`pdfLayout: 'positional'`) that stands every line where its
+glyphs stand.
+
+Measured against each file's own rendering across the nine comparable files of
+the pdf.js corpus, the summed difference went 0.794 to 0.036. The three
+documents that had the most wrong with them carry most of it:
+`22060_A1_01_Plans.pdf` 0.353 to 0.008, `160F-2019.pdf` 0.207 to 0.001,
+`Brotli-Prototype-FileA.pdf` 0.155 to 0.005.
+
+The sixth writer is GitHub-Flavored Markdown — the narrowest medium Ream
+writes, and so mostly a set of decisions about what a document still is once
+its geometry is gone.
+
+### Added
+
+- **Markdown output — `convert('md')`.** A flow medium like HTML: no
+  pagination, no layout engine, no fonts, zero I/O. Kept: headings from the
+  outline level (falling back to a `Heading N` style id), bold, italic,
+  strikethrough, ordered and bullet lists with the numbers the source states
+  and CommonMark's nesting, GFM pipe tables with per-column alignment,
+  hyperlinks through the same scheme allowlist the HTML writer uses, pictures,
+  footnotes and endnotes as GFM footnotes, review comments as footnotes
+  attributed to their author, bookmarks as inline anchors, and the text inside
+  shapes. Underline and super/subscript survive as the inline html GFM parses.
+  List markers are demounted — the readers materialize `1.` and `•` as leading
+  runs, and those are dropped and the list rebuilt as markup. Everything
+  markdown cannot say is reported rather than dropped in silence, and
+  deduplicated, so two hundred centred paragraphs are one line in the report.
+  Pictures inline as `data:` URIs by default; `{ images: 'link' }` names them
+  under `./media/` for a caller that writes the bytes itself, `'drop'` omits
+  them. Measured on 964 real documents across docx, xlsx, pptx and legacy
+  `.doc`, every one parses back with a real GFM parser into the structures
+  intended — 515 tables, 96 lists, 107 headings, 28 footnote references against
+  exactly 28 definitions, and not one accidental code block.
+
+- **A deck's slide boundaries can stay.** `{ pageBreaks: 'rule' }` writes the
+  `---` thematic break where the `.pptx` and `.ppt` readers mark a slide, which
+  is the only structure a deck has. Opt-in, because the same property means
+  something else in a paginated document.
+
+- **A workbook says which sheet each table came from.** Markdown has no pages
+  to tell one sheet from the next by, so each opens with a heading carrying its
+  tab name; `{ sheetNames: false }` gives the bare tables back.
+
+- **A PDF can be read as a page, not only as a document.**
+  `Ream.parse(bytes, { pdfLayout: 'positional' })` — every line stands where
+  its glyphs stand, beside the artwork, with no reading order, no paragraphs
+  and no tables. Use it for re-rendering a page; the default reflowable reading
+  is unchanged.
+
+- **A page's own artwork comes back with its words.** §8.5.4 clipping paths
+  (`W` / `W*`), applied to paths and pictures alike; §8.7.3 tiling patterns,
+  drawn as a picture where they fill a shape and read as a tint where they fill
+  type, at the density the tile actually covers its cell; §11.6.4.4 `/ca` and
+  the `gs` operator, so a band meant to be read through no longer erases the
+  plan beneath it; §9.6.5 Type 3 glyphs, which are content streams and are now
+  drawn as the artwork they are; §12.5.5 annotation appearance streams, so a
+  form field draws itself; §14.11.1 `/Rotate`, so a page is read the way up it
+  is shown; and §9.3.6 `Tr`, so stroked type carries its outline and the
+  invisible modes an OCR layer uses are marked rather than painted.
+
+- **A page is re-set in the faces the file carries.** §9.9 — an embedded font
+  program is lifted out and handed to the output, so a rebuilt page is set in
+  the type it was set in rather than a substitute.
+
+- **The face a run was shown in comes back with it.** §9.8.1 — weight and slant
+  from the `/FontDescriptor`, falling back to the name only for a standard-14
+  font, which carries no descriptor to believe.
+
+- **A stream filter the reader does not carry can be handed to it.**
+  `Ream.parse(bytes, { filters })` takes a decoder per filter name (§7.4).
+  Absent or throwing, the filter is reported unreadable BY NAME rather than
+  producing an empty document in silence.
+
+### Fixed
+
+- **A simple font reads its codes one byte at a time.** §9.6 — only a composite
+  Type0 font takes its code width from a CMap; the `codespacerange` of a
+  `/ToUnicode` belongs to that CMap's own convention and says nothing about the
+  font, and Distiller writes `<0000> <FFFF>` there whatever the font is. Read
+  two bytes at a time, an Arial subset's strings came apart into pairs:
+  "rémunérations brutes" arrived as "isr", and a whole certificate as rubble.
+  Half the characters vanished rather than turning into wrong ones, which is
+  why it survived so long — the output looked like a bad font, and nothing in
+  the loss report said the text was never read.
+
+- **A composite font with no `/ToUnicode` says what its glyphs are anyway.**
+  §9.10.2 — with `Identity-H` a code IS a glyph index, and the embedded
+  program's own `cmap` maps back. Read as nothing, every run in such a font
+  decoded to the empty string and was dropped where it stood.
+
+- **A table states its properties even when it has none.** §17.4 declares
+  `w:tblPr` `minOccurs="1"`. We wrote it only when something went inside, and
+  Word refuses to open such a file with no indication of what it objected to.
+  It went unseen because a table read from a real document always carries
+  something — one reconstructed from a PDF's glyph positions carries nothing,
+  so `Ream.parse(pdf).convert('docx')` was producing the document Word turned
+  away.
+
+- **A reconstructed page ends where the source page did.** Placed, every mark
+  is anchored to "the page", so with nothing between them all twenty-five pages
+  of a source stacked onto the first.
+
+- **A picture's own words paint with the picture, not with the page.** §19.3.1
+  — a slide states the order its shapes paint in, and a picture's caption
+  belongs to the drawing, over the shapes it draws under them. Sent to the
+  page's text pass it was painted before every picture on the slide, so
+  thirteen buttons each covered their own caption with their own face.
+
+- **A run says where it ends, and a page says where it starts.** The reader
+  guessed a run's width at half an em a character, which is what tells a word
+  space from a table column; a `/MediaBox` that does not start at the origin
+  moves every mark on the page. Both are read now, along with the `TJ` nudge
+  that says where the next piece goes, the pen width the page states through
+  the CTM, and a mark set above the line, which is a footnote reference and not
+  part of the words it follows.
+
+- **A run set down on the one before it was placed, not flowed.** The placed
+  reading cut a baseline where a gap opened; the same argument runs the other
+  way, and a run that starts before the one before it ended was stamped ON it.
+  Flowed end to end, a word stamped three times came out half again as wide as
+  the page sets it.
+
+- **Arabic comes back the way round it was written.** A show operator paints
+  left to right whatever the script, so the string a PDF holds for Arabic is in
+  visual order — passed through and reversed again by the layout, every line
+  came out mirrored.
+
+- **White paint is invisible only over white.** A white mark over something
+  already painted is what hides it, strokes included; over bare paper it is
+  nothing. Both were being treated the same way.
+
+- **A rebuilt table takes its columns from the page, and its text its size.**
+  A heuristic line kept what it said and not how it looked, so every line came
+  back at the 11pt default in black — placed, that is not a wrong shade but a
+  wrong shape, and 7pt footnotes drawn at eleven climbed over each other.
+
+- **A shape that turns turns its words with it**, unless it is mirrored, where
+  the words stay level.
+
+- **A page that runs past the reader's guard says so** rather than returning a
+  truncated one in silence, and a filter nothing here can undo is reported by
+  name.
+
+- **Markdown's own five.** A delimiter that cannot flank is not a delimiter
+  (CommonMark §6.2), so where no `**` can open or close, the `<strong>` /
+  `<em>` / `<del>` GFM parses says the same thing and answers to no neighbour;
+  a cell states its own padding and does not carry Word's spaces; a table draws
+  what it holds, not the blank leading row a print range was cut with; an empty
+  paragraph neither opens a bullet nor closes the list it stands in; and a hard
+  break at the end of a block is dropped rather than left as a backslash.
+
 ## 1.24.0
 
 A release about the diagrams. A SmartArt graphic keeps its own description —

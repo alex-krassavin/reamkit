@@ -7,6 +7,7 @@
 import { PdfFile } from './document';
 import { reconstructByLayout } from './layout';
 import { reconstructTaggedPdf } from './tagged';
+import type { StreamFilters } from './document';
 import type { DocumentReader, ReadResult } from '@/core/ir/adapters';
 import type { FlowDoc } from '@/core/ir/flow';
 import type { Loss } from '@/core/ir';
@@ -41,10 +42,22 @@ function sniffPdf(bytes: Uint8Array): boolean {
  * @param bytes    The complete PDF file bytes.
  * @param password The user password for an encrypted source; the empty string
  *                 opens permissions-only encryption.
+ * @param filters  Decoders for `/Filter` names this reader does not implement
+ *                 (§7.4); see {@link StreamFilters}.
+ * @param layout   `'flow'` reads a re-flowable document out of the page —
+ *                 paragraphs and tables in reading order, from the structure
+ *                 tree where there is one. `'positional'` keeps the page: every
+ *                 line stands where its glyphs do, beside the artwork, which is
+ *                 what a form or a drawing needs and what a paragraph cannot be.
  * @returns The reconstructed FlowDoc and its accumulated {@link Loss} report.
  */
-export function readPdf(bytes: Uint8Array, password = ''): ReadResult<FlowDoc> {
-  const file = PdfFile.parse(bytes, password);
+export function readPdf(
+  bytes: Uint8Array,
+  password = '',
+  layout: 'flow' | 'positional' = 'flow',
+  filters: StreamFilters = {},
+): ReadResult<FlowDoc> {
+  const file = PdfFile.parse(bytes, password, filters);
   const losses: Array<Loss> = [];
 
   if (file.encryptionUnsupported) {
@@ -56,9 +69,23 @@ export function readPdf(bytes: Uint8Array, password = ''): ReadResult<FlowDoc> {
     });
   }
 
-  const tagged = reconstructTaggedPdf(file);
-  const reconstruction = tagged ?? reconstructByLayout(file);
-  if (!tagged) {
+  // A placed reconstruction never consults the structure tree: the tree names a
+  // reading order, and a reading order is the one thing a placed page does not
+  // have. The words go where the glyphs are.
+  // §7.4 — a stream filter nothing here can undo leaves that stream unread.
+  // Reported before anything else: when it is the cross-reference stream, every
+  // page of the file is missing and no other loss explains why.
+  for (const name of file.unknownFilters) {
+    losses.push({
+      severity: 'dropped',
+      feature: FEATURES.text,
+      detail: `PDF stream filter /${name} is not supported; streams using it are unreadable`,
+    });
+  }
+
+  const tagged = layout === 'positional' ? undefined : reconstructTaggedPdf(file);
+  const reconstruction = tagged ?? reconstructByLayout(file, layout);
+  if (!tagged && layout !== 'positional') {
     losses.push({
       severity: 'degraded',
       feature: FEATURES.text,
@@ -88,5 +115,16 @@ export const pdfReader: DocumentReader<FlowDoc> = {
   produces: 'flow',
   supports: new Set([FEATURES.text, FEATURES.tables, FEATURES.lists, FEATURES.images]),
   sniff: sniffPdf,
-  read: (bytes, opts) => readPdf(bytes, typeof opts?.password === 'string' ? opts.password : ''),
+  read: (bytes, opts) =>
+    readPdf(
+      bytes,
+      typeof opts?.password === 'string' ? opts.password : '',
+      opts?.pdfLayout === 'positional' ? 'positional' : 'flow',
+      isFilters(opts?.filters) ? opts.filters : {},
+    ),
 };
+
+/** A caller's `filters` option, when it is the shape the reader can use. */
+function isFilters(value: unknown): value is StreamFilters {
+  return typeof value === 'object' && value !== null;
+}

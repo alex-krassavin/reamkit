@@ -1,6 +1,6 @@
 ---
 title: Examples
-description: Working recipes — PDF/A, digital signatures, font providers, SVG and HTML output, strict mode, the interlayer.
+description: Working recipes — PDF/A, digital signatures, font providers, SVG, HTML and Markdown output, strict mode, the interlayer.
 ---
 
 Every snippet below is runnable as-is; they all start from document bytes
@@ -19,6 +19,7 @@ const doc = Ream.parse(bytes);
 const pdf = await doc.convert('pdf', { fonts });
 const svg = await doc.convert('svg', { fonts }); // page-stack preview, no PDF involved
 const html = await doc.convert('html');          // flowed HTML — no fonts, zero I/O
+const md   = await doc.convert('md');            // GitHub-Flavored Markdown — same, narrower
 const docx = await doc.convert('docx');          // WordprocessingML back out — no fonts, no layout
 const xlsx = await doc.convert('xlsx');          // SpreadsheetML back out — from an .xlsx source
 ```
@@ -39,6 +40,58 @@ import { Ream } from 'reamkit';
 const doc = Ream.parse(bytes); // a .docx (xlsx has no docx writer)
 const out = await doc.convert('docx');
 // `out` is a fresh, valid .docx — hand it to a download, an upload, or re-parse it.
+```
+
+## docx → markdown: structure without geometry
+
+`convert('md')` writes GitHub-Flavored Markdown. Like HTML it is a flow medium —
+no pagination, no layout engine, no fonts — but a much narrower one, so it keeps
+what the document *says* and reports everything it cannot say back.
+
+```ts
+import { Ream } from 'reamkit';
+
+const doc = Ream.parse(bytes);
+const { bytes: md, losses } = await doc.convertWithReport('md');
+
+// Headings, lists (with their real numbers and nesting), GFM tables,
+// links, footnotes and the text inside shapes all survive.
+console.log(new TextDecoder().decode(md));
+
+// Everything markdown has no syntax for is reported — once each, however
+// many paragraphs it happened in:
+//   [dropped] text: paragraph alignment has no markdown expression
+//   [degraded] tables: merged cells flattened — markdown has no spans
+for (const loss of losses) console.log(loss.severity, loss.feature, loss.detail);
+```
+
+Pictures are inlined as `data:` URIs so the output is a single self-contained
+file. When you would rather write the image bytes yourself — a docs site, a
+repo — ask for links instead and the writer names them predictably:
+
+```ts
+const md = await doc.convert('md', { images: 'link' }); // ![](./media/image1.png)
+const bare = await doc.convert('md', { images: 'drop' }); // no pictures at all
+```
+
+A deck's only structure is where one slide ends and the next begins, and the
+`.pptx` / `.ppt` readers carry that as a page break. Markdown has no pages, so
+by default the break is dropped and reported — ask for the rule and each slide
+gets its own section:
+
+```ts
+const deck = Ream.parse(pptxBytes);
+const md = await deck.convert('md', { pageBreaks: 'rule' }); // --- between slides
+```
+
+A workbook has the same problem and a different answer: markdown cannot tell
+one sheet from the next, so each opens with a heading carrying its tab name.
+A printed page never shows one — Excel and Calc emit it nowhere — so this is
+markdown's alone, and `{ sheetNames: false }` turns it off:
+
+```ts
+const book = Ream.parse(xlsxBytes);
+const md = await book.convert('md'); // # Revenue, then its grid; # Costs, then its
 ```
 
 ## xlsx → xlsx: re-emit a workbook
@@ -106,12 +159,24 @@ always in the clear.
 (cross-reference streams, object streams) or an encrypted one. A tagged PDF (the
 ones Ream writes) is rebuilt from its structure tree — headings, paragraphs,
 tables, lists in reading order; an untagged PDF is reconstructed heuristically
-from glyph positions. **Raster images, hyperlinks and vector shapes come
+from glyph positions. **Raster images, hyperlinks and the page's artwork come
 back too** — images lifted out and sized from their placement, link annotations
 re-attached to the text, filled paths, stroked lines and shading-pattern
-gradients turned into shapes. The result is an ordinary `FlowDoc`, so it
-converts onward like any other source. Clipping paths and clip-bounded (`sh`)
+gradients turned into shapes, the clipping paths that limit them, tiling
+patterns, constant alpha, the appearance an annotation carries, and the Type 3
+glyphs that are drawings rather than letters. The result is an ordinary
+`FlowDoc`, so it converts onward like any other source. Clip-bounded (`sh`)
 shadings are not read (reported as a loss).
+
+A form or a drawing is not a reflowable document, though — its rules and boxes
+are placed absolutely, and a label an inch from the box it labels says nothing.
+Pass `{ pdfLayout: 'positional' }` to keep the page instead, with every line
+where its glyphs stand:
+
+```ts
+const page = Ream.parse(pdfBytes, { pdfLayout: 'positional' });
+const docx = await page.convert('docx'); // the form, not the form's words
+```
 
 ```ts
 import { Ream } from 'reamkit';
@@ -167,6 +232,41 @@ try {
   }
 }
 ```
+
+## A PDF whose streams use a filter Ream does not carry
+
+§7.4 leaves the filter set open, and PDF 2.0 added Brotli. A stream Ream cannot
+decode is a stream it has not read — and when that stream is the
+cross-reference, the file has no pages at all. Supply the decoder and it does:
+
+```ts
+import { brotliDecompressSync } from 'node:zlib';
+import { Ream } from 'reamkit';
+
+const doc = Ream.parse(pdfBytes, {
+  filters: { BrotliDecode: (bytes) => brotliDecompressSync(bytes) },
+});
+```
+
+In a browser, pass any Brotli implementation you already ship. Without one the
+loss report names the filter, so a document that comes back empty says why.
+
+## pdf → pdf: a form keeps its form
+
+A PDF reads back as a re-flowable document — paragraphs and tables in reading
+order. A form is not that: its grid is painted at fixed coordinates, and text
+that flows beside the grid sits in none of its boxes. Ask for the page instead
+and every line stands where its glyphs do:
+
+```ts
+import { Ream } from 'reamkit';
+
+const doc = Ream.parse(pdfBytes, { pdfLayout: 'positional' });
+const pdf = await doc.convert('pdf', { fonts });
+```
+
+Keep the default for anything going onward to DOCX, Markdown or HTML — the
+placed reading has no reading order, no paragraphs and no tables to give them.
 
 ## pptx → pdf: render a slide deck
 

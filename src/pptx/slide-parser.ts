@@ -1070,6 +1070,16 @@ export function parseTxBody(
   const autofit = bodyPr ? poChildren(bodyPr).find((c) => poIs(c, 'a:normAutofit')) : undefined;
   const shrink = autofit !== undefined && poIntAttr(autofit, 'fontScale') === undefined;
   const warp = bodyPr ? textWarp(bodyPr) : undefined;
+  // §20.1.10.83 `vert` — text set along the box's long axis. The docx side has
+  // read this for as long as it has had text boxes; the slide side never did,
+  // and shape-text-rotate.pptx's word lay flat across a pentagon that both
+  // references set on its side. The East-Asian stacked modes read top-to-bottom
+  // the way `vert` does; only the quarter turn differs.
+  const v = bodyPr ? poAttr(bodyPr, 'vert') : undefined;
+  const vertical: ShapeTextBody['vertical'] | undefined =
+    v === 'vert270' ? 'vert270' : v !== undefined && v !== 'horz' ? 'vert' : undefined;
+  // §20.1.10.55 — the words stay level however far the shape is turned.
+  const upright = bodyPr ? poAttr(bodyPr, 'upright') === '1' : false;
   // A placeholder that states no anchor of its own sits where its prototype
   // says: a master title anchored `ctr` centres the slide's title in its box.
   const anchor: ShapeTextBody['anchor'] | undefined =
@@ -1081,6 +1091,8 @@ export function parseTxBody(
     ...(rIns !== undefined ? { insetRight: emuToPt(rIns) } : {}),
     ...(bIns !== undefined ? { insetBottom: emuToPt(bIns) } : {}),
     ...(anchor ? { anchor } : {}),
+    ...(vertical ? { vertical } : {}),
+    ...(upright ? { upright } : {}),
     ...(shrink ? { shrinkToFit: true } : {}),
     ...(warp ? { warp } : {}),
   };

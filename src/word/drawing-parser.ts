@@ -1485,7 +1485,14 @@ function vmlTextBox(shape: PoNode, parseBody: ParseBody): ShapeTextBody | undefi
   const content = box ? poFindDescendant(box, 'w:txbxContent') : undefined;
   if (!content) return undefined;
   const blocks = parseBody(poChildren(content));
-  return blocks.length > 0 ? { content: blocks } : undefined;
+  if (blocks.length === 0) return undefined;
+  // §14.1.2.19 — a VML `style="rotation:N"` turns the FRAME, and its words are
+  // left level: TextFrameRotation.docx turns a frame a quarter and sets
+  // `layout-flow:vertical` on the textbox so the two cancel, which is the
+  // idiom. Reading the frame's turn without the flow stood the words on their
+  // heads. The flow itself is not read — the frames that set it land where no
+  // reference draws them, so there is nothing to check a reading against.
+  return { content: blocks, upright: true };
 }
 
 /**
@@ -2419,6 +2426,8 @@ function parseTextBox(wsp: PoNode, parseBody: ParseBody): ShapeTextBody | undefi
   const v = bodyPr ? poAttr(bodyPr, 'vert') : undefined;
   const vertical: ShapeTextBody['vertical'] | undefined =
     v === 'vert270' ? 'vert270' : v !== undefined && v !== 'horz' ? 'vert' : undefined;
+  // §20.1.10.55 — the words stay level however far the shape is turned.
+  const upright = bodyPr !== undefined && poAttr(bodyPr, 'upright') === '1';
 
   // §20.1.10.28 — the shape follows its text rather than the stated box.
   const autoFit = bodyPr !== undefined && poChildren(bodyPr).some((c) => poIs(c, 'a:spAutoFit'));
@@ -2427,6 +2436,7 @@ function parseTextBox(wsp: PoNode, parseBody: ParseBody): ShapeTextBody | undefi
     content,
     ...(chain ? { chain } : {}),
     ...(vertical ? { vertical } : {}),
+    ...(upright ? { upright } : {}),
     ...(autoFit ? { autoFit: true } : {}),
     ...(lIns !== undefined ? { insetLeft: emuToPt(lIns) } : {}),
     ...(tIns !== undefined ? { insetTop: emuToPt(tIns) } : {}),

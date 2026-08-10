@@ -3,15 +3,19 @@
 // carries a body of paragraphs/tables/images over the empty style sheet, with
 // any lifted image bytes (EP6) in the resource store the writers embed from.
 
+import { displayOf } from './display';
 import type {
   BodyElement,
   CustomPathCmd,
+  FloatAnchor,
   ParagraphProperties,
   SectionProperties,
   ShapeFill,
   ShapeLine,
+  TextOutline,
 } from '@/core/document-model';
 import type { FlowDoc } from '@/core/ir/flow';
+import type { FontRegistry } from '@/core/font';
 import type { Loss } from '@/core/ir';
 
 import type { PdfImage } from './images';
@@ -27,6 +31,21 @@ import { EMPTY_STYLE_SHEET, resolveBodyStyles } from '@/core/style-cascade';
 export interface Reconstruction {
   readonly doc: FlowDoc;
   readonly losses: ReadonlyArray<Loss>;
+}
+
+/**
+ * The corner a page's marks are measured from, in the SHOWN page's own y-up
+ * frame — see `./display`, which puts every mark into it.
+ *
+ * The shown page starts at its own origin, so `left` is zero and `top` is its
+ * height; the two are kept as a pair because a caller that has not been through
+ * `display` (none, today) would state something else.
+ */
+export interface PageFrame {
+  /** Left edge — subtract it to get an offset from the page. */
+  readonly left: number;
+  /** Top edge — subtract from it to flip into a top-down frame. */
+  readonly top: number;
 }
 
 /**
@@ -46,6 +65,18 @@ export function paragraphBlock(text: string, outlineLevel?: number): BodyElement
 export interface TextSpan {
   readonly text: string;
   readonly href?: string;
+  /** The size the glyphs were SHOWN at (§9.3.1 Tf), so the run keeps it. */
+  readonly sizePt?: number;
+  /** §8.6.8 — the colour they were painted in, when it is not plain black. */
+  readonly colorHex?: string;
+  /** §9.6.2 — the face's own name, for a document that embeds its programs. */
+  readonly fontName?: string;
+  /** §9.3.6 — a line round the glyphs, when the page asked for one. */
+  readonly outline?: TextOutline;
+  /** §9.8.1 — the face was a bold one. */
+  readonly bold?: boolean;
+  /** §9.8.1 — the face was a slanted one. */
+  readonly italic?: boolean;
 }
 
 /**
@@ -58,15 +89,44 @@ export function paragraphFromRuns(
   spans: ReadonlyArray<TextSpan>,
   outlineLevel?: number,
 ): BodyElement {
-  const merged: Array<{ text: string; href?: string }> = [];
+  const merged: Array<{
+    text: string;
+    href?: string;
+    sizePt?: number;
+    colorHex?: string;
+    fontName?: string;
+    outline?: TextOutline;
+    bold?: boolean;
+    italic?: boolean;
+  }> = [];
   for (const s of spans) {
     const last = merged[merged.length - 1];
-    if (last && last.href === s.href) last.text += s.text;
-    else if (s.href !== undefined) merged.push({ text: s.text, href: s.href });
-    else merged.push({ text: s.text });
+    if (
+      last &&
+      last.href === s.href &&
+      last.sizePt === s.sizePt &&
+      last.colorHex === s.colorHex &&
+      last.fontName === s.fontName &&
+      last.outline?.colorHex === s.outline?.colorHex &&
+      last.outline?.widthPt === s.outline?.widthPt &&
+      last.bold === s.bold &&
+      last.italic === s.italic
+    ) {
+      last.text += s.text;
+    } else
+      merged.push({
+        text: s.text,
+        ...(s.href !== undefined ? { href: s.href } : {}),
+        ...(s.sizePt !== undefined ? { sizePt: s.sizePt } : {}),
+        ...(s.colorHex !== undefined ? { colorHex: s.colorHex } : {}),
+        ...(s.fontName !== undefined ? { fontName: s.fontName } : {}),
+        ...(s.outline !== undefined ? { outline: s.outline } : {}),
+        ...(s.bold !== undefined ? { bold: s.bold } : {}),
+        ...(s.italic !== undefined ? { italic: s.italic } : {}),
+      });
   }
   const runs = merged
-    .map((m) => ({ text: m.text.replace(/\s+/g, ' '), href: m.href }))
+    .map((m) => ({ ...m, text: m.text.replace(/\s+/g, ' ') }))
     .filter((m) => m.text.length > 0);
   // Trim the paragraph's outer whitespace.
   if (runs.length > 0) {
@@ -80,7 +140,26 @@ export function paragraphFromRuns(
       properties,
       runs: runs
         .filter((r) => r.text.length > 0)
-        .map((r) => ({ text: r.text, properties: {}, ...(r.href ? { href: r.href } : {}) })),
+        .map((r) => ({
+          text: r.text,
+          // §9.3.1/§8.6.8/§9.8.1 — the size, colour and face the page showed it
+          // in. Dropped, a form set in 7pt was rebuilt at the 11pt default and
+          // grew by half again, its blue field labels and red warning came back
+          // black, and 160F-2019.pdf's title, set in Arial-BoldMT, came back
+          // light.
+          properties: {
+            ...(r.sizePt !== undefined ? { fontSizePt: pt(r.sizePt) } : {}),
+            ...(r.colorHex !== undefined ? { colorHex: r.colorHex } : {}),
+            // §17.3.2.26 `w:rFonts` — the face by name, which is how the layout
+            // finds a program the document itself carries.
+            ...(r.fontName !== undefined ? { fontFamily: { ascii: r.fontName } } : {}),
+            // §9.3.6 / §21.1.2.3.9 — the page drew a line round these glyphs.
+            ...(r.outline !== undefined ? { textOutline: r.outline } : {}),
+            ...(r.bold ? { bold: true } : {}),
+            ...(r.italic ? { italic: true } : {}),
+          },
+          ...(r.href ? { href: r.href } : {}),
+        })),
     },
   };
 }
@@ -90,16 +169,96 @@ export function paragraphFromRuns(
  * {@link BodyElement} that references them, sized in points from the placement
  * CTM. `alt` becomes the block's alt text when given.
  */
-export function imageBlock(image: PdfImage, resources: ResourceStore, alt?: string): BodyElement {
+export function imageBlock(
+  image: PdfImage,
+  resources: ResourceStore,
+  alt?: string,
+  frame?: PageFrame,
+  zOrder?: number,
+): BodyElement {
   const resource = resources.put(image.bytes);
+  // §20.4.2.3 — anchored where the page placed it, for the same reason a lifted
+  // path is: a picture is not a paragraph and has no turn in a reading order.
+  // Stacked in flow, 22060_A1_01_Plans.pdf's four floor plans made two pages of
+  // a sheet that is one.
+  const float: FloatAnchor | undefined =
+    frame !== undefined
+      ? {
+          wrap: 'none',
+          ...(zOrder !== undefined ? { zOrder } : {}),
+          posH: { relativeFrom: 'page', offsetPt: pt(image.x - frame.left) },
+          posV: {
+            relativeFrom: 'page',
+            offsetPt: pt(Math.max(0, frame.top - image.y - image.heightPt)),
+          },
+        }
+      : undefined;
   return {
     kind: 'image',
     image: {
+      ...(float ? { float } : {}),
       resource,
       width: pt(image.widthPt),
       height: pt(image.heightPt),
       paragraphProperties: {},
       ...(alt ? { altText: alt } : {}),
+    },
+  };
+}
+
+/**
+ * A line of text as an anchored box, standing where the page set it.
+ *
+ * The flowed reconstruction reads a document OUT of a page: paragraphs in
+ * reading order, re-flowable, free to land wherever the next medium puts them.
+ * A form is not that document. 160F-2019.pdf is a grid of ruled boxes with a
+ * label in each, and a label means nothing an inch from the box it labels — the
+ * artwork is placed absolutely, so text that flows beside it lines up with none
+ * of it.
+ *
+ * @param spans       The line's runs.
+ * @param box         Its page-space rectangle (y-up, as PDF measures).
+ * @param frame       The page's own corner, to measure the box off.
+ * @param zOrder      Its place in the page's painting order.
+ * @param rotation60k §20.1.7.6 — how far the box turns about its own centre,
+ *                    for a baseline the page did not set flat.
+ * @returns A shape carrying the text, anchored where the glyphs were.
+ */
+export function positionedText(
+  spans: ReadonlyArray<TextSpan>,
+  box: { x: number; y: number; width: number; height: number },
+  frame: PageFrame,
+  zOrder: number,
+  rotation60k?: number,
+): BodyElement {
+  const paragraph = paragraphFromRuns(spans);
+  return {
+    kind: 'shape',
+    shape: {
+      float: {
+        wrap: 'none',
+        zOrder,
+        posH: { relativeFrom: 'page', offsetPt: pt(box.x - frame.left) },
+        posV: {
+          relativeFrom: 'page',
+          offsetPt: pt(Math.max(0, frame.top - box.y - box.height)),
+        },
+      },
+      width: pt(Math.max(1, box.width)),
+      height: pt(Math.max(1, box.height)),
+      ...(rotation60k !== undefined ? { transform: { rotation60k } } : {}),
+      geometry: { kind: 'preset', preset: 'rect' },
+      fill: { kind: 'none' },
+      // A box drawn round a line of a form would be a box the page never had:
+      // the shape is here to place the words, not to be seen.
+      text: {
+        content: [paragraph],
+        insetLeft: pt(0),
+        insetTop: pt(0),
+        insetRight: pt(0),
+        insetBottom: pt(0),
+      },
+      paragraphProperties: {},
     },
   };
 }
@@ -115,10 +274,14 @@ export function dedupeLosses(losses: ReadonlyArray<Loss>): Array<Loss> {
  * Turn a lifted {@link PdfVector} path (filled EP10 / stroked EP11) into a
  * custom-geometry shape {@link BodyElement}. Page-space points (y-up) become
  * path-space (bbox-relative, y-down); the shape is sized from the bounding box
- * (plus the stroke thickness) and placed in flow order by the caller. A fill
- * becomes a solid fill, a stroke becomes the outline.
+ * (plus the stroke thickness). A fill becomes a solid fill, a stroke the outline.
+ *
+ * Given the page's frame the shape is ANCHORED where the page drew it, behind
+ * the text, rather than taking a place of its own in the flow. A drawing is not
+ * a paragraph: 22060_A1_01_Plans.pdf is one A3 sheet of vectors, and stacking
+ * its forty-nine paths one under another spilled it onto a second page.
  */
-export function shapeBlock(v: PdfVector): BodyElement {
+export function shapeBlock(v: PdfVector, frame?: PageFrame, zOrder?: number): BodyElement {
   const w = v.maxX - v.minX;
   const h = v.maxY - v.minY;
   const fx = (x: number): number => x - v.minX;
@@ -143,22 +306,55 @@ export function shapeBlock(v: PdfVector): BodyElement {
         return { cmd: 'close' };
     }
   });
+  // §8.4.3.2 — the pen is as wide as the page says. A width of zero asks for the
+  // thinnest line the device can draw, which on a fixed page is a hairline.
+  //
+  // This used to be raised to half a point, because the same number also sized
+  // the SHAPE BOX and a flat line needs a box to draw in. The two are not the
+  // same thing: Brotli-Prototype-FileA.pdf draws its elevations with a 0.12pt
+  // pen, and at half a point every clapboard line came out four times too heavy
+  // — a drawing that reads grey in every viewer arrived black.
+  const HAIRLINE_PT = 0.1;
+  const stated = v.lineWidth ?? 0.75;
+  const pen = v.strokeHex !== undefined ? (stated > 0 ? stated : HAIRLINE_PT) : 0;
   // A stroked line can be geometrically flat (a horizontal rule has h≈0); give
-  // the shape box at least the stroke thickness so the line has room to draw.
-  const thick = v.strokeHex !== undefined ? Math.max(v.lineWidth ?? 0.75, 0.5) : 0;
+  // the shape box at least half a point so the line has room to draw.
+  const thick = v.strokeHex !== undefined ? Math.max(pen, 0.5) : 0;
+  // §11.6.4.4 — a band the page meant to be read THROUGH is not the same mark
+  // as one that hides what it covers: 22060_A1_01_Plans.pdf marks its
+  // evacuation routes at `ca` 0.6 over the floor plan they run across.
+  const alpha = v.alpha !== undefined ? { alpha: v.alpha } : {};
   const fill: ShapeFill =
     v.gradient !== undefined
-      ? { kind: 'gradient', gradient: v.gradient }
+      ? { kind: 'gradient', gradient: v.gradient, ...alpha }
       : v.fillHex !== undefined
-        ? { kind: 'solid', colorHex: v.fillHex }
+        ? { kind: 'solid', colorHex: v.fillHex, ...alpha }
         : { kind: 'none' };
   const line: ShapeLine | undefined =
     v.strokeHex !== undefined
-      ? { width: pt(thick), colorHex: v.strokeHex, fill: 'solid' }
+      ? { width: pt(pen), colorHex: v.strokeHex, fill: 'solid' }
+      : undefined;
+  // §20.4.2.3 — anchored to the PAGE at the position it was drawn at, y flipped
+  // from PDF's upward axis.
+  //
+  // Not `behind`: a path is not always under the pictures. 22060_A1_01_Plans.pdf
+  // backs its legend with a white box painted OVER a floor plan, and forced
+  // behind it, the plan and the title block read straight through the legend.
+  // `zOrder` carries the order the page painted in, which is the only thing
+  // that decides this.
+  const float: FloatAnchor | undefined =
+    frame !== undefined
+      ? {
+          wrap: 'none',
+          ...(zOrder !== undefined ? { zOrder } : {}),
+          posH: { relativeFrom: 'page', offsetPt: pt(v.minX - frame.left) },
+          posV: { relativeFrom: 'page', offsetPt: pt(Math.max(0, frame.top - v.maxY)) },
+        }
       : undefined;
   return {
     kind: 'shape',
     shape: {
+      ...(float ? { float } : {}),
       width: pt(Math.max(w, thick)),
       height: pt(Math.max(h, thick)),
       geometry: { kind: 'custom', custom: { pathWidth: w, pathHeight: h, commands } },
@@ -181,10 +377,15 @@ export function shapeBlock(v: PdfVector): BodyElement {
  * `A4`. Returns `undefined` when there is no usable first-page box.
  */
 export function sectionFromPdfPages(pages: ReadonlyArray<PdfPage>): SectionProperties | undefined {
-  const box = pages[0]?.mediaBox;
-  if (!box) return undefined;
-  const width = Math.abs(box[2] - box[0]);
-  const height = Math.abs(box[3] - box[1]);
+  const first = pages[0];
+  if (!first) return undefined;
+  // §14.11.1 — the page as it is SHOWN. A landscape sheet drawn sideways in a
+  // portrait box with `/Rotate 270` is a landscape page, and read as its box
+  // says every one of Brotli-Prototype-FileA.pdf's twenty-five came back
+  // portrait with its words running down the page.
+  const shown = displayOf(first);
+  const width = shown.width;
+  const height = shown.height;
   if (!(width > 0 && height > 0)) return undefined;
   return {
     pageSize: {
@@ -214,12 +415,14 @@ export function buildFlowDoc(
   body: ReadonlyArray<BodyElement>,
   resources: ResourceStore = new ResourceStore(),
   section?: SectionProperties,
+  embeddedFonts?: ReadonlyMap<string, FontRegistry>,
 ): FlowDoc {
   return {
     kind: 'flow',
     body: resolveBodyStyles([...body], EMPTY_STYLE_SHEET),
     sections: [],
     ...(section ? { section } : {}),
+    ...(embeddedFonts && embeddedFonts.size > 0 ? { embeddedFonts } : {}),
     styles: EMPTY_STYLE_SHEET,
     resources,
   };

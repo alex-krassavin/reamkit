@@ -11,7 +11,7 @@
 
 import { Lexer } from './lexer';
 import type { ShapeGradient } from '@/core/vector';
-import type { PdfDict, PdfValue } from '@/pdf/objects';
+import type { PdfDict, PdfStream, PdfValue } from '@/pdf/objects';
 import { PDF_NULL, PdfHexString, PdfName } from '@/pdf/objects';
 
 /**
@@ -27,6 +27,28 @@ export interface ContentFont {
   decode: (codes: ReadonlyArray<number>) => string;
   /** Glyph advance for one code, in 1000-unit text space. */
   width: (code: number) => number;
+  /** §9.6.2 — the face's own `/BaseFont` name, for a document that embeds it. */
+  readonly name?: string;
+  /** §9.8.1 — the face is a bold one (weight, the ForceBold flag, or its name). */
+  readonly bold?: boolean;
+  /** §9.8.1 — the face is slanted (`/ItalicAngle`, the Italic flag, or its name). */
+  readonly italic?: boolean;
+  /**
+   * §9.6.5 — a Type 3 face, whose glyphs are content streams rather than
+   * outlines. What such a font draws is not type at all: it is whatever the
+   * procedure paints, in the resources the font states.
+   */
+  readonly type3?: Type3Face;
+}
+
+/** §9.6.5 — the parts of a Type 3 font a caller needs to run its glyphs. */
+export interface Type3Face {
+  /** `/FontMatrix` — glyph space to text space. */
+  readonly matrix: Matrix;
+  /** `/Encoding` + `/CharProcs` — the content stream one code draws. */
+  readonly proc: (code: number) => PdfStream | undefined;
+  /** `/Resources` the procedures draw with, when the font states its own. */
+  readonly resources: PdfDict | undefined;
 }
 
 /**
@@ -40,8 +62,63 @@ export interface TextRun {
   readonly x: number;
   /** Glyph origin y in page space (points). */
   readonly y: number;
+  /**
+   * Where the pen stood after the last glyph, in page space (§9.4.4). The
+   * interpreter advances the text matrix by the font's own widths, so this is
+   * a measurement, not the half-em-per-character guess the reader used to make
+   * — and the difference between a word space and a table column is exactly
+   * the kind of thing a guess gets wrong.
+   */
+  readonly endX: number;
+  /** The pen's y after the last glyph — with {@link endX}, the whole advance. */
+  readonly endY: number;
+  /**
+   * The baseline's direction in page space, degrees counter-clockwise from
+   * left-to-right (§9.4.2 — the text matrix may turn as well as move). Absent
+   * for ordinary upright text, which is nearly all of it.
+   */
+  readonly angleDeg?: number;
   readonly fontSizePt: number;
   readonly fontKey: string;
+  /**
+   * §9.6.2 `/BaseFont` — the face's own name, subset prefix dropped and
+   * lowercased, or absent when the font states none. This is what a rebuilt run
+   * asks for, so a page whose faces the file EMBEDS is re-set in them rather
+   * than in a substitute (see `./embedded-fonts`).
+   */
+  readonly fontName?: string;
+  /** §9.8.1 — the face the glyphs were shown in is a bold one. */
+  readonly bold?: boolean;
+  /**
+   * §8.6.6.2 — the glyphs are filled with a tiling PATTERN, named here for the
+   * caller to resolve: a pattern is a content stream, not a colour, and the
+   * fill colour still standing from before is not what the page shows.
+   */
+  readonly fillPatternName?: string;
+  /**
+   * §9.3.6 — the page painted these glyphs NOWHERE: mode 3 shows nothing and
+   * mode 7 only adds to the clip. A scanned page carries its recognised words
+   * that way, under the picture of the page — so the run is kept, because it
+   * is the only text such a document has, and a reader reproducing the page
+   * leaves it to the picture.
+   */
+  readonly invisible?: boolean;
+  /**
+   * §9.3.6 — the colour the glyphs are STROKED in, when the rendering mode
+   * asks for a stroke, and how wide the pen is.
+   */
+  readonly outlineHex?: string;
+  readonly outlineWidthPt?: number;
+  /** §9.8.1 — the face the glyphs were shown in is a slanted one. */
+  readonly italic?: boolean;
+  /**
+   * §9.6.5 — the face is a Type 3 one, so what the page SHOWS here is the
+   * glyph procedures, not type. The run is kept for its words; a reader that
+   * reproduces the page draws the procedures instead of re-setting it.
+   */
+  readonly type3?: boolean;
+  /** §8.6.8 — the non-stroking colour the glyphs were painted in (6-hex). */
+  readonly colorHex: string;
   /**
    * The marked-content id of the enclosing `BDC` sequence (§14.6), if any — the
    * link from this text to the structure element that owns it (E-PDF EP3).
@@ -60,6 +137,8 @@ export interface TextRun {
  * `mcid` links the paint to its structure element (a `/Figure`, E-PDF EP6).
  */
 export interface ImagePlacement {
+  /** Where the `Do` fell in the stream's painting order — see {@link VectorPlacement.order}. */
+  readonly order: number;
   /** XObject resource name (no leading slash). */
   readonly name: string;
   readonly ctm: Matrix;
@@ -90,12 +169,69 @@ export type PathSeg =
  * a fill colour/gradient (EP10/EP16c) and/or a stroke colour + width (EP11),
  * plus the enclosing structure id.
  */
-export interface VectorPlacement {
+/** A path's page-space bounding box, or `undefined` when it names no point. */
+function pathBox(
+  segs: ReadonlyArray<PathSeg>,
+): { minX: number; minY: number; maxX: number; maxY: number } | undefined {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  const add = (x: number, y: number): void => {
+    minX = Math.min(minX, x);
+    minY = Math.min(minY, y);
+    maxX = Math.max(maxX, x);
+    maxY = Math.max(maxY, y);
+  };
+  for (const seg of segs) {
+    if (seg.op === 'move' || seg.op === 'line') add(seg.x, seg.y);
+    else if (seg.op === 'cubic') {
+      add(seg.x1, seg.y1);
+      add(seg.x2, seg.y2);
+      add(seg.x, seg.y);
+    }
+  }
+  return Number.isFinite(minX) ? { minX, minY, maxX, maxY } : undefined;
+}
+
+/** The area of a box, for choosing the smaller of two clip regions. */
+const area = (b: { minX: number; minY: number; maxX: number; maxY: number }): number =>
+  Math.max(0, b.maxX - b.minX) * Math.max(0, b.maxY - b.minY);
+
+/**
+ * §8.5.4 — the clipping region in force when a path was painted: the path that
+ * `W`/`W*` installed, plus its page-space bounding box.
+ */
+export interface ClipRegion {
   readonly segs: ReadonlyArray<PathSeg>;
+  readonly minX: number;
+  readonly minY: number;
+  readonly maxX: number;
+  readonly maxY: number;
+}
+
+export interface VectorPlacement {
+  /**
+   * Where this fell in the stream's painting order (§8.5.3): later covers
+   * earlier, and a `Do` of a form is numbered here too, so a caller walking
+   * into that form knows exactly where its marks belong among these.
+   */
+  readonly order: number;
+  readonly segs: ReadonlyArray<PathSeg>;
+  /** §8.5.4 — the clip in force when it was painted, when there was one. */
+  readonly clip?: ClipRegion;
   /** Fill colour (6-hex), present iff the path is filled (`f` / `F` / `f*` / `B` / `b`). */
   readonly fillHex?: string;
   /** Shading pattern, present iff filled with one (EP16c). */
   readonly gradient?: ShapeGradient;
+  /** §11.6.4.4 `/ca` — how opaque the fill is, when the page asked for less. */
+  readonly alpha?: number;
+  /**
+   * §8.7.3 — the TILING pattern resource name the path is filled with. Its
+   * content is a stream of its own, so what the fill actually shows is only
+   * known by walking into it; the `fillHex` beside this is not the fill.
+   */
+  readonly patternName?: string;
   /** Stroke colour (6-hex), present iff the path is stroked (`S` / `s` / `B` / `b`) — EP11. */
   readonly strokeHex?: string;
   /** Stroke width in page-space points — EP11. */
@@ -108,6 +244,20 @@ export interface InterpretResult {
   readonly texts: Array<TextRun>;
   readonly images: Array<ImagePlacement>;
   readonly vectors: Array<VectorPlacement>;
+  /** §9.6.5 — every Type 3 glyph the stream showed, with where to run it. */
+  readonly glyphs: Array<Type3Call>;
+}
+
+/**
+ * §9.6.5 — one showing of a Type 3 glyph: which procedure, and the matrix that
+ * puts glyph space on the page.
+ */
+export interface Type3Call {
+  readonly stream: PdfStream;
+  readonly resources: PdfDict | undefined;
+  readonly ctm: Matrix;
+  /** §8.5.3 — its place in the stream's painting order, as a form call has. */
+  readonly order: number;
 }
 
 /**
@@ -144,11 +294,16 @@ const FALLBACK_FONT: ContentFont = {
   width: () => 500,
 };
 
+/** Below this a baseline is upright: a rounded matrix is not a turned one. */
+const UPRIGHT_TOLERANCE_DEG = 0.5;
+
 interface TextState {
   ctm: Matrix;
   fontKey: string;
   font: ContentFont;
   fontSize: number;
+  /** §9.3.6 `Tr` — 0 fill, 1 stroke, 2 both, 3 invisible, 4–7 the same plus clip. */
+  renderMode: number;
   charSpacing: number; // Tc, text-space units
   wordSpacing: number; // Tw
   hScale: number; // Tz / 100
@@ -158,6 +313,9 @@ interface TextState {
   strokeColor: string; // current stroking colour (6-hex), graphics state (EP11)
   lineWidth: number; // current line width in user-space units (EP11)
   fillGradient: ShapeGradient | undefined; // current non-stroking shading pattern (EP16c)
+  fillPattern: string | undefined; // §8.7.3 non-stroking TILING pattern resource name
+  fillAlpha: number; // §11.6.4.4 `/ca` — how opaque the non-stroking paint is
+  clip: ClipRegion | undefined; // §8.5.4 the clipping region in force
 }
 
 function initialState(): TextState {
@@ -166,6 +324,7 @@ function initialState(): TextState {
     fontKey: '',
     font: FALLBACK_FONT,
     fontSize: 0,
+    renderMode: 0,
     charSpacing: 0,
     wordSpacing: 0,
     hScale: 1,
@@ -175,6 +334,9 @@ function initialState(): TextState {
     strokeColor: '000000',
     lineWidth: 1, // §8.4.3.2 default line width
     fillGradient: undefined,
+    fillPattern: undefined,
+    fillAlpha: 1,
+    clip: undefined,
   };
 }
 
@@ -190,6 +352,7 @@ function initialState(): TextState {
  *                   an unmapped key falls back to Latin-1 with a half-em advance.
  * @param initialCtm The starting CTM mapping user space to page space.
  * @param shadings   Shading patterns by name, selected by `scn`/`sc` (EP16c).
+ * @param alphas     Constant fill alphas by `/ExtGState` name, selected by `gs`.
  * @returns The extracted text runs, image placements and vector paths.
  */
 export function interpretContent(
@@ -197,10 +360,12 @@ export function interpretContent(
   fonts: ReadonlyMap<string, ContentFont>,
   initialCtm: Matrix = IDENTITY,
   shadings: ReadonlyMap<string, ShapeGradient> = new Map(),
+  alphas: ReadonlyMap<string, number> = new Map(),
 ): InterpretResult {
   const runs: Array<TextRun> = [];
   const images: Array<ImagePlacement> = [];
   const vectors: Array<VectorPlacement> = []; // filled paths (EP10)
+  const glyphs: Array<Type3Call> = []; // §9.6.5 Type 3 glyph procedures
   const lexer = new Lexer(bytes);
   const stack: Array<TextState> = [];
   let state = initialState();
@@ -208,6 +373,8 @@ export function interpretContent(
   let tm: Matrix = IDENTITY; // text matrix
   let tlm: Matrix = IDENTITY; // line matrix
   let path: Array<PathSeg> = []; // the current path under construction (page space)
+  let pendingClip = false; // §8.5.4 `W` seen; the next painting operator installs it
+  let paintOrder = 0; // §8.5.3 the sequence marks are laid down in
   let operands: Array<PdfValue> = [];
   const mcStack: Array<number | undefined> = []; // marked-content (MCID) nesting
 
@@ -250,12 +417,28 @@ export function interpretContent(
     if (path.length >= 2 && (fill || stroke)) {
       const mcid = mcStack.length > 0 ? mcStack[mcStack.length - 1] : undefined;
       vectors.push({
+        order: paintOrder++,
         segs: path,
+        ...(state.clip ? { clip: state.clip } : {}),
+        ...(fill && state.fillPattern !== undefined ? { patternName: state.fillPattern } : {}),
         ...(fill ? { fillHex: state.fillColor } : {}),
+        ...(fill && state.fillAlpha < 1 ? { alpha: state.fillAlpha } : {}),
         ...(fill && state.fillGradient ? { gradient: state.fillGradient } : {}),
         ...(stroke ? { strokeHex: state.strokeColor, lineWidth: ctmLineWidth() } : {}),
         ...(mcid !== undefined ? { mcid } : {}),
       });
+    }
+    // §8.5.4 — `W` names the clip but does not install it: the painting
+    // operator that ENDS the path does, and the path it names is this one.
+    if (pendingClip) {
+      pendingClip = false;
+      const box = pathBox(path);
+      if (box) {
+        const next: ClipRegion = { segs: path, ...box };
+        // Clips intersect. Nested ones nest, so the smaller region stands for
+        // the intersection — the whole of it, where it is the whole.
+        state.clip = state.clip && area(state.clip) <= area(next) ? state.clip : next;
+      }
     }
     path = [];
   };
@@ -268,6 +451,22 @@ export function interpretContent(
   // Advance the text matrix for one shown glyph (§9.4.4): w0·Tfs + Tc (+ Tw for
   // the single-byte space), all scaled horizontally by Th.
   const advanceGlyph = (code: number): void => {
+    // §9.6.5 — a Type 3 glyph is a content stream, and it draws BEFORE the pen
+    // moves on. The matrix that places it is the font's own, composed onto the
+    // text-space matrix the glyph would have been set at.
+    const type3 = state.font.type3;
+    if (type3) {
+      const stream = type3.proc(code);
+      if (stream) {
+        const scale: Matrix = [state.fontSize * state.hScale, 0, 0, state.fontSize, 0, state.rise];
+        glyphs.push({
+          stream,
+          resources: type3.resources,
+          ctm: multiply(type3.matrix, multiply(scale, multiply(tm, state.ctm))),
+          order: paintOrder++,
+        });
+      }
+    }
     const w0 = state.font.width(code) / 1000;
     const isSpace = state.font.bytesPerCode === 1 && code === 0x20;
     const tx =
@@ -283,16 +482,38 @@ export function interpretContent(
     return state.font.decode(codes);
   };
 
-  const emitAt = (origin: Matrix, text: string): void => {
+  const emitAt = (origin: Matrix, shown: string, end: Matrix): void => {
+    const text = logicalOrder(shown);
     if (text.length === 0) return;
     const scaleY = Math.hypot(origin[2], origin[3]) || 1;
     const mcid = mcStack.length > 0 ? mcStack[mcStack.length - 1] : undefined;
+    // §9.4.2 — the text matrix turns as well as moves. The baseline's own
+    // direction is the first column of it; upright text leaves this at zero.
+    const angle = (Math.atan2(origin[1], origin[0]) * 180) / Math.PI;
     runs.push({
       text,
       x: origin[4],
       y: origin[5],
+      endX: end[4],
+      endY: end[5],
+      ...(Math.abs(angle) > UPRIGHT_TOLERANCE_DEG ? { angleDeg: angle } : {}),
       fontSizePt: state.fontSize * scaleY,
       fontKey: state.fontKey,
+      ...(state.font.name !== undefined ? { fontName: state.font.name } : {}),
+      ...(state.font.type3 ? { type3: true } : {}),
+      ...(state.renderMode === 3 || state.renderMode === 7 ? { invisible: true } : {}),
+      ...(state.fillPattern !== undefined ? { fillPatternName: state.fillPattern } : {}),
+      // §9.3.6 — modes 1, 2, 5 and 6 stroke the glyphs; the pen is the one the
+      // graphics state holds, in the stroking colour.
+      ...(strokesText(state.renderMode)
+        ? {
+            outlineHex: state.strokeColor,
+            outlineWidthPt: ctmLineWidth(),
+          }
+        : {}),
+      ...(state.font.bold ? { bold: true } : {}),
+      ...(state.font.italic ? { italic: true } : {}),
+      colorHex: state.fillColor,
       ...(mcid !== undefined ? { mcid } : {}),
     });
   };
@@ -300,21 +521,26 @@ export function interpretContent(
   // Tj / ' / " — one string at the current origin.
   const showString = (operand: PdfValue): void => {
     const origin = multiply(tm, state.ctm);
-    emitAt(origin, consume(operand));
+    const text = consume(operand);
+    emitAt(origin, text, multiply(tm, state.ctm));
   };
 
-  // TJ — an array of strings and kerning adjustments; one run at the start origin.
+  // §9.4.3 TJ — an array of strings with the pen nudged BETWEEN them. Each
+  // string is emitted where it stands, because a nudge is the page saying that
+  // this piece does not go where the font's own widths would put it: read as
+  // one run from the start origin, every adjustment was thrown away and the
+  // error accumulated along the line. 160F-2019.pdf kerns its labels that way,
+  // and "période du" drifted a point and a half by its last letter.
   const showArray = (arr: ReadonlyArray<PdfValue>): void => {
-    const origin = multiply(tm, state.ctm);
-    let text = '';
     for (const el of arr) {
       if (typeof el === 'number') {
         tm = multiply(translation((-el / 1000) * state.fontSize * state.hScale, 0), tm);
       } else if (typeof el === 'string' || el instanceof PdfHexString) {
-        text += consume(el);
+        const origin = multiply(tm, state.ctm);
+        const text = consume(el);
+        emitAt(origin, text, multiply(tm, state.ctm));
       }
     }
-    emitAt(origin, text);
   };
 
   const exec = (op: string): void => {
@@ -363,6 +589,10 @@ export function interpretContent(
         break;
       case 'Tc':
         state.charSpacing = num(0);
+        break;
+      case 'Tr':
+        // §9.3.6 — how the glyphs are painted, if at all.
+        state.renderMode = num(0);
         break;
       case 'Tw':
         state.wordSpacing = num(0);
@@ -414,7 +644,12 @@ export function interpretContent(
         const nm = operands[0];
         if (nm instanceof PdfName) {
           const mcid = mcStack.length > 0 ? mcStack[mcStack.length - 1] : undefined;
-          images.push({ name: nm.value, ctm: state.ctm, ...(mcid !== undefined ? { mcid } : {}) });
+          images.push({
+            order: paintOrder++,
+            name: nm.value,
+            ctm: state.ctm,
+            ...(mcid !== undefined ? { mcid } : {}),
+          });
         }
         break;
       }
@@ -423,21 +658,32 @@ export function interpretContent(
       case 'rg':
         state.fillColor = rgbHex(num(0), num(1), num(2));
         state.fillGradient = undefined;
+        state.fillPattern = undefined;
         break;
       case 'g':
         state.fillColor = grayHex(num(0));
         state.fillGradient = undefined;
+        state.fillPattern = undefined;
         break;
       case 'k':
         state.fillColor = cmykHex(num(0), num(1), num(2), num(3));
         state.fillGradient = undefined;
+        state.fillPattern = undefined;
         break;
       // §8.6.8 colour in a named space; a /Pattern name selects a shading
       // pattern (EP16c), numeric operands are a solid colour we leave as-is.
       case 'scn':
       case 'sc': {
+        // §8.6.6.2 — in a Pattern colour space the operand is a pattern NAME,
+        // not components. A shading pattern (type 2) resolves to a gradient
+        // here; a tiling one (type 1) is a whole content stream and is named
+        // for the image walk to enter. Neither is a colour, and taking the
+        // fill colour still standing from before painted 22060_A1_01_Plans.pdf's
+        // four floor plans as four black rectangles.
         const last = operands[operands.length - 1];
-        state.fillGradient = last instanceof PdfName ? shadings.get(last.value) : undefined;
+        const named = last instanceof PdfName ? last.value : undefined;
+        state.fillGradient = named !== undefined ? shadings.get(named) : undefined;
+        state.fillPattern = named !== undefined && !state.fillGradient ? named : undefined;
         break;
       }
       // §8.6.8 stroking colour → the current stroke colour (EP11).
@@ -495,9 +741,20 @@ export function interpretContent(
       case 'n':
         paintPath(false, false); // end the path with no paint
         break;
+      case 'gs': {
+        // §8.4.5 — a named graphics state, of which only the constant fill
+        // alpha is read here. A band meant to be seen through is not the same
+        // mark as one that hides what it covers.
+        const nm = operands[operands.length - 1];
+        if (nm instanceof PdfName) state.fillAlpha = alphas.get(nm.value) ?? 1;
+        break;
+      }
       case 'W':
       case 'W*':
-        break; // intersect clip; the painting operator that follows clears the path
+        // §8.5.4 — the current path becomes the clip once the painting
+        // operator that follows ends it.
+        pendingClip = true;
+        break;
       default:
         break; // other graphics-state / stroking operators ignored
     }
@@ -536,7 +793,68 @@ export function interpretContent(
         break;
     }
   }
-  return { texts: runs, images, vectors };
+  return { texts: runs, images, vectors, glyphs };
+}
+
+/** §9.3.6 — the rendering modes that put a line round the glyphs. */
+function strokesText(mode: number): boolean {
+  return mode === 1 || mode === 2 || mode === 5 || mode === 6;
+}
+
+/**
+ * §9.4 — a show operator paints its glyphs along the baseline, left to right,
+ * whatever the script. For Arabic or Hebrew that means the string a PDF holds
+ * is in VISUAL order: the first character of the word is the last one shown.
+ *
+ * Every reader turns this back into logical order before handing it on, because
+ * everything downstream — a search, a markdown file, a layout engine that does
+ * its own bidi — takes logical order and reverses it again for display.
+ * ArabicCIDTrueType.pdf came out mirrored for exactly that reason: the reader
+ * passed visual order through and the layout reversed it a second time.
+ *
+ * A run is reversed only when it is wholly right-to-left. Anything mixed — a
+ * number inside an Arabic sentence runs left to right — needs the full bidi
+ * algorithm, and guessing at it would be worse than leaving it alone.
+ */
+function logicalOrder(text: string): string {
+  return isRightToLeft(text) ? [...text].reverse().join('') : text;
+}
+
+/**
+ * Whether a string is wholly right-to-left: at least one letter of an RTL
+ * script and nothing of any other, spaces and joiners aside.
+ *
+ * Anything mixed — a number inside an Arabic sentence runs left to right —
+ * needs the full bidi algorithm, and guessing at it would be worse than
+ * leaving it alone.
+ *
+ * @param text The string to judge.
+ * @returns Whether it is one run of right-to-left script.
+ */
+export function isRightToLeft(text: string): boolean {
+  let rtl = false;
+  for (const ch of text) {
+    const cp = ch.codePointAt(0)!;
+    if (isRtl(cp)) {
+      rtl = true;
+      continue;
+    }
+    if (cp !== 0x20 && cp !== 0x0a && cp !== 0x200c && cp !== 0x200d) return false;
+  }
+  return rtl;
+}
+
+/** The right-to-left blocks: Hebrew, Arabic, Syriac, Thaana, and the forms. */
+function isRtl(cp: number): boolean {
+  return (
+    (cp >= 0x0590 && cp <= 0x05ff) || // Hebrew
+    (cp >= 0x0600 && cp <= 0x06ff) || // Arabic
+    (cp >= 0x0700 && cp <= 0x074f) || // Syriac
+    (cp >= 0x0780 && cp <= 0x07bf) || // Thaana
+    (cp >= 0x08a0 && cp <= 0x08ff) || // Arabic Extended-A
+    (cp >= 0xfb1d && cp <= 0xfdff) || // Hebrew + Arabic Presentation Forms-A
+    (cp >= 0xfe70 && cp <= 0xfeff) // Arabic Presentation Forms-B
+  );
 }
 
 // PDF colour operands (0..1 per channel) → a 6-hex sRGB string.

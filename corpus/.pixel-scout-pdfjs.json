@@ -6,47 +6,47 @@
  },
  {
   "name": "22060_A1_01_Plans.pdf",
-  "score": 0.3533,
-  "aligned": false
- },
- {
-  "name": "160F-2019.pdf",
-  "score": 0.2065,
+  "score": 0.0083,
   "aligned": true
- },
- {
-  "name": "Brotli-Prototype-FileA.pdf",
-  "score": 0.1546,
-  "aligned": false
  },
  {
   "name": "IdentityToUnicodeMap_charCodeOf.pdf",
-  "score": 0.0242,
-  "aligned": true
- },
- {
-  "name": "ArabicCIDTrueType.pdf",
-  "score": 0.0166,
+  "score": 0.0068,
   "aligned": true
  },
  {
   "name": "ContentStreamCycleType3insideType3.pdf",
-  "score": 0.0159,
+  "score": 0.0067,
   "aligned": true
  },
  {
   "name": "ContentStreamNoCycleType3insideType3.pdf",
-  "score": 0.0159,
+  "score": 0.006,
   "aligned": true
  },
  {
-  "name": "Embedded_font.pdf",
-  "score": 0.0057,
+  "name": "Brotli-Prototype-FileA.pdf",
+  "score": 0.0047,
+  "aligned": true
+ },
+ {
+  "name": "ArabicCIDTrueType.pdf",
+  "score": 0.0022,
+  "aligned": true
+ },
+ {
+  "name": "160F-2019.pdf",
+  "score": 0.0007,
   "aligned": true
  },
  {
   "name": "90ms_rksj_h_sample.pdf",
-  "score": 0.0009,
+  "score": 0.0006,
+  "aligned": true
+ },
+ {
+  "name": "Embedded_font.pdf",
+  "score": 0.0002,
   "aligned": true
  }
 ]

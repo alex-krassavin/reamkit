@@ -4,11 +4,16 @@
 
 import { readFileSync } from 'node:fs';
 
+import { zlibSync } from 'fflate';
 import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
 import { Ream } from '@/core/converter/ream';
 import { interpretContent } from '@/pdf-reader/content';
+import { PdfFile } from '@/pdf-reader/document';
+import { reconstructByLayout } from '@/pdf-reader/layout';
+import { collectPageVectors } from '@/pdf-reader/vector';
+import { shapeBlock } from '@/pdf-reader/flow-build';
 
 const FONTS = {
   regular: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Regular.ttf')),
@@ -61,6 +66,461 @@ describe('filled vector paths (E-PDF EP10)', () => {
     expect(shape.shape.fill.kind).toBe('solid');
     expect(shape.shape.fill.colorHex).toMatch(/^[0-9A-F]{6}$/);
     expect(shape.shape.geometry.kind).toBe('custom');
+  });
+});
+
+/**
+ * A one-page PDF that fills a black square and then draws a picture over it —
+ * the shape a legend swatch with an icon on it takes.
+ */
+function fillThenImage(): Uint8Array {
+  const gray = zlibSync(Uint8Array.from([0, 255, 255, 0])); // 2x2 DeviceGray
+  const content = 'q 0 0 0 rg 100 100 200 200 re f 50 0 0 50 150 150 cm /Im Do Q';
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 400 400] ' +
+      '/Resources << /XObject << /Im 5 0 R >> >> /Contents 4 0 R >>',
+    `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+    `<< /Type /XObject /Subtype /Image /Width 2 /Height 2 /ColorSpace /DeviceGray ` +
+      `/BitsPerComponent 8 /Filter /FlateDecode /Length ${String(gray.length)} >>`,
+  ];
+  let pdf = '%PDF-1.7\n';
+  const offsets: Array<number> = [];
+  objects.forEach((body, i) => {
+    offsets.push(pdf.length);
+    pdf += `${String(i + 1)} 0 obj\n${body}\n`;
+    if (i === 4) pdf += `stream\n${String.fromCharCode(...gray)}\nendstream\n`;
+    pdf += 'endobj\n';
+  });
+  const xref = pdf.length;
+  pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+  for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+  pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`;
+  return Uint8Array.from([...pdf].map((c) => c.charCodeAt(0)));
+}
+
+/**
+ * A page whose only mark is a WIDGET annotation: nothing in its content stream,
+ * a filled rectangle in the annotation's `/AP` `/N`.
+ */
+function widgetOnlyPdf(): Uint8Array {
+  const ap = '0 0 1 rg 0 0 40 20 re f';
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R ' +
+      '/Annots [<< /Type /Annot /Subtype /Widget /Rect [50 60 90 80] /AP << /N 5 0 R >> >>] >>',
+    '<< /Length 0 >>\nstream\n\nendstream',
+    `<< /Type /XObject /Subtype /Form /BBox [0 0 40 20] /Length ${String(ap.length)} >>\n` +
+      `stream\n${ap}\nendstream`,
+  ];
+  let pdf = '%PDF-1.7\n';
+  const offsets: Array<number> = [];
+  objects.forEach((body, i) => {
+    offsets.push(pdf.length);
+    pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+  });
+  const xref = pdf.length;
+  pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+  for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+  pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`;
+  return new TextEncoder().encode(pdf);
+}
+
+describe('annotation appearances (§12.5.5)', () => {
+  it('lifts what a widget draws, and fits it to the annotation’s /Rect', () => {
+    // A form field paints nothing in the page's content stream: its tint, its
+    // border and its value all live in the widget's own appearance. Read only
+    // from the page, 160F-2019.pdf gave a grid with no fields in it.
+    const file = PdfFile.parse(widgetOnlyPdf());
+    const { vectors } = collectPageVectors(file, file.pages()[0]!);
+    expect(vectors).toHaveLength(1);
+    const [box] = vectors;
+    expect(box!.fillHex).toBe('0000FF');
+    // The appearance is authored at the origin; the /Rect is what places it.
+    expect(box!.minX).toBeCloseTo(50, 1);
+    expect(box!.minY).toBeCloseTo(60, 1);
+    expect(box!.maxX).toBeCloseTo(90, 1);
+    expect(box!.maxY).toBeCloseTo(80, 1);
+  });
+
+  it('paints no annotation the file marks hidden', () => {
+    const hidden = new TextDecoder()
+      .decode(widgetOnlyPdf())
+      .replace('/Subtype /Widget', '/Subtype /Widget /F 2');
+    const file = PdfFile.parse(new TextEncoder().encode(hidden));
+    expect(collectPageVectors(file, file.pages()[0]!).vectors).toHaveLength(0);
+  });
+});
+
+describe('painting order (§8.5.3)', () => {
+  it('lays a picture over the path it was drawn after', () => {
+    // Pictures under paths loses an icon sitting on its swatch; paths under
+    // pictures loses a white box backing a legend. Only the page's own order
+    // gets both, and 22060_A1_01_Plans.pdf has one of each.
+    const { doc } = reconstructByLayout(PdfFile.parse(fillThenImage()));
+    const shape = doc.body.find((b) => b.kind === 'shape');
+    const image = doc.body.find((b) => b.kind === 'image');
+    expect(shape?.kind).toBe('shape');
+    expect(image?.kind).toBe('image');
+    if (shape?.kind !== 'shape' || image?.kind !== 'image') return;
+    expect(image.image.float?.zOrder).toBeGreaterThan(shape.shape.float?.zOrder ?? 0);
+  });
+
+  it('numbers paths and XObject calls in one sequence', () => {
+    // Later marks cover earlier ones, and a form is drawn where its `Do`
+    // stands. Collected apart, every form ends up on top: 22060_A1_01_Plans.pdf
+    // backs its legend with a white box inside a form, and hoisted to the end
+    // that box covered the legend's own words.
+    const { vectors, images } = interpretContent(
+      new TextEncoder().encode('0 0 0 rg 0 0 10 10 re f /Fm Do 0 0 20 20 re f'),
+      NO_FONTS,
+    );
+    expect(vectors).toHaveLength(2);
+    expect(images).toHaveLength(1);
+    // The form's call falls BETWEEN the two fills, which is where it paints.
+    expect(vectors[0]!.order).toBeLessThan(images[0]!.order);
+    expect(images[0]!.order).toBeLessThan(vectors[1]!.order);
+  });
+});
+
+/** A page that paints `count` little squares, each its own path. */
+function manyPathsPdf(count: number): Uint8Array {
+  let content = '0 0 1 rg ';
+  for (let i = 0; i < count; i++) {
+    content += `${String(i % 500) + ' ' + String(Math.floor(i / 500))} 6 6 re f `;
+  }
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 600] /Contents 4 0 R >>',
+    `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+  ];
+  let pdf = '%PDF-1.7\n';
+  const offsets: Array<number> = [];
+  objects.forEach((body, i) => {
+    offsets.push(pdf.length);
+    pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+  });
+  const xref = pdf.length;
+  pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+  for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+  pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`;
+  return new TextEncoder().encode(pdf);
+}
+
+describe('the guard on how much a page may paint', () => {
+  // The cap was two thousand and it was silent, so a drawing that ran past it
+  // simply arrived without its tail: Brotli-Prototype-FileA.pdf lost its whole
+  // title block, the vegetation of its perspective and every hatch in its
+  // legend, with nothing in the report to say a thing was missing.
+  it('reads a page well inside the guard with nothing to report', () => {
+    const file = PdfFile.parse(manyPathsPdf(50));
+    const lifted = collectPageVectors(file, file.pages()[0]!);
+    expect(lifted.vectors.length).toBe(50);
+    expect(lifted.losses).toHaveLength(0);
+  });
+
+  it('reports the cut once the page runs past it', () => {
+    const file = PdfFile.parse(manyPathsPdf(20_001));
+    const lifted = collectPageVectors(file, file.pages()[0]!);
+    expect(lifted.losses).toHaveLength(1);
+    expect(lifted.losses[0]!.severity).toBe('dropped');
+    expect(lifted.losses[0]!.detail).toContain('20000');
+  });
+});
+
+describe('tiling patterns (§8.7.3)', () => {
+  const fills = (stream: string) =>
+    interpretContent(new TextEncoder().encode(stream), NO_FONTS).vectors;
+
+  it('names the tiling pattern a path is filled with instead of inventing a colour', () => {
+    // §8.6.6.2 — in a Pattern colour space `scn` takes a NAME. Read as a
+    // colour it left whatever was set before it standing: 22060_A1_01_Plans.pdf
+    // filled four floor plans with a pattern and we painted four black squares.
+    const [painted] = fills('0 0 0 rg /Pat cs /P1 scn 0 0 100 100 re f');
+    expect(painted?.patternName).toBe('P1');
+  });
+
+  it('forgets the pattern when a real colour is set after it', () => {
+    const [painted] = fills('/Pat cs /P1 scn 1 0 0 rg 0 0 100 100 re f');
+    expect(painted?.patternName).toBeUndefined();
+    expect(painted?.fillHex).toBe('FF0000');
+  });
+
+  it('names no pattern for an ordinary colour fill', () => {
+    const [painted] = fills('0 0 1 rg 0 0 100 100 re f');
+    expect(painted?.patternName).toBeUndefined();
+  });
+});
+
+describe('clipping paths (§8.5.4)', () => {
+  const clipOf = (stream: string) =>
+    interpretContent(new TextEncoder().encode(stream), NO_FONTS).vectors;
+
+  it('installs the clip at the painting operator that ends its path', () => {
+    // `W` names the clip; `n` ends the path and installs it. The fill that
+    // follows is painted through it.
+    const [painted] = clipOf('q 100 100 50 50 re W n 0 0 0 rg 0 0 500 500 re f Q');
+    expect(painted?.clip).toBeDefined();
+    expect(painted?.clip?.minX).toBe(100);
+    expect(painted?.clip?.maxX).toBe(150);
+  });
+
+  it('leaves a path painted under no clip unclipped', () => {
+    const [painted] = clipOf('0 0 0 rg 10 20 30 40 re f');
+    expect(painted?.clip).toBeUndefined();
+  });
+
+  it('restores the clip a Q pops', () => {
+    // §8.4.2 — the clip belongs to the graphics state, so `Q` takes it back.
+    const painted = clipOf('q 0 0 10 10 re W n Q 0 0 0 rg 0 0 500 500 re f');
+    expect(painted[painted.length - 1]?.clip).toBeUndefined();
+  });
+
+  it('keeps the smaller of two nested clips', () => {
+    const [painted] = clipOf('q 0 0 400 400 re W n 10 10 20 20 re W n 0 0 0 rg 0 0 500 500 re f Q');
+    expect(painted?.clip?.maxX).toBe(30);
+  });
+});
+
+/**
+ * A page that fills one band through an `/ExtGState` at `ca` 0.6 and a second
+ * one after the `Q` that pops it — the shape 22060_A1_01_Plans.pdf's evacuation
+ * routes take.
+ */
+function alphaBandsPdf(): Uint8Array {
+  const content = 'q /G0 gs 0 1 0 rg 20 20 100 60 re f Q 0 0 1 rg 20 120 100 60 re f';
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R ' +
+      '/Resources << /ExtGState << /G0 << /Type /ExtGState /CA 0.6 /ca 0.6 >> >> >> >>',
+    `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+  ];
+  let pdf = '%PDF-1.7\n';
+  const offsets: Array<number> = [];
+  objects.forEach((body, i) => {
+    offsets.push(pdf.length);
+    pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+  });
+  const xref = pdf.length;
+  pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+  for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+  pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`;
+  return new TextEncoder().encode(pdf);
+}
+
+describe('constant fill alpha (§11.6.4.4)', () => {
+  it('reads /ca off the graphics state `gs` names, and lets `Q` take it back', () => {
+    // §8.4.5 — `gs` sets a whole state at once. 22060_A1_01_Plans.pdf marks its
+    // evacuation routes with a green band at `ca` 0.6, meant to be read
+    // THROUGH: painted solid, the floor plan under each band disappeared.
+    const { vectors } = interpretContent(
+      new TextEncoder().encode('q /G0 gs 0 1 0 rg 20 20 100 60 re f Q 0 0 1 rg 20 120 100 60 re f'),
+      NO_FONTS,
+      undefined,
+      undefined,
+      new Map([['G0', 0.6]]),
+    );
+    expect(vectors).toHaveLength(2);
+    expect(vectors[0]!.alpha).toBeCloseTo(0.6, 5);
+    expect(vectors[1]!.alpha).toBeUndefined();
+  });
+
+  it('leaves a fill opaque when the named state states no alpha', () => {
+    const { vectors } = interpretContent(
+      new TextEncoder().encode('/G9 gs 0 1 0 rg 20 20 100 60 re f'),
+      NO_FONTS,
+      undefined,
+      undefined,
+      new Map([['G0', 0.6]]),
+    );
+    expect(vectors[0]!.alpha).toBeUndefined();
+  });
+
+  it('carries the alpha from the page’s /ExtGState onto the lifted shape', () => {
+    const file = PdfFile.parse(alphaBandsPdf());
+    const [band, opaque] = collectPageVectors(file, file.pages()[0]!).vectors;
+    expect(band!.alpha).toBeCloseTo(0.6, 5);
+    expect(opaque!.alpha).toBeUndefined();
+
+    const { doc } = reconstructByLayout(file);
+    const fills = doc.body.filter((b) => b.kind === 'shape').map((s) => s.shape.fill);
+    expect(fills).toHaveLength(2);
+    expect(fills.find((f) => f.colorHex === '00FF00')).toMatchObject({
+      kind: 'solid',
+      alpha: 0.6,
+    });
+    expect(fills.find((f) => f.colorHex === '0000FF')).not.toHaveProperty('alpha');
+  });
+});
+
+/** A page that paints `content`, for asking what survives the de-cluttering. */
+function contentPdf(content: string): Uint8Array {
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Contents 4 0 R >>',
+    `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+  ];
+  let pdf = '%PDF-1.7\n';
+  const offsets: Array<number> = [];
+  objects.forEach((body, i) => {
+    offsets.push(pdf.length);
+    pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+  });
+  const xref = pdf.length;
+  pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+  for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+  pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`;
+  return new TextEncoder().encode(pdf);
+}
+
+/**
+ * A page set in a Type 3 font whose one glyph strokes a square, and — from
+ * inside that glyph — shows a second Type 3 font whose glyph strokes a
+ * triangle. The shape ContentStreamCycleType3insideType3.pdf takes.
+ */
+function type3Pdf(inner: boolean): Uint8Array {
+  const outerProc =
+    '1000 0 d0 20 w 1 0 0 RG 0 0 750 750 re s' + (inner ? ' BT /FB 50 Tf (c) Tj ET' : '');
+  const innerProc = '1000 0 d0 20 w 0 1 0 RG 0 0 m 375 750 l 750 0 l s';
+  const content = 'BT /FA 200 Tf 50 50 Td (a) Tj ET';
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 400 400] ' +
+      '/Resources << /Font << /FA 5 0 R >> >> /Contents 4 0 R >>',
+    `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+    '<< /Type /Font /Subtype /Type3 /FontBBox [0 0 750 750] ' +
+      '/FontMatrix [0.001 0 0 0.001 0 0] /Widths [1000] /FirstChar 97 /LastChar 97 ' +
+      '/Encoding << /Differences [97 /square] >> /CharProcs << /square 6 0 R >> ' +
+      '/Resources << /Font << /FB 7 0 R >> >> >>',
+    `<< /Length ${String(outerProc.length)} >>\nstream\n${outerProc}\nendstream`,
+    '<< /Type /Font /Subtype /Type3 /FontBBox [0 0 750 750] ' +
+      '/FontMatrix [0.01 0 0 0.01 0 0] /Widths [1000] /FirstChar 99 /LastChar 99 ' +
+      '/Encoding << /Differences [99 /tri] >> /CharProcs << /tri 8 0 R >> >>',
+    `<< /Length ${String(innerProc.length)} >>\nstream\n${innerProc}\nendstream`,
+  ];
+  let pdf = '%PDF-1.7\n';
+  const offsets: Array<number> = [];
+  objects.forEach((body, i) => {
+    offsets.push(pdf.length);
+    pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+  });
+  const xref = pdf.length;
+  pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+  for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+  pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`;
+  return new TextEncoder().encode(pdf);
+}
+
+describe('a Type 3 glyph is a drawing (§9.6.5)', () => {
+  const strokesOf = (bytes: Uint8Array) => {
+    const file = PdfFile.parse(bytes);
+    return collectPageVectors(file, file.pages()[0]!).vectors;
+  };
+
+  it('paints what the glyph procedure paints, where the character stands', () => {
+    // ContentStreamCycleType3insideType3.pdf is a stroked square and a stroked
+    // triangle drawn as GLYPHS. With the procedures unread the page came back
+    // as two letters of substituted type an eighth of an inch tall.
+    const vectors = strokesOf(type3Pdf(false));
+    expect(vectors).toHaveLength(1);
+    expect(vectors[0]!.strokeHex).toBe('FF0000');
+    // 750 glyph units × 0.001 × 200pt = 150pt, at the pen's 50, 50.
+    expect(vectors[0]!.minX).toBeCloseTo(50, 1);
+    expect(vectors[0]!.minY).toBeCloseTo(50, 1);
+    expect(vectors[0]!.maxX).toBeCloseTo(200, 1);
+  });
+
+  it('follows a glyph that shows a second Type 3 font from inside itself', () => {
+    const vectors = strokesOf(type3Pdf(true));
+    expect(vectors.map((v) => v.strokeHex).sort()).toEqual(['00FF00', 'FF0000']);
+  });
+});
+
+describe('white paint is invisible only over white', () => {
+  const kept = (content: string) => {
+    const file = PdfFile.parse(contentPdf(content));
+    return collectPageVectors(file, file.pages()[0]!).vectors;
+  };
+
+  it('keeps a white stroke drawn over something, as it keeps a white fill', () => {
+    // 160F-2019.pdf's every form field is a tinted box with a WHITE one-point
+    // border stroked inside it. Dropped, each field came back a point wider on
+    // every side than the file draws it — seventy-six times over.
+    const vectors = kept('0 0 1 rg 50 50 100 50 re f 1 G 55 55 90 40 re s');
+    expect(vectors).toHaveLength(2);
+    expect(vectors[0]!.fillHex).toBe('0000FF');
+    expect(vectors[1]!.strokeHex).toBe('FFFFFF');
+  });
+
+  it('drops a white stroke over bare paper, which shows nothing', () => {
+    expect(kept('1 G 55 55 90 40 re s')).toHaveLength(0);
+  });
+});
+
+describe('the pen is as wide as the page says (§8.4.3.2)', () => {
+  const strokeOf = (stream: string) => {
+    const [v] = interpretContent(new TextEncoder().encode(stream), NO_FONTS).vectors;
+    const el = shapeBlock({
+      orderKey: [0],
+      segs: v!.segs,
+      strokeHex: '000000',
+      ...(v?.lineWidth !== undefined ? { lineWidth: v.lineWidth } : {}),
+      minX: 0,
+      minY: 0,
+      maxX: 100,
+      maxY: 0,
+    });
+    return el.kind === 'shape' ? el.shape : undefined;
+  };
+
+  it('draws a hairline pen at the width the page set, not at a floor', () => {
+    // Brotli-Prototype-FileA.pdf draws its elevations with a 0.12pt pen, and
+    // raised to half a point every clapboard line came out four times too
+    // heavy: a drawing that reads grey in every viewer arrived black.
+    expect(strokeOf('0.12 w 0 0 m 100 0 l S')?.line?.width).toBeCloseTo(0.12, 5);
+    expect(strokeOf('2 w 0 0 m 100 0 l S')?.line?.width).toBeCloseTo(2, 5);
+  });
+
+  it('takes a width of zero for the thinnest line there is', () => {
+    const width = strokeOf('0 w 0 0 m 100 0 l S')?.line?.width ?? 0;
+    expect(width).toBeGreaterThan(0);
+    expect(width).toBeLessThan(0.25);
+  });
+
+  it('still gives a flat line a box to draw in', () => {
+    // The floor was there for a reason: a horizontal rule has no height, and a
+    // shape of no height has nowhere to put a stroke.
+    expect(strokeOf('0.12 w 0 0 m 100 0 l S')?.height).toBeCloseTo(0.5, 5);
+  });
+});
+
+describe('filled rules (E-PDF EP10)', () => {
+  const fills = (stream: string) =>
+    interpretContent(new TextEncoder().encode(stream), NO_FONTS).vectors;
+
+  it('keeps a long thin fill — a form draws its lines as rectangles', () => {
+    // 160F-2019.pdf has no stroke operator at all: every rule of the
+    // certificate is a filled rectangle half a point high. Dropped as hairline
+    // clutter, the whole grid went with them and the text arrived with no form
+    // under it.
+    const [rule] = fills('0 0 0 rg 100 100 200 0.5 re f');
+    expect(rule).toBeDefined();
+    expect(rule!.fillHex).toBe('000000');
+  });
+
+  it('still drops a speck thin in BOTH directions', () => {
+    // The rule admits length, not smallness: a dot stays clutter.
+    const painted = fills('0 0 0 rg 100 100 1 1 re f');
+    expect(painted).toHaveLength(1); // the interpreter sees it …
+    // … and `collectPageVectors` is what rejects it; the geometry is the test.
+    const segs = painted[0]!.segs.flatMap((seg) => ('x' in seg ? [seg.x] : []));
+    expect(Math.max(...segs) - Math.min(...segs)).toBeLessThan(6);
   });
 });
 

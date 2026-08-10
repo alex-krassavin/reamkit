@@ -62,6 +62,7 @@ import { PathBuilder, flipTransform, svgPathData } from '@/core/vector';
 import { detectImageFormat } from '@/core/images';
 import { sanitizeHref } from '@/core/links';
 import { FEATURES } from '@/core/ir';
+import { headingLevelOf } from '@/core/outline';
 import {
   EMPTY_STYLE_SHEET,
   resolveParagraphProperties,
@@ -561,9 +562,9 @@ function emitOneShape(out: Array<string>, shape: ShapeBlock, ctx: EmitCtx): void
 
 function emitParagraph(out: Array<string>, p: Paragraph, ctx: EmitCtx): void {
   const resolved = resolveParagraphProperties(p.properties, EMPTY_STYLE_SHEET);
-  // Same mapping as the tagged-PDF structure pass: outline level 0–8 → H1–H6.
-  const lvl = resolved.outlineLevel;
-  const tag = lvl !== undefined && lvl >= 0 && lvl <= 8 ? `h${Math.min(lvl, 5) + 1}` : 'p';
+  // The one heading rule every target reads the outline by (core/outline).
+  const lvl = headingLevelOf(resolved);
+  const tag = lvl !== undefined ? `h${String(lvl)}` : 'p';
 
   const style = paragraphCss(resolved);
   const dir = resolved.bidi ? ' dir="rtl"' : '';

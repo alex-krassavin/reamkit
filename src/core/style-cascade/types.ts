@@ -11,6 +11,7 @@ import type {
   NumberingReference,
   RunProperties,
   TabStop,
+  TextOutline,
   UnderlineStyle,
   VerticalAlign,
 } from '@/core/document-model';
@@ -47,6 +48,8 @@ export interface ResolvedRunProperties {
   readonly shadingColorHex?: string;
   /** §17.3.2.35 — extra space between the run's characters, in points. */
   readonly letterSpacingPt?: Pt;
+  /** §21.1.2.3.9 — a line drawn round the glyphs themselves. */
+  readonly textOutline?: TextOutline;
 }
 
 /**

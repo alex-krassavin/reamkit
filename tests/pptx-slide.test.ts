@@ -72,7 +72,15 @@ describe('pptx slide text (E-PPTX PX1)', () => {
     const pdf = await Ream.parse(pptx).convert('pdf', { fonts: FONTS });
     const file = PdfFile.parse(pdf);
     const runs = extractPageText(file, file.pages()[0]!);
-    const run = runs.find((r) => r.text.replace(/\s/g, '').includes('Positioned'));
+    // §9.4.3 — the writer kerns, so the word arrives as several pieces; the
+    // first of them is where the box put it.
+    expect(
+      runs
+        .map((r) => r.text)
+        .join('')
+        .replace(/\s/g, ''),
+    ).toContain('Positioned');
+    const run = runs.find((r) => r.text.length > 0 && 'Positioned'.startsWith(r.text));
     expect(run).toBeDefined();
     // The glyph origin sits just inside the box's left edge (144 pt) — not at
     // x≈0 (which would mean the float position was ignored).
@@ -598,6 +606,44 @@ describe('what a slide shape states about its own box', () => {
     expect(shape('rot="5400000"')?.transform?.rotation60k).toBe(5400000);
     expect(shape('flipH="1"')?.transform?.flipH).toBe(true);
     expect(shape('')?.transform).toBeUndefined();
+  });
+
+  it('reads a:bodyPr vert, which a slide sets and only docx was reading', () => {
+    // §20.1.10.83 — text set along the box's long axis. shape-text-rotate.pptx
+    // sets `vert` in a pentagon turned a half turn, and unread the word lay
+    // flat across a shape both references set on its side.
+    const withVert = (vert: string): string =>
+      `<p:sp><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm>` +
+      `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>` +
+      `<p:txBody><a:bodyPr${vert}/><a:p><a:r><a:t>side</a:t></a:r></a:p></p:txBody></p:sp>`;
+    const textOf = (vert: string) => {
+      const el = Ream.parse(buildPptx([withVert(vert)])).flow.body.find((e) => e.kind === 'shape');
+      return el?.kind === 'shape' ? el.shape.text : undefined;
+    };
+    expect(textOf(' vert="vert"')?.vertical).toBe('vert');
+    expect(textOf(' vert="vert270"')?.vertical).toBe('vert270');
+    // The East-Asian stacked modes read top-to-bottom the way `vert` does.
+    expect(textOf(' vert="eaVert"')?.vertical).toBe('vert');
+    expect(textOf(' vert="horz"')?.vertical).toBeUndefined();
+    expect(textOf('')?.vertical).toBeUndefined();
+  });
+
+  it('reads a:bodyPr upright, which keeps words level in a turned box', () => {
+    // §20.1.10.55 — bnc762542.xlsx turns each legend label a quarter and asks
+    // for this; the same `parseTxBody` serves the sheet shapes it sets it on.
+    const withUpright = (attrs: string): string =>
+      `<p:sp><p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></a:xfrm>` +
+      `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>` +
+      `<p:txBody><a:bodyPr${attrs}/><a:p><a:r><a:t>level</a:t></a:r></a:p></p:txBody></p:sp>`;
+    const textOf = (attrs: string) => {
+      const el = Ream.parse(buildPptx([withUpright(attrs)])).flow.body.find(
+        (e) => e.kind === 'shape',
+      );
+      return el?.kind === 'shape' ? el.shape.text : undefined;
+    };
+    expect(textOf(' upright="1"')?.upright).toBe(true);
+    expect(textOf(' upright="0"')?.upright).toBeUndefined();
+    expect(textOf('')?.upright).toBeUndefined();
   });
 });
 
