@@ -21,6 +21,7 @@ import type { Loss, Pt } from '@/core/ir';
 import type { PdfImage } from './images';
 import type { PdfPage } from './document';
 import type { PdfVector } from './vector';
+import type { TextMarkup } from './annot-draw';
 import type { TextRun } from './content';
 import { ResourceStore, pt } from '@/core/ir';
 import { EMPTY_STYLE_SHEET, resolveBodyStyles } from '@/core/style-cascade';
@@ -78,6 +79,8 @@ export interface TextSpan {
   readonly bold?: boolean;
   /** §9.8.1 — the face was a slanted one. */
   readonly italic?: boolean;
+  /** §12.5.6.10 — a text-markup annotation marks these words. */
+  readonly markup?: TextMarkup;
 }
 
 /**
@@ -100,6 +103,7 @@ export function paragraphFromRuns(
     outline?: TextOutline;
     bold?: boolean;
     italic?: boolean;
+    markup?: TextMarkup;
   }> = [];
   for (const s of spans) {
     const last = merged[merged.length - 1];
@@ -112,7 +116,8 @@ export function paragraphFromRuns(
       last.outline?.colorHex === s.outline?.colorHex &&
       last.outline?.widthPt === s.outline?.widthPt &&
       last.bold === s.bold &&
-      last.italic === s.italic
+      last.italic === s.italic &&
+      sameMarkup(last.markup, s.markup)
     ) {
       last.text += s.text;
     } else
@@ -125,6 +130,7 @@ export function paragraphFromRuns(
         ...(s.outline !== undefined ? { outline: s.outline } : {}),
         ...(s.bold !== undefined ? { bold: s.bold } : {}),
         ...(s.italic !== undefined ? { italic: s.italic } : {}),
+        ...(s.markup !== undefined ? { markup: s.markup } : {}),
       });
   }
   const runs = merged
@@ -165,11 +171,33 @@ export function paragraphFromRuns(
             ...(r.outline !== undefined ? { textOutline: r.outline } : {}),
             ...(r.bold ? { bold: true } : {}),
             ...(r.italic ? { italic: true } : {}),
+            // §12.5.6.10 — a highlight, an underline or a strikeout stated
+            // ABOUT these words rather than painted among them, so it re-sets
+            // with them: §17.3.2.32 `w:shd`, §17.3.2.40 `w:u`, §17.3.2.37
+            // `w:strike`.
+            ...(r.markup?.highlightHex !== undefined
+              ? { shadingColorHex: r.markup.highlightHex }
+              : {}),
+            ...(r.markup?.underline !== undefined ? { underline: r.markup.underline } : {}),
+            ...(r.markup?.underlineHex !== undefined
+              ? { underlineColorHex: r.markup.underlineHex }
+              : {}),
+            ...(r.markup?.strike === true ? { strike: true } : {}),
           },
           ...(r.href ? { href: r.href } : {}),
         })),
     },
   };
+}
+
+/** Whether two runs are marked the same way, so they may join into one. */
+function sameMarkup(a: TextMarkup | undefined, b: TextMarkup | undefined): boolean {
+  return (
+    a?.highlightHex === b?.highlightHex &&
+    a?.underline === b?.underline &&
+    a?.underlineHex === b?.underlineHex &&
+    a?.strike === b?.strike
+  );
 }
 
 /**

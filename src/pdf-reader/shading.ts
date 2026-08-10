@@ -8,7 +8,7 @@
 import type { GradientStop, ShapeGradient } from '@/core/vector';
 import type { PdfDict, PdfValue } from '@/pdf/objects';
 
-import type { PdfFile, PdfPage } from './document';
+import type { PdfFile } from './document';
 import { PDF_NULL, PdfName, PdfStream } from '@/pdf/objects';
 
 /**

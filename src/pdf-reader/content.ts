@@ -11,6 +11,7 @@
 
 import { Lexer } from './lexer';
 import type { ColorSpaceInfo, GsPaint } from './shading';
+import type { TextMarkup } from './annot-draw';
 import type { ShapeGradient } from '@/core/vector';
 import type { PdfDict, PdfStream, PdfValue } from '@/pdf/objects';
 import { PDF_NULL, PdfHexString, PdfName } from '@/pdf/objects';
@@ -90,6 +91,13 @@ export interface TextRun {
   readonly fontName?: string;
   /** §9.8.1 — the face the glyphs were shown in is a bold one. */
   readonly bold?: boolean;
+  /**
+   * §12.5.6.10 — a text-markup annotation marks these glyphs: highlighted,
+   * underlined, struck through. Applied after extraction, from the page's
+   * `/Annots` (see `./text`), because it is stated about the words rather than
+   * painted among them.
+   */
+  readonly markup?: TextMarkup;
   /**
    * §8.6.6.2 — the glyphs are filled with a tiling PATTERN, named here for the
    * caller to resolve: a pattern is a content stream, not a colour, and the

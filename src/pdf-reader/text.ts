@@ -6,7 +6,9 @@
 import { IDENTITY, interpretContent, multiply } from './content';
 import { buildContentFont } from './font';
 import { collectPageAppearances } from './annots';
+import { textMarkupOf } from './annot-draw';
 import { patternTint } from './pattern-tint';
+import type { Quad, TextMarkupAnnot } from './annot-draw';
 import type { ContentFont, Matrix, TextRun } from './content';
 import type { PdfDict } from '@/pdf/objects';
 import type { PdfFile, PdfPage, Rectangle } from './document';
@@ -45,11 +47,47 @@ export function extractPageText(file: PdfFile, page: PdfPage): Array<TextRun> {
     );
   }
   const links = collectLinks(file, page);
-  if (links.length === 0) return runs;
+  const marks = collectTextMarkup(file, page);
+  if (links.length === 0 && marks.length === 0) return runs;
   return runs.map((run) => {
     const link = links.find((l) => inRect(run.x, run.y, l.rect));
-    return link ? { ...run, href: link.href } : run;
+    const marked = marks.find((m) => m.quads.some((q) => covers(q, run)));
+    return {
+      ...run,
+      ...(link ? { href: link.href } : {}),
+      ...(marked ? { markup: marked.mark } : {}),
+    };
   });
+}
+
+/**
+ * §12.5.6.10 — whether a marked quad covers this run.
+ *
+ * The quad is a box round a run of text and the run is a baseline with an
+ * advance, so the test is the baseline falling inside the box's height while
+ * the two overlap horizontally by more than a hair. A quad drawn round one word
+ * of a line must not claim the whole line.
+ */
+function covers(q: Quad, run: TextRun): boolean {
+  if (run.y < q.y0 || run.y > q.y0 + q.h) return false;
+  const left = Math.min(run.x, run.endX);
+  const right = Math.max(run.x, run.endX);
+  const shared = Math.min(right, q.x1) - Math.max(left, q.x0);
+  return shared > Math.min(2, (right - left) / 2);
+}
+
+/** Every text-markup annotation on the page, with the boxes it marks. */
+function collectTextMarkup(file: PdfFile, page: PdfPage): Array<TextMarkupAnnot> {
+  const annots = file.get(page.dict, 'Annots');
+  if (!Array.isArray(annots)) return [];
+  const out: Array<TextMarkupAnnot> = [];
+  for (const entry of annots) {
+    const annot = file.resolve(entry);
+    if (!(annot instanceof Map)) continue;
+    const mark = textMarkupOf(file, annot);
+    if (mark) out.push(mark);
+  }
+  return out;
 }
 
 // Interpret one content stream (a page or a Form XObject) into runs, then recurse

@@ -130,6 +130,7 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
             : {}),
           ...(run.bold ? { bold: true } : {}),
           ...(run.italic ? { italic: true } : {}),
+          ...(run.markup !== undefined ? { markup: run.markup } : {}),
           ...(run.href !== undefined ? { href: run.href } : {}),
         });
       }
@@ -140,6 +141,31 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
   // All text under a node, in reading order (a list item's label + body).
   const collectText = (node: StructNode): string =>
     squash([textOf(node), ...node.children.map(collectText)].join(' '));
+
+  // Where each emitted paragraph was SET on the page, for the space between
+  // them: the tree says what the words are and never how far apart they stood.
+  const setting = new Map<BodyElement, Setting>();
+
+  /** The topmost and bottommost baseline under a node, and its largest face. */
+  function baselinesOf(node: StructNode): Setting | undefined {
+    let top: number | undefined;
+    let bottom: number | undefined;
+    let size = 0;
+    const visit = (n: StructNode): void => {
+      for (const { page, mcid } of n.mcids) {
+        for (const run of runsOfMcid(page, mcid)) {
+          if (top === undefined || run.y > top) top = run.y;
+          if (bottom === undefined || run.y < bottom) bottom = run.y;
+          if (run.fontSizePt > size) size = run.fontSizePt;
+        }
+      }
+      for (const child of n.children) visit(child);
+    };
+    visit(node);
+    return top !== undefined && bottom !== undefined && size > 0
+      ? { top, bottom, size }
+      : undefined;
+  }
 
   function emit(node: StructNode, out: Array<BodyElement>): void {
     if (node.type === 'Table') {
@@ -161,7 +187,10 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
     }
     if (node.children.length === 0) {
       if (textOf(node).length > 0) {
-        out.push(paragraphFromRuns(spansOf(node), headingLevel(node.type)));
+        const el = paragraphFromRuns(spansOf(node), headingLevel(node.type));
+        const set = baselinesOf(node);
+        if (set) setting.set(el, set);
+        out.push(el);
       }
       return;
     }
@@ -229,6 +258,7 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
 
   const body: Array<BodyElement> = [];
   emit(root, body);
+  spaceParagraphs(body, setting, shown[0]?.height ?? 0);
   // Artwork sits UNDER the text the tree placed: `zOrder` starts below zero so
   // a lifted rule never covers the words it rules off.
   let zOrder = -1_000_000;
@@ -422,4 +452,65 @@ function squash(text: string): string {
 function headingLevel(type: string): number | undefined {
   const m = /^H([1-6])$/.exec(type);
   return m ? Number(m[1]) - 1 : undefined;
+}
+
+/** Where a tagged paragraph stood: its outer baselines and its largest face. */
+interface Setting {
+  /** The topmost baseline under the node, in page space (y up). */
+  readonly top: number;
+  /** The bottommost. */
+  readonly bottom: number;
+  /** The largest face any of its runs was shown in, in points. */
+  readonly size: number;
+}
+
+/**
+ * §17.3.1.33 `w:spacing` — the space the SOURCE left before each paragraph.
+ *
+ * A structure tree names the words and says nothing about how far apart they
+ * stood, so every tagged PDF came back at one flat leading: on
+ * annotation-polyline-polygon-without-appearance.pdf the two labels, set a
+ * third of a page apart above their own drawings, arrived as two lines
+ * touching. The page still says it — the gap between the last baseline of one
+ * paragraph and the first of the next, less the line it would have taken
+ * anyway. This is the rule the heuristic reading already uses, applied to the
+ * paragraphs the tree named.
+ *
+ * @param body       The body elements, in order; amended in place.
+ * @param setting    Where each paragraph was set, for those that were.
+ * @param pageHeight The shown page's height, which bounds any one gap.
+ */
+function spaceParagraphs(
+  body: Array<BodyElement>,
+  setting: Map<BodyElement, Setting>,
+  pageHeight: number,
+): void {
+  let prev: Setting | undefined;
+  body.forEach((el, i) => {
+    const here = setting.get(el);
+    if (!here) return;
+    // Only DOWN the page: a paragraph the tree put after one that stands below
+    // it is not spaced by the distance between them, it is out of order.
+    const gap = prev !== undefined ? prev.bottom - here.top : 0;
+    prev = here;
+    if (!(gap > 0)) return;
+    const opened = gap - here.size * 1.2;
+    // Under a third of a line is leading, not spacing.
+    if (!(opened > here.size * 0.3)) return;
+    if (el.kind !== 'paragraph') return;
+    // No one gap may take more than a third of the sheet: the tree is trusted
+    // for the ORDER of its paragraphs, and a gap larger than that is a page
+    // this reading has no other way to see.
+    const most = pageHeight > 0 ? pageHeight / 3 : here.size * 3;
+    body[i] = {
+      ...el,
+      paragraph: {
+        ...el.paragraph,
+        properties: {
+          ...el.paragraph.properties,
+          spacingBefore: pt(Math.min(opened, most)),
+        },
+      },
+    };
+  });
 }

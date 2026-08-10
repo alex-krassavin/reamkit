@@ -13,6 +13,7 @@ import { collectEmbeddedFonts } from '@/pdf-reader/embedded-fonts';
 import { textForGlyphName } from '@/pdf-reader/glyph-names';
 import { patternTint } from '@/pdf-reader/pattern-tint';
 import { extractPageText } from '@/pdf-reader/text';
+import { collectPageAppearances } from '@/pdf-reader/annots';
 import { reconstructByLayout } from '@/pdf-reader/layout';
 import { parseTtf } from '@/core/font/ttf-parser';
 
@@ -447,5 +448,80 @@ describe('page text extraction — real Ream output (E-PDF EP2)', () => {
     expect(second).toBeDefined();
     // PDF y grows upward, so the first line sits higher on the page.
     expect(first!.y).toBeGreaterThan(second!.y);
+  });
+});
+
+/**
+ * One line of text with a text-markup annotation over it. `annot` states the
+ * subtype and its colour; the quad is the box round the line.
+ */
+function markedTextPdf(annot: string): Uint8Array {
+  const content = 'BT /F1 12 Tf 72 720 Td (Marked) Tj ET';
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] ' +
+      '/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R ' +
+      `/Annots [<< /Type /Annot ${annot} /Rect [70 716 140 734] ` +
+      '/QuadPoints [70 734 140 734 70 716 140 716] >>] >>',
+    `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+    '<< /Type /Font /Subtype /TrueType /BaseFont /Arial /FirstChar 32 /LastChar 255 ' +
+      '/Encoding /WinAnsiEncoding >>',
+  ];
+  let pdf = '%PDF-1.7\n';
+  const offsets: Array<number> = [];
+  objects.forEach((body, i) => {
+    offsets.push(pdf.length);
+    pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+  });
+  const xref = pdf.length;
+  pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+  for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+  pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\n`;
+  pdf += `startxref\n${String(xref)}\n%%EOF\n`;
+  return new TextEncoder().encode(pdf);
+}
+
+describe('text-markup annotations (§12.5.6.10)', () => {
+  it('marks the WORDS a highlight covers, not the paper under them', () => {
+    // Lifted as artwork a highlight is a band anchored to the page, which is
+    // right until the text re-sets and is then a band between two paragraphs
+    // it does not mark. Carried on the run it survives the reflow, and Word
+    // gets what the annotation meant.
+    const file = PdfFile.parse(markedTextPdf('/Subtype /Highlight /C [1 1 0]'));
+    const [run] = extractPageText(file, file.pages()[0]!);
+    expect(run?.markup?.highlightHex).toBe('FFFF00');
+    // And the band itself is NOT painted a second time.
+    expect(collectPageAppearances(file, file.pages()[0]!)).toHaveLength(0);
+  });
+
+  it('reads an underline, a squiggle and a strikeout off the same quads', () => {
+    const under = PdfFile.parse(markedTextPdf('/Subtype /Underline /C [0 0.6 0]'));
+    expect(extractPageText(under, under.pages()[0]!)[0]?.markup).toEqual({
+      underline: 'single',
+      underlineHex: '009900',
+    });
+    const wavy = PdfFile.parse(markedTextPdf('/Subtype /Squiggly /C [0 0 1]'));
+    expect(extractPageText(wavy, wavy.pages()[0]!)[0]?.markup?.underline).toBe('wave');
+    const struck = PdfFile.parse(markedTextPdf('/Subtype /StrikeOut /C [1 0 0]'));
+    expect(extractPageText(struck, struck.pages()[0]!)[0]?.markup?.strike).toBe(true);
+  });
+
+  it('leaves a line the quads do not cover unmarked', () => {
+    // A quad drawn round one line of a paragraph must not claim the lines
+    // above and below it, so the test is the baseline falling inside the box.
+    const file = PdfFile.parse(
+      new TextEncoder().encode(
+        new TextDecoder().decode(markedTextPdf('/Subtype /Highlight /C [1 1 0]')).replace(
+          '/QuadPoints [70 734 140 734 70 716 140 716]',
+          // The same quad, two lines further up the page.
+          '/QuadPoints [70 764 140 764 70 746 140 746]',
+        ),
+      ),
+    );
+    const [run] = extractPageText(file, file.pages()[0]!);
+    // The line is still read — it is only no longer claimed by the quad.
+    expect(run?.text).toBe('Marked');
+    expect(run?.markup).toBeUndefined();
   });
 });

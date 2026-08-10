@@ -152,7 +152,7 @@ export function reconstructByLayout(
               right: Math.max(...lines.map((l) => l.x + l.width)),
             }
           : undefined;
-      for (const para of groupIntoParagraphs(lines, measure)) {
+      for (const para of groupIntoParagraphs(lines, measure, display.height)) {
         blocks.push({
           col,
           top: para.top,
@@ -513,6 +513,7 @@ function lineSpans(runs: ReadonlyArray<TextRun>, fontSize: number): Array<TextSp
         : {}),
       ...(run.bold ? { bold: true } : {}),
       ...(run.italic ? { italic: true } : {}),
+      ...(run.markup !== undefined ? { markup: run.markup } : {}),
       ...(run.href !== undefined ? { href: run.href } : {}),
     });
     prevEnd = run.endX;
@@ -525,6 +526,7 @@ function lineSpans(runs: ReadonlyArray<TextRun>, fontSize: number): Array<TextSp
 function groupIntoParagraphs(
   lines: ReadonlyArray<Line>,
   column?: { left: number; right: number },
+  pageHeight = 0,
 ): Array<{
   spans: Array<TextSpan>;
   fontSize: number;
@@ -551,8 +553,15 @@ function groupIntoParagraphs(
     // The gap that OPENED this paragraph, less the line it would have taken
     // anyway, is the space its author put before it. Under a third of a line it
     // is just leading, and a paragraph is not spaced by rounding error.
+    //
+    // Bounded by a third of the sheet, not by three lines: the gap is MEASURED,
+    // and three lines is a guess overriding a measurement.
+    // annotation-square-circle-without-appearance.pdf sets its two labels two
+    // hundred points apart, each over its own pair of drawings, and capped at
+    // thirty the second label came back inside the first drawing.
     const opened = (gaps[i] ?? 0) - fontSize * 1.2;
-    const spacingBefore = opened > fontSize * 0.3 ? Math.min(opened, fontSize * 3) : undefined;
+    const most = pageHeight > 0 ? pageHeight / 3 : fontSize * 3;
+    const spacingBefore = opened > fontSize * 0.3 ? Math.min(opened, most) : undefined;
     return {
       spans: g.flatMap((l, k) => (k > 0 ? [{ text: ' ' }, ...l.spans] : [...l.spans])),
       fontSize,

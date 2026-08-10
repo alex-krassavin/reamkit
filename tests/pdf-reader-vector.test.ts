@@ -178,7 +178,52 @@ function widgetOnlyPdf(): Uint8Array {
   return new TextEncoder().encode(pdf);
 }
 
+/**
+ * A page with one markup annotation and NO `/AP` — the case §12.5.5 leaves to
+ * the reader. `extra` states the geometry the subtype is drawn from.
+ */
+function noAppearancePdf(subtype: string, extra: string): Uint8Array {
+  return assemble([
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R ' +
+      `/Annots [<< /Type /Annot /Subtype /${subtype} /C [1 0 0] ${extra} >>] >>`,
+    '<< /Length 0 >>\nstream\n\nendstream',
+  ]);
+}
+
 describe('annotation appearances (§12.5.5)', () => {
+  it('draws a markup annotation that carries no appearance at all', () => {
+    // "If the annotation does not contain an appearance stream, the conforming
+    // reader shall generate one." Nine files of the pdf.js corpus are that
+    // case, and every one came back a blank page while poppler and
+    // LibreOffice both drew it.
+    const line = PdfFile.parse(noAppearancePdf('Line', '/Rect [0 0 0 0] /L [20 30 180 30]'));
+    const [rule] = collectPageVectors(line, line.pages()[0]!).vectors;
+    expect(rule?.strokeHex).toBe('FF0000');
+    expect([rule?.minX, rule?.maxX]).toEqual([20, 180]);
+
+    const ink = PdfFile.parse(
+      noAppearancePdf('Ink', '/Rect [0 0 200 200] /InkList [[20 20 40 60] [80 20 100 60]]'),
+    );
+    // Two strokes, one path: a scrawl is stroked once, not once per stroke.
+    expect(collectPageVectors(ink, ink.pages()[0]!).vectors).toHaveLength(1);
+
+    const circle = PdfFile.parse(
+      noAppearancePdf('Circle', '/Rect [20 20 120 80] /IC [0 0 1] /BS << /W 2 >>'),
+    );
+    const [disc] = collectPageVectors(circle, circle.pages()[0]!).vectors;
+    expect(disc?.fillHex).toBe('0000FF');
+    expect(disc?.strokeHex).toBe('FF0000');
+  });
+
+  it('leaves a WIDGET with no appearance for its state undrawn', () => {
+    // The same rule must not invent a look for a form field: a check box whose
+    // clear state has no appearance draws nothing, and that is the point.
+    const file = PdfFile.parse(noAppearancePdf('Widget', '/Rect [20 20 40 40] /FT /Btn'));
+    expect(collectPageVectors(file, file.pages()[0]!).vectors).toHaveLength(0);
+  });
+
   it('paints the state /AS names, and nothing when the set has no such state', () => {
     // A check box is drawn by its ON appearance and cleared by having none:
     // annotation-button-widget.pdf carries `/N << /1 … >>` and `/AS /Off` for

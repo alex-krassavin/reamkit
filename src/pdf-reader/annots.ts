@@ -13,6 +13,7 @@
 // the rectangle.
 
 import { IDENTITY, multiply } from './content';
+import { drawnAppearance, textMarkupOf } from './annot-draw';
 import type { Matrix } from './content';
 import type { PdfDict, PdfValue } from '@/pdf/objects';
 import type { PdfFile, PdfPage } from './document';
@@ -37,7 +38,9 @@ const FLAG_NOVIEW = 32;
  *
  * A `Popup` is a note's window and is never part of the page. An annotation
  * flagged Hidden or NoView paints nothing. An `/AP` `/N` may be a stream or a
- * dictionary of states, in which case `/AS` names the one in force.
+ * dictionary of states, in which case `/AS` names the one in force. An
+ * annotation with no appearance at all gets one written for it from its own
+ * geometry, where its subtype says exactly what that is ({@link drawnAppearance}).
  *
  * @param file The owning file, for resolving references.
  * @param page The page whose annotations are wanted.
@@ -52,11 +55,22 @@ export function collectPageAppearances(file: PdfFile, page: PdfPage): Array<Appe
     if (!(annot instanceof Map)) continue;
     const subtype = file.get(annot, 'Subtype');
     if (subtype instanceof PdfName && subtype.value === 'Popup') continue;
+    // A text-markup annotation marks WORDS, and its band comes back on the
+    // runs rather than as a mark on the paper (see `textMarkupOf`). Painting
+    // its appearance too would lay the band over the words a second time,
+    // where the words no longer are.
+    if (textMarkupOf(file, annot)) continue;
     const flags = file.get(annot, 'F');
     if (typeof flags === 'number' && (flags & FLAG_HIDDEN || flags & FLAG_NOVIEW)) continue;
 
     const stream = normalAppearance(file, annot);
-    if (!stream) continue;
+    if (!stream) {
+      // §12.5.5 — no appearance to paint, so one is written from the geometry
+      // the annotation states. Already in page space, so it is placed as it is.
+      const drawn = drawnAppearance(file, annot);
+      if (drawn) out.push({ stream: drawn, ctm: IDENTITY, resources: undefined });
+      continue;
+    }
     const rect = rectangle(file.get(annot, 'Rect'));
     if (!rect) continue;
 

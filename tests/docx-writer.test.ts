@@ -828,3 +828,64 @@ describe('an attribute is written only where the schema admits its value', () =>
     expect(Number(path![1]) / Number(path![2])).toBeCloseTo(246.478 / 15.024, 3);
   });
 });
+
+describe('what a reader can actually draw', () => {
+  const shapeDoc = (pathWidth: number, pathHeight: number): FlowDoc =>
+    ({
+      body: [
+        {
+          kind: 'shape',
+          shape: {
+            width: 300,
+            height: 1,
+            geometry: {
+              kind: 'custom',
+              custom: {
+                pathWidth,
+                pathHeight,
+                commands: [
+                  { cmd: 'move', x: 0, y: 0 },
+                  { cmd: 'line', x: pathWidth, y: pathHeight },
+                ],
+              },
+            },
+            fill: { kind: 'none' },
+            line: { width: 1, colorHex: 'FF0000', fill: 'solid' },
+            paragraphProperties: {},
+          },
+        },
+      ],
+      sections: [],
+      resources: { images: new Map() },
+    }) as unknown as FlowDoc;
+
+  it('never states a path space with no size in it (§20.1.9.15)', () => {
+    // `a:path @w/@h` is the coordinate space the shape's extent is mapped
+    // onto, so a zero is a space nothing can be mapped into: a horizontal rule
+    // written `h="0"` is in the package and on no page.
+    const flat = decode(OpcPackage.open(writeDocx(shapeDoc(570, 0)).bytes).getMainDocument().data);
+    expect(flat).toContain('<a:path w="570" h="1">');
+    const upright = decode(
+      OpcPackage.open(writeDocx(shapeDoc(0, 570)).bytes).getMainDocument().data,
+    );
+    expect(upright).toContain('<a:path w="1" h="570">');
+  });
+
+  it('writes run properties in the order CT_RPr states them (§17.3.2.28)', () => {
+    // The element is a SEQUENCE and a reader may drop what arrives out of it:
+    // with `w:u` ahead of `w:rFonts`, LibreOffice ignored the underline.
+    const src = buildDocxFromBody(
+      '<w:p><w:r><w:rPr><w:rFonts w:ascii="Arial"/><w:b/><w:u w:val="wave" w:color="4B99FF"/>' +
+        '<w:sz w:val="20"/></w:rPr><w:t>marked</w:t></w:r></w:p>',
+    );
+    const { doc } = readDocx(src);
+    const xml = decode(OpcPackage.open(writeDocx(doc).bytes).getMainDocument().data);
+    const rPr = /<w:rPr>.*?<\/w:rPr>/u.exec(xml)?.[0] ?? '';
+    const order = ['w:rFonts', 'w:b', 'w:sz', 'w:u'];
+    const at = order.map((tag) => rPr.indexOf(`<${tag}`));
+    expect(at.every((i) => i >= 0)).toBe(true);
+    expect([...at].sort((a, b) => a - b)).toEqual(at);
+    // And the underline keeps the colour it was given.
+    expect(rPr).toContain('w:color="4B99FF"');
+  });
+});
