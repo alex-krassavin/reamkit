@@ -6,6 +6,7 @@
 import { IDENTITY, interpretContent, multiply } from './content';
 import { buildContentFont } from './font';
 import { collectPageAppearances } from './annots';
+import { patternTint } from './pattern-tint';
 import type { ContentFont, Matrix, TextRun } from './content';
 import type { PdfDict } from '@/pdf/objects';
 import type { PdfFile, PdfPage, Rectangle } from './document';
@@ -137,20 +138,28 @@ function withPatternColour(
   if (!(stream instanceof PdfStream) || visiting.has(stream)) return run;
   visiting.add(stream);
   try {
-    const own = file.get(stream.dict, 'Resources');
-    const inner = interpretContent(
-      file.streamData(stream),
-      buildFonts(file, own instanceof Map ? own : resources),
-    );
-    // Whatever the pattern paints first is the colour it paints in: a tile is
-    // one mark or a few, and they are the same colour far more often than not.
-    const colorHex = inner.texts[0]?.colorHex ?? inner.vectors.find((v) => v.fillHex)?.fillHex;
-    return colorHex !== undefined ? { ...run, colorHex } : run;
+    const tint = patternTint(file, resources, name);
+    // The pattern's colour at the pattern's own strength: a tile that covers a
+    // third of its cell reads as a third-strength tint, and painting it solid
+    // is as wrong in the other direction as painting it black was.
+    return tint ? { ...run, colorHex: tintedHex(tint.colorHex, tint.coverage) } : run;
   } catch {
     return run; // A pattern the reader cannot run says nothing about colour.
   } finally {
     visiting.delete(stream);
   }
+}
+
+/** A colour laid over white paper at `coverage` strength, as a 6-hex string. */
+function tintedHex(colorHex: string, coverage: number): string {
+  const k = Math.min(1, Math.max(0, coverage));
+  if (k >= 1) return colorHex;
+  const channel = (at: number): string => {
+    const c = Number.parseInt(colorHex.slice(at, at + 2), 16);
+    const mixed = Math.round(255 - (255 - (Number.isFinite(c) ? c : 0)) * k);
+    return mixed.toString(16).toUpperCase().padStart(2, '0');
+  };
+  return `${channel(0)}${channel(2)}${channel(4)}`;
 }
 
 /**

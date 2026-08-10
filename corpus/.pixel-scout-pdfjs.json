@@ -5,23 +5,23 @@
   "aligned": false
  },
  {
-  "name": "ContentStreamCycleType3insideType3.pdf",
-  "score": 0.0089,
-  "aligned": true
- },
- {
-  "name": "ContentStreamNoCycleType3insideType3.pdf",
-  "score": 0.0088,
-  "aligned": true
- },
- {
   "name": "22060_A1_01_Plans.pdf",
   "score": 0.0083,
   "aligned": true
  },
  {
+  "name": "ContentStreamCycleType3insideType3.pdf",
+  "score": 0.0081,
+  "aligned": true
+ },
+ {
   "name": "IdentityToUnicodeMap_charCodeOf.pdf",
   "score": 0.0068,
+  "aligned": true
+ },
+ {
+  "name": "ContentStreamNoCycleType3insideType3.pdf",
+  "score": 0.0065,
   "aligned": true
  },
  {

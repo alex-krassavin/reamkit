@@ -77,13 +77,16 @@ export function reconstructByLayout(
 
   const resources = new ResourceStore();
   const losses: Array<Loss> = [];
-  // §8.6.6.2 — type filled with a tiling pattern keeps the pattern's colour and
-  // loses its shape: a run carries one colour, not a content stream.
+  // §8.6.6.2 — type filled with a tiling pattern keeps the pattern's colour at
+  // the pattern's own density and loses its shape: a run carries one colour, not
+  // a content stream, so a hatch that alternates ink and paper becomes the flat
+  // tint the two average to.
   if (pageRuns.some((page) => page.some((r) => r.fillPatternName !== undefined))) {
     losses.push({
       severity: 'degraded',
       feature: FEATURES.text,
-      detail: 'text filled with a tiling pattern is drawn in the pattern’s colour, not its pattern',
+      detail:
+        'text filled with a tiling pattern is drawn as a flat tint of the pattern’s colour, not as the pattern',
     });
   }
   const body: Array<BodyElement> = [];

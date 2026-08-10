@@ -10,6 +10,7 @@ import { Ream } from '@/core/converter/ream';
 import { parseToUnicodeCMap } from '@/pdf-reader/cmap';
 import { PdfFile } from '@/pdf-reader/document';
 import { collectEmbeddedFonts } from '@/pdf-reader/embedded-fonts';
+import { patternTint } from '@/pdf-reader/pattern-tint';
 import { extractPageText } from '@/pdf-reader/text';
 import { reconstructByLayout } from '@/pdf-reader/layout';
 import { parseTtf } from '@/core/font/ttf-parser';
@@ -275,15 +276,39 @@ function patternTextPdf(): Uint8Array {
 }
 
 describe('type filled with a pattern (§8.6.6.2)', () => {
-  it('takes the pattern’s own colour instead of whatever was set before', () => {
+  it('takes the pattern’s colour, at the pattern’s own strength', () => {
     // ContentStreamCycleType3insideType3.pdf fills its glyphs with a magenta
     // tiling pattern. A pattern is a content stream, not a colour, and the fill
     // still standing from before painted the words solid black.
+    //
+    // The tile here paints a 5×5 square on a 10×10 cell — a quarter of it — so
+    // the words read as a quarter-strength magenta over white paper, not as
+    // solid magenta.
     const file = PdfFile.parse(patternTextPdf());
     const run = extractPageText(file, file.pages()[0]!)[0];
     expect(run?.text).toBe('tinted');
     expect(run?.fillPatternName).toBe('P1');
-    expect(run?.colorHex).toBe('FF00FF');
+    expect(run?.colorHex).toBe('FFBFFF');
+  });
+
+  it('measures the cell it repeats on, not the marks it paints', () => {
+    // A tile is clipped to its /BBox and repeats on /XStep × /YStep, and the
+    // marks need agree with neither: the fixture that started this tiles on
+    // 55 × 32 and paints two 300 × 300 squares, one of them starting 400 units
+    // out. Summed by area, its ink is a hundred times the cell.
+    const file = PdfFile.parse(patternTextPdf());
+    const page = file.pages()[0]!;
+    const tint = patternTint(file, page.resources, 'P1');
+    expect(tint?.colorHex).toBe('FF00FF');
+    expect(tint?.coverage).toBeCloseTo(0.25, 1);
+  });
+
+  it('reads a pattern that covers its whole cell as the solid colour', () => {
+    const solid = new TextDecoder()
+      .decode(patternTextPdf())
+      .replace('1 0 1 rg 0 0 5 5 re f', '1 0 1 rg 0 0 9 9 re f');
+    const file = PdfFile.parse(new TextEncoder().encode(solid));
+    expect(patternTint(file, file.pages()[0]!.resources, 'P1')?.coverage).toBeGreaterThan(0.75);
   });
 
   it('says so, because the pattern’s shape is lost even where its colour is not', () => {
