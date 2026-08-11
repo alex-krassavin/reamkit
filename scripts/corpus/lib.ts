@@ -581,14 +581,11 @@ export function listCorpus(dir: string): Array<string> {
  * @returns The parse options for it (empty for everything that is not a PDF).
  */
 export function parseOptions(input: string): ParseOptions {
-  return /\.pdf$/i.test(input)
-    ? { pdfLayout: 'positional', filters: { BrotliDecode: brotli } }
-    : {};
+  return /\.pdf$/i.test(input) ? { filters: { BrotliDecode: brotli } } : {};
 }
 
 /** What the corpus tools hand `Ream.parse`. */
 interface ParseOptions {
-  readonly pdfLayout?: 'flow' | 'positional';
   readonly filters?: Readonly<Record<string, (bytes: Uint8Array) => Uint8Array>>;
 }
 

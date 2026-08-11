@@ -180,12 +180,13 @@ A form or a drawing is not a reflowable document, though — its rules and boxes
 are placed absolutely, and a label an inch from the box it labels says nothing.
 **The file decides for itself**: a paper is mostly lines and is re-flowed, a
 form or a drawing is mostly marks and is kept as a page, with every line where
-its glyphs stand. `pdfLayout` overrides the choice when you know better:
+its glyphs stand. There is nothing to configure — the reader records which
+reading it took, in the losses:
 
 ```ts
-const page = Ream.parse(pdfBytes, { pdfLayout: 'positional' }); // keep the page
-const flow = Ream.parse(pdfBytes, { pdfLayout: 'flow' }); // …or re-flow it
-const docx = await page.convert('docx'); // the form, not the form's words
+const doc = Ream.parse(pdfBytes);
+const docx = await doc.convert('docx');
+doc.losses.find((l) => /read as a/u.test(l.detail)); // …which reading it took
 ```
 
 ```ts
@@ -271,7 +272,7 @@ and every line stands where its glyphs do:
 ```ts
 import { Ream } from 'reamkit';
 
-const doc = Ream.parse(pdfBytes, { pdfLayout: 'positional' });
+const doc = Ream.parse(pdfBytes);
 const pdf = await doc.convert('pdf', { fonts });
 ```
 

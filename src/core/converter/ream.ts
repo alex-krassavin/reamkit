@@ -64,15 +64,6 @@ export interface ReamParseOptions {
    */
   readonly password?: string;
   /**
-   * PDF only: what to read out of the page. `'flow'` (the default) reconstructs
-   * a re-flowable document — paragraphs and tables in reading order, from the
-   * structure tree where the file has one. `'positional'` keeps the page as a
-   * page: every line stands where its glyphs stand, beside the rules and fills
-   * the page draws. A form or a drawing needs the second; a report to be edited
-   * or converted to markdown needs the first.
-   */
-  readonly pdfLayout?: 'flow' | 'positional';
-  /**
    * PDF only: decoders for `/Filter` names the reader does not implement
    * (§7.4). A filter it cannot undo leaves that stream unread — and when the
    * unread one is the cross-reference, the whole document is missing — so a
@@ -230,7 +221,6 @@ export class Ream {
     }
     const { doc, losses } = reader.read(source, {
       password: options.password,
-      ...(options.pdfLayout ? { pdfLayout: options.pdfLayout } : {}),
       ...(options.filters ? { filters: options.filters } : {}),
     });
     // The reader's native tree — a SheetDoc for spreadsheets — is projected to

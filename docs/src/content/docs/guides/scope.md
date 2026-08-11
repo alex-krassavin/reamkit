@@ -100,7 +100,7 @@ Absent, or throwing, the filter is reported unreadable by name rather than
 producing an empty document silently. FlateDecode, LZW, RunLength, ASCII85,
 ASCIIHex, CCITT, DCT, JPX and JBIG2 need nothing supplied.
 
-**Placed PDF reading (`Ream.parse(bytes, { pdfLayout: 'positional' })`)** — a
+**The two PDF readings** — a
 conversion cannot have both readings at once: words that move cannot agree with
 rules that do not, so anchored artwork over reflowed text lines up with none of
 it. The FILE decides which it gets. A paper is mostly LINES with a rule or two
@@ -111,7 +111,10 @@ is read as a page: every line stands where its glyphs stand, beside the artwork,
 with no reading order, no paragraphs and no tables. The marks are counted
 against the baselines on the MEDIAN page, so one plan folded into a report does
 not make the report a plan; the reader records which reading it took and why.
-`pdfLayout: 'flow' | 'positional'` overrides the choice outright.
+There is no option to override it. A caller holding a `Uint8Array` cannot know
+whether it is a paper or a form, so asking it to choose only moved the guess
+outward — and left the choice the library actually makes untested, because
+everything that measured it pinned the other one.
 
 **Markdown (`convert('md')`)** — GitHub-Flavored Markdown, a flow medium like
 HTML: no pagination, no layout, no fonts, zero I/O. It keeps what a document

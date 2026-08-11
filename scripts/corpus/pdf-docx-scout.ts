@@ -76,7 +76,7 @@ async function measure(src: string, mode: Mode, work: string, dpi: number): Prom
   const bytes = new Uint8Array(readFileSync(src));
   const docx = resolve(work, 'ours.docx');
   try {
-    const doc = Ream.parse(bytes, mode === 'positional' ? { pdfLayout: 'positional' } : {});
+    const doc = Ream.parse(bytes);
     writeFileSync(docx, await doc.convert('docx', FONT_OPTIONS));
   } catch (e) {
     return { score: 99, note: `convert: ${(e as Error).message.slice(0, 48)}`, ...none };
@@ -125,8 +125,9 @@ async function main(): Promise<void> {
   const positional = flagAt < 0 ? args : args.slice(0, flagAt);
   const dpiFlag = args.indexOf('--dpi');
   const dpi = dpiFlag >= 0 ? Number(args[dpiFlag + 1]) : DEFAULT_DPI;
-  const modeFlag = args.indexOf('--mode');
-  const modes: Array<Mode> = modeFlag >= 0 ? [args[modeFlag + 1] as Mode] : ['flow', 'positional'];
+  // One reading per file now: the FILE chooses it, so there is nothing to
+  // sweep over. The type stays because a report row still names which it got.
+  const modes: Array<Mode> = ['flow'];
 
   const dir = positional[0];
   if (dir === undefined) throw new Error('usage: pdf-docx-scout.ts <corpus-dir> [limit] [offset]');

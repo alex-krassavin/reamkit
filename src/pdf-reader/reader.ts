@@ -65,20 +65,16 @@ function endsLikePdf(bytes: Uint8Array): boolean {
  *                 opens permissions-only encryption.
  * @param filters  Decoders for `/Filter` names this reader does not implement
  *                 (§7.4); see {@link StreamFilters}.
- * @param layout   `'auto'` (the default) lets the FILE decide: a page that is
- *                 mostly marks is reproduced, one that is mostly lines is re-set,
- *                 and the reader records which it chose. `'flow'` reads a
- *                 re-flowable document out of the page —
- *                 paragraphs and tables in reading order, from the structure
- *                 tree where there is one. `'positional'` keeps the page: every
- *                 line stands where its glyphs do, beside the artwork, which is
- *                 what a form or a drawing needs and what a paragraph cannot be.
  * @returns The reconstructed FlowDoc and its accumulated {@link Loss} report.
+ *
+ * Which of the two readings a file gets is the FILE's to decide and no
+ * caller's: a page that is mostly marks is reproduced where it stands, one
+ * that is mostly lines is re-set as a document, and the reader records which
+ * it chose. There is no override — see the note on {@link readingOf}.
  */
 export function readPdf(
   bytes: Uint8Array,
   password = '',
-  layout: 'flow' | 'positional' | 'auto' = 'auto',
   filters: StreamFilters = {},
 ): ReadResult<FlowDoc> {
   const file = PdfFile.parse(bytes, password, filters);
@@ -107,18 +103,20 @@ export function readPdf(
     });
   }
 
-  // Which reading the FILE asks for, where the caller did not say.
-  const reading = layout === 'auto' ? readingOf(file) : layout;
-  if (layout === 'auto') {
-    losses.push({
-      severity: 'degraded',
-      feature: FEATURES.text,
-      detail:
-        reading === 'positional'
-          ? 'PDF read as a PAGE (placed): its artwork outweighs its prose, so every line stands where its glyphs stand — pass pdfLayout: "flow" to re-set it as a document instead'
-          : 'PDF read as a DOCUMENT (flowing): its prose outweighs its artwork, so the words re-set and the artwork takes its turn in reading order — pass pdfLayout: "positional" to reproduce the page instead',
-    });
-  }
+  // Which reading the file asks for. The FILE decides, always: a caller cannot
+  // know whether the bytes it was handed are a paper or a form, and asking it
+  // to choose only moved the guess outward — and left the choice the library
+  // actually makes untested, because everything that measured it pinned the
+  // other one.
+  const reading = readingOf(file);
+  losses.push({
+    severity: 'degraded',
+    feature: FEATURES.text,
+    detail:
+      reading === 'positional'
+        ? 'PDF read as a PAGE (placed): its artwork outweighs its prose, so every line stands where its glyphs stand'
+        : 'PDF read as a DOCUMENT (flowing): its prose outweighs its artwork, so the words re-set and the artwork takes its turn in reading order',
+  });
   const tagged = reading === 'positional' ? undefined : reconstructTaggedPdf(file);
   const reconstruction = tagged ?? reconstructByLayout(file, reading);
   if (!tagged && reading !== 'positional') {
@@ -203,11 +201,6 @@ export const pdfReader: DocumentReader<FlowDoc> = {
     readPdf(
       bytes,
       typeof opts?.password === 'string' ? opts.password : '',
-      opts?.pdfLayout === 'positional'
-        ? 'positional'
-        : opts?.pdfLayout === 'flow'
-          ? 'flow'
-          : 'auto',
       isFilters(opts?.filters) ? opts.filters : {},
     ),
 };
