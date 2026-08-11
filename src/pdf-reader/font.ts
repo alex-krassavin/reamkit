@@ -79,8 +79,7 @@ export function buildContentFont(file: PdfFile, fontDict: PdfDict): ContentFont 
   // reconstruction reports it (see `./layout`).
   const speechless = isType0 && unicode.size === 0;
   const decodeOne = (code: number): string =>
-    unicode.get(code) ??
-    (bytesPerCode === 1 ? String.fromCharCode(code) : speechless ? '\uFFFD' : '');
+    unicode.get(code) ?? (bytesPerCode === 1 ? latin1(code) : speechless ? '\uFFFD' : '');
   const simple = simpleWidths(file, fontDict, decodeOne);
   // §9.6.5 — a Type 3 font states its widths in GLYPH space, which its
   // `/FontMatrix` maps to text space; every other font states them in
@@ -104,6 +103,20 @@ export function buildContentFont(file: PdfFile, fontDict: PdfDict): ContentFont 
 }
 
 /**
+ * The character a code stands for when nothing in the font says.
+ *
+ * Latin-1 is the only guess there is, and it is a good one for a text font —
+ * but a C0 control is not a glyph. §9.4.3 shows GLYPHS, and a code falling back
+ * to one has landed there by accident: issue11549_reduced.pdf's one line came
+ * back as U+0007 through U+0011 and was drawn as six empty boxes over a page
+ * that shows nothing at all. A `/ToUnicode` that STATES a control is stating
+ * something and is left alone.
+ */
+function latin1(code: number): string {
+  return code < 0x20 || code === 0x7f ? '\uFFFD' : String.fromCharCode(code);
+}
+
+/**
  * What a `/ToUnicode` gives, less what Unicode says is not a character.
  *
  * `U+FFFE` and `U+FFFF` are noncharacters and the `U+FDD0`–`U+FDEF` block with
@@ -121,6 +134,10 @@ function readable(text: string): string {
     const noncharacter =
       (cp & 0xfffe) === 0xfffe ||
       (cp >= 0xfdd0 && cp <= 0xfdef) ||
+      // A C0 control is not a glyph. §9.4.3 shows GLYPHS, and a code that
+      // decodes to one has fallen back to Latin-1 from a font that said
+      // nothing: issue11549_reduced.pdf's one line came back as U+0007 through
+      // U+0011 and was drawn as six empty boxes over a page that shows nothing.
       cp === 0 ||
       (cp >= SURROGATE_FIRST && cp <= SURROGATE_LAST);
     out += noncharacter ? '\uFFFD' : ch;

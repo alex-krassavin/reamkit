@@ -1055,6 +1055,39 @@ describe('a composite font that says nothing about its characters (§9.10.2)', (
     ).toBe(true);
   });
 
+  it('does not fall back to a C0 control, which is no glyph', () => {
+    // A simple font with no `/ToUnicode` and no glyph names falls back to
+    // Latin-1, which is a good guess for a text font and a bad one below
+    // U+0020: issue11549_reduced.pdf's one line came back as U+0007 through
+    // U+0011 and was drawn as six empty boxes over a page that shows nothing,
+    // and TAMReview.pdf carried 47,084 control characters into its text.
+    const content = 'BT /F1 12 Tf 20 100 Td <0741420B> Tj ET';
+    const objects = [
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R ' +
+        '/Resources << /Font << /F1 5 0 R >> >> >>',
+      `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+      '<< /Type /Font /Subtype /TrueType /BaseFont /AAAAAA+Sub /FirstChar 0 /LastChar 255 >>',
+    ];
+    let pdf = '%PDF-1.7\n';
+    const offsets: Array<number> = [];
+    objects.forEach((body, i) => {
+      offsets.push(pdf.length);
+      pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+    });
+    const xref = pdf.length;
+    pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+    for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+    pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`;
+    const file = PdfFile.parse(new TextEncoder().encode(pdf));
+    // 0x07 and 0x0B are controls and go; 0x41 and 0x42 are "AB" and stay.
+    const text = extractPageText(file, file.pages()[0]!)
+      .map((r) => r.text)
+      .join('');
+    expect(text.replaceAll('\uFFFD', '')).toBe('AB');
+  });
+
   it('still leaves the replacement character out of the words', () => {
     const doc = Ream.parse(speechless());
     const text = JSON.stringify(doc.flow.body);
