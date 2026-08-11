@@ -3,6 +3,190 @@
 All notable changes to **Ream** (`reamkit`) are documented here. The project
 follows [Semantic Versioning](https://semver.org/).
 
+## 1.27.0
+
+A release about what the reader SEES.
+
+1.26.0 asked what reaches the `.docx`. This one goes a step back — what Ream
+reads off the page at all — and measures it the other way round: the file's own
+rendering against Ream's rendering of what it read, worst page of each, over
+the four hundred PDFs of the pdf.js suite. That number answers a narrower
+question than 1.26.0's and a sharper one: everything downstream is built on it,
+and a page the reader never saw cannot be written back by any writer.
+
+Over the 389 files comparable across the work the summed worst-page difference
+went 17.64 to 9.12 — 48% less wrong — with 52 files better and not one worse;
+the count under 0.01, a page indistinguishable from its source, went 259 to
+282, and the count rendering pixel-for-pixel identically 84 to 97.
+
+Most of what follows is a page that came back BLANK, or came back showing
+something the file says not to show. Neither is a small error, and neither is
+visible in a diff of the words.
+
+One correction to how this is measured, which also qualifies 1.26.0's JBIG2
+claim: mutool renders a JBIG2 refinement region as solid black, so a file it
+got wrong the same way we did scored as agreement. Those files are rasterised
+through poppler now, and the numbers above use the corrected harness on BOTH
+sides.
+
+### Added
+
+- **The layers a file turns off stay off.** §8.11 — a file may divide its marks
+  into optional-content groups and state, in its own default configuration,
+  which of them a viewer shows: a CAD drawing keeps its dimensions on one and
+  its hatching on another, a form keeps each language on its own. Reading them
+  all is not a smaller loss than reading none, because the hidden layers are
+  drawn OVER the visible one — one such page came back with text no viewer
+  shows, over colours no viewer shows either. Honoured on `/OC … BDC` marked
+  content, on an XObject's own `/OC`, through an `/OCMD`'s four policies, and
+  with `/BaseState` deciding the groups the configuration does not name.
+
+- **A tint becomes the colour its transform gives.** §8.6.6.4/§8.6.6.5 — a
+  `/Separation` or `/DeviceN` states its colorants, an alternate space, and the
+  transform between them; without running that transform a fill has only its
+  tint to go on, and a tint of 1 read as a strength of ink is BLACK. Running it
+  needs a function that can be CALLED, so §7.10 is here in full: sampled tables
+  (multilinear, over any number of inputs), exponential, stitching, and the
+  type-4 PostScript calculator — a program in braces run on a stack, which is
+  the one kind that cannot be read off a dictionary at all. A shading defined by
+  one is sampled through it now too, instead of being dropped.
+
+- **A stencil mask is painted in the page's own colour.** §8.9.6.2 — one bit per
+  pixel saying WHERE to paint, the colour being whatever the non-stroking colour
+  was at the `Do`. It was dropped entirely. It comes back as RGBA — that colour
+  throughout, opaque where the stencil paints and clear where it does not —
+  which is what the mask means and what every format downstream can show.
+
+- **An image written into the content stream is read.** §8.9.7 — an inline image
+  names no resource: it IS the resource, between `BI` and `EI`, and was skipped
+  over. Its data is binary and may hold the bytes `EI` itself, so its end is
+  MEASURED where the dictionary says how much there is — an unfiltered image is
+  exactly `ceil(W·BPC·comps/8)·H` bytes — and searched for only where a filter
+  makes the length unknowable. Its abbreviated keys and filter names (Table 93)
+  decode down the same path once wrapped as a stream.
+
+- **The built-in metrics of the 14 standard fonts.** §9.6.2.2 — they need be
+  neither embedded nor given a `/Widths` array, "because a conforming reader
+  shall have built-in font metrics for them", and without them every advance in
+  such a file is a guess. "Chapter 1 " in 12pt Helvetica is 56pt of type; a flat
+  half-em made it 70.5, and with it the line's width, the gaps between its runs,
+  its alignment and the column it was assigned to.
+
+- **The CIE spaces a file states its colours in.** §8.6.5.6 `CalGray` — one
+  number through one gamma against a stated white, which is unambiguous, and
+  read as a device grey a page of swatches was 0.258 wrong where it is now
+  0.044. §8.6.5.8 `Lab` — the one CIE space with no argument about the way out;
+  a page painting two grids of blue swatches through an `Indexed` palette whose
+  base is one came back entirely blank. (`CalRGB` is deliberately still read as
+  a device space: no two renderers agree on the chromatic adaptation at the end
+  of its transform, and guessing made some pages worse.)
+
+- **An annotation with no appearance stream still marks the page.** §12.5.5 — a
+  viewer draws one from the annotation's own properties where the file supplies
+  no `/AP`. Ink, Line, Square, Circle, Polygon and PolyLine are drawn; a text
+  field's `/V` is set in the `/DA` it names against the AcroForm's `/DR`; and a
+  Highlight, Underline, StrikeOut or Squiggly marks the words its `QuadPoints`
+  cover, cut at the quad's edges by proportion of the advance rather than
+  applied to the whole line.
+
+- **A rule drawn under words is those words' underline.** Nothing in the format
+  says a run is underlined: the file draws a thin filled rectangle beneath the
+  words and the reader is expected to see a line. Lifted as artwork it is
+  anchored where it was drawn, which is right until the text re-sets and then it
+  is a dash floating between two lines. Recognised, it goes on the RUN and
+  travels with the words. The signature is narrow on purpose — a table rule and
+  an underline are the same shape, and only their placement tells them apart.
+
+- **The file decides whether it is a document or a page.** A conversion cannot
+  have both: words that move cannot agree with rules that do not, so anchored
+  artwork over reflowed text puts every label on the wrong box. A form or a
+  drawing is mostly MARKS — one form sets 28 numbered rows in 355 ruled boxes —
+  and a paper is mostly LINES with a rule or two between them, so the marks are
+  counted against the baselines on the MEDIAN page. The reader records which
+  reading it took and why, and `pdfLayout: 'flow' | 'positional'` still
+  overrides it outright.
+
+- **A flowing reading keeps the margins, the weight, the placement and the
+  spacing.** The measure its author set, taken from the leftmost glyph of the
+  median page rather than invented; the weight the `/FontDescriptor` states, or
+  the name where it states none; the alignment its position across the measure
+  witnesses; and the space that OPENED a paragraph, less the line it would have
+  taken anyway. Before this a converted paper ran edge to edge, in one weight,
+  flush left, with every paragraph running into the next.
+
+### Fixed
+
+- **The package is a document XML can carry.** XML 1.0 §2.2 — everything below
+  U+0020 except tab, newline and return is forbidden and there is no escape for
+  them. They arrived from the PDF reader, and one of them lost the whole
+  conversion: LibreOffice answered "source file could not be loaded" and Word
+  refused it too. Found by converting the first file to hand and opening it,
+  which is what a user does and what no corpus score measures.
+
+- **The crop box cuts the marks away, not just the sheet.** §14.11.2 — it is the
+  region "to which the contents of the page shall be clipped". The page was
+  being SIZED by it and the marks outside it lifted all the same, which is worse
+  than ignoring it: a book carrying a printer's slug in the 42 points the crop
+  cuts off the top had it stand at the head of the page and push the sheet
+  taller to hold it.
+
+- **A picture the matrix turns, and the clip that cuts it.** §8.9.5 — a picture
+  is placed by the CTM and the CTM may TURN it; taking only the column lengths
+  threw the turn away and set the picture square at the origin of its own space.
+  §8.5.4 — and a clip is stated in the page's coordinates while the picture may
+  be turned within them, so intersecting the two boxes as they stand crops along
+  the wrong axes. Carried back through the placement matrix the clip lands in
+  the unit square the image is drawn into, where a crop is what `a:srcRect`
+  means: the fraction off each of the picture's OWN edges.
+
+- **A shading stitched out of shadings keeps their own steps.** §7.10.4 — a
+  stitching function's subfunctions were reduced to their first and last colour,
+  which is right for a plain ramp and wrong for anything else. A subfunction may
+  be a stitch itself, and a `/Bounds` that leaves the fade between two colours
+  zero wide is a hard EDGE; kept only at its ends, twelve such pairs came back
+  as twelve smooth fades instead of twenty-four flat bands.
+
+- **A code with no character does not fall back to a control.** §9.4.3 shows
+  GLYPHS. Where a simple font states neither a `/ToUnicode` nor glyph names,
+  Latin-1 is the only guess there is — a good one for a text font and a bad one
+  below U+0020, where a code lands on a C0 control by accident and the
+  substitute face draws a notdef box for it. One paper was carrying 47,084 of
+  them into its text; with them gone its word count is 3131 against 3107, the
+  difference being "words" that were nothing else.
+
+- **A font that says nothing about its characters says so.** §9.10.2 — a
+  composite font may state no `/ToUnicode` and embed a program whose `cmap` is
+  missing or unreadable; its codes are glyph indices with no way back to text.
+  Decoded to the empty string, every run in it was dropped where it stood and
+  the page came back BLANK with nothing said about it, which is the one loss
+  this reader must never take in silence.
+
+- **`/BlackIs1`, and an Indexed image's `/Decode`.** §7.4.6 — the fax decoder
+  codes a black run as 1 bits, but what the FILTER hands on is the flag's
+  business; a sheet carrying the same picture twice, once encoded each way, had
+  the second come back inverted. §8.9.5.2 — and an Indexed image's decode maps
+  to INDEX values, not to 0..1, so two grids drawn from one palette through
+  opposite decodes came back identical instead of mirrored.
+
+- **ForceBold is a hinting flag, and zero is not a weight.** §9.8.2 — the flag
+  says whether the rasteriser should thicken the stems at very small sizes, not
+  that the face is a bold cut, and where the descriptor states a weight that
+  weight is the answer. §9.8.1 gives the weight as one of 100…900, so a producer
+  writing anything else has written a placeholder rather than a weight.
+
+- **JBIG2: one symbol takes no bits to name, and MMR planes share a stream.**
+  §6.4.5 Table 34 — `SBSYMCODELEN` is `ceil(log2(SBNUMSYMS))`, which is zero for
+  a dictionary of one, and reading a bit that is not there desynchronised the
+  whole text region. Annex C.5 — a grey-scale image's bitplanes are coded into
+  ONE MMR stream, separated by EOFB and byte alignment; decoding each from the
+  start of the data recovered one plane of ten.
+
+- **A page background is not clutter, and a headerless file is still a PDF.** A
+  filled rectangle covering the sheet was discarded as decoration by an area cap
+  that predates the placed reading, so a page with a coloured ground came back
+  white. And a file whose `%PDF-` header a producer dropped is still recognisable
+  by its `startxref` … `%%EOF`, and was being refused outright.
+
 ## 1.26.0
 
 A release about what a converted PDF actually looks like when you open it.
