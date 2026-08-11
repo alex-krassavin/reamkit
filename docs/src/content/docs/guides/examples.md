@@ -32,7 +32,10 @@ formatting as direct properties rather than named styles — so use it to
 normalize, sanitize or programmatically edit a document in the browser, not to
 preserve the original markup verbatim. Images, tables, lists, links, bookmarks,
 shapes, headers/footers, multi-section geometry, footnotes/endnotes, charts and
-OfficeMath all round-trip; floating (anchored) placement collapses to inline.
+OfficeMath all round-trip, and a drawing that states where on the page it
+belongs is written back as the `wp:anchor` that puts it there rather than
+flattened into the text flow. No image part the format cannot show goes into the
+package: JPEG 2000 is dropped with a loss that names it.
 
 ```ts
 import { Ream } from 'reamkit';
@@ -160,21 +163,28 @@ always in the clear.
 ones Ream writes) is rebuilt from its structure tree — headings, paragraphs,
 tables, lists in reading order; an untagged PDF is reconstructed heuristically
 from glyph positions. **Raster images, hyperlinks and the page's artwork come
-back too** — images lifted out and sized from their placement, link annotations
-re-attached to the text, filled paths, stroked lines and shading-pattern
-gradients turned into shapes, the clipping paths that limit them, tiling
-patterns, constant alpha, the appearance an annotation carries, and the Type 3
-glyphs that are drawings rather than letters. The result is an ordinary
-`FlowDoc`, so it converts onward like any other source. Clip-bounded (`sh`)
-shadings are not read (reported as a loss).
+back too** — images lifted out and sized from their placement (including the
+ones written into the content stream, and stencil masks painted in the page's
+own colour), link annotations re-attached to the text, filled paths, stroked
+lines and shading-pattern gradients turned into shapes, the clipping paths that
+limit them, tiling patterns, constant alpha, the appearance an annotation
+carries — or one drawn from its properties where the file supplies none — and
+the Type 3 glyphs that are drawings rather than letters. Colour comes back
+through whatever space states it: device, CIE (`CalGray`, `Lab`), or a
+`Separation`/`DeviceN` run through its own tint transform. The layers a file
+turns off stay off, and the box it says to show is the box you get. The result
+is an ordinary `FlowDoc`, so it converts onward like any other source.
+Clip-bounded (`sh`) shadings are not read (reported as a loss).
 
 A form or a drawing is not a reflowable document, though — its rules and boxes
 are placed absolutely, and a label an inch from the box it labels says nothing.
-Pass `{ pdfLayout: 'positional' }` to keep the page instead, with every line
-where its glyphs stand:
+**The file decides for itself**: a paper is mostly lines and is re-flowed, a
+form or a drawing is mostly marks and is kept as a page, with every line where
+its glyphs stand. `pdfLayout` overrides the choice when you know better:
 
 ```ts
-const page = Ream.parse(pdfBytes, { pdfLayout: 'positional' });
+const page = Ream.parse(pdfBytes, { pdfLayout: 'positional' }); // keep the page
+const flow = Ream.parse(pdfBytes, { pdfLayout: 'flow' }); // …or re-flow it
 const docx = await page.convert('docx'); // the form, not the form's words
 ```
 

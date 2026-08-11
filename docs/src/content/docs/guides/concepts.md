@@ -52,7 +52,9 @@ The same seam runs in reverse for **PDF input**. A PDF reader is just another
 `DocumentReader`, but inbound it _reconstructs_ a FlowDoc rather than parsing a
 clean tree: a tagged PDF is rebuilt from its logical structure tree, an untagged
 one heuristically from glyph positions (lines by baseline, paragraphs by spacing,
-a two-column page split by its central gutter). The result is an ordinary
+a two-column page split by its central gutter). Which reading it gets is the
+FILE's to decide — a paper is mostly lines and re-flows, a form is mostly marks
+and keeps its page — and `pdfLayout` overrides that. The result is an ordinary
 FlowDoc, so `Ream.parse(pdfBytes)` converts onward to HTML, Markdown, docx or a re-laid PDF
 like any other source.
 
