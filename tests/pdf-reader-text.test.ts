@@ -230,6 +230,23 @@ describe('the face a run was shown in (§9.8.1)', () => {
     expect(styleOf('Whatever', '/Flags 262176').bold).toBe(true);
   });
 
+  it('lets a STATED weight overrule the ForceBold flag', () => {
+    // §9.8.2 — ForceBold says whether the rasteriser should thicken the stems
+    // at very small sizes, not that the face is a bold cut.
+    // issue10084_reduced.pdf sets "abcdefg" in a Helvetica of /FontWeight 400
+    // with the flag set, and read off the flag the whole page came back bold.
+    expect(styleOf('Helvetica', '/Flags 262176 /FontWeight 400').bold).toBeUndefined();
+    expect(styleOf('Helvetica', '/Flags 262176 /FontWeight 700').bold).toBe(true);
+  });
+
+  it('takes a weight below 100 for no weight at all', () => {
+    // §9.8.1 gives the weight as one of 100…900, and a producer writing
+    // anything else has written a placeholder: issue10519_reduced.pdf states
+    // `/FontWeight 0` on a face called "Calibri,Bold", and taken at its word
+    // every bold word on the page went light.
+    expect(styleOf('Calibri,Bold', '/Flags 262176 /FontWeight 0').bold).toBe(true);
+  });
+
   it('believes a descriptor that states no weight, whatever the name says', () => {
     // "New Basrah Bold" and "Damascus Bold" are family names, not weights, and
     // their descriptors give neither /FontWeight nor ForceBold.

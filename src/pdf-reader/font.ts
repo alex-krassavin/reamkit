@@ -272,6 +272,9 @@ function differences(file: PdfFile, fontDict: PdfDict): Map<number, string> {
 const FLAG_ITALIC = 1 << 6;
 const FLAG_FORCE_BOLD = 1 << 18;
 
+/** §9.8.1 `/FontWeight` — the lightest a face may state; below it is no weight. */
+const LIGHTEST_WEIGHT = 100;
+
 /** §9.8.1 `/FontWeight` — 400 is normal, 700 bold; 600 is where "bold" begins. */
 const BOLD_WEIGHT = 600;
 
@@ -308,10 +311,21 @@ function faceStyle(
     // reading that silence as "regular" is how TAMReview.pdf's Times-Bold came
     // back light: every bold word on the page — its title, "Abstract",
     // "Keywords:" — set in the same face as the body.
-    const statesWeight = typeof weightVal === 'number' || (flags & FLAG_FORCE_BOLD) !== 0;
-    const bold = statesWeight
-      ? asNumber(weightVal, 0) >= BOLD_WEIGHT || (flags & FLAG_FORCE_BOLD) !== 0
-      : named.bold;
+    //
+    // §9.8.2 — but ForceBold is a HINTING flag: it says whether the rasteriser
+    // should thicken the stems at very small sizes, not that the face is a bold
+    // cut. Where the descriptor states a weight, that weight is the answer:
+    // issue10084_reduced.pdf sets "abcdefg" in a Helvetica of /FontWeight 400
+    // with ForceBold set, and read off the flag the whole page came back bold.
+    //
+    // §9.8.1 gives the weight as one of 100…900, and a producer writing
+    // anything else has written a placeholder rather than a weight:
+    // issue10519_reduced.pdf states `/FontWeight 0` on a face called
+    // "Calibri,Bold", and taken at its word every bold word went light.
+    const stated = typeof weightVal === 'number' && weightVal >= LIGHTEST_WEIGHT;
+    const bold = stated
+      ? asNumber(weightVal, 0) >= BOLD_WEIGHT
+      : (flags & FLAG_FORCE_BOLD) !== 0 || named.bold;
     // The slant and the flag each state italic outright; where neither does,
     // the name is the only witness left.
     const italic = slant !== 0 || (flags & FLAG_ITALIC) !== 0 || named.italic;
