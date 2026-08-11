@@ -152,14 +152,29 @@ export interface TextRun {
  * square to page space, so it carries both the placement and the size; the
  * `mcid` links the paint to its structure element (a `/Figure`, E-PDF EP6).
  */
+/** §8.9.7 — an image written into the content stream rather than named. */
+export interface InlineImage {
+  /** Its dictionary, keys as written — the abbreviated ones (`/W`, `/CS`, `/F`). */
+  readonly dict: PdfDict;
+  /** Its bytes, still filtered as the dictionary says. */
+  readonly data: Uint8Array;
+}
+
 export interface ImagePlacement {
   /** Where the `Do` fell in the stream's painting order — see {@link VectorPlacement.order}. */
   readonly order: number;
-  /** XObject resource name (no leading slash). */
+  /** XObject resource name (no leading slash), empty for an inline image. */
   readonly name: string;
+  /** §8.9.7 — the image itself, where it was written into the stream. */
+  readonly inline?: InlineImage;
   readonly ctm: Matrix;
   /** §8.5.4 — the clip in force when it was painted, when there was one. */
   readonly clip?: ClipRegion;
+  /**
+   * §8.9.6.2 — the non-stroking colour in force. A stencil `/ImageMask` carries
+   * no colour of its own: it says only WHERE to paint, and this is what.
+   */
+  readonly fillHex: string;
   readonly mcid?: number;
   /** §11.3.5 `/BM` — a blend the page asked for that nothing here performs. */
   readonly blend?: string;
@@ -778,6 +793,7 @@ export function interpretContent(
             name: nm.value,
             ctm: state.ctm,
             ...(state.clip ? { clip: state.clip } : {}),
+            fillHex: state.fillColor,
             ...(mcid !== undefined ? { mcid } : {}),
             ...(state.blendMode !== undefined ? { blend: state.blendMode } : {}),
           });
@@ -948,8 +964,22 @@ export function interpretContent(
         operands.push(readDict(lexer)); // e.g. a BDC marked-content property dict
         break;
       case 'keyword':
-        if (tok.value === 'BI') skipInlineImage(lexer);
-        else exec(tok.value);
+        if (tok.value === 'BI') {
+          // §8.9.7 — an image written into the stream itself rather than named.
+          const inline = readInlineImage(lexer);
+          if (inline) {
+            images.push({
+              order: paintOrder++,
+              name: '',
+              inline,
+              ctm: state.ctm,
+              ...(state.clip ? { clip: state.clip } : {}),
+              fillHex: state.fillColor,
+              ...(mcStack.length > 0 ? { mcid: mcStack[mcStack.length - 1]! } : {}),
+              ...(state.blendMode !== undefined ? { blend: state.blendMode } : {}),
+            });
+          }
+        } else exec(tok.value);
         operands = [];
         break;
       default:
@@ -1112,13 +1142,67 @@ function readValue(lexer: Lexer): PdfValue {
   }
 }
 
-// §8.9.7 — an inline image: skip from BI past the binary data to EI.
-function skipInlineImage(lexer: Lexer): void {
+/**
+ * §8.9.7 — an inline image: its dictionary between `BI` and `ID`, then its
+ * bytes up to `EI`.
+ *
+ * The bytes are binary and may hold `EI` themselves, so the end is found by
+ * MEASURING where the dictionary says how much there is — an unfiltered image
+ * is exactly `ceil(W · BPC · components / 8) · H` bytes — and only searched for
+ * where a filter makes the length unknowable. images_1bit_grayscale.pdf draws
+ * two of them and both were skipped over.
+ */
+function readInlineImage(lexer: Lexer): InlineImage | undefined {
+  const dict: PdfDict = new Map<string, PdfValue>();
   for (;;) {
     const tok = lexer.nextToken();
-    if (tok.kind === 'eof') return;
+    if (tok.kind === 'eof') return undefined;
     if (tok.kind === 'keyword' && tok.value === 'ID') break;
+    if (tok.kind === 'name') dict.set(tok.value, readValue(lexer));
   }
-  const ei = lexer.indexOfAscii('EI', lexer.pos);
+  // §8.9.7 — exactly ONE whitespace byte separates `ID` from the data.
+  const start = lexer.pos + 1;
+  const measured = inlineLength(dict);
+  let end = measured !== undefined ? start + measured : -1;
+  if (end < 0 || end > lexer.length) {
+    end = lexer.indexOfAscii('EI', start);
+    if (end < 0) {
+      lexer.pos = lexer.length;
+      return undefined;
+    }
+  }
+  const data = lexer.slice(start, Math.min(end, lexer.length));
+  const ei = lexer.indexOfAscii('EI', end);
   lexer.pos = ei < 0 ? lexer.length : ei + 2;
+  return { dict, data };
+}
+
+/** How many bytes an UNFILTERED inline image's samples take, if that is known. */
+function inlineLength(dict: PdfDict): number | undefined {
+  if (dict.has('F') || dict.has('Filter')) return undefined;
+  const num = (...keys: ReadonlyArray<string>): number => {
+    for (const k of keys) {
+      const v = dict.get(k);
+      if (typeof v === 'number') return v;
+    }
+    return 0;
+  };
+  const w = num('W', 'Width');
+  const h = num('H', 'Height');
+  if (w <= 0 || h <= 0) return undefined;
+  const mask = dict.get('IM') === true || dict.get('ImageMask') === true;
+  const bpc = mask ? 1 : num('BPC', 'BitsPerComponent') || 8;
+  const cs = dict.get('CS') ?? dict.get('ColorSpace');
+  const name = cs instanceof PdfName ? cs.value : '';
+  const comps = mask
+    ? 1
+    : /^(RGB|DeviceRGB|CalRGB)$/u.test(name)
+      ? 3
+      : /^(CMYK|DeviceCMYK)$/u.test(name)
+        ? 4
+        : /^(G|DeviceGray|CalGray|I|Indexed)$/u.test(name) || name === ''
+          ? 1
+          : 0;
+  if (comps === 0) return undefined; // a space this cannot size: search instead
+  return (((w * comps * bpc + 7) / 8) | 0) * h;
 }

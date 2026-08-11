@@ -140,12 +140,31 @@ export function collectPageImages(file: PdfFile, page: PdfPage): PageImages {
 
     for (const placement of result.images) {
       if (images.length >= MAX_IMAGES) return;
+      // §8.9.7 — an inline image names no resource: it IS the resource, written
+      // into the stream. Wrapped as one, it decodes down the same path.
+      if (placement.inline) {
+        const decoded = decodePdfImage(
+          file,
+          new PdfStream(placement.inline.dict, placement.inline.data),
+          placement.fillHex,
+        );
+        if (decoded.ok) {
+          images.push({
+            ...geometry(placement.ctm, decoded, placement.mcid ?? inheritedMcid, placement.clip),
+            orderKey: [...prefix, placement.order],
+          });
+          if (decoded.degraded) addLoss('degraded', decoded.degraded);
+        } else {
+          addLoss(decoded.severity, decoded.detail);
+        }
+        continue;
+      }
       const stream = xobjDict ? file.resolve(xobjDict.get(placement.name) ?? PDF_NULL) : PDF_NULL;
       if (!(stream instanceof PdfStream)) continue;
       const subtype = nameOf(file.get(stream.dict, 'Subtype'));
       const mcid = placement.mcid ?? inheritedMcid;
       if (subtype === 'Image') {
-        const decoded = decodePdfImage(file, stream);
+        const decoded = decodePdfImage(file, stream, placement.fillHex);
         if (decoded.ok) {
           images.push({
             ...geometry(placement.ctm, decoded, mcid, placement.clip),
