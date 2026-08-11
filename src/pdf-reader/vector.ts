@@ -7,7 +7,13 @@
 // and the bare `sh` operator are not captured (a documented loss).
 
 import { IDENTITY, interpretContent, multiply } from './content';
-import { buildAlphaMap, buildColorSpaceMap, buildShadingMap } from './shading';
+import {
+  buildAlphaMap,
+  buildColorSpaceMap,
+  buildShadingMap,
+  gradientShading,
+  shadingTypeOf,
+} from './shading';
 import { collectPageAppearances } from './annots';
 import { hiddenProperties, hiddenXObject } from './optional-content';
 import { buildFonts } from './text';
@@ -95,7 +101,45 @@ function paintedVectors(
       maps.spaces,
       hiddenProperties(file, resources),
     );
-    bareShadings += result.shadings.length;
+    // §8.7.4.3 — a bare `sh` paints the CLIP with a shading. Where that shading
+    // is axial or radial it is a gradient, and the region it fills is the clip:
+    // 131 of the corpus's `sh` paints are axial, ten times as many as the
+    // function-based ones, and every one of them was dropped.
+    for (const paint of result.shadings) {
+      if (out.length >= MAX_VECTORS) break;
+      const dict = resources ? file.get(resources, 'Shading') : PDF_NULL;
+      const found = dict instanceof Map ? file.resolve(dict.get(paint.name) ?? PDF_NULL) : PDF_NULL;
+      const sh = found instanceof PdfStream ? found.dict : found instanceof Map ? found : undefined;
+      // §8.7.4.5.3 — a function-based shading is a PICTURE, and the image pass
+      // draws it. Counted here it was a loss the file did not have.
+      if (sh && shadingTypeOf(file, sh) === 1) continue;
+      const gradient = sh ? gradientShading(file, sh) : undefined;
+      // §11.6.5 — under a soft mask the clip is not the extent: the MASK is,
+      // and nothing here applies one. bug1721218_reduced.pdf fades a shadow out
+      // under the router it draws, and painted to its clip that shadow arrived
+      // as a solid black blob beside the picture.
+      if (paint.masked) {
+        bareShadings++;
+        continue;
+      }
+      if (!sh || !gradient || !paint.clip) {
+        bareShadings++;
+        continue;
+      }
+      // The clip is the whole of what the paint covers, so the clip's own path
+      // IS the shape. Without one the region is the page, which is a guess this
+      // does not make.
+      out.push({
+        order: paint.order,
+        segs: paint.clip.segs,
+        gradient,
+        // §11.6.4.4 — alphatrans.pdf paints its gradient at half opacity over
+        // three coloured squares, and drawn solid it buried all three.
+        ...(paint.alpha !== undefined ? { alpha: paint.alpha } : {}),
+        ...(paint.darkens ? { darkens: true } : {}),
+        orderKey: [...prefix, paint.order],
+      });
+    }
 
     // §8.5.3 — later marks cover earlier ones, and a form is drawn where its
     // `Do` stands, not after everything around it. Walking the stream first and

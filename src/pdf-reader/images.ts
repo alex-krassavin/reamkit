@@ -194,6 +194,9 @@ export function collectPageImages(file: PdfFile, page: PdfPage): PageImages {
       const sh =
         shading instanceof PdfStream ? shading.dict : shading instanceof Map ? shading : undefined;
       if (!sh) continue;
+      // §11.6.5 — a mask decides where a masked paint lands, and none is
+      // applied here; drawn to its clip it would be a hard rectangle.
+      if (paint.masked) continue;
       const sampled = sampledShading(file, sh);
       if (!sampled) continue;
       // §8.7.4.5.3 — the `/Matrix` on the shading maps its domain onto the

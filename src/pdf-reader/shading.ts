@@ -10,6 +10,7 @@
 // `/Separation` or `/DeviceN` (§8.6.6.4): its tint transform, as something the
 // interpreter can call.
 
+import { cieToSrgb } from './cie-color';
 import { readFunction } from './function';
 import type { CieSpace } from './cie-color';
 import type { PdfFunction } from './function';
@@ -51,10 +52,36 @@ export function buildShadingMap(
   return out;
 }
 
+/**
+ * §8.7.4.5.2 — an axial or radial shading as a gradient, for a bare `sh`.
+ *
+ * A `sh` paints the CLIP rather than a path, so what it needs is not a fill for
+ * a shape the page drew but the gradient itself, to fill the region with. It is
+ * the same reading `buildShadingMap` does for a pattern.
+ *
+ * @param file The owning file.
+ * @param sh   The shading dictionary.
+ * @returns The gradient, or `undefined` for a type this does not read.
+ */
+export function gradientShading(file: PdfFile, sh: PdfDict): ShapeGradient | undefined {
+  return parseShading(file, sh);
+}
+
+/**
+ * §8.7.4.5 — which kind of shading this is, as the file states it.
+ *
+ * @param file The owning file.
+ * @param sh   The shading dictionary.
+ * @returns Its `/ShadingType`, or 0 where the file states none.
+ */
+export function shadingTypeOf(file: PdfFile, sh: PdfDict): number {
+  return numOf(file.get(sh, 'ShadingType'));
+}
+
 function parseShading(file: PdfFile, sh: PdfDict): ShapeGradient | undefined {
   const type = numOf(file.get(sh, 'ShadingType'));
   if (type !== 2 && type !== 3) return undefined; // only axial (2) / radial (3)
-  const stops = parseFunction(file, sh.get('Function'));
+  const stops = parseFunction(file, sh.get('Function'), shadingSpace(file, sh));
   if (!stops || stops.length === 0) return undefined;
   if (type === 3) return { kind: 'radial', stops };
   // Axial: the angle is the Coords direction, with y negated (PDF y-up → the
@@ -71,6 +98,7 @@ function parseShading(file: PdfFile, sh: PdfDict): ShapeGradient | undefined {
 function parseFunction(
   file: PdfFile,
   value: PdfValue | undefined,
+  space: ColorSpaceInfo | undefined,
 ): Array<GradientStop> | undefined {
   const resolved = value !== undefined ? file.resolve(value) : undefined;
   const dict = dictOf(resolved);
@@ -78,8 +106,8 @@ function parseFunction(
   const type = numOf(file.get(dict, 'FunctionType'));
 
   if (type === 2) {
-    const c0 = colorOf(numArray(file, dict.get('C0')) ?? [0]);
-    const c1 = colorOf(numArray(file, dict.get('C1')) ?? [1]);
+    const c0 = colorOf(numArray(file, dict.get('C0')) ?? [0], space);
+    const c1 = colorOf(numArray(file, dict.get('C1')) ?? [1], space);
     return [
       { offset: 0, colorHex: c0 },
       { offset: 1, colorHex: c1 },
@@ -98,7 +126,7 @@ function parseFunction(
     const stops: Array<GradientStop> = [];
     const span = d1 - d0 || 1;
     for (let i = 0; i < subs.length; i++) {
-      const sub = parseFunction(file, subs[i]);
+      const sub = parseFunction(file, subs[i], space);
       if (!sub || sub.length === 0) continue;
       // Each subfunction's own 0..1 laid onto the piece of the domain it holds
       // — ALL of its stops, not just its ends. A subfunction may be a stitch
@@ -114,7 +142,7 @@ function parseFunction(
   }
 
   if (type === 0 && resolved instanceof PdfStream) {
-    return sampleFunction(file, resolved);
+    return sampleFunction(file, resolved, space);
   }
   if (type === 4) {
     // §7.10.5 — a program, not a table: the only way to a stop is to RUN it,
@@ -127,7 +155,7 @@ function parseFunction(
     const stops: Array<GradientStop> = [];
     for (let s = 0; s < PS_STOPS; s++) {
       const off = s / (PS_STOPS - 1);
-      pushStop(stops, off, colorOf(fn([d0 + off * (d1 - d0)])));
+      pushStop(stops, off, colorOf(fn([d0 + off * (d1 - d0)]), space));
     }
     return stops.length > 0 ? stops : undefined;
   }
@@ -157,6 +185,7 @@ export function sampledShading(
   shading: PdfDict,
 ): { rgb: Uint8Array; size: number; domain: [number, number, number, number] } | undefined {
   if (numOf(file.get(shading, 'ShadingType')) !== 1) return undefined;
+  const space = shadingSpace(file, shading);
   const fn = readFunction(file, shading.get('Function'));
   if (!fn) return undefined;
   const d = numArray(file, shading.get('Domain')) ?? [0, 1, 0, 1];
@@ -169,7 +198,7 @@ export function sampledShading(
     const y = domain[3] - ((row + 0.5) / size) * (domain[3] - domain[2]);
     for (let col = 0; col < size; col++) {
       const x = domain[0] + ((col + 0.5) / size) * (domain[1] - domain[0]);
-      const hex = colorOf(fn([x, y]));
+      const hex = colorOf(fn([x, y]), space);
       const at = (row * size + col) * 3;
       rgb[at] = Number.parseInt(hex.slice(0, 2), 16);
       rgb[at + 1] = Number.parseInt(hex.slice(2, 4), 16);
@@ -179,6 +208,19 @@ export function sampledShading(
   return { rgb, size, domain };
 }
 
+/**
+ * §8.7.4.5 — the colour space a shading's function lands in.
+ *
+ * The components alone do not say: a `/Separation` function gives ONE number
+ * and that number is a strength of ink, not a grey level.
+ * function_based_shading_cmyk.pdf's third square is a spot colour whose full
+ * tint is a warm red, and read as grey it came back a black-to-white ramp.
+ */
+function shadingSpace(file: PdfFile, sh: PdfDict): ColorSpaceInfo | undefined {
+  const cs = sh.get('ColorSpace');
+  return cs === undefined ? undefined : colorSpaceAt(file, file.resolve(cs), 0);
+}
+
 /** How many samples a side a function-based shading is drawn at. */
 const SAMPLED_SIDE = 128;
 
@@ -186,7 +228,11 @@ const SAMPLED_SIDE = 128;
 const PS_STOPS = 16;
 
 // §7.10.2 sampled function — read the table and sample it at a few offsets.
-function sampleFunction(file: PdfFile, stream: PdfStream): Array<GradientStop> | undefined {
+function sampleFunction(
+  file: PdfFile,
+  stream: PdfStream,
+  space: ColorSpaceInfo | undefined,
+): Array<GradientStop> | undefined {
   const d = stream.dict;
   const size = numArray(file, d.get('Size'));
   const range = numArray(file, d.get('Range'));
@@ -241,18 +287,88 @@ function numArray(file: PdfFile, v: PdfValue | undefined): Array<number> | undef
 }
 
 // Colour components (0..1, in the shading colour space) → a 6-hex sRGB string.
-function colorOf(c: ReadonlyArray<number>): string {
-  if (c.length >= 4) {
-    const k = c[3]!;
-    return hex255(
-      255 * (1 - c[0]!) * (1 - k),
-      255 * (1 - c[1]!) * (1 - k),
-      255 * (1 - c[2]!) * (1 - k),
-    );
+// A shading's function output as a colour. Where the stated space cannot say
+// what the numbers mean, the COUNT is the fallback — and a lone number is a
+// grey level here, unlike an `sc` operand, because a shading that states no
+// space at all has nothing else to go on. bug1721218_reduced.pdf paints a shape
+// through a space this does not read, and defaulted to black it arrived as a
+// black blob beside the router the page draws.
+function colorOf(c: ReadonlyArray<number>, space?: ColorSpaceInfo): string {
+  return spaceColor(c, space) ?? spaceColor(c, undefined) ?? grayHex(c[0] ?? 0);
+}
+
+/**
+ * §8.6.8 — the colour a run of `sc` / `scn` components comes to.
+ *
+ * The space in force decides, and where it was not read the COUNT is the next
+ * best witness: three numbers are RGB and four are CMYK on every device space
+ * there is. One number is the ambiguous case — grey in a device space, but the
+ * strength of a colorant in a Separation, where 1 is the ink at full and reads
+ * dark — so a lone component is only taken where the space said what it means.
+ *
+ * @param nums  The components, as the page or a shading's function states them.
+ * @param space The space in force, where it was read.
+ * @returns The colour as 6 hex digits, or `undefined` where the numbers do not
+ *          say what colour they are.
+ */
+export function spaceColor(
+  nums: ReadonlyArray<number>,
+  space: ColorSpaceInfo | undefined,
+): string | undefined {
+  if (nums.length === 0) return undefined;
+  // §8.6.5.6/§8.6.5.7 — a CIE space's numbers mean what its own transform makes
+  // of them, which is not what the same numbers mean to a device space.
+  if (space?.cie) {
+    const [r, g, b] = cieToSrgb(space.cie, nums);
+    return rgbHex(r, g, b);
   }
-  if (c.length === 3) return hex255(c[0]! * 255, c[1]! * 255, c[2]! * 255);
-  const g = (c[0] ?? 0) * 255;
-  return hex255(g, g, g);
+  const kind = space?.kind ?? (nums.length === 3 ? 'rgb' : nums.length === 4 ? 'cmyk' : undefined);
+  switch (kind) {
+    case 'rgb':
+      return nums.length >= 3 ? rgbHex(nums[0]!, nums[1]!, nums[2]!) : undefined;
+    case 'cmyk':
+      return nums.length >= 4 ? cmykHex(nums[0]!, nums[1]!, nums[2]!, nums[3]!) : undefined;
+    case 'gray':
+      return grayHex(nums[0]!);
+    case 'tint':
+      // §8.6.6.4/§8.6.6.5 — a tint is a strength of colorant, and the space's
+      // own transform says what colour that strength comes to. Run it and the
+      // answer is in the alternate space; devicen.pdf's three triangles are
+      // green, blue and red.
+      if (space?.tint) {
+        const out = space.tint.transform(nums);
+        const hex = spaceColor(out, space.tint.alternate);
+        if (hex !== undefined) return hex;
+      }
+      // Without a transform this can run, the honest reading is "this much
+      // ink", which is the inverse of a grey level.
+      return grayHex(1 - Math.max(...nums));
+    default:
+      return undefined;
+  }
+}
+
+// PDF colour operands (0..1 per channel) → a 6-hex sRGB string.
+function clamp255(v: number): number {
+  return Math.max(0, Math.min(255, Math.round(v * 255)));
+}
+function hex2(v: number): string {
+  return clamp255(v).toString(16).padStart(2, '0');
+}
+
+/** Three channels, each 0..1, as 6 upper-case hex digits. */
+export function rgbHex(r: number, g: number, b: number): string {
+  return (hex2(r) + hex2(g) + hex2(b)).toUpperCase();
+}
+
+/** One grey level, 0..1, as 6 upper-case hex digits. */
+export function grayHex(v: number): string {
+  return rgbHex(v, v, v);
+}
+
+/** §8.6.4.4 — four inks, each 0..1, as 6 upper-case hex digits. */
+export function cmykHex(c: number, m: number, y: number, k: number): string {
+  return rgbHex((1 - c) * (1 - k), (1 - m) * (1 - k), (1 - y) * (1 - k));
 }
 
 function hex255(r: number, g: number, b: number): string {
@@ -302,8 +418,14 @@ export function buildAlphaMap(file: PdfFile, resources: PdfDict | undefined): Ma
   for (const [name, value] of states) {
     const state = file.resolve(value);
     if (!(state instanceof Map)) continue;
+    // §8.4.5 — a `gs` changes ONLY the parameters its dictionary names, so what
+    // matters here is which ones it names, not only what they say.
+    // alphatrans.pdf sets `ca` 0.5 in one state and then names a second that
+    // carries `/CA` alone; read as "everything this one does not say is the
+    // default", the second turned the fill opaque again and the blue square it
+    // draws at half opacity buried what it covers.
     const ca = file.resolve(state.get('ca') ?? PDF_NULL);
-    const alpha = typeof ca === 'number' && ca >= 0 && ca < 1 ? ca : undefined;
+    const alpha = typeof ca === 'number' && ca >= 0 && ca <= 1 ? ca : undefined;
     // `/BM` may be a name or an array of them, best first (§11.3.5).
     const bm = file.resolve(state.get('BM') ?? PDF_NULL);
     const first = Array.isArray(bm) ? file.resolve(bm[0] ?? PDF_NULL) : bm;
@@ -318,24 +440,33 @@ export function buildAlphaMap(file: PdfFile, resources: PdfDict | undefined): Ma
         : undefined;
     // §11.6.5 `/SMask` — a mask that varies the paint's opacity from place to
     // place, out of another group's luminosity or alpha. `/None` is the absence
-    // of one.
-    const smask = file.resolve(state.get('SMask') ?? PDF_NULL);
-    const masked = smask instanceof Map;
-    if (alpha === undefined && !darkens && blend === undefined && !masked) continue;
+    // of one, and STATING it takes a mask off.
+    const statesMask = state.has('SMask');
+    const masked = statesMask
+      ? file.resolve(state.get('SMask') ?? PDF_NULL) instanceof Map
+      : undefined;
+    if (alpha === undefined && mode === undefined && !statesMask) continue;
     out.set(name, {
       ...(alpha !== undefined ? { alpha } : {}),
-      ...(darkens ? { darkens: true } : {}),
+      ...(mode !== undefined ? { statesBlend: true, darkens } : {}),
       ...(blend !== undefined ? { blend } : {}),
-      ...(masked ? { masked: true } : {}),
+      ...(masked !== undefined ? { masked } : {}),
     });
   }
   return out;
 }
 
-/** What a `/ExtGState` says about paint that the reconstruction can carry. */
+/**
+ * What a `/ExtGState` says about paint that the reconstruction can carry.
+ *
+ * Every field is absent when the state does not NAME that parameter, because a
+ * `gs` leaves what it does not name alone (§8.4.5).
+ */
 export interface GsPaint {
-  /** §11.6.4.4 `/ca` — the constant fill alpha, when it is below 1. */
+  /** §11.6.4.4 `/ca` — the constant fill alpha, where the state names one. */
   readonly alpha?: number;
+  /** §11.3.5 — whether `/BM` is named at all, since naming `/Normal` ends a blend. */
+  readonly statesBlend?: boolean;
   /** §11.3.5 `/BM` — the paint only darkens, so what it covers shows through. */
   readonly darkens?: boolean;
   /**
@@ -346,6 +477,7 @@ export interface GsPaint {
   /**
    * §11.6.5 `/SMask` — the paint's opacity varies from place to place, out of
    * another group's luminosity or alpha. Nothing downstream has a mask like it.
+   * `false` where the state names `/None`, which takes a mask off.
    */
   readonly masked?: boolean;
 }

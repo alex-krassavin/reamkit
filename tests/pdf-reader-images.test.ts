@@ -422,7 +422,92 @@ describe('image reconstruction end-to-end (E-PDF EP6)', () => {
     const shaded = Ream.parse(new TextEncoder().encode(pdf));
     expect(shaded.losses.some((l) => /bare-shading/u.test(l.detail))).toBe(true);
   });
+
+  it('fills the clip a bare axial `sh` painted with its gradient', () => {
+    // §8.7.4.3 — a `sh` paints the CLIP, so where there is one the clip's own
+    // path is the shape and the shading is its fill. 131 of the pdf.js corpus's
+    // `sh` paints are axial, and every one of them was dropped: S2.pdf's colour
+    // bars are drawn this way and came back blank.
+    const doc = Ream.parse(shPdf('20 20 60 60 re W n /Sh0 sh'));
+    expect(doc.losses.some((l) => /bare-shading/u.test(l.detail))).toBe(false);
+    const shape = doc.flow.body.find((b) => b.kind === 'shape' && b.shape.fill.kind === 'gradient');
+    expect(shape).toBeDefined();
+    if (shape?.kind !== 'shape' || shape.shape.fill.kind !== 'gradient') return;
+    const stops = (shape.shape.fill.gradient?.stops ?? []).map((s) => s.colorHex);
+    expect(stops[0]).toBe('FF0000');
+    expect(stops[stops.length - 1]).toBe('0000FF');
+  });
+
+  it('takes a shading colour through the space the shading STATES', () => {
+    // §8.6.6.4 — a `/Separation` function gives ONE number and that number is a
+    // strength of ink, not a grey level. Read by component count,
+    // function_based_shading_cmyk.pdf's spot-colour square came back a
+    // black-to-white ramp where the file paints a warm red.
+    const spot =
+      '[/Separation /Spot /DeviceCMYK << /FunctionType 2 /Domain [0 1] ' +
+      '/C0 [0 0 0 0] /C1 [0 1 1 0] /N 1 >>]';
+    const doc = Ream.parse(
+      shPdf(
+        '20 20 60 60 re W n /Sh0 sh',
+        `/ShadingType 2 /ColorSpace ${spot} /Coords [0 0 100 0] ` +
+          '/Function << /FunctionType 2 /Domain [0 1] /C0 [0] /C1 [1] /N 1 >>',
+      ),
+    );
+    const shape = doc.flow.body.find((b) => b.kind === 'shape' && b.shape.fill.kind === 'gradient');
+    expect(shape).toBeDefined();
+    if (shape?.kind !== 'shape' || shape.shape.fill.kind !== 'gradient') return;
+    const stops = (shape.shape.fill.gradient?.stops ?? []).map((s) => s.colorHex);
+    // Tint 0 is no ink at all — the paper — and tint 1 is the colorant at full,
+    // which through this transform is CMYK 0 1 1 0: red.
+    expect(stops[0]).toBe('FFFFFF');
+    expect(stops[stops.length - 1]).toBe('FF0000');
+  });
+
+  it('does not paint a bare `sh` the page put under a soft mask', () => {
+    // §11.6.5 — under a soft mask the clip is not the extent: the MASK is, and
+    // none is applied here. bug1721218_reduced.pdf fades a shadow out beneath
+    // the router it draws, and filled to its clip that shadow arrived as a
+    // solid black blob beside the picture.
+    const gs = '/ExtGState << /G0 << /SMask << /S /Luminosity /G 5 0 R >> >> >>';
+    const doc = Ream.parse(shPdf('/G0 gs 20 20 60 60 re W n /Sh0 sh', undefined, gs));
+    expect(doc.flow.body.some((b) => b.kind === 'shape' && b.shape.fill.kind === 'gradient')).toBe(
+      false,
+    );
+    expect(doc.losses.some((l) => /bare-shading/u.test(l.detail))).toBe(true);
+  });
 });
+
+/**
+ * A one-page PDF whose content stream is `content` and whose `/Sh0` shading is
+ * `shading` — the smallest file that exercises the `sh` operator.
+ */
+function shPdf(content: string, shading?: string, extraResources = ''): Uint8Array {
+  const sh =
+    shading ??
+    '/ShadingType 2 /ColorSpace /DeviceRGB /Coords [0 0 100 0] ' +
+      '/Function << /FunctionType 2 /Domain [0 1] /C0 [1 0 0] /C1 [0 0 1] /N 1 >>';
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Contents 4 0 R ' +
+      `/Resources << /Shading << /Sh0 << ${sh} >> >> ${extraResources} >> >>`,
+    `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+    // The mask's own group, referenced by the /SMask above; never walked when
+    // the paint it masks is skipped.
+    '<< /Type /XObject /Subtype /Form /BBox [0 0 100 100] /Length 0 >>\nstream\n\nendstream',
+  ];
+  let pdf = '%PDF-1.7\n';
+  const offsets: Array<number> = [];
+  objects.forEach((body, i) => {
+    offsets.push(pdf.length);
+    pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+  });
+  const xref = pdf.length;
+  pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+  for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+  pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`;
+  return new TextEncoder().encode(pdf);
+}
 
 /** Read back a PNG this suite made: its size and its pixels as RGBA. */
 function decodePngPixels(png: Uint8Array): { width: number; height: number; rgba: Uint8Array } {

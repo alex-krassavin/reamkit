@@ -10,7 +10,7 @@
 // font falls back to Latin-1 with a half-em advance so text still surfaces.
 
 import { Lexer } from './lexer';
-import { cieToSrgb } from './cie-color';
+import { cmykHex, grayHex, rgbHex, spaceColor } from './shading';
 import type { ColorSpaceInfo, GsPaint } from './shading';
 import type { TextMarkup } from './annot-draw';
 import type { ShapeGradient } from '@/core/vector';
@@ -328,6 +328,16 @@ export interface ShadingPaint {
   readonly ctm: Matrix;
   /** §8.5.4 — the clip the paint was bounded by, which is its whole extent. */
   readonly clip?: ClipRegion;
+  /**
+   * §11.6.5 `/SMask` — the paint was faded from place to place. For a `sh` that
+   * is not a detail: the mask is the SHAPE, and the clip is only its outer
+   * bound.
+   */
+  readonly masked?: boolean;
+  /** §11.6.4.4 `/ca` — how opaque the paint is, when the page asked for less. */
+  readonly alpha?: number;
+  /** §11.3.5 `/BM` — the paint only DARKENS what it covers. */
+  readonly darkens?: boolean;
   /** Where it fell in the painting order (§8.5.3). */
   readonly order: number;
 }
@@ -469,51 +479,15 @@ function spaceOf(
   }
 }
 
-/**
- * §8.6.8 — the colour a run of `sc` / `scn` components comes to.
- *
- * The space in force decides, and where it was not read the COUNT is the next
- * best witness: three numbers are RGB and four are CMYK on every device space
- * there is. One number is the ambiguous case — grey in a device space, but the
- * strength of a colorant in a Separation, where 1 is the ink at full and reads
- * dark — so a lone component is only taken where the space said what it means.
- */
-function componentColor(
+/** §8.6.8 — the colour a run of `sc` / `scn` operands comes to (see `spaceColor`). */
+function colorOfOperands(
   operands: ReadonlyArray<PdfValue>,
   space: ColorSpaceInfo | undefined,
 ): string | undefined {
-  const nums = operands.filter((o): o is number => typeof o === 'number');
-  if (nums.length === 0) return undefined;
-  // §8.6.5.6/§8.6.5.7 — a CIE space's numbers mean what its own transform makes
-  // of them, which is not what the same numbers mean to a device space.
-  if (space?.cie) {
-    const [r, g, b] = cieToSrgb(space.cie, nums);
-    return rgbHex(r, g, b);
-  }
-  const kind = space?.kind ?? (nums.length === 3 ? 'rgb' : nums.length === 4 ? 'cmyk' : undefined);
-  switch (kind) {
-    case 'rgb':
-      return nums.length >= 3 ? rgbHex(nums[0]!, nums[1]!, nums[2]!) : undefined;
-    case 'cmyk':
-      return nums.length >= 4 ? cmykHex(nums[0]!, nums[1]!, nums[2]!, nums[3]!) : undefined;
-    case 'gray':
-      return grayHex(nums[0]!);
-    case 'tint':
-      // §8.6.6.4/§8.6.6.5 — a tint is a strength of colorant, and the space's
-      // own transform says what colour that strength comes to. Run it and the
-      // answer is in the alternate space; devicen.pdf's three triangles are
-      // green, blue and red.
-      if (space?.tint) {
-        const out = space.tint.transform(nums);
-        const hex = componentColor(out, space.tint.alternate);
-        if (hex !== undefined) return hex;
-      }
-      // Without a transform this can run, the honest reading is "this much
-      // ink", which is the inverse of a grey level.
-      return grayHex(1 - Math.max(...nums));
-    default:
-      return undefined;
-  }
+  return spaceColor(
+    operands.filter((o): o is number => typeof o === 'number'),
+    space,
+  );
 }
 
 export function interpretContent(
@@ -910,7 +884,7 @@ export function interpretContent(
           state.fillPattern = state.fillGradient ? undefined : named;
           break;
         }
-        const hex = componentColor(operands, state.fillSpace);
+        const hex = colorOfOperands(operands, state.fillSpace);
         if (hex !== undefined) {
           state.fillColor = hex;
           state.fillGradient = undefined;
@@ -922,7 +896,7 @@ export function interpretContent(
       case 'SC': {
         const last = operands[operands.length - 1];
         if (last instanceof PdfName) break;
-        const hex = componentColor(operands, state.strokeSpace);
+        const hex = colorOfOperands(operands, state.strokeSpace);
         if (hex !== undefined) state.strokeColor = hex;
         break;
       }
@@ -988,6 +962,9 @@ export function interpretContent(
             name: nm.value,
             ctm: state.ctm,
             ...(state.clip ? { clip: state.clip } : {}),
+            ...(state.softMask ? { masked: true } : {}),
+            ...(state.fillAlpha < 1 ? { alpha: state.fillAlpha } : {}),
+            ...(state.fillDarkens ? { darkens: true } : {}),
             order: paintOrder++,
           });
         }
@@ -997,16 +974,20 @@ export function interpretContent(
         paintPath(false, false); // end the path with no paint
         break;
       case 'gs': {
-        // §8.4.5 — a named graphics state, of which the constant fill alpha
-        // and the blend mode are read here. A band meant to be seen through is
-        // not the same mark as one that hides what it covers.
+        // §8.4.5 — a named graphics state, of which the constant fill alpha,
+        // the blend mode and the soft mask are read here. A band meant to be
+        // seen through is not the same mark as one that hides what it covers.
         const nm = operands[operands.length - 1];
-        if (nm instanceof PdfName) {
-          const paint = alphas.get(nm.value);
-          state.fillAlpha = paint?.alpha ?? 1;
-          state.fillDarkens = paint?.darkens ?? false;
-          state.blendMode = paint?.blend;
-          state.softMask = paint?.masked ?? false;
+        const paint = nm instanceof PdfName ? alphas.get(nm.value) : undefined;
+        if (paint) {
+          // §8.4.5 — only what the state NAMES; the rest of the graphics state
+          // is the caller's and stands.
+          if (paint.alpha !== undefined) state.fillAlpha = paint.alpha;
+          if (paint.statesBlend === true) {
+            state.fillDarkens = paint.darkens ?? false;
+            state.blendMode = paint.blend;
+          }
+          if (paint.masked !== undefined) state.softMask = paint.masked;
         }
         break;
       }
@@ -1130,23 +1111,6 @@ function isRtl(cp: number): boolean {
     (cp >= 0xfb1d && cp <= 0xfdff) || // Hebrew + Arabic Presentation Forms-A
     (cp >= 0xfe70 && cp <= 0xfeff) // Arabic Presentation Forms-B
   );
-}
-
-// PDF colour operands (0..1 per channel) → a 6-hex sRGB string.
-function clamp255(v: number): number {
-  return Math.max(0, Math.min(255, Math.round(v * 255)));
-}
-function hex2(v: number): string {
-  return clamp255(v).toString(16).padStart(2, '0');
-}
-function rgbHex(r: number, g: number, b: number): string {
-  return (hex2(r) + hex2(g) + hex2(b)).toUpperCase();
-}
-function grayHex(v: number): string {
-  return rgbHex(v, v, v);
-}
-function cmykHex(c: number, m: number, y: number, k: number): string {
-  return rgbHex((1 - c) * (1 - k), (1 - m) * (1 - k), (1 - y) * (1 - k));
 }
 
 function matrixFromOperands(operands: ReadonlyArray<PdfValue>): Matrix {
