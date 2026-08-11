@@ -1011,3 +1011,53 @@ describe('the layers a file turns off (§8.11)', () => {
     expect(wordsOf('/BaseState /OFF /ON [6 0 R]')).toEqual(['Shown', 'Hidden']);
   });
 });
+
+describe('a composite font that says nothing about its characters (§9.10.2)', () => {
+  /** A page showing two codes in a Type0 font with neither /ToUnicode nor a program. */
+  const speechless = (): Uint8Array => {
+    const content = 'BT /C0 12 Tf 20 100 Td <000D0007> Tj ET';
+    const objects = [
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R ' +
+        '/Resources << /Font << /C0 5 0 R >> >> >>',
+      `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+      '<< /Type /Font /Subtype /Type0 /BaseFont /AAAAAA+Sub /Encoding /Identity-H ' +
+        '/DescendantFonts [6 0 R] >>',
+      '<< /Type /Font /Subtype /CIDFontType2 /BaseFont /AAAAAA+Sub /DW 500 ' +
+        '/CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> ' +
+        '/FontDescriptor 7 0 R >>',
+      '<< /Type /FontDescriptor /FontName /AAAAAA+Sub /Flags 4 /ItalicAngle 0 ' +
+        '/FontBBox [0 0 1000 1000] /Ascent 750 /Descent -250 /CapHeight 700 /StemV 80 >>',
+    ];
+    let pdf = '%PDF-1.7\n';
+    const offsets: Array<number> = [];
+    objects.forEach((body, i) => {
+      offsets.push(pdf.length);
+      pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+    });
+    const xref = pdf.length;
+    pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+    for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+    pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`;
+    return new TextEncoder().encode(pdf);
+  };
+
+  it('reports the text as unrecoverable rather than returning a blank page', () => {
+    // issue11131_reduced.pdf is one line, "Operating Account Consolidated
+    // Statement", in a subset whose program carries neither `cmap` nor `post`.
+    // Its codes are glyph indices with no way back to text, and decoded to the
+    // empty string every run was dropped where it stood — the page came back
+    // blank with nothing said about it.
+    const doc = Ream.parse(speechless());
+    expect(
+      doc.losses.some((l) => l.severity === 'dropped' && /map to no character/u.test(l.detail)),
+    ).toBe(true);
+  });
+
+  it('still leaves the replacement character out of the words', () => {
+    const doc = Ream.parse(speechless());
+    const text = JSON.stringify(doc.flow.body);
+    expect(text).not.toContain('�');
+  });
+});

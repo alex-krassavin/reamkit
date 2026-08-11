@@ -68,8 +68,19 @@ export function buildContentFont(file: PdfFile, fontDict: PdfDict): ContentFont 
 
   // §9.6.2.2 — a standard face need not carry a `/Widths` array at all, and
   // where it does not the reader's own metrics are the only ones there are.
+  // §9.10.2 — a composite font that states NOTHING about its characters: no
+  // `/ToUnicode`, and a program whose `cmap` is missing or unreadable. Its
+  // codes are glyph indices and there is no way back to text from them.
+  // Decoded to the empty string every run in it was dropped where it stood and
+  // the page came back blank with nothing said about it —
+  // issue11131_reduced.pdf is one line, "Operating Account Consolidated
+  // Statement", in a subset whose program carries neither `cmap` nor `post`.
+  // Marked unreadable it is stripped from the output just the same, and the
+  // reconstruction reports it (see `./layout`).
+  const speechless = isType0 && unicode.size === 0;
   const decodeOne = (code: number): string =>
-    unicode.get(code) ?? (bytesPerCode === 1 ? String.fromCharCode(code) : '');
+    unicode.get(code) ??
+    (bytesPerCode === 1 ? String.fromCharCode(code) : speechless ? '\uFFFD' : '');
   const simple = simpleWidths(file, fontDict, decodeOne);
   // §9.6.5 — a Type 3 font states its widths in GLYPH space, which its
   // `/FontMatrix` maps to text space; every other font states them in
@@ -86,10 +97,7 @@ export function buildContentFont(file: PdfFile, fontDict: PdfDict): ContentFont 
     ...(name !== undefined ? { name } : {}),
     // Map each code to Unicode; an unmapped code in a simple font falls back to
     // its Latin-1 character, a composite font's to nothing (no sensible guess).
-    decode: (codes) =>
-      codes
-        .map((c) => readable(unicode.get(c) ?? (bytesPerCode === 1 ? String.fromCharCode(c) : '')))
-        .join(''),
+    decode: (codes) => codes.map((c) => readable(decodeOne(c))).join(''),
     width,
     ...style,
   };
