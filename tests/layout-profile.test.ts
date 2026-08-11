@@ -39,6 +39,25 @@ function lineHeightOf(profile?: LayoutProfile): number {
   return Math.abs(lines[2]!.baselineY - lines[1]!.baselineY);
 }
 
+describe('the sfnt tags a font program may wear', () => {
+  it("reads a font whose tag is Apple's `true`, not 0x00010000", () => {
+    // Both are TrueType. Rejected outright, the reader could not read the
+    // program a file embedded and so could not say what its glyphs were:
+    // complex_ttf_font.pdf, PDFJS-7562-reduced.pdf and
+    // arial_unicode_en_cidfont.pdf each carry one.
+    const apple = new Uint8Array(FONTS.regular);
+    apple[0] = 0x74;
+    apple[1] = 0x72;
+    apple[2] = 0x75;
+    apple[3] = 0x65;
+    expect(parseTtf(apple).unitsPerEm).toBe(parseTtf(FONTS.regular).unitsPerEm);
+  });
+
+  it('still refuses bytes that are no font at all', () => {
+    expect(() => parseTtf(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]))).toThrow(/Not a TrueType/u);
+  });
+});
+
 describe('layoutProfile — metric-derived leading (E-PARITY FP2)', () => {
   const parsed = parseTtf(FONTS.regular);
   const upem = parsed.unitsPerEm;
