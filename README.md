@@ -195,10 +195,15 @@ and a clean two-column split). It lifts back the text (via each font's
 glyph names its `/Encoding` states — which is all a PDF from TeX gives), the
 font programs themselves, raster images (JPEG verbatim; PNG/Flate/LZW/CCITT-fax
 and **JBIG2** decoded and re-encoded), `/Link` hyperlinks, form-XObject content,
-annotation appearances, colour set through a named space, and the page's
-artwork: filled / stroked / gradient shapes,
-clipping paths, tiling patterns, constant alpha, and the Type 3 glyphs that are
-drawings rather than letters. It reads modern compressed files (cross-reference
+annotation appearances (drawing one itself where the file supplies none),
+colour set through a named space — device, CIE (`CalGray`, `Lab`) or a
+`Separation`/`DeviceN` run through its own tint transform — and the page's
+artwork: filled / stroked / gradient shapes, clipping paths, tiling patterns,
+stencil image masks, constant alpha, and the Type 3 glyphs that are drawings
+rather than letters. It honours the layers a file turns off (§8.11 optional
+content) and the box it says to show (`/CropBox`), and it decides for itself
+whether a file is a document to re-flow or a page to keep — a paper is mostly
+lines, a form is mostly marks — which `pdfLayout` overrides. It reads modern compressed files (cross-reference
 + object streams) and encrypted ones (RC4 / AES — the user password is passed to
 `Ream.parse(bytes, { password })`, defaulting to the permissions-only case); a
 filter it does not carry can be handed to it through

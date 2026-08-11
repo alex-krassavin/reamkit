@@ -574,6 +574,49 @@ describe('docx writer (E-DOCX D2 skeleton)', () => {
   });
 });
 
+describe('the package is a document XML can carry', () => {
+  it('drops the characters XML forbids instead of writing a file nothing opens', () => {
+    // XML 1.0 §2.2 — everything under U+0020 but tab, newline and return is
+    // forbidden, and no escape exists: `&#2;` is as ill-formed as the byte.
+    // They arrive from a subset font that states neither /ToUnicode nor
+    // /Encoding /Differences: a subset's codes start at 1, 2, 3, and the
+    // last-resort Latin-1 reading turns a page of prose into control
+    // characters. TAMReview.pdf did exactly that, and LibreOffice answered
+    // "source file could not be loaded" — the whole conversion lost over it.
+    const { doc: flow } = readDocx(buildDocxFromBody('<w:p><w:r><w:t>x</w:t></w:r></w:p>'));
+    const para = flow.body.find((b) => b.kind === 'paragraph');
+    if (para?.kind !== 'paragraph') throw new Error('expected a paragraph');
+    const run = para.paragraph.runs[0]!;
+    const dirty = {
+      ...flow,
+      body: [
+        {
+          ...para,
+          paragraph: {
+            ...para.paragraph,
+            runs: [{ ...run, text: 'a\u0002b\u0003c\td\u001fe' }],
+          },
+        },
+      ],
+    } as unknown as FlowDoc;
+    const bytes = writeDocx(dirty).bytes;
+    const xml = decode(OpcPackage.open(bytes).getMainDocument().data);
+    expect(xml).toContain('ab');
+    // Checked by code point rather than a pattern: a regular expression that
+    // matches control characters has to contain them.
+    expect(
+      [...xml].some((ch) => {
+        const cp = ch.codePointAt(0)!;
+        return cp < 0x20 && cp !== 0x9 && cp !== 0xa && cp !== 0xd;
+      }),
+    ).toBe(false);
+    // A tab is one of the three XML does admit, and survives.
+    expect(xml).toContain('c\td');
+    // And the package parses as XML, which is the whole point.
+    expect(() => readDocx(bytes)).not.toThrow();
+  });
+});
+
 describe('the package carries no picture the format cannot show', () => {
   it('drops a JPEG 2000 picture and says why, rather than writing a hole', () => {
     // §15.2.14 lists the image parts a WordprocessingML package may carry, and
@@ -783,5 +826,66 @@ describe('an attribute is written only where the schema admits its value', () =>
     const path = /<a:path w="(\d+)" h="(\d+)"/u.exec(xml);
     expect(path).not.toBeNull();
     expect(Number(path![1]) / Number(path![2])).toBeCloseTo(246.478 / 15.024, 3);
+  });
+});
+
+describe('what a reader can actually draw', () => {
+  const shapeDoc = (pathWidth: number, pathHeight: number): FlowDoc =>
+    ({
+      body: [
+        {
+          kind: 'shape',
+          shape: {
+            width: 300,
+            height: 1,
+            geometry: {
+              kind: 'custom',
+              custom: {
+                pathWidth,
+                pathHeight,
+                commands: [
+                  { cmd: 'move', x: 0, y: 0 },
+                  { cmd: 'line', x: pathWidth, y: pathHeight },
+                ],
+              },
+            },
+            fill: { kind: 'none' },
+            line: { width: 1, colorHex: 'FF0000', fill: 'solid' },
+            paragraphProperties: {},
+          },
+        },
+      ],
+      sections: [],
+      resources: { images: new Map() },
+    }) as unknown as FlowDoc;
+
+  it('never states a path space with no size in it (§20.1.9.15)', () => {
+    // `a:path @w/@h` is the coordinate space the shape's extent is mapped
+    // onto, so a zero is a space nothing can be mapped into: a horizontal rule
+    // written `h="0"` is in the package and on no page.
+    const flat = decode(OpcPackage.open(writeDocx(shapeDoc(570, 0)).bytes).getMainDocument().data);
+    expect(flat).toContain('<a:path w="570" h="1">');
+    const upright = decode(
+      OpcPackage.open(writeDocx(shapeDoc(0, 570)).bytes).getMainDocument().data,
+    );
+    expect(upright).toContain('<a:path w="1" h="570">');
+  });
+
+  it('writes run properties in the order CT_RPr states them (§17.3.2.28)', () => {
+    // The element is a SEQUENCE and a reader may drop what arrives out of it:
+    // with `w:u` ahead of `w:rFonts`, LibreOffice ignored the underline.
+    const src = buildDocxFromBody(
+      '<w:p><w:r><w:rPr><w:rFonts w:ascii="Arial"/><w:b/><w:u w:val="wave" w:color="4B99FF"/>' +
+        '<w:sz w:val="20"/></w:rPr><w:t>marked</w:t></w:r></w:p>',
+    );
+    const { doc } = readDocx(src);
+    const xml = decode(OpcPackage.open(writeDocx(doc).bytes).getMainDocument().data);
+    const rPr = /<w:rPr>.*?<\/w:rPr>/u.exec(xml)?.[0] ?? '';
+    const order = ['w:rFonts', 'w:b', 'w:sz', 'w:u'];
+    const at = order.map((tag) => rPr.indexOf(`<${tag}`));
+    expect(at.every((i) => i >= 0)).toBe(true);
+    expect([...at].sort((a, b) => a - b)).toEqual(at);
+    // And the underline keeps the colour it was given.
+    expect(rPr).toContain('w:color="4B99FF"');
   });
 });

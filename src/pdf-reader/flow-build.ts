@@ -16,11 +16,13 @@ import type {
 } from '@/core/document-model';
 import type { FlowDoc } from '@/core/ir/flow';
 import type { FontRegistry } from '@/core/font';
-import type { Loss } from '@/core/ir';
+import type { Loss, Pt } from '@/core/ir';
 
 import type { PdfImage } from './images';
 import type { PdfPage } from './document';
 import type { PdfVector } from './vector';
+import type { TextMarkup } from './annot-draw';
+import type { TextRun } from './content';
 import { ResourceStore, pt } from '@/core/ir';
 import { EMPTY_STYLE_SHEET, resolveBodyStyles } from '@/core/style-cascade';
 
@@ -77,6 +79,8 @@ export interface TextSpan {
   readonly bold?: boolean;
   /** §9.8.1 — the face was a slanted one. */
   readonly italic?: boolean;
+  /** §12.5.6.10 — a text-markup annotation marks these words. */
+  readonly markup?: TextMarkup;
 }
 
 /**
@@ -88,6 +92,7 @@ export interface TextSpan {
 export function paragraphFromRuns(
   spans: ReadonlyArray<TextSpan>,
   outlineLevel?: number,
+  placement?: Pick<ParagraphProperties, 'alignment' | 'spacingBefore'>,
 ): BodyElement {
   const merged: Array<{
     text: string;
@@ -98,6 +103,7 @@ export function paragraphFromRuns(
     outline?: TextOutline;
     bold?: boolean;
     italic?: boolean;
+    markup?: TextMarkup;
   }> = [];
   for (const s of spans) {
     const last = merged[merged.length - 1];
@@ -110,7 +116,8 @@ export function paragraphFromRuns(
       last.outline?.colorHex === s.outline?.colorHex &&
       last.outline?.widthPt === s.outline?.widthPt &&
       last.bold === s.bold &&
-      last.italic === s.italic
+      last.italic === s.italic &&
+      sameMarkup(last.markup, s.markup)
     ) {
       last.text += s.text;
     } else
@@ -123,6 +130,7 @@ export function paragraphFromRuns(
         ...(s.outline !== undefined ? { outline: s.outline } : {}),
         ...(s.bold !== undefined ? { bold: s.bold } : {}),
         ...(s.italic !== undefined ? { italic: s.italic } : {}),
+        ...(s.markup !== undefined ? { markup: s.markup } : {}),
       });
   }
   const runs = merged
@@ -133,7 +141,13 @@ export function paragraphFromRuns(
     runs[0]!.text = runs[0]!.text.replace(/^ /, '');
     runs[runs.length - 1]!.text = runs[runs.length - 1]!.text.replace(/ $/, '');
   }
-  const properties: ParagraphProperties = outlineLevel !== undefined ? { outlineLevel } : {};
+  // §17.3.1 — how the page SET it, beside what it says: a PDF states no
+  // alignment and no paragraph spacing, and both are read back off where the
+  // lines were placed (see `layout.ts`).
+  const properties: ParagraphProperties = {
+    ...(outlineLevel !== undefined ? { outlineLevel } : {}),
+    ...placement,
+  };
   return {
     kind: 'paragraph',
     paragraph: {
@@ -157,11 +171,33 @@ export function paragraphFromRuns(
             ...(r.outline !== undefined ? { textOutline: r.outline } : {}),
             ...(r.bold ? { bold: true } : {}),
             ...(r.italic ? { italic: true } : {}),
+            // §12.5.6.10 — a highlight, an underline or a strikeout stated
+            // ABOUT these words rather than painted among them, so it re-sets
+            // with them: §17.3.2.32 `w:shd`, §17.3.2.40 `w:u`, §17.3.2.37
+            // `w:strike`.
+            ...(r.markup?.highlightHex !== undefined
+              ? { shadingColorHex: r.markup.highlightHex }
+              : {}),
+            ...(r.markup?.underline !== undefined ? { underline: r.markup.underline } : {}),
+            ...(r.markup?.underlineHex !== undefined
+              ? { underlineColorHex: r.markup.underlineHex }
+              : {}),
+            ...(r.markup?.strike === true ? { strike: true } : {}),
           },
           ...(r.href ? { href: r.href } : {}),
         })),
     },
   };
+}
+
+/** Whether two runs are marked the same way, so they may join into one. */
+function sameMarkup(a: TextMarkup | undefined, b: TextMarkup | undefined): boolean {
+  return (
+    a?.highlightHex === b?.highlightHex &&
+    a?.underline === b?.underline &&
+    a?.underlineHex === b?.underlineHex &&
+    a?.strike === b?.strike
+  );
 }
 
 /**
@@ -175,6 +211,7 @@ export function imageBlock(
   alt?: string,
   frame?: PageFrame,
   zOrder?: number,
+  behind = false,
 ): BodyElement {
   const resource = resources.put(image.bytes);
   // §20.4.2.3 — anchored where the page placed it, for the same reason a lifted
@@ -185,6 +222,7 @@ export function imageBlock(
     frame !== undefined
       ? {
           wrap: 'none',
+          ...(behind ? { behind: true } : {}),
           ...(zOrder !== undefined ? { zOrder } : {}),
           posH: { relativeFrom: 'page', offsetPt: pt(image.x - frame.left) },
           posV: {
@@ -200,6 +238,14 @@ export function imageBlock(
       resource,
       width: pt(image.widthPt),
       height: pt(image.heightPt),
+      // §20.1.7.6 — a turn is stated in sixtieth-thousandths of a degree, and
+      // clockwise, which is the other way round from the page's own axis.
+      ...(image.rotationDeg !== undefined
+        ? { rotation60k: Math.round(-image.rotationDeg * 60000) }
+        : {}),
+      // §20.1.8.55 — the box above is what the clip left showing, so the source
+      // must be cut to match it or the whole picture squeezes into it.
+      ...(image.crop ? { crop: image.crop } : {}),
       paragraphProperties: {},
       ...(alt ? { altText: alt } : {}),
     },
@@ -281,7 +327,12 @@ export function dedupeLosses(losses: ReadonlyArray<Loss>): Array<Loss> {
  * a paragraph: 22060_A1_01_Plans.pdf is one A3 sheet of vectors, and stacking
  * its forty-nine paths one under another spilled it onto a second page.
  */
-export function shapeBlock(v: PdfVector, frame?: PageFrame, zOrder?: number): BodyElement {
+export function shapeBlock(
+  v: PdfVector,
+  frame?: PageFrame,
+  zOrder?: number,
+  behind = false,
+): BodyElement {
   const w = v.maxX - v.minX;
   const h = v.maxY - v.minY;
   const fx = (x: number): number => x - v.minX;
@@ -337,15 +388,22 @@ export function shapeBlock(v: PdfVector, frame?: PageFrame, zOrder?: number): Bo
   // §20.4.2.3 — anchored to the PAGE at the position it was drawn at, y flipped
   // from PDF's upward axis.
   //
-  // Not `behind`: a path is not always under the pictures. 22060_A1_01_Plans.pdf
-  // backs its legend with a white box painted OVER a floor plan, and forced
-  // behind it, the plan and the title block read straight through the legend.
-  // `zOrder` carries the order the page painted in, which is the only thing
-  // that decides this.
+  // `behind` is about the TEXT, and `zOrder` about the other marks: a legend's
+  // white box still covers the floor plan it backs, because both are behind and
+  // the order the page painted them in still ranks them. What `behind` decides
+  // is whether artwork may cover WORDS, and in a flowing reading it may not —
+  // there the words have moved and the artwork has not, so anything over them
+  // covers text it never covered. annotation-tx3.pdf is a form field filled
+  // pale blue with four lines typed in it, and the fill buried all four.
+  //
+  // §11.3.5 also puts a mark that only DARKENS behind the text wherever it is
+  // read: no anchor blends, so a highlighter over its words would bury them,
+  // and under them it comes to the same picture.
   const float: FloatAnchor | undefined =
     frame !== undefined
       ? {
           wrap: 'none',
+          ...(behind || v.darkens === true ? { behind: true } : {}),
           ...(zOrder !== undefined ? { zOrder } : {}),
           posH: { relativeFrom: 'page', offsetPt: pt(v.minX - frame.left) },
           posV: { relativeFrom: 'page', offsetPt: pt(Math.max(0, frame.top - v.maxY)) },
@@ -401,6 +459,111 @@ export function sectionFromPdfPages(pages: ReadonlyArray<PdfPage>): SectionPrope
     margins: { top: pt(0), right: pt(0), bottom: pt(0), left: pt(0) },
     headers: [],
     footers: [],
+  };
+}
+
+/**
+ * The margins the SOURCE used, measured off where its words actually sit.
+ *
+ * A PDF states none — text is placed anywhere on the MediaBox — so the reader
+ * used to leave them at zero rather than invent an inch. But the words
+ * themselves say where the margin was: the leftmost glyph on the page is the
+ * left margin, and reflowing inside it keeps the measure the author set instead
+ * of running the text from edge to edge.
+ *
+ * Measured on the MEDIAN page rather than the extreme one, so a single full-
+ * bleed rule or a page number in the corner does not collapse the margin for
+ * the whole document, and clamped so a strange page cannot leave no text area
+ * at all.
+ *
+ * @param section  The section the page box gave, or `undefined`.
+ * @param shown    Each page as it is shown, for its own width and height.
+ * @param pageRuns Each page's runs, already placed on the shown page.
+ * @returns The section with measured margins, or `section` when nothing is
+ *          measurable.
+ */
+/** What the measure gives back, so the widest line still fits when re-set. */
+const SLACK = 0.01;
+
+/** How far a face's ascender stands above its baseline, as a fraction of the size. */
+const ASCENDER = 0.8;
+
+/** And its descender below — the two together are a little over one em. */
+const DESCENDER = 0.22;
+
+export function withMeasuredMargins(
+  section: SectionProperties | undefined,
+  shown: ReadonlyArray<{ width: number; height: number }>,
+  pageRuns: ReadonlyArray<ReadonlyArray<TextRun>>,
+): SectionProperties | undefined {
+  if (!section?.pageSize) return section;
+  const width = section.pageSize.width as number;
+  const height = section.pageSize.height as number;
+  const lefts: Array<number> = [];
+  const rights: Array<number> = [];
+  const tops: Array<number> = [];
+  const bottoms: Array<number> = [];
+  pageRuns.forEach((runs, i) => {
+    const page = shown[i];
+    if (!page || runs.length === 0) return;
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+    // The faces of the topmost and bottommost lines, for the room their
+    // ascenders and descenders take beyond the baseline.
+    let topSize = 0;
+    let bottomSize = 0;
+    for (const r of runs) {
+      if (!Number.isFinite(r.x) || !Number.isFinite(r.y)) continue;
+      minX = Math.min(minX, r.x);
+      maxX = Math.max(maxX, r.endX);
+      if (r.y < minY) {
+        minY = r.y;
+        bottomSize = r.fontSizePt;
+      }
+      if (r.y > maxY) {
+        maxY = r.y;
+        topSize = r.fontSizePt;
+      }
+    }
+    if (!Number.isFinite(minX) || !Number.isFinite(minY)) return;
+    lefts.push(minX);
+    rights.push(page.width - maxX);
+    // Runs carry a BASELINE, and a margin is to the top of the LINE.
+    //
+    // Measured to the baseline, every converted PDF came back a whole ascender
+    // too low: on annotation-stamp.pdf the word "Stamp" slid under the stamp
+    // anchored above it, and the same shift put a label inside its own drawing
+    // on four more files of the corpus. The reader cannot know which face the
+    // layout will re-set the line in, so the ascender is estimated at four
+    // fifths of the size — near enough for the faces documents use, and wrong
+    // by a fraction of a line where it is wrong at all, instead of by a line.
+    tops.push(page.height - maxY - topSize * ASCENDER);
+    bottoms.push(minY - bottomSize * DESCENDER);
+  });
+  if (lefts.length === 0) return section;
+  const median = (xs: Array<number>): number => {
+    const s = [...xs].sort((a, b) => a - b);
+    return s[Math.floor(s.length / 2)] ?? 0;
+  };
+  // Never more than a third of the sheet, never negative: a margin that eats
+  // the text area is worse than none.
+  const clamp = (v: number, span: number): Pt => pt(Math.max(0, Math.min(v, span / 3)));
+  return {
+    ...section,
+    margins: {
+      left: clamp(median(lefts), width),
+      // The right margin gives back a little of what it measured. The page was
+      // set in faces this reader does not have, and re-setting it in
+      // substitutes cannot come out narrower everywhere — so a measure exactly
+      // as wide as the widest line wraps that line's last word onto the next.
+      // basicapi.pdf's contents line runs 504.5pt across a 504.5pt measure, and
+      // its page number came back at the head of the line below.
+      right: clamp(median(rights) - width * SLACK, width),
+      top: clamp(median(tops), height),
+      bottom: clamp(median(bottoms), height),
+    },
   };
 }
 

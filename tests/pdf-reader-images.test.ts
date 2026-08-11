@@ -13,6 +13,7 @@ import { buildTinyPng } from './fixtures/build-png';
 import { Ream } from '@/core/converter/ream';
 import { detectImageFormat, prepareImage } from '@/core/images';
 import { PdfFile } from '@/pdf-reader/document';
+import { collectPageImages } from '@/pdf-reader/images';
 import { decodePdfImage } from '@/pdf-reader/image-decode';
 import { encodePng } from '@/core/png-encode';
 import { PdfHexString, dict, name, stream } from '@/pdf/objects';
@@ -394,5 +395,240 @@ describe('image reconstruction end-to-end (E-PDF EP6)', () => {
     const pdf = await Ream.parse(docxWithImage()).convert('pdf', { fonts: FONTS });
     const doc = Ream.parse(pdf);
     expect(doc.losses.some((l) => /vector/i.test(l.detail))).toBe(true);
+  });
+});
+
+/** Read back a PNG this suite made: its size and its pixels as RGBA. */
+function decodePngPixels(png: Uint8Array): { width: number; height: number; rgba: Uint8Array } {
+  const view = new DataView(png.buffer, png.byteOffset, png.byteLength);
+  let at = 8;
+  let width = 0;
+  let height = 0;
+  let channels = 4;
+  const parts: Array<Uint8Array> = [];
+  while (at + 8 <= png.length) {
+    const len = view.getUint32(at);
+    const type = String.fromCharCode(...png.subarray(at + 4, at + 8));
+    const body = png.subarray(at + 8, at + 8 + len);
+    if (type === 'IHDR') {
+      width = view.getUint32(at + 8);
+      height = view.getUint32(at + 12);
+      channels = { 0: 1, 2: 3, 4: 2, 6: 4 }[body[9] as 0 | 2 | 4 | 6];
+    } else if (type === 'IDAT') {
+      parts.push(body);
+    } else if (type === 'IEND') {
+      break;
+    }
+    at += 12 + len;
+  }
+  const joined = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let off = 0;
+  for (const p of parts) {
+    joined.set(p, off);
+    off += p.length;
+  }
+  const raw = unzlibSync(joined);
+  // Every scanline this suite writes carries filter 0 (None).
+  const rgba = new Uint8Array(width * height * 4);
+  const stride = width * channels;
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const src = y * (stride + 1) + 1 + x * channels;
+      const dst = (y * width + x) * 4;
+      if (channels >= 3) {
+        rgba[dst] = raw[src]!;
+        rgba[dst + 1] = raw[src + 1]!;
+        rgba[dst + 2] = raw[src + 2]!;
+        rgba[dst + 3] = channels === 4 ? raw[src + 3]! : 255;
+      } else {
+        rgba[dst] = raw[src]!;
+        rgba[dst + 1] = raw[src]!;
+        rgba[dst + 2] = raw[src]!;
+        rgba[dst + 3] = channels === 2 ? raw[src + 1]! : 255;
+      }
+    }
+  }
+  return { width, height, rgba };
+}
+
+describe('§8.9.6.2 — a stencil mask, and §8.9.7 — an image written into the stream', () => {
+  /** A one-page file: `content` its stream, extra objects appended after it. */
+  const page = (
+    content: string,
+    extra: ReadonlyArray<string>,
+    streams: ReadonlyMap<number, Uint8Array>,
+  ): Uint8Array => {
+    const bytes: Array<number> = [];
+    const push = (t: string): void => {
+      for (const ch of t) bytes.push(ch.charCodeAt(0) & 0xff);
+    };
+    const objects = [
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Contents 4 0 R ' +
+        '/Resources << /XObject << /Im 5 0 R >> >> >>',
+      `<< /Length ${String(content.length)} >>`,
+      ...extra,
+    ];
+    push('%PDF-1.7\n');
+    const offsets: Array<number> = [];
+    objects.forEach((body, i) => {
+      offsets.push(bytes.length);
+      push(`${String(i + 1)} 0 obj\n${body}\n`);
+      const data =
+        i === 3 ? Uint8Array.from([...content].map((c) => c.charCodeAt(0))) : streams.get(i + 1);
+      if (data) {
+        push('stream\n');
+        for (const b of data) bytes.push(b);
+        push('\nendstream\n');
+      }
+      push('endobj\n');
+    });
+    const xref = bytes.length;
+    push(`xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`);
+    for (const off of offsets) push(`${String(off).padStart(10, '0')} 00000 n \n`);
+    push(
+      `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`,
+    );
+    return Uint8Array.from(bytes);
+  };
+
+  /** The one image such a page carries, decoded to its PNG pixels. */
+  const pixels = (pdf: Uint8Array): { width: number; height: number; rgba: Uint8Array } => {
+    const file = PdfFile.parse(pdf);
+    const { images } = collectPageImages(file, file.pages()[0]!);
+    expect(images).toHaveLength(1);
+    return decodePngPixels(images[0]!.bytes);
+  };
+
+  it('paints a stencil in the page’s own fill colour, clear elsewhere', () => {
+    // §8.9.6.2 — a sample of 0 paints, 1 leaves the page alone. Two pixels
+    // across, one row: paint, then leave.
+    const mask = Uint8Array.from([0b0100_0000]);
+    const pdf = page(
+      '1 0 0 rg 0 0 100 100 cm /Im Do',
+      [
+        '<< /Type /XObject /Subtype /Image /Width 2 /Height 1 /ImageMask true ' +
+          '/BitsPerComponent 1 /Length 1 >>',
+      ],
+      new Map([[5, mask]]),
+    );
+    const { width, rgba } = pixels(pdf);
+    expect(width).toBe(2);
+    // Painted: the fill colour, opaque. Not painted: clear.
+    expect([...rgba.slice(0, 4)]).toEqual([255, 0, 0, 255]);
+    expect(rgba[7]).toBe(0);
+  });
+
+  it('lets /Decode [1 0] say the OTHER bit paints', () => {
+    const mask = Uint8Array.from([0b0100_0000]);
+    const pdf = page(
+      '0 0 1 rg 0 0 100 100 cm /Im Do',
+      [
+        '<< /Type /XObject /Subtype /Image /Width 2 /Height 1 /ImageMask true ' +
+          '/Decode [1 0] /BitsPerComponent 1 /Length 1 >>',
+      ],
+      new Map([[5, mask]]),
+    );
+    const { rgba } = pixels(pdf);
+    expect(rgba[3]).toBe(0);
+    expect([...rgba.slice(4, 8)]).toEqual([0, 0, 255, 255]);
+  });
+
+  it('MEASURES an inline image rather than hunting for EI in its bytes', () => {
+    // §8.9.7 — the data is binary and may hold `EI` itself. Three grey pixels
+    // whose bytes are exactly 'E', 'I' and a space: searching for the keyword
+    // would cut this image off at its first pixel.
+    const pdf = page('0 0 100 100 cm BI /W 3 /H 1 /BPC 8 /CS /G ID EI  EI', [], new Map());
+    const { width, rgba } = pixels(pdf);
+    expect(width).toBe(3);
+    expect([rgba[0], rgba[4], rgba[8]]).toEqual([0x45, 0x49, 0x20]);
+  });
+
+  it('takes an inline image’s abbreviated filter name', () => {
+    // /AHx is ASCIIHexDecode: three bytes written as six hex digits.
+    const real = page(
+      '0 0 100 100 cm BI /W 3 /H 1 /BPC 8 /CS /G /F /AHx ID 0080ff> EI',
+      [],
+      new Map(),
+    );
+    const { rgba } = pixels(real);
+    expect([rgba[0], rgba[4], rgba[8]]).toEqual([0x00, 0x80, 0xff]);
+  });
+  it('reads /BlackIs1, which says which bit the fax filter hands on', () => {
+    // §7.4.6 — the decoder codes black as 1; false (the default) means the
+    // black pixel LEAVES as a 0, and true means it leaves as a 1, which
+    // DeviceGray then reads as white. images_1bit_grayscale.pdf carries the
+    // same picture twice, once encoded each way, and read without the flag the
+    // second came back white on black.
+    //
+    // One all-white 8-pixel row, Group 4: the white-run code for 8 is 10011,
+    // then the EOFB. Under BlackIs1 the same bits mean the row is black.
+    const g4 = Uint8Array.from([0b1001_1000, 0b0000_0001, 0b0000_0000]);
+    const shot = (blackIs1: boolean): number => {
+      const pdf = page(
+        '0 0 100 100 cm /Im Do',
+        [
+          '<< /Type /XObject /Subtype /Image /Width 8 /Height 1 /ColorSpace /DeviceGray ' +
+            '/BitsPerComponent 1 /Filter /CCITTFaxDecode /DecodeParms << /K -1 /Columns 8 ' +
+            `/Rows 1 /BlackIs1 ${blackIs1 ? 'true' : 'false'} >> /Length ${String(g4.length)} >>`,
+        ],
+        new Map([[5, g4]]),
+      );
+      return pixels(pdf).rgba[0]!;
+    };
+    expect(shot(false)).toBe(255);
+    expect(shot(true)).toBe(0);
+  });
+  it('reads a Lab image, and an Indexed palette whose base is one', () => {
+    // §8.6.5.8 — `L*` 0..100 and `a*`/`b*` over the stated range, against the
+    // stated white. issue10339_reduced.pdf paints two grids of blue swatches
+    // through an Indexed palette whose base is one, and read as anything else
+    // the page came back blank.
+    //
+    // Two 8-bit pixels: pure white (L*=100, a*=b*=0) and mid grey (L*≈54).
+    const lab = Uint8Array.from([255, 128, 128, 138, 128, 128]);
+    const pdf = page(
+      '0 0 100 100 cm /Im Do',
+      [
+        '<< /Type /XObject /Subtype /Image /Width 2 /Height 1 /BitsPerComponent 8 ' +
+          '/ColorSpace [/Lab << /WhitePoint [0.9505 1 1.089] /Range [-128 127 -128 127] >>] ' +
+          `/Length ${String(lab.length)} >>`,
+      ],
+      new Map([[5, lab]]),
+    );
+    const { rgba } = pixels(pdf);
+    // White stays white; the mid grey is neutral and close to sRGB's middle.
+    expect([...rgba.slice(0, 3)]).toEqual([255, 255, 255]);
+    expect(rgba[4]).toBe(rgba[5]);
+    expect(rgba[5]).toBe(rgba[6]);
+    expect(rgba[4]).toBeGreaterThan(110);
+    expect(rgba[4]).toBeLessThan(150);
+  });
+
+  it('maps an Indexed image through /Decode, which gives INDEX values', () => {
+    // §8.9.5.2 — an Indexed image's decode default is `[0 2^bpc − 1]`, so the
+    // sample IS the index unless the file says otherwise.
+    // issue10339_reduced.pdf draws its two grids from one palette, the second
+    // through `/Decode [255 0]`, and read without it the two came back
+    // identical instead of mirrored.
+    const shot = (decode: string): Array<number> => {
+      const pdf = page(
+        '0 0 100 100 cm /Im Do',
+        [
+          '<< /Type /XObject /Subtype /Image /Width 2 /Height 1 /BitsPerComponent 8 ' +
+            '/ColorSpace [/Indexed /DeviceRGB 1 <FF000000FF00>] ' +
+            `${decode} /Length 2 >>`,
+        ],
+        new Map([[5, Uint8Array.from([0, 255])]]),
+      );
+      const { rgba } = pixels(pdf);
+      return [rgba[0]!, rgba[1]!, rgba[4]!, rgba[5]!];
+    };
+    // The samples run the width of the 8-bit range, as an Indexed image's do:
+    // 0 is the palette's first entry (red) and 255 its last (green).
+    expect(shot('')).toEqual([255, 0, 0, 255]);
+    // …and a decode that runs the other way swaps them.
+    expect(shot('/Decode [255 0]')).toEqual([0, 255, 255, 0]);
   });
 });

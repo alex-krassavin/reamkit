@@ -14,22 +14,25 @@ import {
   paragraphFromRuns,
   sectionFromPdfPages,
   shapeBlock,
+  withMeasuredMargins,
 } from './flow-build';
-import { displayOf, placeVectors } from './display';
+import { displayOf, placeRuns, placeVectors } from './display';
 import { collectEmbeddedFonts } from './embedded-fonts';
 import { collectPageImages } from './images';
 import { collectPageVectors } from './vector';
+import { UNMAPPED, endedParagraph } from './layout';
+import { markDrawnRules } from './text-rules';
 import { readStructTree } from './struct-tree';
 import { extractPageText } from './text';
 import type { BodyElement, Table, TableCell, TableRow } from '@/core/document-model';
-import type { Pt } from '@/core/ir';
+import type { Loss, Pt } from '@/core/ir';
 
 import type { TextRun } from './content';
 import type { PdfFile } from './document';
 import type { Reconstruction, TextSpan } from './flow-build';
 import type { PdfImage } from './images';
 import type { StructNode } from './struct-tree';
-import { ResourceStore, pt } from '@/core/ir';
+import { FEATURES, ResourceStore, pt } from '@/core/ir';
 
 // Printable width assumed for a synthesized table grid (6.5"). The structure
 // tree carries no column widths, so the PROPORTIONS come from where the glyphs
@@ -57,10 +60,33 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
   if (!root) return undefined;
 
   const pages = file.pages();
+  // §14.11.1 — the pages as they are SHOWN, and every run placed on them. The
+  // tree says what the words ARE; where they sit is still the page's to say,
+  // and it is the only witness of the margins the author set.
+  const shown = pages.map((page) => displayOf(page));
+  const placedRuns = pages.map((page, i) => placeRuns(extractPageText(file, page), shown[i]!));
+  // A PDF has no underline: it draws a thin bar under the words, and the tree
+  // says nothing about it. Read onto the runs before they are gathered, so it
+  // travels with them, and the bar itself is not placed a second time.
+  const vectorLosses: Array<Loss> = [];
+  const pageVectors = pages.map((page, i) => {
+    // A white box drawn over a picture is what HIDES it, so the paths are
+    // filtered against the pictures already lifted off the same page.
+    const covered = collectPageImages(file, page).images.map((img) => ({
+      minX: img.x,
+      minY: img.y,
+      maxX: img.x + img.widthPt,
+      maxY: img.y + img.heightPt,
+    }));
+    const lifted = collectPageVectors(file, page, covered);
+    vectorLosses.push(...lifted.losses);
+    return placeVectors(lifted.vectors, shown[i]!);
+  });
+  const ruled = placedRuns.map((runs, i) => markDrawnRules(runs, pageVectors[i] ?? []));
   // Per page: MCID → its runs, in show order (runs carry any hyperlink, EP8).
-  const pageRuns = pages.map((page) => {
+  const pageRuns = ruled.map(({ runs }) => {
     const byMcid = new Map<number, Array<TextRun>>();
-    for (const run of extractPageText(file, page)) {
+    for (const run of runs) {
       if (run.mcid === undefined) continue;
       const list = byMcid.get(run.mcid);
       if (list) list.push(run);
@@ -68,8 +94,15 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
     }
     return byMcid;
   });
-  const runsOfMcid = (page: number, mcid: number): Array<TextRun> =>
-    pageRuns[page]?.get(mcid) ?? [];
+  // Every run the tree actually reached, for the check at the end: a tree that
+  // reaches almost none of a page's words is not a description of this
+  // document's text.
+  const claimed = new Set<TextRun>();
+  const runsOfMcid = (page: number, mcid: number): Array<TextRun> => {
+    const runs = pageRuns[page]?.get(mcid) ?? [];
+    for (const run of runs) claimed.add(run);
+    return runs;
+  };
 
   // Per page: the lifted images, indexed by their owning MCID (a /Figure's).
   const resources = new ResourceStore();
@@ -105,28 +138,146 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
     const spans: Array<TextSpan> = [];
     node.mcids.forEach(({ page, mcid }, i) => {
       if (i > 0) spans.push({ text: ' ' });
-      for (const run of runsOfMcid(page, mcid)) {
-        spans.push({
-          text: run.text,
-          sizePt: run.fontSizePt,
-          // Black is the default; carrying it would put a colour on every run.
-          ...(run.colorHex !== '000000' ? { colorHex: run.colorHex } : {}),
-          ...(run.fontName !== undefined ? { fontName: run.fontName } : {}),
-          ...(run.outlineHex !== undefined
-            ? { outline: { colorHex: run.outlineHex, widthPt: pt(run.outlineWidthPt ?? 1) } }
-            : {}),
-          ...(run.bold ? { bold: true } : {}),
-          ...(run.italic ? { italic: true } : {}),
-          ...(run.href !== undefined ? { href: run.href } : {}),
-        });
-      }
+      for (const run of runsOfMcid(page, mcid)) spans.push(spanOf(run));
     });
     return spans;
   };
 
+  /** One run as the span that carries everything the page showed it with. */
+  const spanOf = (run: TextRun): TextSpan => ({
+    // §9.10.2 — a glyph the face maps to no character says "no text here", and
+    // writing it on would put bytes no reader can show into the document.
+    text: run.text.replaceAll(UNMAPPED, ''),
+    sizePt: run.fontSizePt,
+    // Black is the default; carrying it would put a colour on every run.
+    ...(run.colorHex !== '000000' ? { colorHex: run.colorHex } : {}),
+    ...(run.fontName !== undefined ? { fontName: run.fontName } : {}),
+    ...(run.outlineHex !== undefined
+      ? { outline: { colorHex: run.outlineHex, widthPt: pt(run.outlineWidthPt ?? 1) } }
+      : {}),
+    ...(run.bold ? { bold: true } : {}),
+    ...(run.italic ? { italic: true } : {}),
+    ...(run.markup !== undefined ? { markup: run.markup } : {}),
+    ...(run.href !== undefined ? { href: run.href } : {}),
+  });
+
   // All text under a node, in reading order (a list item's label + body).
   const collectText = (node: StructNode): string =>
     squash([textOf(node), ...node.children.map(collectText)].join(' '));
+
+  // Where each emitted paragraph was SET on the page, for the space between
+  // them: the tree says what the words are and never how far apart they stood.
+  const setting = new Map<BodyElement, Setting>();
+
+  /** The topmost and bottommost baseline under a node, and its largest face. */
+  function baselinesOf(node: StructNode): Setting | undefined {
+    let top: number | undefined;
+    let bottom: number | undefined;
+    let size = 0;
+    const visit = (n: StructNode): void => {
+      for (const { page, mcid } of n.mcids) {
+        for (const run of runsOfMcid(page, mcid)) {
+          if (top === undefined || run.y > top) top = run.y;
+          if (bottom === undefined || run.y < bottom) bottom = run.y;
+          if (run.fontSizePt > size) size = run.fontSizePt;
+        }
+      }
+      for (const child of n.children) visit(child);
+    };
+    visit(node);
+    return top !== undefined && bottom !== undefined && size > 0
+      ? { top, bottom, size }
+      : undefined;
+  }
+
+  /**
+   * The element's own lines, gathered into the paragraphs they were SET as.
+   *
+   * A tree names elements, not lines, and a producer may put a whole page under
+   * one: annotation-underline.pdf marks every glyph on its page with the same
+   * id, so a heading, a blank line and a body line came back as one paragraph
+   * and re-wrapped into a single run-together line. The page still says where
+   * one ended — a line stopping well short of the measure stopped because its
+   * author stopped it — and that is the rule the heuristic reading already uses
+   * ({@link endedParagraph}). A properly tagged paragraph's inner lines all
+   * reach the measure, so nothing there changes.
+   */
+  function settingsOf(node: StructNode): Array<{ spans: Array<TextSpan>; set: Setting }> {
+    const spans = spansOf(node);
+    const lines = linesOf(node);
+    if (lines.length < 2) {
+      const set = baselinesOf(node);
+      return set ? [{ spans, set }] : [];
+    }
+    const measure = {
+      left: Math.min(...lines.map((l) => l.x)),
+      right: Math.max(...lines.map((l) => l.x + l.width)),
+    };
+    const groups: Array<Array<(typeof lines)[number]>> = [];
+    let prev: (typeof lines)[number] | undefined;
+    for (const line of lines) {
+      const gap = prev === undefined ? 0 : prev.y - line.y;
+      const opened = prev !== undefined && gap > line.fontSize * 1.5;
+      if (groups.length === 0 || opened || (prev && endedParagraph(prev, line, measure))) {
+        groups.push([]);
+      }
+      groups[groups.length - 1]!.push(line);
+      prev = line;
+    }
+    return groups.map((g) => ({
+      spans: g.flatMap((l, i) => (i > 0 ? [{ text: ' ' }, ...l.spans] : [...l.spans])),
+      set: {
+        top: g[0]!.y,
+        bottom: g[g.length - 1]!.y,
+        size: Math.max(...g.map((l) => l.fontSize)),
+      },
+    }));
+  }
+
+  /** The node's runs clustered onto the baselines they were shown on. */
+  function linesOf(
+    node: StructNode,
+  ): Array<{ y: number; x: number; width: number; fontSize: number; spans: Array<TextSpan> }> {
+    const rows: Array<{ y: number; size: number; runs: Array<TextRun> }> = [];
+    const visit = (n: StructNode): void => {
+      for (const { page, mcid } of n.mcids) {
+        for (const run of runsOfMcid(page, mcid)) {
+          if (run.angleDeg !== undefined) return;
+          // A superscript sits off the baseline it belongs to and is set
+          // SMALLER, so the tolerance has to come from the LINE's face and not
+          // the mark's: measured against its own 7pt, bug2013793.pdf's "240th"
+          // made a line of its own out of two raised "th"s and cut the
+          // paragraph in half around it.
+          const row = rows.find(
+            (r) => Math.abs(r.y - run.y) <= Math.max(r.size, run.fontSizePt) * 0.5,
+          );
+          if (row) {
+            row.runs.push(run);
+            row.size = Math.max(row.size, run.fontSizePt);
+            // The baseline is the one most of the line stands on, which is the
+            // lowest of them: a raised mark never lowers it.
+            row.y = Math.min(row.y, run.y);
+          } else rows.push({ y: run.y, size: run.fontSizePt, runs: [run] });
+        }
+      }
+      for (const child of n.children) visit(child);
+    };
+    visit(node);
+    return rows
+      .sort((a, b) => b.y - a.y)
+      .map(({ y, runs }) => {
+        const ordered = [...runs].sort((a, b) => a.x - b.x);
+        const x = Math.min(...ordered.map((r) => r.x));
+        return {
+          y,
+          x,
+          width: Math.max(...ordered.map((r) => r.endX)) - x,
+          fontSize: Math.max(...ordered.map((r) => r.fontSizePt)),
+          spans: ordered.map((r) => spanOf(r)),
+        };
+      })
+      .filter((l) => l.spans.some((sp) => sp.text.trim().length > 0));
+  }
 
   function emit(node: StructNode, out: Array<BodyElement>): void {
     if (node.type === 'Table') {
@@ -148,7 +299,11 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
     }
     if (node.children.length === 0) {
       if (textOf(node).length > 0) {
-        out.push(paragraphFromRuns(spansOf(node), headingLevel(node.type)));
+        for (const part of settingsOf(node)) {
+          const el = paragraphFromRuns(part.spans, headingLevel(node.type));
+          setting.set(el, part.set);
+          out.push(el);
+        }
       }
       return;
     }
@@ -216,6 +371,7 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
 
   const body: Array<BodyElement> = [];
   emit(root, body);
+  spaceParagraphs(body, setting, shown[0]?.height ?? 0);
   // Artwork sits UNDER the text the tree placed: `zOrder` starts below zero so
   // a lifted rule never covers the words it rules off.
   let zOrder = -1_000_000;
@@ -226,20 +382,15 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
   // text with no form under it at all. Those paths are lifted and anchored
   // where the page drew them, exactly as the untagged path does — the tree
   // supplies the reading order, the page supplies its own artwork.
-  pages.forEach((page, index) => {
+  imageLosses.push(...vectorLosses);
+  pages.forEach((_page, index) => {
     // §14.11.1/§14.11.2 — the page as it is SHOWN, corner and turn together.
-    const display = displayOf(page);
-    const frame = { left: 0, top: display.height };
-    const covered = (pageImages[index]?.images ?? []).map((img) => ({
-      minX: img.x,
-      minY: img.y,
-      maxX: img.x + img.widthPt,
-      maxY: img.y + img.heightPt,
-    }));
-    const lifted = collectPageVectors(file, page, covered);
-    imageLosses.push(...lifted.losses);
-    for (const v of placeVectors(lifted.vectors, display)) {
-      body.push(shapeBlock(v, frame, zOrder++));
+    const frame = { left: 0, top: shown[index]!.height };
+    const taken = ruled[index]?.consumed;
+    for (const v of pageVectors[index] ?? []) {
+      // A bar that became a run's underline is not also a bar on the page.
+      if (taken?.has(v) === true) continue;
+      body.push(shapeBlock(v, frame, zOrder++, true));
     }
   });
 
@@ -254,12 +405,39 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
   for (const { img } of orphans) body.push(imageBlock(img, resources));
 
   if (body.length === 0) return undefined;
+  // A tree that names words the page never marked describes nothing.
+  //
+  // annotation-choice-widget.pdf carries a structure tree and not one of its
+  // runs carries an MCID, so every node came back empty and the file converted
+  // to its list boxes with no text in them at all — while the artwork alone
+  // kept `body` non-empty, so the tagged reading still won. Marked content is
+  // what joins the tree to the page; where the join is missing the heuristic
+  // reading has the whole page to work from, and the words come back.
+  //
+  // Half, not all: a header, a footer and a page number are Artifacts by
+  // design and belong to no element, and a document is not untagged for
+  // leaving them out.
+  if (placedRuns.some((page) => page.some((r) => r.text.includes(UNMAPPED)))) {
+    imageLosses.push({
+      severity: 'dropped',
+      feature: FEATURES.text,
+      detail:
+        'some glyphs map to no character — the font states no /ToUnicode and its program says nothing either, so that text is unrecoverable',
+    });
+  }
+  const onPage = placedRuns.flat().reduce((n, r) => n + r.text.length, 0);
+  const reached = [...claimed].reduce((n, r) => n + r.text.length, 0);
+  if (onPage > 0 && reached * 2 < onPage) return undefined;
   return {
     doc: buildFlowDoc(
       body,
       resources,
-      sectionFromPdfPages(pages),
-      collectEmbeddedFonts(file, pages),
+      // A tagged reading re-sets the words exactly as an untagged one does, so
+      // it needs the same margins: measured off where the source put them.
+      // Without this every tagged PDF came back with its text against all four
+      // edges of the paper.
+      withMeasuredMargins(sectionFromPdfPages(pages), shown, placedRuns),
+      collectEmbeddedFonts(file, pages, imageLosses),
     ),
     losses: imageLosses,
   };
@@ -390,4 +568,65 @@ function squash(text: string): string {
 function headingLevel(type: string): number | undefined {
   const m = /^H([1-6])$/.exec(type);
   return m ? Number(m[1]) - 1 : undefined;
+}
+
+/** Where a tagged paragraph stood: its outer baselines and its largest face. */
+interface Setting {
+  /** The topmost baseline under the node, in page space (y up). */
+  readonly top: number;
+  /** The bottommost. */
+  readonly bottom: number;
+  /** The largest face any of its runs was shown in, in points. */
+  readonly size: number;
+}
+
+/**
+ * §17.3.1.33 `w:spacing` — the space the SOURCE left before each paragraph.
+ *
+ * A structure tree names the words and says nothing about how far apart they
+ * stood, so every tagged PDF came back at one flat leading: on
+ * annotation-polyline-polygon-without-appearance.pdf the two labels, set a
+ * third of a page apart above their own drawings, arrived as two lines
+ * touching. The page still says it — the gap between the last baseline of one
+ * paragraph and the first of the next, less the line it would have taken
+ * anyway. This is the rule the heuristic reading already uses, applied to the
+ * paragraphs the tree named.
+ *
+ * @param body       The body elements, in order; amended in place.
+ * @param setting    Where each paragraph was set, for those that were.
+ * @param pageHeight The shown page's height, which bounds any one gap.
+ */
+function spaceParagraphs(
+  body: Array<BodyElement>,
+  setting: Map<BodyElement, Setting>,
+  pageHeight: number,
+): void {
+  let prev: Setting | undefined;
+  body.forEach((el, i) => {
+    const here = setting.get(el);
+    if (!here) return;
+    // Only DOWN the page: a paragraph the tree put after one that stands below
+    // it is not spaced by the distance between them, it is out of order.
+    const gap = prev !== undefined ? prev.bottom - here.top : 0;
+    prev = here;
+    if (!(gap > 0)) return;
+    const opened = gap - here.size * 1.2;
+    // Under a third of a line is leading, not spacing.
+    if (!(opened > here.size * 0.3)) return;
+    if (el.kind !== 'paragraph') return;
+    // No one gap may take more than a third of the sheet: the tree is trusted
+    // for the ORDER of its paragraphs, and a gap larger than that is a page
+    // this reading has no other way to see.
+    const most = pageHeight > 0 ? pageHeight / 3 : here.size * 3;
+    body[i] = {
+      ...el,
+      paragraph: {
+        ...el.paragraph,
+        properties: {
+          ...el.paragraph.properties,
+          spacingBefore: pt(Math.min(opened, most)),
+        },
+      },
+    };
+  });
 }

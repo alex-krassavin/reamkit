@@ -24,3 +24,5 @@ corpus/.pixel-scout-*/
 corpus/.pdf-docx-*/
 corpus/.pdf-docx-run.log
 corpus/.fonts/
+corpus/.vs-lo.log
+corpus/.pairs/

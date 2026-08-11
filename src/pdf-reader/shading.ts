@@ -2,13 +2,21 @@
 // shape filled with a shading pattern (`/Pattern cs /Pn scn` … fill) is the
 // path-bounded case the interpreter captures; this resolves the page's
 // /Pattern resources into ShapeGradients keyed by resource name, evaluating the
-// shading's /Function (type 2 exponential, type 3 stitching, type 0 sampled) for
-// the colour stops. The bare `sh` operator (clip-bounded) is not captured.
+// shading's /Function (type 2 exponential, type 3 stitching, type 0 sampled, and
+// type 4 by running it through `./function`) for the colour stops. The bare `sh`
+// operator (clip-bounded) is not captured.
+//
+// The colour SPACES a page names are read here too, including the way out of a
+// `/Separation` or `/DeviceN` (§8.6.6.4): its tint transform, as something the
+// interpreter can call.
 
+import { readFunction } from './function';
+import type { CieSpace } from './cie-color';
+import type { PdfFunction } from './function';
 import type { GradientStop, ShapeGradient } from '@/core/vector';
 import type { PdfDict, PdfValue } from '@/pdf/objects';
 
-import type { PdfFile, PdfPage } from './document';
+import type { PdfFile } from './document';
 import { PDF_NULL, PdfName, PdfStream } from '@/pdf/objects';
 
 /**
@@ -19,12 +27,18 @@ import { PDF_NULL, PdfName, PdfStream } from '@/pdf/objects';
  * filled with `/Pattern cs /Pn scn`. The bare `sh` operator (clip-bounded) is
  * not captured.
  *
+ * @param file      The owning file.
+ * @param resources The resource dictionary in force — a page's, or the form or
+ *                  annotation appearance's own.
  * @returns A map from pattern resource name to its {@link ShapeGradient}.
  */
-export function buildShadingMap(file: PdfFile, page: PdfPage): Map<string, ShapeGradient> {
+export function buildShadingMap(
+  file: PdfFile,
+  resources: PdfDict | undefined,
+): Map<string, ShapeGradient> {
   const out = new Map<string, ShapeGradient>();
-  if (!page.resources) return out;
-  const patterns = file.get(page.resources, 'Pattern');
+  if (!resources) return out;
+  const patterns = file.get(resources, 'Pattern');
   if (!(patterns instanceof Map)) return out;
   for (const [nm, value] of patterns) {
     const pat = file.resolve(value);
@@ -85,9 +99,16 @@ function parseFunction(
     const span = d1 - d0 || 1;
     for (let i = 0; i < subs.length; i++) {
       const sub = parseFunction(file, subs[i]);
-      if (!sub || sub.length < 2) continue;
-      pushStop(stops, ((edges[i] ?? d0) - d0) / span, sub[0]!.colorHex);
-      pushStop(stops, ((edges[i + 1] ?? d1) - d0) / span, sub[sub.length - 1]!.colorHex);
+      if (!sub || sub.length === 0) continue;
+      // Each subfunction's own 0..1 laid onto the piece of the domain it holds
+      // — ALL of its stops, not just its ends. A subfunction may be a stitch
+      // itself, and its inner steps are the picture: issue10572.pdf stitches
+      // twelve copies of a green/blue pair whose `/Bounds [0.5 0.5]` makes a
+      // hard edge, and reduced to first-and-last each pair came back a smooth
+      // fade instead of two flat bands.
+      const lo = ((edges[i] ?? d0) - d0) / span;
+      const hi = ((edges[i + 1] ?? d1) - d0) / span;
+      for (const stop of sub) pushStop(stops, lo + stop.offset * (hi - lo), stop.colorHex);
     }
     return stops.length > 0 ? stops : undefined;
   }
@@ -95,8 +116,26 @@ function parseFunction(
   if (type === 0 && resolved instanceof PdfStream) {
     return sampleFunction(file, resolved);
   }
-  return undefined; // type 4 (PostScript calculator) — not evaluated
+  if (type === 4) {
+    // §7.10.5 — a program, not a table: the only way to a stop is to RUN it,
+    // which `./function` does. Sampled along the domain like any other curve.
+    const fn = readFunction(file, resolved);
+    if (!fn) return undefined;
+    const domain = numArray(file, dict.get('Domain')) ?? [0, 1];
+    const d0 = domain[0] ?? 0;
+    const d1 = domain[1] ?? 1;
+    const stops: Array<GradientStop> = [];
+    for (let s = 0; s < PS_STOPS; s++) {
+      const off = s / (PS_STOPS - 1);
+      pushStop(stops, off, colorOf(fn([d0 + off * (d1 - d0)])));
+    }
+    return stops.length > 0 ? stops : undefined;
+  }
+  return undefined;
 }
+
+/** How many places a type-4 gradient is sampled at along its domain. */
+const PS_STOPS = 16;
 
 // §7.10.2 sampled function — read the table and sample it at a few offsets.
 function sampleFunction(file: PdfFile, stream: PdfStream): Array<GradientStop> | undefined {
@@ -195,22 +234,72 @@ function pushStop(stops: Array<GradientStop>, offset: number, colorHex: string):
  * a green band at `ca` 0.6, meant to be read THROUGH: painted solid, the floor
  * plan under each band disappears.
  *
- * @param file The owning file.
- * @param page The page whose `/ExtGState` resources are wanted.
- * @returns Name → fill alpha, for the states that state one below 1.
+ * §11.3.5 `/BM` comes off the same dictionary. A blend nothing downstream can
+ * perform is still worth knowing: `Multiply` and `Darken` both let dark ink
+ * under the paint show through, which is what a highlighter IS, and a mark that
+ * only darkens belongs UNDER the words rather than over them.
+ *
+ * @param file      The owning file.
+ * @param resources The resource dictionary in force — a page's, or the form or
+ *                  annotation appearance's own, since `gs` resolves against
+ *                  whichever is current.
+ * @returns Name → the fill alpha and blend worth carrying, for the states that
+ *          state one.
  */
-export function buildAlphaMap(file: PdfFile, page: PdfPage): Map<string, number> {
-  const out = new Map<string, number>();
-  if (!page.resources) return out;
-  const states = file.get(page.resources, 'ExtGState');
+export function buildAlphaMap(file: PdfFile, resources: PdfDict | undefined): Map<string, GsPaint> {
+  const out = new Map<string, GsPaint>();
+  if (!resources) return out;
+  const states = file.get(resources, 'ExtGState');
   if (!(states instanceof Map)) return out;
   for (const [name, value] of states) {
     const state = file.resolve(value);
     if (!(state instanceof Map)) continue;
     const ca = file.resolve(state.get('ca') ?? PDF_NULL);
-    if (typeof ca === 'number' && ca >= 0 && ca < 1) out.set(name, ca);
+    const alpha = typeof ca === 'number' && ca >= 0 && ca < 1 ? ca : undefined;
+    // `/BM` may be a name or an array of them, best first (§11.3.5).
+    const bm = file.resolve(state.get('BM') ?? PDF_NULL);
+    const first = Array.isArray(bm) ? file.resolve(bm[0] ?? PDF_NULL) : bm;
+    const mode = first instanceof PdfName ? first.value : undefined;
+    const darkens = mode === 'Multiply' || mode === 'Darken';
+    // §11.3.5 — a mode that mixes two colours by a rule no anchored picture and
+    // no run property can express. `Normal` and `Compatible` are the absence of
+    // one; `Multiply` and `Darken` are carried as `darkens` and approximated.
+    const blend =
+      mode !== undefined && mode !== 'Normal' && mode !== 'Compatible' && !darkens
+        ? mode
+        : undefined;
+    // §11.6.5 `/SMask` — a mask that varies the paint's opacity from place to
+    // place, out of another group's luminosity or alpha. `/None` is the absence
+    // of one.
+    const smask = file.resolve(state.get('SMask') ?? PDF_NULL);
+    const masked = smask instanceof Map;
+    if (alpha === undefined && !darkens && blend === undefined && !masked) continue;
+    out.set(name, {
+      ...(alpha !== undefined ? { alpha } : {}),
+      ...(darkens ? { darkens: true } : {}),
+      ...(blend !== undefined ? { blend } : {}),
+      ...(masked ? { masked: true } : {}),
+    });
   }
   return out;
+}
+
+/** What a `/ExtGState` says about paint that the reconstruction can carry. */
+export interface GsPaint {
+  /** §11.6.4.4 `/ca` — the constant fill alpha, when it is below 1. */
+  readonly alpha?: number;
+  /** §11.3.5 `/BM` — the paint only darkens, so what it covers shows through. */
+  readonly darkens?: boolean;
+  /**
+   * §11.3.5 `/BM` — a blend NOTHING downstream can perform, named so the loss
+   * report can say which. `Normal` is no blend at all and is never named here.
+   */
+  readonly blend?: string;
+  /**
+   * §11.6.5 `/SMask` — the paint's opacity varies from place to place, out of
+   * another group's luminosity or alpha. Nothing downstream has a mask like it.
+   */
+  readonly masked?: boolean;
 }
 
 /**
@@ -223,23 +312,50 @@ export function buildAlphaMap(file: PdfFile, page: PdfPage): Map<string, number>
 export interface ColorSpaceInfo {
   readonly kind: 'gray' | 'rgb' | 'cmyk' | 'tint';
   readonly components: number;
+  /**
+   * §8.6.5.6/§8.6.5.7 — the CIE parameters, for a `CalGray` or `CalRGB` space.
+   * Its numbers look like a device space's and are not: they mean what comes
+   * out of this transform.
+   */
+  readonly cie?: CieSpace;
+  /**
+   * §8.6.6.4/§8.6.6.5 — for a `Separation` or `DeviceN`, the way OUT of it: the
+   * tint transform and the space its numbers land in. Absent where the file
+   * states a transform this cannot run, and then a tint is only "this much ink".
+   */
+  readonly tint?: {
+    readonly transform: PdfFunction;
+    readonly alternate: ColorSpaceInfo;
+  };
 }
 
-/** The spaces a page's `/ColorSpace` resources name, by name. */
-export function buildColorSpaceMap(file: PdfFile, page: PdfPage): Map<string, ColorSpaceInfo> {
+/**
+ * The spaces a `/ColorSpace` resource dictionary names, by name.
+ *
+ * @param file      The owning file.
+ * @param resources The resource dictionary in force.
+ * @returns Name → what the space comes to, for the spaces that are read.
+ */
+export function buildColorSpaceMap(
+  file: PdfFile,
+  resources: PdfDict | undefined,
+): Map<string, ColorSpaceInfo> {
   const out = new Map<string, ColorSpaceInfo>();
-  if (!page.resources) return out;
-  const spaces = file.get(page.resources, 'ColorSpace');
+  if (!resources) return out;
+  const spaces = file.get(resources, 'ColorSpace');
   if (!(spaces instanceof Map)) return out;
   for (const [name, value] of spaces) {
-    const info = colorSpaceInfo(file, file.resolve(value));
+    const info = colorSpaceAt(file, file.resolve(value), 0);
     if (info) out.set(name, info);
   }
   return out;
 }
 
+/** An alternate space may name another; this is where that stops. */
+const MAX_ALTERNATE = 4;
+
 /** What a colour space object comes to, or `undefined` for one not read. */
-function colorSpaceInfo(file: PdfFile, cs: PdfValue): ColorSpaceInfo | undefined {
+function colorSpaceAt(file: PdfFile, cs: PdfValue, depth: number): ColorSpaceInfo | undefined {
   if (cs instanceof PdfName) return byFamily(cs.value, 0);
   if (!Array.isArray(cs) || cs.length === 0) return undefined;
   const head = file.resolve(cs[0]!);
@@ -256,12 +372,60 @@ function colorSpaceInfo(file: PdfFile, cs: PdfValue): ColorSpaceInfo | undefined
     // image path's business; a bare `sc` into one is rare and left alone.
     return undefined;
   }
+  if (head.value === 'CalGray') {
+    // §8.6.5.6 — one number through one gamma, which is unambiguous.
+    //
+    // `CalRGB` is NOT read this way, though the file states it the same way.
+    // Its transform is well defined on paper and no two renderers agree on the
+    // chromatic adaptation at the end of it: calrgb.pdf's neutral column comes
+    // back light blue-grey from mutool, and neither adapting the stated white
+    // to D65 (Bradford or von Kries) nor ignoring the white reproduces that.
+    // Guessing at it moved the file 0.630 to 0.621 while making some of its
+    // pages worse, so it keeps the device reading until there is something to
+    // check an implementation against.
+    const params = file.resolve(cs[1] ?? PDF_NULL);
+    const cie = params instanceof Map ? cieParams(file, params, false) : undefined;
+    const base = { kind: 'gray' as const, components: 1 };
+    return cie ? { ...base, cie } : base;
+  }
   if (head.value === 'Separation' || head.value === 'DeviceN') {
     const names = file.resolve(cs[1] ?? PDF_NULL);
     const n = head.value === 'Separation' ? 1 : Array.isArray(names) ? names.length : 1;
+    // §8.6.6.4 — the space names its colorants, an ALTERNATE space, and the
+    // transform between them; run it and the tint is a colour rather than an
+    // amount of ink. devicen.pdf's three triangles are green, blue and red, and
+    // read as ink at full strength all three came back black.
+    const alternate =
+      depth < MAX_ALTERNATE
+        ? colorSpaceAt(file, file.resolve(cs[2] ?? PDF_NULL), depth + 1)
+        : undefined;
+    const transform = readFunction(file, cs[3]);
+    if (alternate && transform && alternate.kind !== 'tint') {
+      return { kind: 'tint', components: n, tint: { transform, alternate } };
+    }
     return { kind: 'tint', components: n };
   }
   return byFamily(head.value, 0);
+}
+
+/** §8.6.5.6/§8.6.5.7 — the white point, gamma and matrix a CIE space states. */
+function cieParams(file: PdfFile, params: PdfDict, rgb: boolean): CieSpace | undefined {
+  const nums = (v: PdfValue | undefined): Array<number> =>
+    Array.isArray(v)
+      ? v.map((x) => file.resolve(x)).filter((x): x is number => typeof x === 'number')
+      : [];
+  const white = nums(file.get(params, 'WhitePoint'));
+  if (white.length < 3 || !(white[1]! > 0)) return undefined;
+  const gammaRaw = file.get(params, 'Gamma');
+  const gamma = typeof gammaRaw === 'number' ? [gammaRaw] : nums(gammaRaw);
+  const matrix = nums(file.get(params, 'Matrix'));
+  return {
+    white: [white[0]!, white[1]!, white[2]!],
+    gamma: gamma.length > 0 ? gamma : rgb ? [1, 1, 1] : [1],
+    // §8.6.5.7 — the identity is the default, which is also what a matrix of
+    // the wrong length comes to.
+    ...(rgb ? { matrix: matrix.length === 9 ? matrix : [1, 0, 0, 0, 1, 0, 0, 0, 1] } : {}),
+  };
 }
 
 function byFamily(family: string, n: number): ColorSpaceInfo | undefined {

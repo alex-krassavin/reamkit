@@ -45,16 +45,31 @@ generic, refinement, symbol-dictionary, text and halftone regions, arithmetic
 and Huffman) — `/Link` URIs
 re-attached to the text, filled paths, stroked lines and shading-pattern
 gradients turned into shapes), colour set through a named space (§8.6.8 `cs` /
-`sc`, which is how every PDF a browser prints states it), along with clipping
-paths (§8.5.4 `W` / `W*`,
-applied to paths and pictures alike), tiling patterns (§8.7.3 — drawn as a
+`sc`, which is how every PDF a browser prints states it) — including the CIE
+spaces `CalGray` (§8.6.5.6) and `Lab` (§8.6.5.8), and a `Separation` or
+`DeviceN` run through its own tint transform (§8.6.6.4/§8.6.6.5), which needs
+all four kinds of PDF function (§7.10: sampled, exponential, stitching, and the
+type-4 PostScript calculator) — along with clipping
+paths (§8.5.4 `W` / `W*`, applied to paths and pictures alike, and carried into
+a turned picture's OWN axes), stencil image masks (§8.9.6.2, painted in the
+page's non-stroking colour), images written into the content stream (§8.9.7
+`BI` … `EI`), tiling patterns (§8.7.3 — drawn as a
 picture where they fill a shape, read as a tint at the tile's own density where
 they fill type), constant alpha (§11.6.4.4 `/ca` through the `gs` operator),
 Type 3 glyphs (§9.6.5 — content streams, drawn as the artwork they are),
 annotation appearance streams (§12.5.5, so a form field draws itself), the text
 render modes (§9.3.6 `Tr` — stroked type keeps its outline, and the invisible
-modes an OCR layer uses are marked rather than painted) and the page's own
-`/Rotate` (§14.11.1). Clip-bounded (`sh`) shadings are not read.
+modes an OCR layer uses are marked rather than painted), the box a viewer shows
+(§14.11.2 `/CropBox` — which sizes the page AND clips the marks outside it) and
+the page's own `/Rotate` (§14.11.1). A file's optional content is honoured
+(§8.11 — the layers its default configuration turns off stay off, on `/OC … BDC`
+marked content and on an XObject's own `/OC`, through an `/OCMD`'s policies).
+An annotation the file gives no `/AP` is drawn from its own properties (§12.5.5
+— Ink, Line, Square, Circle, Polygon, PolyLine, a text field's `/V` set in its
+`/DA`, and the text markups' `QuadPoints` applied to the words they cover). The
+built-in metrics of the 14 standard fonts (§9.6.2.2) stand in where a file
+embeds neither the face nor a `/Widths` array. Clip-bounded (`sh`) shadings are
+not read.
 
 **Output** — `convert('pdf')`, `convert('svg')` (a page-stack preview),
 `convert('html')` (flowed, needs no fonts), `convert('md')` (GitHub-Flavored
@@ -85,14 +100,18 @@ Absent, or throwing, the filter is reported unreadable by name rather than
 producing an empty document silently. FlateDecode, LZW, RunLength, ASCII85,
 ASCIIHex, CCITT, DCT, JPX and JBIG2 need nothing supplied.
 
-**Placed PDF reading (`Ream.parse(bytes, { pdfLayout: 'positional' })`)** — a PDF
-is read as a re-flowable document by default: paragraphs and tables in reading
-order, from the structure tree where the file has one. A form or a drawing is
-not that document — its rules, boxes and tints are placed absolutely, and text
-that flows beside them lines up with none of it. `'positional'` keeps the page:
-every line stands where its glyphs stand, beside the artwork. It has no reading
-order, no paragraphs and no tables, so use it for re-rendering a page and the
-default for anything converted onward to DOCX, Markdown or HTML.
+**Placed PDF reading (`Ream.parse(bytes, { pdfLayout: 'positional' })`)** — a
+conversion cannot have both readings at once: words that move cannot agree with
+rules that do not, so anchored artwork over reflowed text lines up with none of
+it. The FILE decides which it gets. A paper is mostly LINES with a rule or two
+between them and is read as a re-flowable document — paragraphs and tables in
+reading order, from the structure tree where the file has one. A form or a
+drawing is mostly MARKS (one form sets 28 numbered rows in 355 ruled boxes) and
+is read as a page: every line stands where its glyphs stand, beside the artwork,
+with no reading order, no paragraphs and no tables. The marks are counted
+against the baselines on the MEDIAN page, so one plan folded into a report does
+not make the report a plan; the reader records which reading it took and why.
+`pdfLayout: 'flow' | 'positional'` overrides the choice outright.
 
 **Markdown (`convert('md')`)** — GitHub-Flavored Markdown, a flow medium like
 HTML: no pagination, no layout, no fonts, zero I/O. It keeps what a document

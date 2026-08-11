@@ -8,12 +8,14 @@ import { zlibSync } from 'fflate';
 import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
+import type { PdfImage } from '@/pdf-reader/images';
 import { Ream } from '@/core/converter/ream';
 import { interpretContent } from '@/pdf-reader/content';
 import { PdfFile } from '@/pdf-reader/document';
 import { reconstructByLayout } from '@/pdf-reader/layout';
-import { collectPageVectors } from '@/pdf-reader/vector';
 import { shapeBlock } from '@/pdf-reader/flow-build';
+import { collectPageVectors } from '@/pdf-reader/vector';
+import { collectPageImages } from '@/pdf-reader/images';
 
 const FONTS = {
   regular: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Regular.ttf')),
@@ -101,6 +103,56 @@ function fillThenImage(): Uint8Array {
 }
 
 /**
+ * A page whose only mark is a check box whose `/AP` `/N` is a SET of states —
+ * one stream, named `/1` — while `/AS` names the state actually in force.
+ */
+function checkBoxPdf(state: string): Uint8Array {
+  const ap = '0 0 1 rg 0 0 10 10 re f';
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R ' +
+      `/Annots [<< /Type /Annot /Subtype /Widget /Rect [50 60 60 70] /AS /${state} ` +
+      '/AP << /N << /1 5 0 R >> >> >>] >>',
+    '<< /Length 0 >>\nstream\n\nendstream',
+    `<< /Type /XObject /Subtype /Form /BBox [0 0 10 10] /Length ${String(ap.length)} >>\n` +
+      `stream\n${ap}\nendstream`,
+  ];
+  return assemble(objects);
+}
+
+/**
+ * A page that writes a word and lays a band over it through a graphics state
+ * whose `/BM` is `/Multiply` — a highlighter, and nothing else.
+ */
+function highlighterPdf(): Uint8Array {
+  const content = 'q /Hi gs 1 1 0 rg 20 20 100 20 re f Q';
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R ' +
+      '/Resources << /ExtGState << /Hi << /Type /ExtGState /BM /Multiply >> >> >> >>',
+    `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+  ];
+  return assemble(objects);
+}
+
+/** The objects as a file: header, bodies, cross-reference table, trailer. */
+function assemble(objects: ReadonlyArray<string>): Uint8Array {
+  let pdf = '%PDF-1.7\n';
+  const offsets: Array<number> = [];
+  objects.forEach((body, i) => {
+    offsets.push(pdf.length);
+    pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+  });
+  const xref = pdf.length;
+  pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+  for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+  pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`;
+  return new TextEncoder().encode(pdf);
+}
+
+/**
  * A page whose only mark is a WIDGET annotation: nothing in its content stream,
  * a filled rectangle in the annotation's `/AP` `/N`.
  */
@@ -128,7 +180,63 @@ function widgetOnlyPdf(): Uint8Array {
   return new TextEncoder().encode(pdf);
 }
 
+/**
+ * A page with one markup annotation and NO `/AP` — the case §12.5.5 leaves to
+ * the reader. `extra` states the geometry the subtype is drawn from.
+ */
+function noAppearancePdf(subtype: string, extra: string): Uint8Array {
+  return assemble([
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R ' +
+      `/Annots [<< /Type /Annot /Subtype /${subtype} /C [1 0 0] ${extra} >>] >>`,
+    '<< /Length 0 >>\nstream\n\nendstream',
+  ]);
+}
+
 describe('annotation appearances (§12.5.5)', () => {
+  it('draws a markup annotation that carries no appearance at all', () => {
+    // "If the annotation does not contain an appearance stream, the conforming
+    // reader shall generate one." Nine files of the pdf.js corpus are that
+    // case, and every one came back a blank page while poppler and
+    // LibreOffice both drew it.
+    const line = PdfFile.parse(noAppearancePdf('Line', '/Rect [0 0 0 0] /L [20 30 180 30]'));
+    const [rule] = collectPageVectors(line, line.pages()[0]!).vectors;
+    expect(rule?.strokeHex).toBe('FF0000');
+    expect([rule?.minX, rule?.maxX]).toEqual([20, 180]);
+
+    const ink = PdfFile.parse(
+      noAppearancePdf('Ink', '/Rect [0 0 200 200] /InkList [[20 20 40 60] [80 20 100 60]]'),
+    );
+    // Two strokes, one path: a scrawl is stroked once, not once per stroke.
+    expect(collectPageVectors(ink, ink.pages()[0]!).vectors).toHaveLength(1);
+
+    const circle = PdfFile.parse(
+      noAppearancePdf('Circle', '/Rect [20 20 120 80] /IC [0 0 1] /BS << /W 2 >>'),
+    );
+    const [disc] = collectPageVectors(circle, circle.pages()[0]!).vectors;
+    expect(disc?.fillHex).toBe('0000FF');
+    expect(disc?.strokeHex).toBe('FF0000');
+  });
+
+  it('leaves a WIDGET with no appearance for its state undrawn', () => {
+    // The same rule must not invent a look for a form field: a check box whose
+    // clear state has no appearance draws nothing, and that is the point.
+    const file = PdfFile.parse(noAppearancePdf('Widget', '/Rect [20 20 40 40] /FT /Btn'));
+    expect(collectPageVectors(file, file.pages()[0]!).vectors).toHaveLength(0);
+  });
+
+  it('paints the state /AS names, and nothing when the set has no such state', () => {
+    // A check box is drawn by its ON appearance and cleared by having none:
+    // annotation-button-widget.pdf carries `/N << /1 … >>` and `/AS /Off` for
+    // the boxes that are clear. Taking "the only stream in the set" for those
+    // ticked every box and filled every radio button on the form.
+    const on = PdfFile.parse(checkBoxPdf('1'));
+    expect(collectPageVectors(on, on.pages()[0]!).vectors).toHaveLength(1);
+    const off = PdfFile.parse(checkBoxPdf('Off'));
+    expect(collectPageVectors(off, off.pages()[0]!).vectors).toHaveLength(0);
+  });
+
   it('lifts what a widget draws, and fits it to the annotation’s /Rect', () => {
     // A form field paints nothing in the page's content stream: its tint, its
     // border and its value all live in the widget's own appearance. Read only
@@ -313,6 +421,17 @@ function alphaBandsPdf(): Uint8Array {
 }
 
 describe('constant fill alpha (§11.6.4.4)', () => {
+  it('marks a fill that only DARKENS, so what it covers reads through', () => {
+    // §11.3.5 — annotation-highlight.pdf lays its yellow band over the words
+    // with `/BM /Multiply`, which is how a highlighter works. Nothing anchored
+    // in a .docx blends, so a band read as paint buried the line it marked.
+    const file = PdfFile.parse(highlighterPdf());
+    const [band] = collectPageVectors(file, file.pages()[0]!).vectors;
+    expect(band?.darkens).toBe(true);
+    const block = shapeBlock(band!, { left: 0, top: 200 }, 0);
+    expect(block.kind === 'shape' && block.shape.float?.behind).toBe(true);
+  });
+
   it('reads /ca off the graphics state `gs` names, and lets `Q` take it back', () => {
     // §8.4.5 — `gs` sets a whole state at once. 22060_A1_01_Plans.pdf marks its
     // evacuation routes with a green band at `ca` 0.6, meant to be read
@@ -322,7 +441,7 @@ describe('constant fill alpha (§11.6.4.4)', () => {
       NO_FONTS,
       undefined,
       undefined,
-      new Map([['G0', 0.6]]),
+      new Map([['G0', { alpha: 0.6 }]]),
     );
     expect(vectors).toHaveLength(2);
     expect(vectors[0]!.alpha).toBeCloseTo(0.6, 5);
@@ -335,7 +454,7 @@ describe('constant fill alpha (§11.6.4.4)', () => {
       NO_FONTS,
       undefined,
       undefined,
-      new Map([['G0', 0.6]]),
+      new Map([['G0', { alpha: 0.6 }]]),
     );
     expect(vectors[0]!.alpha).toBeUndefined();
   });
@@ -566,5 +685,282 @@ describe('stroked vector paths (E-PDF EP11)', () => {
     if (lined?.kind !== 'shape') return;
     expect(lined.shape.line?.colorHex).toMatch(/^[0-9A-F]{6}$/);
     expect(lined.shape.fill.kind).toBe('none');
+  });
+});
+
+describe('a blend the page asks for and nothing here performs (§11.3.5)', () => {
+  /** A page that paints an image through a graphics state naming `mode`. */
+  const blended = (mode: string): Uint8Array => {
+    const gray = zlibSync(Uint8Array.from([0, 255, 255, 0]));
+    const content = `q /BM0 gs 50 0 0 50 20 20 cm /Im Do Q`;
+    const objects = [
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R ' +
+        '/Resources << /XObject << /Im 5 0 R >> ' +
+        `/ExtGState << /BM0 << /Type /ExtGState /BM /${mode} >> >> >> >>`,
+      `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+      '<< /Type /XObject /Subtype /Image /Width 2 /Height 2 /ColorSpace /DeviceGray ' +
+        `/BitsPerComponent 8 /Filter /FlateDecode /Length ${String(gray.length)} >>`,
+    ];
+    let pdf = '%PDF-1.7\n';
+    const offsets: Array<number> = [];
+    objects.forEach((body, i) => {
+      offsets.push(pdf.length);
+      pdf += `${String(i + 1)} 0 obj\n${body}\n`;
+      if (i === 4) pdf += `stream\n${String.fromCharCode(...gray)}\nendstream\n`;
+      pdf += 'endobj\n';
+    });
+    const xref = pdf.length;
+    pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+    for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+    pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`;
+    return Uint8Array.from([...pdf].map((c) => c.charCodeAt(0)));
+  };
+
+  it('says so, rather than drawing one picture over the other in silence', () => {
+    // No anchored picture blends, in any format this writes. blendmode.pdf
+    // lays a second photograph over a dog in each of sixteen cells, one blend
+    // to a cell, and every one came back as the dog alone with nothing said.
+    const file = PdfFile.parse(blended('Difference'));
+    const { losses, images } = collectPageImages(file, file.pages()[0]!);
+    expect(images).toHaveLength(1);
+    expect(losses.some((l) => l.detail.includes('/Difference'))).toBe(true);
+  });
+
+  it('says nothing where the blend is Normal, which is no blend', () => {
+    const file = PdfFile.parse(blended('Normal'));
+    expect(collectPageImages(file, file.pages()[0]!).losses).toHaveLength(0);
+  });
+
+  it('says nothing where the mark only DARKENS, which it approximates', () => {
+    // Multiply and Darken go behind the text instead, and come to the same
+    // picture — a highlighter with its words on top.
+    const file = PdfFile.parse(blended('Multiply'));
+    expect(collectPageImages(file, file.pages()[0]!).losses).toHaveLength(0);
+  });
+});
+
+describe('a picture the CTM turns and a clip cuts (§8.9.5, §8.5.4)', () => {
+  /** A page whose only mark is one image drawn through `cm`, under `clip`. */
+  const placed = (cm: string, clip: string): Uint8Array => {
+    const gray = zlibSync(Uint8Array.from([0, 255, 255, 0]));
+    const content = `q ${clip}${cm} cm /Im Do Q`;
+    const objects = [
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 400 400] /Contents 4 0 R ' +
+        '/Resources << /XObject << /Im 5 0 R >> >> >>',
+      `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+      '<< /Type /XObject /Subtype /Image /Width 2 /Height 2 /ColorSpace /DeviceGray ' +
+        `/BitsPerComponent 8 /Filter /FlateDecode /Length ${String(gray.length)} >>`,
+    ];
+    let pdf = '%PDF-1.7\n';
+    const offsets: Array<number> = [];
+    objects.forEach((body, i) => {
+      offsets.push(pdf.length);
+      pdf += `${String(i + 1)} 0 obj\n${body}\n`;
+      if (i === 4) pdf += `stream\n${String.fromCharCode(...gray)}\nendstream\n`;
+      pdf += 'endobj\n';
+    });
+    const xref = pdf.length;
+    pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+    for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+    pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`;
+    return Uint8Array.from([...pdf].map((c) => c.charCodeAt(0)));
+  };
+
+  /** The one image such a page carries. */
+  const only = (cm: string, clip = ''): PdfImage => {
+    const file = PdfFile.parse(placed(cm, clip));
+    const { images } = collectPageImages(file, file.pages()[0]!);
+    expect(images).toHaveLength(1);
+    return images[0]!;
+  };
+
+  it('leaves an upright picture upright, and where it was put', () => {
+    const img = only('100 0 0 60 40 30');
+    expect(img.rotationDeg).toBeUndefined();
+    expect(img.crop).toBeUndefined();
+    expect([img.x, img.y, img.widthPt, img.heightPt]).toEqual([40, 30, 100, 60]);
+  });
+
+  it('turns it as the CTM turns it, about its own centre', () => {
+    // 90° counter-clockwise: the columns swap and the second one flips.
+    // image-rotated-black-white-ratio.pdf sets its picture at thirty-one
+    // degrees and it came back upright in the corner, because taking only the
+    // column LENGTHS threw the turn away.
+    const img = only('0 100 -60 0 40 30');
+    expect(Math.round(img.rotationDeg ?? 0)).toBe(90);
+    expect(Math.round(img.widthPt)).toBe(100);
+    expect(Math.round(img.heightPt)).toBe(60);
+    // The unturned box is centred where the turned one is: (40,30) is the
+    // unit square's origin, so its middle lands at (40-30, 30+50).
+    expect([Math.round(img.x + img.widthPt / 2), Math.round(img.y + img.heightPt / 2)]).toEqual([
+      10, 80,
+    ]);
+  });
+
+  it('cuts it to a clip, on the picture\u2019s own edges', () => {
+    // The left half and the top three quarters, of a picture placed square on.
+    const img = only('100 0 0 100 0 0', '0 25 50 75 re W n ');
+    expect(img.crop).toEqual({ left: 0, right: 0.5, top: 0, bottom: 0.25 });
+    expect([img.x, img.y, img.widthPt, img.heightPt]).toEqual([0, 25, 50, 75]);
+  });
+
+  it('cuts along the picture\u2019s axes when clip and picture turn together', () => {
+    // A clip square on in the page's axes but drawn at the picture's own
+    // angle: in the picture's space it is square on, and the crop is exact.
+    // image-rotated-black-white-ratio.pdf turns both by thirty-one degrees.
+    const cm = '0 100 -100 0 100 0';
+    const img = only(cm, '100 25 m 25 25 l 25 75 l 100 75 l h W n ');
+    expect(img.crop?.left).toBeCloseTo(0.25, 6);
+    expect(img.crop?.right).toBeCloseTo(0.25, 6);
+    expect(img.crop?.top).toBeCloseTo(0.25, 6);
+    expect(img.crop?.bottom).toBeCloseTo(0, 6);
+    expect(Math.round(img.widthPt)).toBe(50);
+    expect(Math.round(img.heightPt)).toBe(75);
+  });
+
+  it('draws the whole picture where the clip does not reach it', () => {
+    // A clip that leaves nothing has been read wrong; a hairline is worse
+    // than the picture.
+    const img = only('100 0 0 100 0 0', '300 300 20 20 re W n ');
+    expect(img.crop).toBeUndefined();
+    expect(img.widthPt).toBe(100);
+  });
+});
+
+describe('a fill the size of the page', () => {
+  /** A page whose only mark is one filled rectangle covering `fraction` of it. */
+  const backgroundPdf = (fraction: number, color: string): Uint8Array => {
+    const side = Math.sqrt(fraction) * 200;
+    const content = `${color} rg 0 0 ${String(side)} ${String(side)} re f`;
+    return assemble([
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R >>',
+      `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+    ]);
+  };
+
+  it('is a page background, not clutter', () => {
+    // Capped at 0.85 of the sheet, filled-background.pdf — which is nothing but
+    // that fill — came back a blank page, and bug1755507.pdf's card floated on
+    // white where the file has pale blue. Eight files of the corpus improved
+    // when the cap went and not one worsened.
+    const whole = PdfFile.parse(backgroundPdf(1, '0.7 0.85 0.95'));
+    const [bg] = collectPageVectors(whole, whole.pages()[0]!).vectors;
+    expect(bg?.fillHex).toBe('B3D9F2');
+    expect(bg!.maxX - bg!.minX).toBeCloseTo(200, 3);
+  });
+
+  it('still drops white paint that covers nothing', () => {
+    // White over white paper marks nothing, whatever its size.
+    const white = PdfFile.parse(backgroundPdf(1, '1 1 1'));
+    expect(collectPageVectors(white, white.pages()[0]!).vectors).toHaveLength(0);
+  });
+});
+
+describe('the CIE-based grey space (§8.6.5.6)', () => {
+  /** A page filling a box in a CalGray space with the given parameters. */
+  const calGrayPdf = (params: string, value: string): Uint8Array => {
+    const content = `/Cs cs ${value} sc 20 20 100 100 re f`;
+    return assemble([
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R ' +
+        `/Resources << /ColorSpace << /Cs [/CalGray << ${params} >>] >> >> >>`,
+      `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+    ]);
+  };
+
+  it('puts the value through the gamma the space states', () => {
+    // A CalGray's number looks like a DeviceGray's and is not: calgray.pdf
+    // reads 0.258 against the source as one and 0.044 as the other.
+    const plain = PdfFile.parse(calGrayPdf('/WhitePoint [0.9505 1 1.089]', '0.5'));
+    const [flat] = collectPageVectors(plain, plain.pages()[0]!).vectors;
+    // Gamma 1: the sRGB transfer alone, which lifts a mid grey well above half.
+    expect(flat?.fillHex).toBe('BCBCBC');
+    const dark = PdfFile.parse(calGrayPdf('/WhitePoint [0.9505 1 1.089] /Gamma 2.2', '0.5'));
+    const [gammaed] = collectPageVectors(dark, dark.pages()[0]!).vectors;
+    expect(gammaed?.fillHex).toBe('808080');
+  });
+
+  it('keeps the device reading where the space states no white point', () => {
+    // §8.6.5.6 makes /WhitePoint required; a space without one states nothing
+    // this can transform, and the number is read as the device grey it looks
+    // like — which at gamma 1 is a different grey from the transform's.
+    const odd = PdfFile.parse(calGrayPdf('/Gamma 1', '0.5'));
+    expect(collectPageVectors(odd, odd.pages()[0]!).vectors[0]?.fillHex).toBe('808080');
+  });
+});
+
+describe('a shading stitched out of shadings (§7.10.4)', () => {
+  /** A page filling one square with pattern `/P1`, whose function is `fn`. */
+  const shaded = (fn: string): Uint8Array => {
+    const content = '/Pattern cs /P1 scn 10 10 80 80 re f';
+    const objects = [
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Contents 4 0 R ' +
+        '/Resources << /Pattern << /P1 5 0 R >> >> >>',
+      `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+      '<< /Type /Pattern /PatternType 2 /Shading << /ShadingType 2 /ColorSpace /DeviceRGB ' +
+        `/Coords [0 0 0 100] /Function ${fn} >> >>`,
+    ];
+    let pdf = '%PDF-1.7\n';
+    const offsets: Array<number> = [];
+    objects.forEach((body, i) => {
+      offsets.push(pdf.length);
+      pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+    });
+    const xref = pdf.length;
+    pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+    for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+    pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`;
+    return Uint8Array.from([...pdf].map((c) => c.charCodeAt(0)));
+  };
+
+  const stopsOf = (fn: string): Array<string> => {
+    const shape = Ream.parse(shaded(fn)).flow.body.find((el) => el.kind === 'shape');
+    if (shape?.kind !== 'shape' || shape.shape.fill.kind !== 'gradient') return [];
+    const gradient = shape.shape.fill.gradient;
+    if (!gradient) return [];
+    return gradient.stops.map((s) => `${s.offset.toFixed(3)}:${s.colorHex}`);
+  };
+
+  const RAMP = '<< /FunctionType 2 /Domain [0 1] /C0 [1 0 0] /C1 [0 0 1] /N 1 >>';
+  /** Green, then a zero-width fade, then blue — which is a hard EDGE. */
+  const STEP =
+    '<< /FunctionType 3 /Domain [0 1] /Bounds [0.5 0.5] /Encode [0 1 0 1 0 1] /Functions [' +
+    '<< /FunctionType 2 /Domain [0 1] /C0 [0 1 0] /C1 [0 1 0] /N 1 >> ' +
+    '<< /FunctionType 2 /Domain [0 1] /C0 [0 1 0] /C1 [0 0 1] /N 1 >> ' +
+    '<< /FunctionType 2 /Domain [0 1] /C0 [0 0 1] /C1 [0 0 1] /N 1 >>] >>';
+
+  it('keeps a plain ramp as its two ends', () => {
+    expect(stopsOf(RAMP)).toEqual(['0.000:FF0000', '1.000:0000FF']);
+  });
+
+  it('keeps a subfunction’s OWN steps, not just its ends', () => {
+    // issue10572.pdf stitches twelve copies of a green/blue pair whose
+    // `/Bounds [0.5 0.5]` makes a hard edge; reduced to first-and-last, each
+    // pair came back a smooth fade instead of two flat bands.
+    expect(stopsOf(STEP)).toEqual(['0.000:00FF00', '0.500:00FF00', '0.500:0000FF', '1.000:0000FF']);
+  });
+
+  it('lays a nested stitch onto the piece of the domain it holds', () => {
+    const outer = `<< /FunctionType 3 /Domain [0 1] /Bounds [0.5] /Encode [0 1 0 1] /Functions [${STEP} ${STEP}] >>`;
+    // Two bands, each stepping green → blue halfway through its own half.
+    expect(stopsOf(outer)).toEqual([
+      '0.000:00FF00',
+      '0.250:00FF00',
+      '0.250:0000FF',
+      '0.500:0000FF',
+      '0.500:00FF00',
+      '0.750:00FF00',
+      '0.750:0000FF',
+      '1.000:0000FF',
+    ]);
   });
 });

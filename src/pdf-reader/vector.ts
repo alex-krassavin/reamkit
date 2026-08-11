@@ -9,8 +9,9 @@
 import { IDENTITY, interpretContent, multiply } from './content';
 import { buildAlphaMap, buildColorSpaceMap, buildShadingMap } from './shading';
 import { collectPageAppearances } from './annots';
+import { hiddenProperties, hiddenXObject } from './optional-content';
 import { buildFonts } from './text';
-import type { ColorSpaceInfo } from './shading';
+import type { ColorSpaceInfo, GsPaint } from './shading';
 import type {
   ContentFont,
   ImagePlacement,
@@ -39,15 +40,36 @@ import { FEATURES } from '@/core/ir';
  * The same walk `collectPageImages` already makes, with the same depth and
  * cycle guards, collecting paths instead of pictures.
  */
+/** The name-keyed state a resource dictionary supplies to the interpreter. */
+interface ResourceMaps {
+  readonly shadings: ReadonlyMap<string, ShapeGradient>;
+  readonly alphas: ReadonlyMap<string, GsPaint>;
+  readonly spaces: ReadonlyMap<string, ColorSpaceInfo>;
+}
+
 function paintedVectors(
   file: PdfFile,
   page: PdfPage,
-  shadings: ReadonlyMap<string, ShapeGradient>,
-  alphas: ReadonlyMap<string, number>,
-  spaces: ReadonlyMap<string, ColorSpaceInfo>,
 ): Array<VectorPlacement & { orderKey: ReadonlyArray<number> }> {
   const out: Array<VectorPlacement & { orderKey: ReadonlyArray<number> }> = [];
   const visiting = new Set<PdfStream>();
+  // §7.8.3 — a name resolves against the resources IN FORCE, which is the
+  // form's or the appearance's own where it has one. annotation-highlight.pdf
+  // keeps its `/Multiply` in the appearance's `/ExtGState` and nowhere else,
+  // and read against the page's it was never found at all. Cached per
+  // dictionary, since a page's forms nearly all share one.
+  const stateCache = new Map<PdfDict | undefined, ResourceMaps>();
+  const mapsOf = (resources: PdfDict | undefined): ResourceMaps => {
+    const had = stateCache.get(resources);
+    if (had) return had;
+    const made: ResourceMaps = {
+      shadings: buildShadingMap(file, resources),
+      alphas: buildAlphaMap(file, resources),
+      spaces: buildColorSpaceMap(file, resources),
+    };
+    stateCache.set(resources, made);
+    return made;
+  };
   const walk = (
     resources: PdfDict | undefined,
     content: Uint8Array,
@@ -58,13 +80,15 @@ function paintedVectors(
     if (out.length >= MAX_VECTORS) return;
     const xobjects = resources ? file.get(resources, 'XObject') : PDF_NULL;
     const xobjDict = xobjects instanceof Map ? xobjects : undefined;
+    const maps = mapsOf(resources);
     const result = interpretContent(
       content,
       buildFonts(file, resources),
       baseCtm,
-      shadings,
-      alphas,
-      spaces,
+      maps.shadings,
+      maps.alphas,
+      maps.spaces,
+      hiddenProperties(file, resources),
     );
 
     // §8.5.3 — later marks cover earlier ones, and a form is drawn where its
@@ -106,6 +130,9 @@ function paintedVectors(
       if (depth >= MAX_FORM_DEPTH) continue;
       const stream = xobjDict ? file.resolve(xobjDict.get(placement.name) ?? PDF_NULL) : PDF_NULL;
       if (!(stream instanceof PdfStream) || visiting.has(stream)) continue;
+      // §8.11.3.1 — a form may carry its own `/OC`, and a hidden one paints
+      // nothing at all.
+      if (hiddenXObject(file, stream)) continue;
       const subtype = file.get(stream.dict, 'Subtype');
       if (!(subtype instanceof PdfName) || subtype.value !== 'Form') continue;
       visiting.add(stream);
@@ -165,6 +192,11 @@ export interface PdfVector {
   readonly gradient?: ShapeGradient;
   /** §11.6.4.4 — how opaque the fill is, when the page asked for less than all. */
   readonly alpha?: number;
+  /**
+   * §11.3.5 — the fill only DARKENS what it covers, so the marks under it read
+   * through. A highlighter is this, and nothing on a page reads it as paint.
+   */
+  readonly darkens?: boolean;
   /** Present iff a qualifying stroke survived (EP11). */
   readonly strokeHex?: string;
   /** Stroke width in page-space points (EP11). */
@@ -218,17 +250,34 @@ export function collectPageVectors(
   page: PdfPage,
   occupied: ReadonlyArray<Box> = [],
 ): PageVectors {
-  const [px0, py0, px1, py1] = page.mediaBox;
+  const [px0, py0, px1, py1] = page.cropBox;
   const pageArea = Math.max(1, Math.abs((px1 - px0) * (py1 - py0)));
-  const shadings = buildShadingMap(file, page);
-  const alphas = buildAlphaMap(file, page);
-  const spaces = buildColorSpaceMap(file, page);
   const out: Array<PdfVector> = [];
   // What the page has painted so far. White paint is invisible only over white:
   // over anything else it is the thing that HIDES it, and the caller seeds this
   // with the pictures it has already placed.
   const painted: Array<Box> = [...occupied];
-  const raws = paintedVectors(file, page, shadings, alphas, spaces);
+  const raws = paintedVectors(file, page);
+  // §11.6.5 — a mask that fades the paint from place to place, which no shape
+  // downstream has. bug852992_reduced.pdf fades both its green ground and the
+  // orange box on it toward the edges, and both came back flat with nothing
+  // said. §11.3.5 — and a blend rule nothing here performs, likewise.
+  const losses: Array<Loss> = [];
+  const asked = new Set<string>();
+  for (const raw of raws) {
+    if (raw.masked === true) {
+      asked.add(
+        'PDF soft mask (/SMask in the graphics state) is not applied; the shape is drawn at full opacity throughout',
+      );
+    }
+    if (raw.blend !== undefined) {
+      asked.add(
+        `PDF blend mode /${raw.blend} is not performed; the shape is drawn over what it was to blend with`,
+      );
+    }
+  }
+  for (const detail of asked)
+    losses.push({ severity: 'degraded', feature: FEATURES.images, detail });
   for (const raw of raws) {
     if (out.length >= MAX_VECTORS) break;
     const v = clipped(raw);
@@ -267,8 +316,16 @@ export function collectPageVectors(
     const short = Math.min(w, h);
     const isBox = short >= MIN_SIDE && area >= MIN_AREA;
     const isRule = long >= MIN_RULE_LEN && short > 0;
-    const filled =
-      (v.gradient !== undefined || solidFill) && (isBox || isRule) && area <= 0.85 * pageArea;
+    // No cap on the AREA. A fill the size of the page is a page background, and
+    // a page that is pale blue is pale blue: filled-background.pdf is nothing
+    // but that fill, and it came back a blank sheet. bug1755507.pdf and
+    // bug946506.pdf are a page of blue with a card on it, XiaoBiaoSong.pdf and
+    // SimFang-variant.pdf a page of grey — eight files across the corpus, every
+    // one of them better for it and not one worse. What keeps a background from
+    // burying the words is not its size but where it sits: the flowing reading
+    // puts every mark behind the text, and the placed one keeps the page's own
+    // painting order.
+    const filled = (v.gradient !== undefined || solidFill) && (isBox || isRule);
     // White paint is invisible only over white — the same rule the fill above
     // follows, which the stroke did not. 160F-2019.pdf's every form field is a
     // tinted box with a WHITE one-point border stroked inside it, and dropping
@@ -292,6 +349,7 @@ export function collectPageVectors(
             : {}
         : {}),
       ...(filled && v.alpha !== undefined ? { alpha: v.alpha } : {}),
+      ...(filled && v.darkens === true ? { darkens: true } : {}),
       ...(stroked
         ? {
             strokeHex: v.strokeHex,
@@ -304,18 +362,14 @@ export function collectPageVectors(
   }
   // A cap that says nothing is a cap that reads as "the page had no more".
   const cut = out.length >= MAX_VECTORS || raws.length >= MAX_VECTORS;
-  return {
-    vectors: out,
-    losses: cut
-      ? [
-          {
-            severity: 'dropped' as const,
-            feature: FEATURES.shapes,
-            detail: `page carries more than ${String(MAX_VECTORS)} painted paths; the rest were not read`,
-          },
-        ]
-      : [],
-  };
+  if (cut) {
+    losses.push({
+      severity: 'dropped',
+      feature: FEATURES.shapes,
+      detail: `page carries more than ${String(MAX_VECTORS)} painted paths; the rest were not read`,
+    });
+  }
+  return { vectors: out, losses };
 }
 
 /** The paths lifted off one page, plus a loss if the page ran past the cap. */

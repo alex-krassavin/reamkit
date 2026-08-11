@@ -1153,8 +1153,14 @@ function geomXml(g: ShapeGeometry): string {
         }
       })
       .join('');
-    const w = c1(g.custom.pathWidth);
-    const h = c1(g.custom.pathHeight);
+    // §20.1.9.15 `a:path @w/@h` — the coordinate space the shape's extent is
+    // mapped onto, so a zero is a space with no size in that direction and
+    // nothing can be mapped into it: a horizontal rule written `h="0"` is in
+    // the package and on no page, which is what became of
+    // annotation-line-without-appearance-empty-Rect.pdf's red line and of
+    // every flat rule drawn as a path.
+    const w = Math.max(1, c1(g.custom.pathWidth));
+    const h = Math.max(1, c1(g.custom.pathHeight));
     return (
       '<a:custGeom><a:avLst/><a:gdLst/>' +
       `<a:rect l="0" t="0" r="${w}" b="${h}"/>` +
@@ -1506,24 +1512,45 @@ function runXml(run: Run, state: WriteState, scope: PartScope): string {
 
 // §17.3.2 — run properties as a delta from the resolved defaults.
 function rPrXml(r: ResolvedRunProperties): string {
+  // §17.3.2.28 CT_RPr is a SEQUENCE, and a reader may drop what arrives out of
+  // it: rFonts, b, i, strike, color, sz, u, shd, vertAlign, rtl, lang. Written
+  // in the old order — `w:u` ahead of `w:rFonts` — LibreOffice ignored the
+  // underline outright, so annotation-squiggly.pdf's wavy blue rule was in the
+  // package and on no page.
   const out: Array<string> = [];
+  const fonts = rFontsXml(r.fontFamily);
+  if (fonts) out.push(fonts);
   if (r.bold !== DEFAULT_RUN.bold) out.push(toggle('w:b', r.bold));
   if (r.italic !== DEFAULT_RUN.italic) out.push(toggle('w:i', r.italic));
   if (r.strike !== DEFAULT_RUN.strike) out.push(toggle('w:strike', r.strike));
-  if (r.underline !== DEFAULT_RUN.underline) out.push(`<w:u w:val="${r.underline}"/>`);
-  const fonts = rFontsXml(r.fontFamily);
-  if (fonts) out.push(fonts);
+  if (r.colorHex !== DEFAULT_RUN.colorHex) out.push(`<w:color w:val="${r.colorHex}"/>`);
   if (r.fontSizePt !== DEFAULT_RUN.fontSizePt) {
     // §17.3.2.38 w:sz — half-points.
     out.push(`<w:sz w:val="${Math.round(r.fontSizePt * 2)}"/>`);
   }
-  if (r.colorHex !== DEFAULT_RUN.colorHex) out.push(`<w:color w:val="${r.colorHex}"/>`);
+  // §17.3.2.40 — `w:u @w:color`, the rule's own colour where it has one: a
+  // PDF's `/Underline` annotation states its colour and nothing else does.
+  if (r.underline !== DEFAULT_RUN.underline) out.push(underlineXml(r));
+  // §17.3.2.32 — the wash behind the glyphs, which is what a PDF's `/Highlight`
+  // annotation marks its words with.
+  if (r.shadingColorHex !== undefined) out.push(runShdXml(r.shadingColorHex));
   if (r.verticalAlign !== DEFAULT_RUN.verticalAlign) {
     out.push(`<w:vertAlign w:val="${r.verticalAlign}"/>`);
   }
   if (r.rtl !== DEFAULT_RUN.rtl) out.push(toggle('w:rtl', r.rtl));
   if (r.lang !== undefined) out.push(`<w:lang w:val="${escapeAttr(r.lang)}"/>`);
   return out.length > 0 ? `<w:rPr>${out.join('')}</w:rPr>` : '';
+}
+
+// §17.3.2.40 `w:u` — the style, and the colour when the run states one.
+function underlineXml(r: { underline: string; underlineColorHex?: string }): string {
+  const color = r.underlineColorHex !== undefined ? ` w:color="${r.underlineColorHex}"` : '';
+  return `<w:u w:val="${r.underline}"${color}/>`;
+}
+
+// §17.3.2.32 `w:rPr/w:shd` — a solid wash behind the run's own glyphs.
+function runShdXml(fill: string): string {
+  return `<w:shd w:val="clear" w:color="auto" w:fill="${fill}"/>`;
 }
 
 // §17.3.1 — paragraph properties as a delta from the resolved defaults, the
@@ -1695,15 +1722,17 @@ function rawParaPrXml(p: ParagraphProperties): string {
 }
 
 function rawRunPrXml(r: RunProperties): string {
+  // §17.3.2.28 — the schema's own order; see `rPrXml`.
   const out: Array<string> = [];
+  const fonts = r.fontFamily ? rawRFontsXml(r.fontFamily) : '';
+  if (fonts) out.push(fonts);
   if (r.bold !== undefined) out.push(toggle('w:b', r.bold));
   if (r.italic !== undefined) out.push(toggle('w:i', r.italic));
   if (r.strike !== undefined) out.push(toggle('w:strike', r.strike));
-  if (r.underline !== undefined) out.push(`<w:u w:val="${r.underline}"/>`);
-  const fonts = r.fontFamily ? rawRFontsXml(r.fontFamily) : '';
-  if (fonts) out.push(fonts);
-  if (r.fontSizePt !== undefined) out.push(`<w:sz w:val="${Math.round(r.fontSizePt * 2)}"/>`);
   if (r.colorHex !== undefined) out.push(`<w:color w:val="${r.colorHex}"/>`);
+  if (r.fontSizePt !== undefined) out.push(`<w:sz w:val="${Math.round(r.fontSizePt * 2)}"/>`);
+  if (r.underline !== undefined) out.push(underlineXml({ ...r, underline: r.underline }));
+  if (r.shadingColorHex !== undefined) out.push(runShdXml(r.shadingColorHex));
   if (r.verticalAlign !== undefined) out.push(`<w:vertAlign w:val="${r.verticalAlign}"/>`);
   return out.length > 0 ? `<w:rPr>${out.join('')}</w:rPr>` : '';
 }
@@ -1761,8 +1790,60 @@ function colsXml(cols: SectionColumns): string {
 
 const twips = (pt: number): number => Math.round(pt * 20);
 
+/**
+ * XML 1.0 §2.2 — the characters a document may contain at all.
+ *
+ * Everything below U+0020 except tab, newline and return is FORBIDDEN, and no
+ * escape exists for them: `&#2;` is as ill-formed as the byte. A package with
+ * one in it is not a document — LibreOffice says "source file could not be
+ * loaded" and Word says nothing useful either.
+ *
+ * They reach here from the PDF reader. A subset font that states neither a
+ * `/ToUnicode` nor an `/Encoding /Differences` says nothing about what its
+ * codes mean, and the codes of a subset start at 1, 2, 3 — so the last-resort
+ * Latin-1 reading turns a page of text into control characters. Reading it
+ * better is `font.ts`'s business; what this must guarantee is that nothing the
+ * reader believes can produce a package that will not open.
+ *
+ * A lone surrogate is the same case: a half of a pair is not a character.
+ */
+/**
+ * XML 1.0 §2.2 — whether a code point may appear in a document at all.
+ *
+ * Everything below U+0020 except tab, newline and return is forbidden, and no
+ * escape exists for them: `&#2;` is as ill-formed as the byte itself. So is a
+ * lone surrogate — half a pair is not a character — and so are U+FFFE/U+FFFF.
+ */
+function xmlAllows(cp: number): boolean {
+  if (cp === 0x9 || cp === 0xa || cp === 0xd) return true;
+  if (cp < 0x20) return false;
+  if (cp >= 0xd800 && cp <= 0xdfff) return false;
+  if (cp === 0xfffe || cp === 0xffff) return false;
+  return cp <= 0x10ffff;
+}
+
+/**
+ * Escape text for XML, and drop what XML cannot carry.
+ *
+ * The dropping is not fussiness: a package with one control character in it is
+ * not a document. LibreOffice answers "source file could not be loaded" and
+ * Word refuses it too, so the whole conversion is lost over one byte.
+ *
+ * They reach here from the PDF reader. A subset font that states neither a
+ * `/ToUnicode` nor an `/Encoding /Differences` says nothing about what its
+ * codes mean, and a subset's codes start at 1, 2, 3 — so the last-resort
+ * Latin-1 reading turns a page of prose into control characters. Reading such
+ * a font better is `font.ts`'s business; what this guarantees is that nothing
+ * the reader believes can produce a package that will not open.
+ */
 function escapeXml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  let out = '';
+  for (const ch of s) {
+    const cp = ch.codePointAt(0) ?? 0;
+    if (!xmlAllows(cp)) continue;
+    out += ch === '&' ? '&amp;' : ch === '<' ? '&lt;' : ch === '>' ? '&gt;' : ch;
+  }
+  return out;
 }
 
 function escapeAttr(s: string): string {

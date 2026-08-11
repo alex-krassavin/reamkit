@@ -10,7 +10,9 @@
 // font falls back to Latin-1 with a half-em advance so text still surfaces.
 
 import { Lexer } from './lexer';
-import type { ColorSpaceInfo } from './shading';
+import { cieToSrgb } from './cie-color';
+import type { ColorSpaceInfo, GsPaint } from './shading';
+import type { TextMarkup } from './annot-draw';
 import type { ShapeGradient } from '@/core/vector';
 import type { PdfDict, PdfStream, PdfValue } from '@/pdf/objects';
 import { PDF_NULL, PdfHexString, PdfName } from '@/pdf/objects';
@@ -88,8 +90,21 @@ export interface TextRun {
    * than in a substitute (see `./embedded-fonts`).
    */
   readonly fontName?: string;
+  /**
+   * §9.4.4 — the advance of this face's SPACE at the size the run was shown
+   * at, which is what says whether a gap between two runs was a word space.
+   * Absent where the face states no width for it.
+   */
+  readonly spaceWidthPt?: number;
   /** §9.8.1 — the face the glyphs were shown in is a bold one. */
   readonly bold?: boolean;
+  /**
+   * §12.5.6.10 — a text-markup annotation marks these glyphs: highlighted,
+   * underlined, struck through. Applied after extraction, from the page's
+   * `/Annots` (see `./text`), because it is stated about the words rather than
+   * painted among them.
+   */
+  readonly markup?: TextMarkup;
   /**
    * §8.6.6.2 — the glyphs are filled with a tiling PATTERN, named here for the
    * caller to resolve: a pattern is a content stream, not a colour, and the
@@ -137,13 +152,34 @@ export interface TextRun {
  * square to page space, so it carries both the placement and the size; the
  * `mcid` links the paint to its structure element (a `/Figure`, E-PDF EP6).
  */
+/** §8.9.7 — an image written into the content stream rather than named. */
+export interface InlineImage {
+  /** Its dictionary, keys as written — the abbreviated ones (`/W`, `/CS`, `/F`). */
+  readonly dict: PdfDict;
+  /** Its bytes, still filtered as the dictionary says. */
+  readonly data: Uint8Array;
+}
+
 export interface ImagePlacement {
   /** Where the `Do` fell in the stream's painting order — see {@link VectorPlacement.order}. */
   readonly order: number;
-  /** XObject resource name (no leading slash). */
+  /** XObject resource name (no leading slash), empty for an inline image. */
   readonly name: string;
+  /** §8.9.7 — the image itself, where it was written into the stream. */
+  readonly inline?: InlineImage;
   readonly ctm: Matrix;
+  /** §8.5.4 — the clip in force when it was painted, when there was one. */
+  readonly clip?: ClipRegion;
+  /**
+   * §8.9.6.2 — the non-stroking colour in force. A stencil `/ImageMask` carries
+   * no colour of its own: it says only WHERE to paint, and this is what.
+   */
+  readonly fillHex: string;
   readonly mcid?: number;
+  /** §11.3.5 `/BM` — a blend the page asked for that nothing here performs. */
+  readonly blend?: string;
+  /** §11.6.5 `/SMask` — the paint faded from place to place; nothing here does. */
+  readonly masked?: boolean;
 }
 
 /**
@@ -227,6 +263,16 @@ export interface VectorPlacement {
   readonly gradient?: ShapeGradient;
   /** §11.6.4.4 `/ca` — how opaque the fill is, when the page asked for less. */
   readonly alpha?: number;
+  /**
+   * §11.3.5 `/BM` — the fill only DARKENS what it covers (`Multiply`,
+   * `Darken`), so the marks under it read through. A highlighter is this and
+   * nothing else.
+   */
+  readonly darkens?: boolean;
+  /** §11.3.5 `/BM` — a blend the page asked for that nothing here performs. */
+  readonly blend?: string;
+  /** §11.6.5 `/SMask` — the paint faded from place to place; nothing here does. */
+  readonly masked?: boolean;
   /**
    * §8.7.3 — the TILING pattern resource name the path is filled with. Its
    * content is a stream of its own, so what the fill actually shows is only
@@ -319,6 +365,9 @@ interface TextState {
   fillGradient: ShapeGradient | undefined; // current non-stroking shading pattern (EP16c)
   fillPattern: string | undefined; // §8.7.3 non-stroking TILING pattern resource name
   fillAlpha: number; // §11.6.4.4 `/ca` — how opaque the non-stroking paint is
+  fillDarkens: boolean; // §11.3.5 `/BM` Multiply or Darken — the paint only darkens
+  blendMode: string | undefined; // §11.3.5 `/BM` — a blend nothing here can perform
+  softMask: boolean; // §11.6.5 `/SMask` — the paint fades from place to place
   clip: ClipRegion | undefined; // §8.5.4 the clipping region in force
 }
 
@@ -342,6 +391,9 @@ function initialState(): TextState {
     fillGradient: undefined,
     fillPattern: undefined,
     fillAlpha: 1,
+    fillDarkens: false,
+    blendMode: undefined,
+    softMask: false,
     clip: undefined,
   };
 }
@@ -399,6 +451,12 @@ function componentColor(
 ): string | undefined {
   const nums = operands.filter((o): o is number => typeof o === 'number');
   if (nums.length === 0) return undefined;
+  // §8.6.5.6/§8.6.5.7 — a CIE space's numbers mean what its own transform makes
+  // of them, which is not what the same numbers mean to a device space.
+  if (space?.cie) {
+    const [r, g, b] = cieToSrgb(space.cie, nums);
+    return rgbHex(r, g, b);
+  }
   const kind = space?.kind ?? (nums.length === 3 ? 'rgb' : nums.length === 4 ? 'cmyk' : undefined);
   switch (kind) {
     case 'rgb':
@@ -408,8 +466,16 @@ function componentColor(
     case 'gray':
       return grayHex(nums[0]!);
     case 'tint':
-      // §8.6.6.4 — a tint of 1 is the colorant at full strength. Without
-      // running the space's own transform, the honest reading is "this much
+      // §8.6.6.4/§8.6.6.5 — a tint is a strength of colorant, and the space's
+      // own transform says what colour that strength comes to. Run it and the
+      // answer is in the alternate space; devicen.pdf's three triangles are
+      // green, blue and red.
+      if (space?.tint) {
+        const out = space.tint.transform(nums);
+        const hex = componentColor(out, space.tint.alternate);
+        if (hex !== undefined) return hex;
+      }
+      // Without a transform this can run, the honest reading is "this much
       // ink", which is the inverse of a grey level.
       return grayHex(1 - Math.max(...nums));
     default:
@@ -422,8 +488,9 @@ export function interpretContent(
   fonts: ReadonlyMap<string, ContentFont>,
   initialCtm: Matrix = IDENTITY,
   shadings: ReadonlyMap<string, ShapeGradient> = new Map(),
-  alphas: ReadonlyMap<string, number> = new Map(),
+  alphas: ReadonlyMap<string, GsPaint> = new Map(),
   spaces: ReadonlyMap<string, ColorSpaceInfo> = new Map(),
+  hiddenOc: ReadonlySet<string> = new Set(),
 ): InterpretResult {
   const runs: Array<TextRun> = [];
   const images: Array<ImagePlacement> = [];
@@ -440,6 +507,12 @@ export function interpretContent(
   let paintOrder = 0; // §8.5.3 the sequence marks are laid down in
   let operands: Array<PdfValue> = [];
   const mcStack: Array<number | undefined> = []; // marked-content (MCID) nesting
+  // §8.11.3.2 — how deep inside a `/OC … BDC` naming a group the page does NOT
+  // show. The marks are still interpreted, because the graphics state they set
+  // outlives them; they are simply not emitted.
+  const ocStack: Array<boolean> = [];
+  let hiddenDepth = 0;
+  const visible = (): boolean => hiddenDepth === 0;
 
   // Apply the CTM to a user-space point → page space (§8.3.4).
   const toPage = (x: number, y: number): [number, number] => [
@@ -477,7 +550,7 @@ export function interpretContent(
   // Emit the current path as a painted vector (§8.5.3): filled, stroked, or both.
   // `n` and clip operators paint nothing — they pass fill=stroke=false to clear.
   const paintPath = (fill: boolean, stroke: boolean): void => {
-    if (path.length >= 2 && (fill || stroke)) {
+    if (path.length >= 2 && (fill || stroke) && visible()) {
       const mcid = mcStack.length > 0 ? mcStack[mcStack.length - 1] : undefined;
       vectors.push({
         order: paintOrder++,
@@ -486,6 +559,9 @@ export function interpretContent(
         ...(fill && state.fillPattern !== undefined ? { patternName: state.fillPattern } : {}),
         ...(fill ? { fillHex: state.fillColor } : {}),
         ...(fill && state.fillAlpha < 1 ? { alpha: state.fillAlpha } : {}),
+        ...(fill && state.fillDarkens ? { darkens: true } : {}),
+        ...(state.blendMode !== undefined ? { blend: state.blendMode } : {}),
+        ...(state.softMask ? { masked: true } : {}),
         ...(fill && state.fillGradient ? { gradient: state.fillGradient } : {}),
         ...(stroke ? { strokeHex: state.strokeColor, lineWidth: ctmLineWidth() } : {}),
         ...(mcid !== undefined ? { mcid } : {}),
@@ -520,7 +596,7 @@ export function interpretContent(
     const type3 = state.font.type3;
     if (type3) {
       const stream = type3.proc(code);
-      if (stream) {
+      if (stream && visible()) {
         const scale: Matrix = [state.fontSize * state.hScale, 0, 0, state.fontSize, 0, state.rise];
         glyphs.push({
           stream,
@@ -549,10 +625,12 @@ export function interpretContent(
     const text = logicalOrder(shown);
     if (text.length === 0) return;
     const scaleY = Math.hypot(origin[2], origin[3]) || 1;
+    const scaleX = (Math.hypot(origin[0], origin[1]) || 1) * state.hScale;
     const mcid = mcStack.length > 0 ? mcStack[mcStack.length - 1] : undefined;
     // §9.4.2 — the text matrix turns as well as moves. The baseline's own
     // direction is the first column of it; upright text leaves this at zero.
     const angle = (Math.atan2(origin[1], origin[0]) * 180) / Math.PI;
+    if (!visible()) return;
     runs.push({
       text,
       x: origin[4],
@@ -560,7 +638,18 @@ export function interpretContent(
       endX: end[4],
       endY: end[5],
       ...(Math.abs(angle) > UPRIGHT_TOLERANCE_DEG ? { angleDeg: angle } : {}),
-      fontSizePt: state.fontSize * scaleY,
+      // §9.3.1 — `Tf` may be NEGATIVE, which flips the text rather than shrinking
+      // it. bug1011159.pdf sets its line at −20, and a size below zero is not a
+      // size any downstream format states: the magnitude is what was shown.
+      fontSizePt: Math.abs(state.fontSize) * scaleY,
+      // §9.4.4 — how far the pen moves for a SPACE here: the face's own width
+      // for it, plus the character and word spacing in force, which is exactly
+      // the advance `advanceGlyph` gives that code. basicapi.pdf sets its page
+      // number as thirty-one spaces and "page 1 / 3" in one run, and the ink in
+      // it starts only where those thirty-one advances end.
+      spaceWidthPt:
+        ((state.font.width(0x20) / 1000) * state.fontSize + state.charSpacing + state.wordSpacing) *
+        scaleX,
       fontKey: state.fontKey,
       ...(state.font.name !== undefined ? { fontName: state.font.name } : {}),
       ...(state.font.type3 ? { type3: true } : {}),
@@ -692,26 +781,42 @@ export function interpretContent(
         const isArtifact = tag instanceof PdfName && tag.value === 'Artifact';
         const mcidVal = !isArtifact && props instanceof Map ? props.get('MCID') : undefined;
         mcStack.push(typeof mcidVal === 'number' ? mcidVal : undefined);
+        // §8.11.3.2 — `/OC /Name BDC` guards everything up to its `EMC` on a
+        // group the file may have turned off. issue11144_reduced.pdf keeps
+        // three versions of its page this way, two of them off, and read
+        // without this they were drawn over the one a viewer shows.
+        const isOc =
+          tag instanceof PdfName &&
+          tag.value === 'OC' &&
+          props instanceof PdfName &&
+          hiddenOc.has(props.value);
+        ocStack.push(isOc);
+        if (isOc) hiddenDepth++;
         break;
       }
       case 'BMC':
         mcStack.push(undefined); // `tag BMC` — no properties, so no MCID
+        ocStack.push(false);
         break;
       case 'EMC':
         mcStack.pop();
+        if (ocStack.pop() === true) hiddenDepth--;
         break;
       case 'Do': {
         // Paint an XObject (image or form). Record its name + the CTM (which
         // already folds in the placement `cm`) so a later stage can resolve and
         // size it; tag it with the enclosing structure id (a /Figure).
         const nm = operands[0];
-        if (nm instanceof PdfName) {
+        if (nm instanceof PdfName && visible()) {
           const mcid = mcStack.length > 0 ? mcStack[mcStack.length - 1] : undefined;
           images.push({
             order: paintOrder++,
             name: nm.value,
             ctm: state.ctm,
+            ...(state.clip ? { clip: state.clip } : {}),
+            fillHex: state.fillColor,
             ...(mcid !== undefined ? { mcid } : {}),
+            ...(state.blendMode !== undefined ? { blend: state.blendMode } : {}),
           });
         }
         break;
@@ -832,11 +937,17 @@ export function interpretContent(
         paintPath(false, false); // end the path with no paint
         break;
       case 'gs': {
-        // §8.4.5 — a named graphics state, of which only the constant fill
-        // alpha is read here. A band meant to be seen through is not the same
-        // mark as one that hides what it covers.
+        // §8.4.5 — a named graphics state, of which the constant fill alpha
+        // and the blend mode are read here. A band meant to be seen through is
+        // not the same mark as one that hides what it covers.
         const nm = operands[operands.length - 1];
-        if (nm instanceof PdfName) state.fillAlpha = alphas.get(nm.value) ?? 1;
+        if (nm instanceof PdfName) {
+          const paint = alphas.get(nm.value);
+          state.fillAlpha = paint?.alpha ?? 1;
+          state.fillDarkens = paint?.darkens ?? false;
+          state.blendMode = paint?.blend;
+          state.softMask = paint?.masked ?? false;
+        }
         break;
       }
       case 'W':
@@ -874,8 +985,22 @@ export function interpretContent(
         operands.push(readDict(lexer)); // e.g. a BDC marked-content property dict
         break;
       case 'keyword':
-        if (tok.value === 'BI') skipInlineImage(lexer);
-        else exec(tok.value);
+        if (tok.value === 'BI') {
+          // §8.9.7 — an image written into the stream itself rather than named.
+          const inline = readInlineImage(lexer);
+          if (inline && visible()) {
+            images.push({
+              order: paintOrder++,
+              name: '',
+              inline,
+              ctm: state.ctm,
+              ...(state.clip ? { clip: state.clip } : {}),
+              fillHex: state.fillColor,
+              ...(mcStack.length > 0 ? { mcid: mcStack[mcStack.length - 1]! } : {}),
+              ...(state.blendMode !== undefined ? { blend: state.blendMode } : {}),
+            });
+          }
+        } else exec(tok.value);
         operands = [];
         break;
       default:
@@ -1038,13 +1163,67 @@ function readValue(lexer: Lexer): PdfValue {
   }
 }
 
-// §8.9.7 — an inline image: skip from BI past the binary data to EI.
-function skipInlineImage(lexer: Lexer): void {
+/**
+ * §8.9.7 — an inline image: its dictionary between `BI` and `ID`, then its
+ * bytes up to `EI`.
+ *
+ * The bytes are binary and may hold `EI` themselves, so the end is found by
+ * MEASURING where the dictionary says how much there is — an unfiltered image
+ * is exactly `ceil(W · BPC · components / 8) · H` bytes — and only searched for
+ * where a filter makes the length unknowable. images_1bit_grayscale.pdf draws
+ * two of them and both were skipped over.
+ */
+function readInlineImage(lexer: Lexer): InlineImage | undefined {
+  const dict: PdfDict = new Map<string, PdfValue>();
   for (;;) {
     const tok = lexer.nextToken();
-    if (tok.kind === 'eof') return;
+    if (tok.kind === 'eof') return undefined;
     if (tok.kind === 'keyword' && tok.value === 'ID') break;
+    if (tok.kind === 'name') dict.set(tok.value, readValue(lexer));
   }
-  const ei = lexer.indexOfAscii('EI', lexer.pos);
+  // §8.9.7 — exactly ONE whitespace byte separates `ID` from the data.
+  const start = lexer.pos + 1;
+  const measured = inlineLength(dict);
+  let end = measured !== undefined ? start + measured : -1;
+  if (end < 0 || end > lexer.length) {
+    end = lexer.indexOfAscii('EI', start);
+    if (end < 0) {
+      lexer.pos = lexer.length;
+      return undefined;
+    }
+  }
+  const data = lexer.slice(start, Math.min(end, lexer.length));
+  const ei = lexer.indexOfAscii('EI', end);
   lexer.pos = ei < 0 ? lexer.length : ei + 2;
+  return { dict, data };
+}
+
+/** How many bytes an UNFILTERED inline image's samples take, if that is known. */
+function inlineLength(dict: PdfDict): number | undefined {
+  if (dict.has('F') || dict.has('Filter')) return undefined;
+  const num = (...keys: ReadonlyArray<string>): number => {
+    for (const k of keys) {
+      const v = dict.get(k);
+      if (typeof v === 'number') return v;
+    }
+    return 0;
+  };
+  const w = num('W', 'Width');
+  const h = num('H', 'Height');
+  if (w <= 0 || h <= 0) return undefined;
+  const mask = dict.get('IM') === true || dict.get('ImageMask') === true;
+  const bpc = mask ? 1 : num('BPC', 'BitsPerComponent') || 8;
+  const cs = dict.get('CS') ?? dict.get('ColorSpace');
+  const name = cs instanceof PdfName ? cs.value : '';
+  const comps = mask
+    ? 1
+    : /^(RGB|DeviceRGB|CalRGB)$/u.test(name)
+      ? 3
+      : /^(CMYK|DeviceCMYK)$/u.test(name)
+        ? 4
+        : /^(G|DeviceGray|CalGray|I|Indexed)$/u.test(name) || name === ''
+          ? 1
+          : 0;
+  if (comps === 0) return undefined; // a space this cannot size: search instead
+  return (((w * comps * bpc + 7) / 8) | 0) * h;
 }

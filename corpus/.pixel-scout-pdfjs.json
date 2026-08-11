@@ -5,48 +5,1998 @@
   "aligned": false
  },
  {
-  "name": "22060_A1_01_Plans.pdf",
-  "score": 0.0083,
+  "name": "Pages-tree-refs.pdf",
+  "score": 97,
+  "aligned": false
+ },
+ {
+  "name": "REDHAT-1531897-0.pdf",
+  "score": 97,
+  "aligned": false
+ },
+ {
+  "name": "auth-event-ef-open.pdf",
+  "score": 97,
+  "aligned": false
+ },
+ {
+  "name": "bomb_giant.pdf",
+  "score": 97,
+  "aligned": false
+ },
+ {
+  "name": "bug1020226.pdf",
+  "score": 97,
+  "aligned": false
+ },
+ {
+  "name": "bug1782186.pdf",
+  "score": 97,
+  "aligned": false
+ },
+ {
+  "name": "bug_jpx.pdf",
+  "score": 97,
+  "aligned": false
+ },
+ {
+  "name": "encrypted-attachment.pdf",
+  "score": 97,
+  "aligned": false
+ },
+ {
+  "name": "franz_2.pdf",
+  "score": 0.8959,
+  "aligned": true
+ },
+ {
+  "name": "calrgb.pdf",
+  "score": 0.6304,
+  "aligned": true
+ },
+ {
+  "name": "function_based_shading.pdf",
+  "score": 0.4578,
+  "aligned": true
+ },
+ {
+  "name": "function_based_shading_cmyk.pdf",
+  "score": 0.4414,
+  "aligned": false
+ },
+ {
+  "name": "bug852992_reduced.pdf",
+  "score": 0.4277,
+  "aligned": true
+ },
+ {
+  "name": "endchar.pdf",
+  "score": 0.3873,
+  "aligned": true
+ },
+ {
+  "name": "S2.pdf",
+  "score": 0.2518,
+  "aligned": true
+ },
+ {
+  "name": "coons-allflags-withfunction.pdf",
+  "score": 0.1711,
+  "aligned": true
+ },
+ {
+  "name": "bug911034.pdf",
+  "score": 0.1669,
+  "aligned": true
+ },
+ {
+  "name": "alphatrans.pdf",
+  "score": 0.1556,
+  "aligned": true
+ },
+ {
+  "name": "TAMReview.pdf",
+  "score": 0.1383,
+  "aligned": true
+ },
+ {
+  "name": "ccitt_EndOfBlock_false.pdf",
+  "score": 0.1367,
+  "aligned": true
+ },
+ {
+  "name": "blendmode.pdf",
+  "score": 0.1276,
+  "aligned": true
+ },
+ {
+  "name": "bug1175962.pdf",
+  "score": 0.1182,
+  "aligned": true
+ },
+ {
+  "name": "bug1844576.pdf",
+  "score": 0.1163,
+  "aligned": true
+ },
+ {
+  "name": "ThuluthFeatures.pdf",
+  "score": 0.1089,
+  "aligned": true
+ },
+ {
+  "name": "Type3WordSpacing.pdf",
+  "score": 0.0916,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-refine-tpgron.pdf",
+  "score": 0.089,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-refine-template1-tpgron.pdf",
+  "score": 0.085,
+  "aligned": true
+ },
+ {
+  "name": "bug1650302_reduced.pdf",
+  "score": 0.0813,
+  "aligned": true
+ },
+ {
+  "name": "bug1108301.pdf",
+  "score": 0.0799,
+  "aligned": true
+ },
+ {
+  "name": "bug1669099.pdf",
+  "score": 0.0785,
+  "aligned": true
+ },
+ {
+  "name": "issue11131_reduced.pdf",
+  "score": 0.0753,
+  "aligned": true
+ },
+ {
+  "name": "cff_bluescale_small_zones.pdf",
+  "score": 0.0732,
+  "aligned": true
+ },
+ {
+  "name": "IndexedCS_negative_and_high.pdf",
+  "score": 0.0728,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-halftone-skip-dummy.pdf",
+  "score": 0.0727,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-halftone-skip-grid-template1.pdf",
+  "score": 0.0727,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-halftone-skip-grid-template2.pdf",
+  "score": 0.0727,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-halftone-skip-grid-template3.pdf",
+  "score": 0.0727,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-halftone-skip-grid.pdf",
+  "score": 0.0727,
+  "aligned": true
+ },
+ {
+  "name": "bug946506.pdf",
+  "score": 0.072,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-symhuffB5B3-texthuffB7B9B12.pdf",
+  "score": 0.0697,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-symhuffrefineseveral.pdf",
+  "score": 0.0696,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-symbolrefineseveral.pdf",
+  "score": 0.0694,
+  "aligned": true
+ },
+ {
+  "name": "bug1245391_reduced.pdf",
+  "score": 0.066,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-symhuffrefine-textrefine.pdf",
+  "score": 0.0649,
+  "aligned": true
+ },
+ {
+  "name": "issue11242_reduced.pdf",
+  "score": 0.0617,
+  "aligned": true
+ },
+ {
+  "name": "devicen.pdf",
+  "score": 0.0591,
+  "aligned": true
+ },
+ {
+  "name": "bug1992868.pdf",
+  "score": 0.0589,
+  "aligned": true
+ },
+ {
+  "name": "comments.pdf",
+  "score": 0.0589,
+  "aligned": true
+ },
+ {
+  "name": "highlights.pdf",
+  "score": 0.0589,
+  "aligned": true
+ },
+ {
+  "name": "bug1308536.pdf",
+  "score": 0.0576,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-symbolrefine-textrefine.pdf",
+  "score": 0.056,
+  "aligned": true
+ },
+ {
+  "name": "cidfont_cmap_overflow.pdf",
+  "score": 0.054,
+  "aligned": true
+ },
+ {
+  "name": "freeculture.pdf",
+  "score": 0.0538,
+  "aligned": true
+ },
+ {
+  "name": "copy_paste_ligatures.pdf",
+  "score": 0.0518,
+  "aligned": true
+ },
+ {
+  "name": "bug1844583.pdf",
+  "score": 0.0455,
+  "aligned": true
+ },
+ {
+  "name": "cmykjpeg.pdf",
+  "score": 0.0447,
+  "aligned": true
+ },
+ {
+  "name": "calgray.pdf",
+  "score": 0.0441,
+  "aligned": true
+ },
+ {
+  "name": "bug920426.pdf",
+  "score": 0.0425,
+  "aligned": true
+ },
+ {
+  "name": "bug1885505.pdf",
+  "score": 0.0403,
+  "aligned": true
+ },
+ {
+  "name": "bug1027533.pdf",
+  "score": 0.0395,
+  "aligned": true
+ },
+ {
+  "name": "complex_ttf_font.pdf",
+  "score": 0.0393,
+  "aligned": true
+ },
+ {
+  "name": "bug1538111.pdf",
+  "score": 0.0378,
+  "aligned": true
+ },
+ {
+  "name": "issue10665_reduced.pdf",
+  "score": 0.0358,
+  "aligned": true
+ },
+ {
+  "name": "bug1721218_reduced.pdf",
+  "score": 0.0355,
+  "aligned": true
+ },
+ {
+  "name": "bug1872721.pdf",
+  "score": 0.0353,
+  "aligned": true
+ },
+ {
+  "name": "bug1011159.pdf",
+  "score": 0.0341,
+  "aligned": true
+ },
+ {
+  "name": "bug1151216.pdf",
+  "score": 0.0334,
+  "aligned": true
+ },
+ {
+  "name": "colorkeymask.pdf",
+  "score": 0.0327,
+  "aligned": true
+ },
+ {
+  "name": "bug898853.pdf",
+  "score": 0.0318,
+  "aligned": true
+ },
+ {
+  "name": "bug859204.pdf",
+  "score": 0.0317,
+  "aligned": true
+ },
+ {
+  "name": "bug1627427_reduced.pdf",
+  "score": 0.0287,
+  "aligned": true
+ },
+ {
+  "name": "ShowText-ShadingPattern.pdf",
+  "score": 0.0277,
+  "aligned": true
+ },
+ {
+  "name": "bug1065245.pdf",
+  "score": 0.0272,
+  "aligned": true
+ },
+ {
+  "name": "bug1050040.pdf",
+  "score": 0.0271,
+  "aligned": true
+ },
+ {
+  "name": "bug1703683_page2_reduced.pdf",
+  "score": 0.026,
+  "aligned": true
+ },
+ {
+  "name": "file_pdfjs_test.pdf",
+  "score": 0.0253,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-composite-and-xnor-halftone.pdf",
+  "score": 0.0246,
+  "aligned": true
+ },
+ {
+  "name": "bug1802506.pdf",
+  "score": 0.0233,
+  "aligned": true
+ },
+ {
+  "name": "bug1252420.pdf",
+  "score": 0.0232,
+  "aligned": true
+ },
+ {
+  "name": "bug1186827.pdf",
+  "score": 0.0231,
+  "aligned": true
+ },
+ {
+  "name": "bug1811668_reduced.pdf",
+  "score": 0.0224,
+  "aligned": true
+ },
+ {
+  "name": "clippath.pdf",
+  "score": 0.0214,
+  "aligned": true
+ },
+ {
+  "name": "bug1978317.pdf",
+  "score": 0.0204,
+  "aligned": true
+ },
+ {
+  "name": "bug1873345.pdf",
+  "score": 0.0198,
+  "aligned": true
+ },
+ {
+  "name": "bug1755507.pdf",
+  "score": 0.0194,
+  "aligned": true
+ },
+ {
+  "name": "issue10084_reduced.pdf",
+  "score": 0.0187,
+  "aligned": true
+ },
+ {
+  "name": "bug1671312_ArialNarrow.pdf",
+  "score": 0.0187,
+  "aligned": true
+ },
+ {
+  "name": "issue11477_reduced.pdf",
+  "score": 0.0184,
+  "aligned": true
+ },
+ {
+  "name": "XiaoBiaoSong.pdf",
+  "score": 0.0183,
+  "aligned": true
+ },
+ {
+  "name": "bug1019475_1.pdf",
+  "score": 0.018,
+  "aligned": true
+ },
+ {
+  "name": "bug886717.pdf",
+  "score": 0.0178,
+  "aligned": true
+ },
+ {
+  "name": "bug1997343.pdf",
+  "score": 0.0163,
+  "aligned": true
+ },
+ {
+  "name": "ZapfDingbats.pdf",
+  "score": 0.0161,
+  "aligned": true
+ },
+ {
+  "name": "bug1157493.pdf",
+  "score": 0.016,
+  "aligned": true
+ },
+ {
+  "name": "bug878026.pdf",
+  "score": 0.0155,
+  "aligned": true
+ },
+ {
+  "name": "bug1068432.pdf",
+  "score": 0.0151,
+  "aligned": true
+ },
+ {
+  "name": "bug1552113.pdf",
+  "score": 0.0139,
+  "aligned": true
+ },
+ {
+  "name": "bug1250079.pdf",
+  "score": 0.0138,
+  "aligned": true
+ },
+ {
+  "name": "freetext_no_appearance.pdf",
+  "score": 0.0138,
+  "aligned": true
+ },
+ {
+  "name": "issue11403_reduced.pdf",
+  "score": 0.0137,
+  "aligned": true
+ },
+ {
+  "name": "bug1146106.pdf",
+  "score": 0.0136,
+  "aligned": true
+ },
+ {
+  "name": "font_ascent_descent.pdf",
+  "score": 0.0127,
+  "aligned": true
+ },
+ {
+  "name": "highlight_popup.pdf",
+  "score": 0.0125,
+  "aligned": true
+ },
+ {
+  "name": "bug1934157.pdf",
+  "score": 0.0121,
+  "aligned": true
+ },
+ {
+  "name": "arial_unicode_en_cidfont.pdf",
+  "score": 0.0119,
+  "aligned": true
+ },
+ {
+  "name": "bug766086.pdf",
+  "score": 0.0114,
+  "aligned": true
+ },
+ {
+  "name": "chrome-text-selection-markedContent.pdf",
+  "score": 0.0112,
+  "aligned": true
+ },
+ {
+  "name": "issue1002.pdf",
+  "score": 0.0111,
+  "aligned": true
+ },
+ {
+  "name": "canvas.pdf",
+  "score": 0.0108,
+  "aligned": true
+ },
+ {
+  "name": "annotation-text-widget.pdf",
+  "score": 0.0108,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-halftone-composite.pdf",
+  "score": 0.0105,
+  "aligned": true
+ },
+ {
+  "name": "issue11442_reduced.pdf",
+  "score": 0.0101,
+  "aligned": true
+ },
+ {
+  "name": "issue11362.pdf",
+  "score": 0.01,
+  "aligned": true
+ },
+ {
+  "name": "bug1865341.pdf",
+  "score": 0.0099,
+  "aligned": true
+ },
+ {
+  "name": "file_url_link.pdf",
+  "score": 0.0097,
+  "aligned": true
+ },
+ {
+  "name": "bug903856.pdf",
+  "score": 0.0096,
+  "aligned": true
+ },
+ {
+  "name": "bug1671312_reduced.pdf",
+  "score": 0.0092,
+  "aligned": true
+ },
+ {
+  "name": "glyph_accent.pdf",
+  "score": 0.0091,
+  "aligned": true
+ },
+ {
+  "name": "boundingBox_invalid.pdf",
+  "score": 0.0089,
+  "aligned": false
+ },
+ {
+  "name": "bug1020858.pdf",
+  "score": 0.0088,
+  "aligned": true
+ },
+ {
+  "name": "bug1868759.pdf",
+  "score": 0.0087,
+  "aligned": true
+ },
+ {
+  "name": "bug1200096.pdf",
+  "score": 0.0087,
+  "aligned": true
+ },
+ {
+  "name": "issue10438_reduced.pdf",
+  "score": 0.0086,
+  "aligned": true
+ },
+ {
+  "name": "franz.pdf",
+  "score": 0.0086,
+  "aligned": true
+ },
+ {
+  "name": "bug1337429.pdf",
+  "score": 0.0084,
   "aligned": true
  },
  {
   "name": "IdentityToUnicodeMap_charCodeOf.pdf",
+  "score": 0.0081,
+  "aligned": true
+ },
+ {
+  "name": "bug866395.pdf",
+  "score": 0.008,
+  "aligned": true
+ },
+ {
+  "name": "issue11279.pdf",
+  "score": 0.0079,
+  "aligned": true
+ },
+ {
+  "name": "bug1606566.pdf",
+  "score": 0.0076,
+  "aligned": true
+ },
+ {
+  "name": "bug850854.pdf",
+  "score": 0.0076,
+  "aligned": true
+ },
+ {
+  "name": "issue11150_reduced.pdf",
+  "score": 0.0074,
+  "aligned": true
+ },
+ {
+  "name": "issue10542_reduced.pdf",
+  "score": 0.0073,
+  "aligned": true
+ },
+ {
+  "name": "bug847420.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-composite-and-xnor-refine.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-composite-and-xnor-text.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-composite-and-xnor.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-composite-or-xor-replace-halftone.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-composite-or-xor-replace-refine.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-composite-or-xor-replace-text.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-composite-or-xor-replace.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-customat-tpgdon.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-customat.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-halftone-10bpp-mmr.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-halftone-10bpp.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-halftone-grid.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-halftone-refine.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-halftone-template1.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-halftone-template2.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-halftone-template3.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-halftone.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-initially-unknown-size.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-mmr.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-p32-eof.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-randomaccess.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-refine-customat.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-refine-lossless.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-refine-page-subrect.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-refine-page.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-refine-refine.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-refine-template1.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-refine.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-stripe-initially-unknown-height.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-stripe-last-implicit.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-stripe-single-no-end-of-stripe.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-stripe-single.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-stripe.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-big-segmentid.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-empty.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-negative-sbdsoffset.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-refine.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-symbolrefineone-customat.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-symbolrefineone-template1.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-symbolrefineone.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-symhuffuncompressed-texthuff.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-textbottomleft.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-textbottomlefttranspose.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-textbottomright.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-textbottomrighttranspose.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-textcomposite.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-texthuffrefine.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-texthuffrefineB15.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-texthuffrefinecustom.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-texthuffrefinecustomdims.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-texthuffrefinecustompos.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-texthuffrefinecustomposdims.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-texthuffrefinecustomsize.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-textrefine-customat.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-textrefine-negative-delta-width.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-textrefine.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-texttopright.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-texttoprighttranspose.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-texttranspose.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-template1-customat-tpgdon.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-template1-customat.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-template1-tpgdon.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-template1.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-template2-customat-tpgdon.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-template2-customat.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-template2-tpgdon.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-template2.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-template3-customat-tpgdon.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-template3-customat.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-template3-tpgdon.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-template3.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-tpgdon.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-trailing-7fff-stripped-harder-refine.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-trailing-7fff-stripped-harder.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-trailing-7fff-stripped.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-symhuff-texthuff.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-symhuff-texthuffB10B13.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-symhuffcustom-texthuffcustom.pdf",
+  "score": 0.0071,
+  "aligned": true
+ },
+ {
+  "name": "ContentStreamNoCycleType3insideType3.pdf",
+  "score": 0.007,
+  "aligned": true
+ },
+ {
+  "name": "bug1871353.1.pdf",
+  "score": 0.007,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-refine-customat-tpgron.pdf",
+  "score": 0.0069,
+  "aligned": true
+ },
+ {
+  "name": "bad-PageLabels.pdf",
+  "score": 0.0068,
+  "aligned": true
+ },
+ {
+  "name": "bug868745.pdf",
   "score": 0.0068,
   "aligned": true
  },
  {
   "name": "ContentStreamCycleType3insideType3.pdf",
-  "score": 0.0067,
+  "score": 0.0066,
   "aligned": true
  },
  {
-  "name": "ContentStreamNoCycleType3insideType3.pdf",
+  "name": "bitmap-symbol-symhuffrefineone.pdf",
+  "score": 0.0066,
+  "aligned": true
+ },
+ {
+  "name": "Test-plusminus.pdf",
+  "score": 0.0066,
+  "aligned": true
+ },
+ {
+  "name": "bug1513120_reduced.pdf",
+  "score": 0.0065,
+  "aligned": true
+ },
+ {
+  "name": "TrueType_without_cmap.pdf",
+  "score": 0.0063,
+  "aligned": true
+ },
+ {
+  "name": "issue10519_reduced.pdf",
+  "score": 0.0062,
+  "aligned": true
+ },
+ {
+  "name": "bug1883609.pdf",
+  "score": 0.0062,
+  "aligned": true
+ },
+ {
+  "name": "issue1055r.pdf",
+  "score": 0.0061,
+  "aligned": true
+ },
+ {
+  "name": "bug921409.pdf",
+  "score": 0.0061,
+  "aligned": true
+ },
+ {
+  "name": "bug1028735.pdf",
   "score": 0.006,
   "aligned": true
  },
  {
+  "name": "checkbox_no_appearance.pdf",
+  "score": 0.0058,
+  "aligned": true
+ },
+ {
   "name": "Brotli-Prototype-FileA.pdf",
-  "score": 0.0047,
+  "score": 0.0058,
+  "aligned": true
+ },
+ {
+  "name": "bug1795263.pdf",
+  "score": 0.0057,
+  "aligned": true
+ },
+ {
+  "name": "22060_A1_01_Plans.pdf",
+  "score": 0.0055,
+  "aligned": true
+ },
+ {
+  "name": "issue11016_reduced.pdf",
+  "score": 0.0053,
+  "aligned": true
+ },
+ {
+  "name": "inks_basic.pdf",
+  "score": 0.0051,
+  "aligned": true
+ },
+ {
+  "name": "bug1539074.1.pdf",
+  "score": 0.0051,
+  "aligned": true
+ },
+ {
+  "name": "issue10572.pdf",
+  "score": 0.005,
+  "aligned": true
+ },
+ {
+  "name": "issue10640.pdf",
+  "score": 0.005,
+  "aligned": true
+ },
+ {
+  "name": "bug1820909.1.pdf",
+  "score": 0.0049,
+  "aligned": true
+ },
+ {
+  "name": "issue11473.pdf",
+  "score": 0.0045,
+  "aligned": true
+ },
+ {
+  "name": "bug1046314.pdf",
+  "score": 0.0043,
+  "aligned": true
+ },
+ {
+  "name": "bug860632.pdf",
+  "score": 0.0041,
+  "aligned": true
+ },
+ {
+  "name": "extgstate.pdf",
+  "score": 0.004,
+  "aligned": true
+ },
+ {
+  "name": "bug1365930.pdf",
+  "score": 0.0036,
+  "aligned": true
+ },
+ {
+  "name": "bug1815476.pdf",
+  "score": 0.0035,
+  "aligned": true
+ },
+ {
+  "name": "bug1922766.pdf",
+  "score": 0.0034,
+  "aligned": true
+ },
+ {
+  "name": "bigboundingbox.pdf",
+  "score": 0.0034,
+  "aligned": true
+ },
+ {
+  "name": "bug1771477.pdf",
+  "score": 0.003,
+  "aligned": true
+ },
+ {
+  "name": "issue11555.pdf",
+  "score": 0.0029,
+  "aligned": true
+ },
+ {
+  "name": "highlight.pdf",
+  "score": 0.0027,
   "aligned": true
  },
  {
   "name": "ArabicCIDTrueType.pdf",
+  "score": 0.0027,
+  "aligned": true
+ },
+ {
+  "name": "issue10388_reduced.pdf",
+  "score": 0.0026,
+  "aligned": true
+ },
+ {
+  "name": "asciihexdecode.pdf",
+  "score": 0.0025,
+  "aligned": true
+ },
+ {
+  "name": "bug2014080.pdf",
+  "score": 0.0024,
+  "aligned": true
+ },
+ {
+  "name": "annotation-choice-widget.pdf",
+  "score": 0.0024,
+  "aligned": true
+ },
+ {
+  "name": "issue1045.pdf",
+  "score": 0.0023,
+  "aligned": true
+ },
+ {
+  "name": "bug1947248_forms.pdf",
   "score": 0.0022,
   "aligned": true
  },
  {
-  "name": "160F-2019.pdf",
+  "name": "bug1001080.pdf",
+  "score": 0.0022,
+  "aligned": true
+ },
+ {
+  "name": "issue10529.pdf",
+  "score": 0.0021,
+  "aligned": true
+ },
+ {
+  "name": "french_diacritics.pdf",
+  "score": 0.0021,
+  "aligned": true
+ },
+ {
+  "name": "bug1708040.pdf",
+  "score": 0.0021,
+  "aligned": true
+ },
+ {
+  "name": "gradientfill.pdf",
+  "score": 0.002,
+  "aligned": true
+ },
+ {
+  "name": "issue11045.pdf",
+  "score": 0.0018,
+  "aligned": true
+ },
+ {
+  "name": "bug1743245.pdf",
+  "score": 0.0018,
+  "aligned": true
+ },
+ {
+  "name": "bug1937438_mml_from_latex.pdf",
+  "score": 0.0017,
+  "aligned": true
+ },
+ {
+  "name": "bug900822.pdf",
+  "score": 0.0017,
+  "aligned": true
+ },
+ {
+  "name": "freetexts.pdf",
+  "score": 0.0016,
+  "aligned": true
+ },
+ {
+  "name": "bug2009627.pdf",
+  "score": 0.0015,
+  "aligned": true
+ },
+ {
+  "name": "close-path-bug.pdf",
+  "score": 0.0015,
+  "aligned": true
+ },
+ {
+  "name": "annotation-highlight-without-appearance.pdf",
+  "score": 0.0015,
+  "aligned": true
+ },
+ {
+  "name": "annotation-highlight.pdf",
+  "score": 0.0015,
+  "aligned": true
+ },
+ {
+  "name": "bug864847.pdf",
+  "score": 0.0015,
+  "aligned": true
+ },
+ {
+  "name": "bug1057544.pdf",
+  "score": 0.0014,
+  "aligned": true
+ },
+ {
+  "name": "colors.pdf",
+  "score": 0.0014,
+  "aligned": true
+ },
+ {
+  "name": "dates_save.pdf",
+  "score": 0.0014,
+  "aligned": true
+ },
+ {
+  "name": "annotation-button-widget.pdf",
+  "score": 0.0014,
+  "aligned": true
+ },
+ {
+  "name": "bug1799927.pdf",
+  "score": 0.0013,
+  "aligned": true
+ },
+ {
+  "name": "bug2026037.pdf",
+  "score": 0.0012,
+  "aligned": true
+ },
+ {
+  "name": "annotation-ink-without-appearance.pdf",
+  "score": 0.0012,
+  "aligned": true
+ },
+ {
+  "name": "bug1529502.pdf",
+  "score": 0.0011,
+  "aligned": true
+ },
+ {
+  "name": "basicapi.pdf",
+  "score": 0.0011,
+  "aligned": true
+ },
+ {
+  "name": "helloworld-bad.pdf",
+  "score": 0.0011,
+  "aligned": true
+ },
+ {
+  "name": "bug1937438_af_from_latex.pdf",
+  "score": 0.001,
+  "aligned": true
+ },
+ {
+  "name": "annotation-underline-without-appearance.pdf",
+  "score": 0.0009,
+  "aligned": true
+ },
+ {
+  "name": "arial_unicode_ab_cidfont.pdf",
+  "score": 0.0009,
+  "aligned": true
+ },
+ {
+  "name": "PDFJS-7562-reduced.pdf",
+  "score": 0.0009,
+  "aligned": true
+ },
+ {
+  "name": "cid_cff.pdf",
+  "score": 0.0009,
+  "aligned": true
+ },
+ {
+  "name": "bug1919513.pdf",
+  "score": 0.0009,
+  "aligned": true
+ },
+ {
+  "name": "SimFang-variant.pdf",
+  "score": 0.0008,
+  "aligned": true
+ },
+ {
+  "name": "annotation-strikeout-without-appearance.pdf",
+  "score": 0.0008,
+  "aligned": true
+ },
+ {
+  "name": "inks.pdf",
+  "score": 0.0007,
+  "aligned": true
+ },
+ {
+  "name": "bug1947248_text.pdf",
   "score": 0.0007,
   "aligned": true
  },
  {
   "name": "90ms_rksj_h_sample.pdf",
+  "score": 0.0007,
+  "aligned": true
+ },
+ {
+  "name": "annotation-squiggly-without-appearance.pdf",
+  "score": 0.0007,
+  "aligned": true
+ },
+ {
+  "name": "acroform_calculation_order.pdf",
   "score": 0.0006,
+  "aligned": true
+ },
+ {
+  "name": "160F-2019.pdf",
+  "score": 0.0006,
+  "aligned": true
+ },
+ {
+  "name": "annotation-squiggly.pdf",
+  "score": 0.0006,
+  "aligned": true
+ },
+ {
+  "name": "bug2013793.pdf",
+  "score": 0.0006,
+  "aligned": true
+ },
+ {
+  "name": "form_two_pages.pdf",
+  "score": 0.0006,
+  "aligned": true
+ },
+ {
+  "name": "annotation-strikeout.pdf",
+  "score": 0.0006,
+  "aligned": true
+ },
+ {
+  "name": "annotation-underline.pdf",
+  "score": 0.0006,
+  "aligned": true
+ },
+ {
+  "name": "bug1708041.pdf",
+  "score": 0.0006,
+  "aligned": false
+ },
+ {
+  "name": "annotation_hidden_noview.pdf",
+  "score": 0.0005,
+  "aligned": true
+ },
+ {
+  "name": "hello_world_rotated.pdf",
+  "score": 0.0005,
+  "aligned": true
+ },
+ {
+  "name": "bug1019475_2.pdf",
+  "score": 0.0004,
+  "aligned": true
+ },
+ {
+  "name": "firefox_stamp.pdf",
+  "score": 0.0004,
+  "aligned": false
+ },
+ {
+  "name": "checkbox-bad-appearance.pdf",
+  "score": 0.0004,
+  "aligned": true
+ },
+ {
+  "name": "bug1918115.pdf",
+  "score": 0.0004,
+  "aligned": true
+ },
+ {
+  "name": "image-rotated-black-white-ratio.pdf",
+  "score": 0.0004,
+  "aligned": true
+ },
+ {
+  "name": "bug854315.pdf",
+  "score": 0.0004,
+  "aligned": true
+ },
+ {
+  "name": "annotation-square-circle-without-appearance.pdf",
+  "score": 0.0004,
+  "aligned": true
+ },
+ {
+  "name": "evaljs.pdf",
+  "score": 0.0004,
+  "aligned": true
+ },
+ {
+  "name": "issue10900.pdf",
+  "score": 0.0003,
+  "aligned": true
+ },
+ {
+  "name": "bug2025674.pdf",
+  "score": 0.0003,
+  "aligned": true
+ },
+ {
+  "name": "bug1675139.pdf",
+  "score": 0.0003,
+  "aligned": true
+ },
+ {
+  "name": "images.pdf",
+  "score": 0.0003,
+  "aligned": true
+ },
+ {
+  "name": "attachment.pdf",
+  "score": 0.0003,
+  "aligned": true
+ },
+ {
+  "name": "annotation-line-without-appearance-empty-Rect.pdf",
+  "score": 0.0003,
+  "aligned": true
+ },
+ {
+  "name": "doc_3_3_pages.pdf",
+  "score": 0.0003,
+  "aligned": true
+ },
+ {
+  "name": "bug1825002.pdf",
+  "score": 0.0003,
+  "aligned": true
+ },
+ {
+  "name": "doc_2_3_pages.pdf",
+  "score": 0.0003,
+  "aligned": true
+ },
+ {
+  "name": "doc_1_3_pages.pdf",
+  "score": 0.0003,
+  "aligned": true
+ },
+ {
+  "name": "bug1937438_from_word.pdf",
+  "score": 0.0003,
+  "aligned": true
+ },
+ {
+  "name": "file_pdfjs_form.pdf",
+  "score": 0.0002,
+  "aligned": true
+ },
+ {
+  "name": "bug1539074.pdf",
+  "score": 0.0002,
+  "aligned": true
+ },
+ {
+  "name": "bug2004951.pdf",
+  "score": 0.0002,
   "aligned": true
  },
  {
   "name": "Embedded_font.pdf",
   "score": 0.0002,
+  "aligned": true
+ },
+ {
+  "name": "bug1727053.pdf",
+  "score": 0.0002,
+  "aligned": true
+ },
+ {
+  "name": "bug1989304.pdf",
+  "score": 0.0002,
+  "aligned": true
+ },
+ {
+  "name": "firefox_logo.pdf",
+  "score": 0.0002,
+  "aligned": true
+ },
+ {
+  "name": "annotation-caret-ink.pdf",
+  "score": 0.0002,
+  "aligned": true
+ },
+ {
+  "name": "annotation-line-without-appearance.pdf",
+  "score": 0.0002,
+  "aligned": true
+ },
+ {
+  "name": "bug1871353.pdf",
+  "score": 0.0002,
+  "aligned": true
+ },
+ {
+  "name": "bug1974436.pdf",
+  "score": 0.0002,
+  "aligned": true
+ },
+ {
+  "name": "bug1811510.pdf",
+  "score": 0.0002,
+  "aligned": true
+ },
+ {
+  "name": "bug1907000_reduced.pdf",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "bug1796741.pdf",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "images_1bit_grayscale.pdf",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "PDFJS-9279-reduced.pdf",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "annotation-tx2.pdf",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "annotation-tx3.pdf",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "extract_link.pdf",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "bug1963407.pdf",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "bug1770750.pdf",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "bug1724918.pdf",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "bug793632.pdf",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "annotation-polyline-polygon.pdf",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "annotation-polyline-polygon-without-appearance.pdf",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "annotation-freetext.pdf",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "annotation-tx.pdf",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "bug1782564.pdf",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "bug1851498.pdf",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "annotation-fileattachment.pdf",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "bug1802888.pdf",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "issue10301.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "annotation-border-styles.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bug816075.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "annotation-text-without-popup.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "issue10402.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "annotation-link-text-popup.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bug1473809.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "annotation-square-circle.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "annotation-stamp.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "issue11144_reduced.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "issue10339_reduced.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "annotation-line.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "PDFBOX-3148-2-fuzzed.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "PDFBOX-4352-0.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "annotation_hidden_print.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "autoprint.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bitmap-symbol-context-reuse.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bug1132849.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bug1392647.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bug1669097.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bug1811694.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bug1863910.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bug1889122.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bug1942064.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bug1953099.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bug1980958.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bug2035197_1.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bug2035197_2.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bug893730.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bug894572.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "colorspace_atan.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "colorspace_cos.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "colorspace_sin.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "dates.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "decodeACSuccessive.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "doc_actions.pdf",
+  "score": 0,
+  "aligned": false
+ },
+ {
+  "name": "empty#hash.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "empty.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "empty_protected.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "extractPages_null_in_array.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "fields_order.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "filled-background.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "find_all.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "fraction-highlight.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "german-umlaut-r.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "issue11124.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "issue11549_reduced.pdf",
+  "score": 0,
   "aligned": true
  }
 ]

@@ -328,9 +328,54 @@ describe('heuristic layout reconstruction (E-PDF EP4)', () => {
     expect(section?.pageSize?.width).toBe(1000);
     expect(section?.pageSize?.height).toBe(600);
     expect(section?.pageSize?.orientation).toBe('landscape');
-    // A PDF has no margin model — the page box is the content box.
-    expect(section?.margins?.left).toBe(0);
-    expect(section?.margins?.top).toBe(0);
+    // A PDF states no margins, but its WORDS say where they were: the leftmost
+    // glyph is the left margin. Left at zero — which is what this used to do,
+    // on the argument that the page box is the content box — a reflowed
+    // document prints its text against the edge of the paper, which is what
+    // every converted PDF looked like.
+    expect(section?.margins?.left).toBeGreaterThan(0);
+    expect(section?.margins?.top).toBeGreaterThan(0);
+    // Never more than a third of the sheet: a margin that eats the text area
+    // is worse than none.
+    expect(section?.margins?.left).toBeLessThanOrEqual(1000 / 3);
+    expect(section?.margins?.top).toBeLessThanOrEqual(600 / 3);
+  });
+
+  it('keeps a PLACED reading at zero margins, where every mark is anchored', () => {
+    // The anchors are measured from the page, so a margin would move them all.
+    const placed = reconstructByLayout(PdfFile.parse(twoColumnLinePdf()), 'positional');
+    expect(placed.doc.section?.margins?.left).toBe(0);
+    expect(placed.doc.section?.margins?.top).toBe(0);
+  });
+
+  it('reads the weight the page set, where the descriptor states none', async () => {
+    // §9.8.1 — a descriptor that gives no /FontWeight and does not force bold
+    // has said NOTHING about weight; reading that silence as "regular" is how
+    // TAMReview.pdf's Times-Bold came back light, and every bold word on the
+    // page with it — its title, "Abstract", "Keywords:".
+    const body =
+      '<w:p><w:r><w:rPr><w:b/></w:rPr><w:t>HeavyWord</w:t></w:r></w:p>' +
+      '<w:p><w:r><w:t>PlainWord</w:t></w:r></w:p>';
+    const flow = await layoutFlow(body);
+    const runs = flow.body.flatMap((b) => (b.kind === 'paragraph' ? b.paragraph.runs : []));
+    expect(runs.find((r) => r.text.includes('Heavy'))?.properties.bold).toBe(true);
+    expect(runs.find((r) => r.text.includes('Plain'))?.properties.bold).toBeFalsy();
+  });
+
+  it('ends a paragraph at a line that stops short of the measure', async () => {
+    // Leading alone cannot tell a wrapped line from a finished one: two
+    // paragraphs set with no extra space between them look exactly like one.
+    // But a wrapping engine pulls the next word UP, so a line that stops well
+    // short stopped because its author stopped it. alphatrans.pdf stacks five
+    // short labels at ordinary leading and they came back as one paragraph,
+    // re-wrapped into two lines of run-together text.
+    const body =
+      '<w:p><w:r><w:t>Short one</w:t></w:r></w:p>' +
+      '<w:p><w:r><w:t>Short two</w:t></w:r></w:p>' +
+      '<w:p><w:r><w:t>A much longer line that runs the whole width of the text measure here</w:t></w:r></w:p>';
+    const flow = await layoutFlow(body);
+    const texts = paragraphs(flow).map((p) => p.paragraph.runs.map((r) => r.text).join(''));
+    expect(texts.some((t) => t.startsWith('Short one') && !t.includes('Short two'))).toBe(true);
   });
 
   it('marks a line far larger than the median as a heading', async () => {

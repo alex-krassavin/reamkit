@@ -45,6 +45,34 @@ const paragraphTexts = (flow: { body: ReadonlyArray<{ kind: string }> }): Array<
     );
 
 describe('tagged-PDF reconstruction (E-PDF EP3)', () => {
+  it('measures the margins the source set instead of leaving them at zero', async () => {
+    // A tagged reading re-sets the words exactly as an untagged one does, and
+    // needs the same margins. Without them every tagged PDF came back with its
+    // text against all four edges of the paper.
+    const flow = await taggedFlow(para('A paragraph inside the page’s margins.'));
+    const margins = flow.section?.margins;
+    expect(margins).toBeDefined();
+    expect(margins!.left as number).toBeGreaterThan(20);
+    expect(margins!.top as number).toBeGreaterThan(20);
+  });
+
+  it('declines a tree that reaches none of the page’s words', async () => {
+    // annotation-choice-widget.pdf carries a structure tree whose nodes name
+    // marked content the page never marks: not one run has an MCID, so every
+    // node came back empty while the artwork kept the body non-empty — and the
+    // file converted to list boxes with no text in them at all. Declining
+    // hands the page to the heuristic reading, which has all of it to read.
+    const pdf = await Ream.parse(buildDocxFromBody(para('Words the tree cannot reach.'))).convert(
+      'pdf',
+      { fonts: FONTS, tagged: true },
+    );
+    // The same file WITH its ids is read through the tree, so the two verdicts
+    // differ by the join alone.
+    expect(reconstructTaggedPdf(PdfFile.parse(pdf))).toBeDefined();
+    const stripped = stripMarkedContent(pdf);
+    expect(reconstructTaggedPdf(PdfFile.parse(stripped))).toBeUndefined();
+  });
+
   it('recovers headings, paragraphs and reading order', async () => {
     const flow = await taggedFlow(
       heading('Chapter One', 0) + para('First paragraph body.') + para('Second paragraph body.'),
@@ -160,3 +188,16 @@ describe('tagged-PDF reconstruction (E-PDF EP3)', () => {
     expect(texts.some((t) => t.includes('ItemTwo'))).toBe(true);
   });
 });
+
+/**
+ * The same file with every `BDC` turned into a `BMC`, which drops the marked
+ * content ids while leaving the structure tree that names them. What comes out
+ * is the shape annotation-choice-widget.pdf is in: a tree joined to nothing.
+ */
+function stripMarkedContent(pdf: Uint8Array): Uint8Array {
+  const out = new Uint8Array(pdf);
+  for (let i = 0; i + 2 < out.length; i++) {
+    if (out[i] === 0x42 && out[i + 1] === 0x44 && out[i + 2] === 0x43) out[i + 1] = 0x4d; // BDC → BMC
+  }
+  return out;
+}

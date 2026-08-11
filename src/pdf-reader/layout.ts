@@ -18,20 +18,25 @@ import {
   positionedText,
   sectionFromPdfPages,
   shapeBlock,
+  withMeasuredMargins,
 } from './flow-build';
 import { displayOf, placeImages, placeRuns, placeVectors } from './display';
 import { collectEmbeddedFonts } from './embedded-fonts';
 import { collectPageImages } from './images';
 import { extractPageText } from './text';
 import { collectPageVectors } from './vector';
+import { markDrawnRules } from './text-rules';
 import { isRightToLeft } from './content';
-import type { BodyElement } from '@/core/document-model';
-import type { Loss } from '@/core/ir';
+import type { BodyElement, SectionProperties } from '@/core/document-model';
+import type { Loss, Pt } from '@/core/ir';
 
 import type { TextRun } from './content';
 import type { PdfFile, PdfPage } from './document';
 import type { Reconstruction, TextSpan } from './flow-build';
 import { FEATURES, ResourceStore, pt } from '@/core/ir';
+
+/** §9.10.2 — a glyph the face maps to no character (see `./font`). */
+export const UNMAPPED = '\uFFFD';
 
 interface Line {
   readonly y: number; // baseline (page space, y-up)
@@ -81,6 +86,18 @@ export function reconstructByLayout(
   // the pattern's own density and loses its shape: a run carries one colour, not
   // a content stream, so a hatch that alternates ink and paper becomes the flat
   // tint the two average to.
+  // §9.10.2 — glyphs whose face maps them to nothing a reader can show. The
+  // words are unrecoverable, and a page that silently comes back blank is the
+  // one loss this reader must never take without saying so:
+  // arial_unicode_ab_cidfont.pdf is four Arabic letters and nothing else.
+  if (pageRuns.some((page) => page.some((r) => r.text.includes(UNMAPPED)))) {
+    losses.push({
+      severity: 'dropped',
+      feature: FEATURES.text,
+      detail:
+        'some glyphs map to no character — the font states no /ToUnicode and its program says nothing either, so that text is unrecoverable',
+    });
+  }
   if (pageRuns.some((page) => page.some((r) => r.fillPatternName !== undefined))) {
     losses.push({
       severity: 'degraded',
@@ -98,6 +115,9 @@ export function reconstructByLayout(
     // independently, then the left column's blocks precede the right's.
     const pageWidth = display.width;
     const gutter = detectGutter(runs, pageWidth);
+    // Whether this page steps between its words or writes spaces of its own,
+    // which decides how wide a gap has to be to mean one.
+    const stepped = stepsBetweenWords(runs);
     // Blocks carry a column key so the final sort reads column-by-column: left
     // column top-to-bottom, then right column.
     const blocks: Array<{ col: number; top: number; el: BodyElement }> = [];
@@ -125,7 +145,7 @@ export function reconstructByLayout(
         // on its side down the middle of a column, and read flat it joined the
         // row it happened to cross.
         for (const [angle, runs] of byAngle(colRuns)) {
-          for (const line of groupIntoLines(rotate(runs, -angle), true)) {
+          for (const line of groupIntoLines(rotate(runs, -angle), true, stepped)) {
             if (line.text.length === 0) continue;
             const box = turnedBox(line, angle, pageWidth);
             placed.push({
@@ -141,12 +161,24 @@ export function reconstructByLayout(
         }
         return;
       }
-      const lines = groupIntoLines(colRuns).filter((l) => l.text.length > 0);
-      for (const para of groupIntoParagraphs(lines)) {
+      const lines = groupIntoLines(colRuns, false, stepped).filter((l) => l.text.length > 0);
+      // The column the paragraphs were set in — its own edges, not the page's,
+      // so a two-column page judges each side against the side it belongs to.
+      const measure =
+        lines.length > 0
+          ? {
+              left: Math.min(...lines.map((l) => l.x)),
+              right: Math.max(...lines.map((l) => l.x + l.width)),
+            }
+          : undefined;
+      for (const para of groupIntoParagraphs(lines, measure, display.height)) {
         blocks.push({
           col,
           top: para.top,
-          el: paragraphFromRuns(para.spans, headingLevel(para.fontSize, medianFont)),
+          el: paragraphFromRuns(para.spans, headingLevel(para.fontSize, medianFont), {
+            ...(para.alignment !== undefined ? { alignment: para.alignment } : {}),
+            ...(para.spacingBefore !== undefined ? { spacingBefore: pt(para.spacingBefore) } : {}),
+          }),
         });
       }
     };
@@ -156,18 +188,6 @@ export function reconstructByLayout(
       top: number;
       make: (z: number) => BodyElement;
     }> = [];
-    if (gutter !== undefined) {
-      addColumn(
-        runs.filter((r) => r.x < gutter),
-        0,
-      );
-      addColumn(
-        runs.filter((r) => r.x >= gutter),
-        1,
-      );
-    } else {
-      addColumn(runs, 0);
-    }
     const colOf = (centerX: number): number => (gutter !== undefined && centerX >= gutter ? 1 : 0);
     // The shown page has its own corner: the turn has already been applied, so
     // what is left is a box that starts at the origin.
@@ -189,25 +209,46 @@ export function reconstructByLayout(
     }));
     const lifted = collectPageVectors(file, page, covered);
     losses.push(...lifted.losses);
-    const vectors = placeVectors(lifted.vectors, display);
+    // A PDF has no underline: it draws a thin bar under the words. Read onto
+    // the runs BEFORE they are grouped, so the mark travels with them and the
+    // bar is not placed a second time where the words no longer are.
+    const placedVectors = placeVectors(lifted.vectors, display);
+    const ruled = markDrawnRules(runs, placedVectors);
+    const vectors = placedVectors.filter((v) => !ruled.consumed.has(v));
+    if (gutter !== undefined) {
+      addColumn(
+        ruled.runs.filter((r) => r.x < gutter),
+        0,
+      );
+      addColumn(
+        ruled.runs.filter((r) => r.x >= gutter),
+        1,
+      );
+    } else {
+      addColumn(ruled.runs, 0);
+    }
 
     // §20.4.2.3 `relativeHeight` — pictures and paths share one z-order, and
     // it is the page's own painting order (§8.5.3), not one kind before the
     // other. 22060_A1_01_Plans.pdf backs a legend with a white box painted over
     // a floor plan AND draws a key icon over a red swatch: pictures under paths
     // loses the key, paths under pictures loses the legend.
+    // In a FLOWING reading the words are re-set and the artwork is not, so no
+    // mark may cover them: the page's own painting order still ranks the marks
+    // against each other, but all of them sit under the text.
+    const under = mode !== 'positional';
     const marks = [
       ...imgs.images.map((img) => ({
         key: img.orderKey,
         col: colOf(img.x + img.widthPt / 2),
         top: img.y + img.heightPt,
-        make: (z: number): BodyElement => imageBlock(img, resources, undefined, frame, z),
+        make: (z: number): BodyElement => imageBlock(img, resources, undefined, frame, z, under),
       })),
       ...vectors.map((v) => ({
         key: v.orderKey,
         col: colOf((v.minX + v.maxX) / 2),
         top: v.maxY,
-        make: (z: number): BodyElement => shapeBlock(v, frame, z),
+        make: (z: number): BodyElement => shapeBlock(v, frame, z, under),
       })),
       ...placed,
     ].sort((a, b) => compareOrder(a.key, b.key));
@@ -230,12 +271,17 @@ export function reconstructByLayout(
     }
     for (const block of blocks) body.push(block.el);
   });
+  const section = sectionFromPdfPages(pages);
   return {
     doc: buildFlowDoc(
       body,
       resources,
-      sectionFromPdfPages(pages),
-      collectEmbeddedFonts(file, pages),
+      // A placed reading anchors everything to the page, so its margins must
+      // stay at zero or the anchors move. A FLOWING one is a document being
+      // re-set, and a document with no margins prints its words against the
+      // edge of the paper — which is what every converted PDF looked like.
+      mode === 'positional' ? section : withMeasuredMargins(section, shown, pageRuns),
+      collectEmbeddedFonts(file, pages, losses),
     ),
     losses: dedupeLosses(losses),
   };
@@ -387,7 +433,7 @@ const BASELINE_STEP_EM = 0.05;
 // With `split`, a cluster is cut wherever a column-wide gap opens or a baseline
 // steps, so each piece keeps its own x and its own y instead of being dragged
 // against its neighbour.
-function groupIntoLines(runs: ReadonlyArray<TextRun>, split = false): Array<Line> {
+function groupIntoLines(runs: ReadonlyArray<TextRun>, split = false, stepped = false): Array<Line> {
   const sorted = [...runs].sort((a, b) => b.y - a.y || a.x - b.x);
   const clusters: Array<{ y: number; fontSize: number; runs: Array<TextRun> }> = [];
   for (const run of sorted) {
@@ -403,7 +449,7 @@ function groupIntoLines(runs: ReadonlyArray<TextRun>, split = false): Array<Line
   return clusters.flatMap((c) => {
     const ordered = c.runs.sort((a, b) => a.x - b.x);
     const fontSize = c.fontSize || 10;
-    if (!split) return [lineOf(ordered, c.y, fontSize)];
+    if (!split) return [lineOf(ordered, c.y, fontSize, stepped)];
     const pieces: Array<Array<TextRun>> = [[]];
     for (const run of ordered) {
       const prev = pieces[pieces.length - 1]!;
@@ -441,14 +487,48 @@ function groupIntoLines(runs: ReadonlyArray<TextRun>, split = false): Array<Line
     // Each piece stands on its own baseline, at its own size — a mark lifted
     // out of a line of eleven-point text is not eleven points tall.
     return pieces.map((piece) =>
-      lineOf(piece, piece[0]!.y, Math.max(...piece.map((r) => r.fontSizePt || 0)) || fontSize),
+      lineOf(
+        piece,
+        piece[0]!.y,
+        Math.max(...piece.map((r) => r.fontSizePt || 0)) || fontSize,
+        stepped,
+      ),
     );
   });
 }
 
+/**
+ * Where a line's INK is, which is not how far its pen travelled.
+ *
+ * A run of spaces advances the pen and marks nothing. basicapi.pdf sets its
+ * page number as thirty-one spaces and "page 1 / 3" in ONE run, reaching 635pt
+ * across a 595pt sheet — and the measure taken off that line was wide enough
+ * that the centred title in the same column no longer looked centred.
+ *
+ * The blanks are deducted at the face's own space width, which the run carries
+ * (§9.4.4); where the face states none, at a quarter of the size.
+ */
+function inkSpan(runs: ReadonlyArray<TextRun>): { x: number; width: number } {
+  const marked = runs.filter((r) => r.text.trim().length > 0);
+  if (marked.length === 0) {
+    const x = runs[0]!.x;
+    return { x, width: runs[runs.length - 1]!.endX - x };
+  }
+  const first = marked[0]!;
+  const last = marked[marked.length - 1]!;
+  const space = (r: TextRun): number =>
+    r.spaceWidthPt !== undefined && r.spaceWidthPt > 0
+      ? r.spaceWidthPt
+      : (r.fontSizePt || 10) * 0.25;
+  const lead = (/^\s*/u.exec(first.text)?.[0].length ?? 0) * space(first);
+  const trail = (/\s*$/u.exec(last.text)?.[0].length ?? 0) * space(last);
+  const x = first.x + lead;
+  return { x, width: Math.max(0, last.endX - trail - x) };
+}
+
 /** One run of runs, left to right on a shared baseline, as a {@link Line}. */
-function lineOf(runs: ReadonlyArray<TextRun>, y: number, fontSize: number): Line {
-  const ordered = lineSpans(runs, fontSize);
+function lineOf(runs: ReadonlyArray<TextRun>, y: number, fontSize: number, stepped: boolean): Line {
+  const ordered = lineSpans(runs, fontSize, stepped);
   // §9.4 — the runs came off the page in the order they were PAINTED, which is
   // left to right whatever the script. `logicalOrder` turned each run's own
   // letters back the right way round; the runs themselves are still in visual
@@ -457,10 +537,10 @@ function lineOf(runs: ReadonlyArray<TextRun>, y: number, fontSize: number): Line
   const spans = ordered.every((s) => s.text.trim() === '' || isRightToLeft(s.text))
     ? [...ordered].reverse()
     : ordered;
-  const x = runs[0]!.x;
+  const ink = inkSpan(runs);
   return {
-    x,
-    width: runs[runs.length - 1]!.endX - x,
+    x: ink.x,
+    width: ink.width,
     y,
     fontSize,
     text: spans
@@ -472,13 +552,59 @@ function lineOf(runs: ReadonlyArray<TextRun>, y: number, fontSize: number): Line
   };
 }
 
+/**
+ * The gap between two runs that means a WORD SPACE stood there.
+ *
+ * A page that draws its own spaces has already said where its words divide, and
+ * a gap between two of its runs is a COLUMN or a placement — 160F-2019.pdf is
+ * ruled into fields a quarter-inch apart and a generous threshold keeps them
+ * apart. A page that draws none has said nothing, and every word boundary on it
+ * is a gap: bigboundingbox.pdf steps 0.226 em between words and never writes a
+ * space, so at a quarter em its every line ran together — "OrangeDemoInc.",
+ * "Whenpayingbycheck,pleasecompletethispaymentadvice".
+ *
+ * The two want different thresholds, and the page says which it is (see
+ * {@link stepsBetweenWords}). The tight one still clears the gaps a producer
+ * leaves INSIDE a word when it splits one for kerning, which measure eight
+ * hundredths of an em at their widest across this corpus.
+ */
+function spaceGap(prev: TextRun, fontSize: number, stepped: boolean): number {
+  return (prev.fontSizePt || fontSize) * (stepped ? STEPPED_SPACE_EM : DRAWN_SPACE_EM);
+}
+
+/** A page that writes its own spaces: only a wide gap means anything more. */
+const DRAWN_SPACE_EM = 0.25;
+
+/** A page that writes none: the step between its words is all there is. */
+const STEPPED_SPACE_EM = 0.12;
+
+/**
+ * Whether this page STEPS between its words rather than writing spaces.
+ *
+ * Counted rather than guessed: bigboundingbox.pdf writes a space in one run in
+ * a hundred, TAMReview.pdf in a third of them, and no page does a little of
+ * both. A page with almost no text says nothing either way and keeps the
+ * cautious reading.
+ */
+function stepsBetweenWords(runs: ReadonlyArray<TextRun>): boolean {
+  if (runs.length < 8) return false;
+  const drawn = runs.filter((r) => /\s/u.test(r.text)).length;
+  return drawn / runs.length < 0.05;
+}
+
 // A line's runs as spans, inserting a (link-free) space where a horizontal gap
 // suggests one.
-function lineSpans(runs: ReadonlyArray<TextRun>, fontSize: number): Array<TextSpan> {
+function lineSpans(
+  runs: ReadonlyArray<TextRun>,
+  fontSize: number,
+  stepped: boolean,
+): Array<TextSpan> {
   const spans: Array<TextSpan> = [];
-  let prevEnd: number | undefined;
+  let prev: TextRun | undefined;
   for (const run of runs) {
-    if (prevEnd !== undefined && run.x - prevEnd > fontSize * 0.25) spans.push({ text: ' ' });
+    if (prev !== undefined && run.x - prev.endX > spaceGap(prev, fontSize, stepped)) {
+      spans.push({ text: ' ' });
+    }
     // §9.3.1/§8.6.8 — the size and colour the page showed the glyphs at. The
     // tagged path has carried these since it learned to; this one never did, so
     // every line it read came back at the 11pt default in black. Placed, that
@@ -486,7 +612,7 @@ function lineSpans(runs: ReadonlyArray<TextRun>, fontSize: number): Array<TextSp
     // in 7pt nine and a half apart, and drawn at eleven they climbed over each
     // other.
     spans.push({
-      text: run.text,
+      text: run.text.replaceAll(UNMAPPED, ''),
       sizePt: run.fontSizePt,
       ...(run.colorHex !== '000000' ? { colorHex: run.colorHex } : {}),
       ...(run.fontName !== undefined ? { fontName: run.fontName } : {}),
@@ -495,9 +621,10 @@ function lineSpans(runs: ReadonlyArray<TextRun>, fontSize: number): Array<TextSp
         : {}),
       ...(run.bold ? { bold: true } : {}),
       ...(run.italic ? { italic: true } : {}),
+      ...(run.markup !== undefined ? { markup: run.markup } : {}),
       ...(run.href !== undefined ? { href: run.href } : {}),
     });
-    prevEnd = run.endX;
+    prev = run;
   }
   return spans;
 }
@@ -506,20 +633,138 @@ function lineSpans(runs: ReadonlyArray<TextRun>, fontSize: number): Array<TextSp
 // line's leading starts a new paragraph. `top` is the paragraph's first (highest) line.
 function groupIntoParagraphs(
   lines: ReadonlyArray<Line>,
-): Array<{ spans: Array<TextSpan>; fontSize: number; top: number }> {
+  column?: { left: number; right: number },
+  pageHeight = 0,
+): Array<{
+  spans: Array<TextSpan>;
+  fontSize: number;
+  top: number;
+  alignment?: 'center' | 'right';
+  spacingBefore?: number;
+}> {
   const groups: Array<Array<Line>> = [];
-  let prevY: number | undefined;
+  const gaps: Array<number> = [];
+  let prev: Line | undefined;
   for (const line of lines) {
-    const gap = prevY !== undefined ? prevY - line.y : 0;
-    if (groups.length === 0 || (prevY !== undefined && gap > line.fontSize * 1.5)) groups.push([]);
+    const gap = prev !== undefined ? prev.y - line.y : 0;
+    const opened = prev !== undefined && gap > line.fontSize * 1.5;
+    if (
+      groups.length === 0 ||
+      opened ||
+      (prev !== undefined && endedParagraph(prev, line, column))
+    ) {
+      groups.push([]);
+      gaps.push(prev === undefined ? 0 : gap);
+    }
     groups[groups.length - 1]!.push(line);
-    prevY = line.y;
+    prev = line;
   }
-  return groups.map((g) => ({
-    spans: g.flatMap((l, i) => (i > 0 ? [{ text: ' ' }, ...l.spans] : [...l.spans])),
-    fontSize: Math.max(...g.map((l) => l.fontSize)),
-    top: g[0]!.y,
+  return groups.map((g, i) => {
+    const first = g[0]!;
+    const fontSize = Math.max(...g.map((l) => l.fontSize));
+    // The gap that OPENED this paragraph, less the line it would have taken
+    // anyway, is the space its author put before it. Under a third of a line it
+    // is just leading, and a paragraph is not spaced by rounding error.
+    //
+    // Bounded by a third of the sheet, not by three lines: the gap is MEASURED,
+    // and three lines is a guess overriding a measurement.
+    // annotation-square-circle-without-appearance.pdf sets its two labels two
+    // hundred points apart, each over its own pair of drawings, and capped at
+    // thirty the second label came back inside the first drawing.
+    const opened = (gaps[i] ?? 0) - fontSize * 1.2;
+    const most = pageHeight > 0 ? pageHeight / 3 : fontSize * 3;
+    const spacingBefore = opened > fontSize * 0.3 ? Math.min(opened, most) : undefined;
+    return {
+      spans: g.flatMap((l, k) => (k > 0 ? [{ text: ' ' }, ...l.spans] : [...l.spans])),
+      fontSize,
+      top: first.y,
+      ...(spacingBefore !== undefined ? { spacingBefore } : {}),
+      ...alignmentOf(g, column),
+    };
+  });
+}
+
+/**
+ * Whether a line ENDED a paragraph, rather than wrapping into the next.
+ *
+ * Leading alone cannot tell the two apart: five labels stacked at 15pt with a
+ * 12pt face look exactly like five wrapped lines, and alphatrans.pdf's five are
+ * read as one paragraph and re-wrapped into two. But a wrapping engine pulls
+ * the next word UP — so a line that stops well short of the measure stopped
+ * because its author stopped it, and the line after it begins something new.
+ * The same rule separates two paragraphs set with no extra space between them,
+ * which used to run together for the same reason.
+ *
+ * Only where both lines start at the same edge. Where they do not, the block is
+ * placed rather than set — a centred title's every line is short of the measure
+ * and none of them ends anything.
+ *
+ * @param prev   The line before: where it starts, how wide it is, its face.
+ * @param next   The line after — only where it starts matters.
+ * @param column The measure both were set in, when it is known.
+ * @returns Whether the first line ended a paragraph.
+ */
+export function endedParagraph(
+  prev: { x: number; width: number; fontSize: number },
+  next: { x: number },
+  column: { left: number; right: number } | undefined,
+): boolean {
+  if (!column) return false;
+  const width = column.right - column.left;
+  if (!(width > 0)) return false;
+  // A first-line indent is a quarter-inch or so; beyond that the two lines are
+  // not part of one setting.
+  if (Math.abs(prev.x - next.x) > Math.max(prev.fontSize, 4)) return false;
+  // A quarter of the measure: less than that is the ragged edge every
+  // unjustified paragraph has, and breaking on it would cut prose into lines.
+  return column.right - (prev.x + prev.width) > width * 0.25;
+}
+
+/**
+ * §17.3.1.13 — where a paragraph sits across its column, which is the only
+ * witness a PDF leaves of how it was set: every line is placed absolutely and
+ * nothing says "centred".
+ *
+ * A paragraph whose lines are inset by about as much on each side is centred; a
+ * one-line paragraph pushed to the right edge is right-aligned. Everything else
+ * is left alone — a justified paragraph and a ragged-right one look the same
+ * from here, and guessing between them would re-set the body of every document.
+ */
+function alignmentOf(
+  lines: ReadonlyArray<Line>,
+  column: { left: number; right: number } | undefined,
+): { alignment?: 'center' | 'right' } {
+  if (!column || lines.length === 0) return {};
+  const width = column.right - column.left;
+  if (!(width > 0)) return {};
+  const insets = lines.map((l) => ({
+    lead: l.x - column.left,
+    trail: column.right - (l.x + l.width),
   }));
+  // A tenth of the measure is the smallest inset worth calling a placement:
+  // below it every ragged line would read as placed.
+  const meaningful = width * 0.1;
+  const even = width * 0.06;
+  // Judged line by line and only then as a whole. Taking the smallest inset
+  // over the whole paragraph makes a CENTRED block read as a full one the
+  // moment any of its lines nearly fills the measure — and a two-line title
+  // whose first line runs the width is exactly that.
+  if (
+    insets.every((i) => Math.abs(i.lead - i.trail) <= even) &&
+    Math.max(...insets.map((i) => Math.min(i.lead, i.trail))) >= meaningful
+  ) {
+    return { alignment: 'center' };
+  }
+  // Flush right: every line ends at the measure and at least one starts well
+  // inside it. A justified paragraph fails this on its last line, which is the
+  // only place the two differ at all.
+  if (
+    insets.every((i) => i.trail <= even) &&
+    Math.max(...insets.map((i) => i.lead)) >= meaningful
+  ) {
+    return { alignment: 'right' };
+  }
+  return {};
 }
 
 // A line markedly larger than the body text reads as a heading.

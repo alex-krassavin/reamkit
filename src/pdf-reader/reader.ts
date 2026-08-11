@@ -5,6 +5,8 @@
 // out and placed in reading order (EP6); true vector graphics are not.
 
 import { PdfFile } from './document';
+import { collectPageVectors } from './vector';
+import { extractPageText } from './text';
 import { reconstructByLayout } from './layout';
 import { reconstructTaggedPdf } from './tagged';
 import type { StreamFilters } from './document';
@@ -29,7 +31,26 @@ function sniffPdf(bytes: Uint8Array): boolean {
       return true;
     }
   }
-  return false;
+  return endsLikePdf(bytes);
+}
+
+/**
+ * §7.5.5 — a file with no header at all, recognised by how it ENDS.
+ *
+ * bug1606566.pdf begins with the binary comment that normally FOLLOWS the
+ * header and has no `%PDF-` anywhere: the producer wrote the second line and
+ * not the first. Every reader takes it — poppler says "May not be a PDF file
+ * (continuing anyway)" and reads its one line of text — and we refused the file
+ * outright, which is the worst answer of the three.
+ *
+ * The two tokens that close every PDF and close nothing else: the cross-
+ * reference offset and the end-of-file marker, in that order, at the end.
+ */
+function endsLikePdf(bytes: Uint8Array): boolean {
+  const tail = bytes.subarray(Math.max(0, bytes.length - 2048));
+  const text = new TextDecoder('latin1').decode(tail);
+  const eof = text.lastIndexOf('%%EOF');
+  return eof >= 0 && text.lastIndexOf('startxref') < eof;
 }
 
 /**
@@ -44,7 +65,10 @@ function sniffPdf(bytes: Uint8Array): boolean {
  *                 opens permissions-only encryption.
  * @param filters  Decoders for `/Filter` names this reader does not implement
  *                 (§7.4); see {@link StreamFilters}.
- * @param layout   `'flow'` reads a re-flowable document out of the page —
+ * @param layout   `'auto'` (the default) lets the FILE decide: a page that is
+ *                 mostly marks is reproduced, one that is mostly lines is re-set,
+ *                 and the reader records which it chose. `'flow'` reads a
+ *                 re-flowable document out of the page —
  *                 paragraphs and tables in reading order, from the structure
  *                 tree where there is one. `'positional'` keeps the page: every
  *                 line stands where its glyphs do, beside the artwork, which is
@@ -54,7 +78,7 @@ function sniffPdf(bytes: Uint8Array): boolean {
 export function readPdf(
   bytes: Uint8Array,
   password = '',
-  layout: 'flow' | 'positional' = 'flow',
+  layout: 'flow' | 'positional' | 'auto' = 'auto',
   filters: StreamFilters = {},
 ): ReadResult<FlowDoc> {
   const file = PdfFile.parse(bytes, password, filters);
@@ -83,9 +107,21 @@ export function readPdf(
     });
   }
 
-  const tagged = layout === 'positional' ? undefined : reconstructTaggedPdf(file);
-  const reconstruction = tagged ?? reconstructByLayout(file, layout);
-  if (!tagged && layout !== 'positional') {
+  // Which reading the FILE asks for, where the caller did not say.
+  const reading = layout === 'auto' ? readingOf(file) : layout;
+  if (layout === 'auto') {
+    losses.push({
+      severity: 'degraded',
+      feature: FEATURES.text,
+      detail:
+        reading === 'positional'
+          ? 'PDF read as a PAGE (placed): its artwork outweighs its prose, so every line stands where its glyphs stand — pass pdfLayout: "flow" to re-set it as a document instead'
+          : 'PDF read as a DOCUMENT (flowing): its prose outweighs its artwork, so the words re-set and the artwork takes its turn in reading order — pass pdfLayout: "positional" to reproduce the page instead',
+    });
+  }
+  const tagged = reading === 'positional' ? undefined : reconstructTaggedPdf(file);
+  const reconstruction = tagged ?? reconstructByLayout(file, reading);
+  if (!tagged && reading !== 'positional') {
     losses.push({
       severity: 'degraded',
       feature: FEATURES.text,
@@ -107,6 +143,54 @@ export function readPdf(
 }
 
 /**
+ * Which reading a PDF asks for: a DOCUMENT to re-set, or a PAGE to reproduce.
+ *
+ * The two cannot be mixed. A flowing reading moves the words, and words that
+ * move cannot agree with rules that do not — anchored artwork over reflowed
+ * text puts every label on the wrong box. A placed reading keeps both where
+ * they were drawn, and reflows nothing.
+ *
+ * The file says which it is by what is on it. A form or a drawing is mostly
+ * MARKS — 160F-2019.pdf sets 28 numbered rows in 355 ruled boxes — and a paper
+ * is mostly LINES, with a rule or two between them. So the marks are counted
+ * against the lines, on the MEDIAN page rather than the worst, since one plan
+ * folded into a report does not make the report a plan.
+ *
+ * A threshold is a guess, and this one is stated rather than hidden: the reader
+ * records which reading it took and why, and the caller can name the other.
+ */
+function readingOf(file: PdfFile): 'flow' | 'positional' {
+  /** Below this many marks a page is prose with decoration, whatever the ratio. */
+  const ENOUGH_MARKS = 20;
+  /** Twice as many marks as lines is a page that is drawn rather than written. */
+  const DRAWN = 2;
+  const ratios: Array<number> = [];
+  for (const page of file.pages()) {
+    let marks = 0;
+    let lines = 0;
+    try {
+      marks = collectPageVectors(file, page, []).vectors.length;
+      // Baselines, not runs: a line broken into twenty runs is still one line,
+      // and counting runs would make ordinary justified prose look drawn.
+      const ys = new Set<number>();
+      for (const run of extractPageText(file, page)) ys.add(Math.round(run.y));
+      lines = ys.size;
+    } catch {
+      continue;
+    }
+    if (marks < ENOUGH_MARKS) {
+      ratios.push(0);
+      continue;
+    }
+    ratios.push(lines > 0 ? marks / lines : DRAWN);
+  }
+  if (ratios.length === 0) return 'flow';
+  const sorted = [...ratios].sort((a, b) => a - b);
+  const median = sorted[Math.floor(sorted.length / 2)] ?? 0;
+  return median >= DRAWN ? 'positional' : 'flow';
+}
+
+/**
  * The `pdfReader` adapter: a {@link DocumentReader} that sniffs the `%PDF-`
  * header and parses the bytes into a {@link FlowDoc} (E-PDF EP5).
  */
@@ -119,7 +203,11 @@ export const pdfReader: DocumentReader<FlowDoc> = {
     readPdf(
       bytes,
       typeof opts?.password === 'string' ? opts.password : '',
-      opts?.pdfLayout === 'positional' ? 'positional' : 'flow',
+      opts?.pdfLayout === 'positional'
+        ? 'positional'
+        : opts?.pdfLayout === 'flow'
+          ? 'flow'
+          : 'auto',
       isFilters(opts?.filters) ? opts.filters : {},
     ),
 };

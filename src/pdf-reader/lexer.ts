@@ -83,6 +83,11 @@ export class Lexer {
     return this.buf.length;
   }
 
+  /** The bytes between two offsets, as a view onto the buffer. */
+  slice(from: number, to: number): Uint8Array {
+    return this.buf.subarray(Math.max(0, from), Math.min(this.buf.length, Math.max(from, to)));
+  }
+
   /** The byte at index `i`, or −1 when out of range. */
   byteAt(i: number): number {
     return i >= 0 && i < this.buf.length ? this.buf[i]! : -1;

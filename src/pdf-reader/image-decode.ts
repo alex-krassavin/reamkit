@@ -8,13 +8,17 @@
 // count), Indexed (expanded against its palette). Filters: Flate, LZW (EP12),
 // RunLength, ASCII85, ASCIIHex, CCITT Group 4 / Group 3 1-D fax (EP15), plus
 // PNG/TIFF predictors on Flate and LZW. Bit depths 1/2/4/8/16. An /SMask becomes
-// the PNG alpha channel. Unsupported inputs — stencil /ImageMask,
-// Separation/DeviceN/Lab, JBIG2 fax, CCITT Group 3 2-D — return a typed reason
-// so the caller records a loss instead of emitting a broken image.
+// the PNG alpha channel, and a stencil /ImageMask (§8.9.6.2) becomes an RGBA
+// picture in the page's own fill colour. The abbreviated keys and filter names
+// an INLINE image writes (§8.9.7 Table 93) are read here too, so one decodes
+// down this same path once wrapped as a stream. Unsupported inputs —
+// Separation/DeviceN/Lab, CCITT Group 3 2-D — return a typed reason so the
+// caller records a loss instead of emitting a broken image.
 
 import { unzlibSync } from 'fflate';
 
 import { decodeCcitt } from './ccitt';
+import { labToSrgb } from './cie-color';
 import { decodeJbig2 } from './jbig2';
 import { decodeJpeg } from './jpeg';
 import { reversePredictor } from './predictor';
@@ -54,13 +58,17 @@ const MAX_PIXELS = 40_000_000; // DoS guard (~40 MP)
  * Supports DeviceGray/RGB/CMYK, CalGray/CalRGB, ICCBased (by `/N`) and Indexed
  * colour spaces; Flate, LZW (EP12), RunLength, ASCII85, ASCIIHex and CCITT
  * Group 4 / Group 3 1-D fax (EP15) filters; PNG/TIFF predictors; bit depths
- * 1/2/4/8/16; and an `/SMask` folded in as the PNG alpha channel. Unsupported
- * inputs (stencil `/ImageMask`, Separation/DeviceN/Lab, JBIG2, CCITT Group 3
- * 2-D) return a typed failure so the caller records a loss.
+ * 1/2/4/8/16; an `/SMask` folded in as the PNG alpha channel; and a stencil
+ * `/ImageMask` (§8.9.6.2) given back as RGBA in `fillHex`. Unsupported inputs
+ * (Separation/DeviceN/Lab, CCITT Group 3 2-D) return a typed failure so the
+ * caller records a loss.
  *
+ * @param file    The owning file.
+ * @param stream  The image XObject, or an inline image wrapped as one.
+ * @param fillHex §8.9.6.2 — the non-stroking colour a stencil mask paints in.
  * @returns The decoded image, or `{ ok: false }` with the loss severity and reason.
  */
-export function decodePdfImage(file: PdfFile, stream: PdfStream): DecodedImage {
+export function decodePdfImage(file: PdfFile, stream: PdfStream, fillHex?: string): DecodedImage {
   const d = stream.dict;
   const width = intOf(file.get(d, 'Width')) || intOf(file.get(d, 'W'));
   const height = intOf(file.get(d, 'Height')) || intOf(file.get(d, 'H'));
@@ -68,7 +76,7 @@ export function decodePdfImage(file: PdfFile, stream: PdfStream): DecodedImage {
   if (width * height > MAX_PIXELS) return fail('dropped', 'image too large to decode');
 
   if (boolOf(d.get('ImageMask')) || boolOf(d.get('IM'))) {
-    return fail('dropped', 'stencil image mask not reconstructed');
+    return stencil(file, stream, width, height, fillHex);
   }
 
   const filters = filterNames(file, d);
@@ -206,24 +214,139 @@ function decodeCcittImage(
     byteAlign: parms ? boolOf(file.get(parms, 'EncodedByteAlign')) : false,
   });
   if (!packed) return 'CCITT fax image not decoded (Group 3 2-D or malformed)';
+  // §7.4.6 — the decoder codes a black run as 1 bits, but what the FILTER hands
+  // on is `/BlackIs1`'s business: false (the default) means the black pixel
+  // leaves as a 0, which DeviceGray then reads as black, and true means it
+  // leaves as a 1, which reads as white. images_1bit_grayscale.pdf carries the
+  // same picture twice, once encoded each way, and read without the flag the
+  // second came back white on black.
+  const blackIs1 = parms ? boolOf(file.get(parms, 'BlackIs1')) : false;
   const rowBytes = (columns + 7) >> 3;
   const samples = new Uint8Array(width * height);
   for (let y = 0; y < height; y++) {
     const rowOff = y * rowBytes;
     for (let x = 0; x < width; x++) {
-      const black = x < columns ? (packed[rowOff + (x >> 3)]! >> (7 - (x & 7))) & 1 : 0;
-      samples[y * width + x] = black ? 0 : 255;
+      const bit = x < columns ? (packed[rowOff + (x >> 3)]! >> (7 - (x & 7))) & 1 : 0;
+      samples[y * width + x] = bit === (blackIs1 ? 0 : 1) ? 0 : 255;
     }
   }
   return { color: 'gray', samples };
 }
 
+/**
+ * §8.9.6.2 — a stencil mask: one bit per pixel saying WHERE to paint, and the
+ * colour is whatever the page's non-stroking colour was at the `Do`.
+ *
+ * A sample of 0 paints and 1 leaves the page alone, which `/Decode [1 0]`
+ * swaps. Given back as an RGBA picture — the fill colour throughout, opaque
+ * where the stencil paints and clear where it does not — which is what the mask
+ * MEANS and what every format downstream can show.
+ * images_1bit_grayscale.pdf draws two of them and they were dropped entirely.
+ */
+function stencil(
+  file: PdfFile,
+  stream: PdfStream,
+  width: number,
+  height: number,
+  fillHex: string | undefined,
+): DecodedImage {
+  const d = stream.dict;
+  const filters = filterNames(file, d);
+  const last = filters[filters.length - 1];
+  const packed =
+    last === 'CCITTFaxDecode' || last === 'CCF'
+      ? ccittBits(file, stream, filters, height)
+      : last === 'JBIG2Decode'
+        ? jbig2Bits(file, stream, filters, width, height)
+        : decodeChain(file, stream, filters);
+  if (!packed) return fail('dropped', 'stencil image mask not decoded');
+  // §8.9.5.2 — `/Decode [1 0]` says the OTHER bit paints.
+  const decode = file.resolve(d.get('Decode') ?? d.get('D') ?? PDF_NULL);
+  const paintBit = Array.isArray(decode) && file.resolve(decode[0] ?? PDF_NULL) === 1 ? 1 : 0;
+  const rgb = fillHex !== undefined ? parseHex(fillHex) : [0, 0, 0];
+  const rowBytes = (width + 7) >> 3;
+  if (packed.length < rowBytes * height) return fail('dropped', 'stencil image mask truncated');
+  const samples = new Uint8Array(width * height * 4);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const bit = (packed[y * rowBytes + (x >> 3)]! >> (7 - (x & 7))) & 1;
+      const at = (y * width + x) * 4;
+      samples[at] = rgb[0]!;
+      samples[at + 1] = rgb[1]!;
+      samples[at + 2] = rgb[2]!;
+      samples[at + 3] = bit === paintBit ? 255 : 0;
+    }
+  }
+  return {
+    ok: true,
+    bytes: encodePng(width, height, 'rgba', samples),
+    format: 'png',
+    widthPx: width,
+    heightPx: height,
+  };
+}
+
+/** A 6-hex colour as its three bytes. */
+function parseHex(hex: string): [number, number, number] {
+  const v = Number.parseInt(hex, 16);
+  if (!Number.isFinite(v)) return [0, 0, 0];
+  return [(v >> 16) & 0xff, (v >> 8) & 0xff, v & 0xff];
+}
+
+/** A stencil's bits where the file coded them as fax (§7.4.6). */
+function ccittBits(
+  file: PdfFile,
+  stream: PdfStream,
+  filters: ReadonlyArray<string>,
+  height: number,
+): Uint8Array | undefined {
+  const parms = decodeParmsOf(file, stream.dict);
+  const columns = (parms ? intOf(file.get(parms, 'Columns')) : 0) || 1728;
+  const packed = decodeCcitt(applyChainExceptLast(filters, stream.data), {
+    k: parms ? intOf(file.get(parms, 'K')) : 0,
+    columns,
+    rows: height,
+    byteAlign: parms ? boolOf(file.get(parms, 'EncodedByteAlign')) : false,
+  });
+  if (!packed) return undefined;
+  // The decoder codes black as 1; the filter hands on 0 for black unless
+  // `/BlackIs1`, and a stencil's 0 is the bit that PAINTS.
+  const blackIs1 = parms ? boolOf(file.get(parms, 'BlackIs1')) : false;
+  if (blackIs1) return packed;
+  const flipped = new Uint8Array(packed.length);
+  for (let i = 0; i < packed.length; i++) flipped[i] = ~packed[i]! & 0xff;
+  return flipped;
+}
+
+/** …or as JBIG2, which codes 1 as black and so paints on 1. */
+function jbig2Bits(
+  file: PdfFile,
+  stream: PdfStream,
+  filters: ReadonlyArray<string>,
+  width: number,
+  height: number,
+): Uint8Array | undefined {
+  const parms = decodeParmsOf(file, stream.dict);
+  const globalsVal = parms ? file.get(parms, 'JBIG2Globals') : undefined;
+  const globals = globalsVal instanceof PdfStream ? file.streamData(globalsVal) : undefined;
+  const packed = decodeJbig2(applyChainExceptLast(filters, stream.data), globals, width, height);
+  if (!packed) return undefined;
+  const flipped = new Uint8Array(packed.length);
+  for (let i = 0; i < packed.length; i++) flipped[i] = ~packed[i]! & 0xff;
+  return flipped;
+}
+
 interface ColorSpace {
-  readonly kind: 'gray' | 'rgb' | 'cmyk' | 'indexed';
+  readonly kind: 'gray' | 'rgb' | 'cmyk' | 'indexed' | 'lab';
   readonly components: number;
   readonly base?: ColorSpace; // indexed
   readonly hival?: number;
   readonly lookup?: Uint8Array;
+  /** §8.6.5.8 — the `Lab` space's white point and the range of `a*`/`b*`. */
+  readonly lab?: {
+    readonly white: readonly [number, number, number];
+    readonly range: readonly [number, number, number, number];
+  };
 }
 
 function resolveColorSpace(file: PdfFile, csVal: PdfValue | undefined): ColorSpace | undefined {
@@ -254,7 +377,34 @@ function resolveColorSpace(file: PdfFile, csVal: PdfValue | undefined): ColorSpa
     if (!base || base.kind === 'indexed' || !lookup) return undefined;
     return { kind: 'indexed', components: 1, base, hival, lookup };
   }
-  // Separation / DeviceN / Lab / Pattern — tint transforms not reconstructed.
+  if (tag === 'Lab') {
+    // §8.6.5.8 — `L*` runs 0..100 and `a*`/`b*` over the stated `/Range`,
+    // which defaults to ±100. issue10339_reduced.pdf paints two grids of blue
+    // swatches through an Indexed palette whose base is one.
+    const params = file.resolve(cs[1] ?? PDF_NULL);
+    const dict = params instanceof Map ? params : undefined;
+    const nums = (v: PdfValue | undefined): Array<number> => {
+      const r = v !== undefined ? file.resolve(v) : undefined;
+      return Array.isArray(r)
+        ? r.map((x) => (typeof file.resolve(x) === 'number' ? (file.resolve(x) as number) : 0))
+        : [];
+    };
+    const white = dict ? nums(file.get(dict, 'WhitePoint')) : [];
+    if (white.length < 3 || !(white[1]! > 0)) return undefined;
+    const range = dict ? nums(file.get(dict, 'Range')) : [];
+    return {
+      kind: 'lab',
+      components: 3,
+      lab: {
+        white: [white[0]!, white[1]!, white[2]!],
+        range:
+          range.length === 4
+            ? [range[0]!, range[1]!, range[2]!, range[3]!]
+            : [-100, 100, -100, 100],
+      },
+    };
+  }
+  // Separation / DeviceN / Pattern — tint transforms not reconstructed.
   return undefined;
 }
 
@@ -314,19 +464,56 @@ function toColor(
     }
     return { color: 'rgb', samples: out };
   }
+  if (cs.kind === 'lab') {
+    // §8.6.5.8 — the samples are already the components; only the DEFAULT
+    // decode differs, running `a*`/`b*` over the space's own range rather than
+    // 0..1. `c01` has applied a stated `/Decode`, so this undoes that scaling.
+    const lab = cs.lab!;
+    const out = new Uint8Array(px * 3);
+    const span = (i: number): [number, number] =>
+      decode && decode.length >= 6
+        ? [0, 1]
+        : i === 0
+          ? [0, 100]
+          : [lab.range[(i - 1) * 2]!, lab.range[(i - 1) * 2 + 1]!];
+    for (let i = 0; i < px; i++) {
+      const comp = [0, 1, 2].map((k) => {
+        const t = c01(s[i * 3 + k]!, k);
+        const [lo, hi] = span(k);
+        return lo + t * (hi - lo);
+      });
+      const [r, g, b] = labToSrgb(lab.white, [comp[0]!, comp[1]!, comp[2]!]);
+      out[i * 3] = Math.round(r * 255);
+      out[i * 3 + 1] = Math.round(g * 255);
+      out[i * 3 + 2] = Math.round(b * 255);
+    }
+    return { color: 'rgb', samples: out };
+  }
   // indexed
   const base = cs.base!;
   const lookup = cs.lookup!;
   const hival = cs.hival ?? 255;
   const bn = base.components;
+  // §8.9.5.2 — an Indexed image's `/Decode` maps to INDEX values, not to 0..1:
+  // its default is `[0 2^bpc − 1]`, so the sample IS the index unless the file
+  // says otherwise. issue10339_reduced.pdf draws its two grids of swatches from
+  // one palette, the second through `/Decode [255 0]`, and read without it the
+  // two came back identical instead of mirrored.
+  const index = (v: number): number => {
+    if (!decode || decode.length < 2) return Math.min(v, hival);
+    const lo = decode[0]!;
+    const hi = decode[1]!;
+    const at = maxv > 0 ? lo + (v / maxv) * (hi - lo) : lo;
+    return Math.min(Math.max(0, Math.round(at)), hival);
+  };
   if (base.kind === 'gray') {
     const out = new Uint8Array(px);
-    for (let i = 0; i < px; i++) out[i] = lookup[Math.min(s[i]!, hival) * bn] ?? 0;
+    for (let i = 0; i < px; i++) out[i] = lookup[index(s[i]!) * bn] ?? 0;
     return { color: 'gray', samples: out };
   }
   const out = new Uint8Array(px * 3);
   for (let i = 0; i < px; i++) {
-    const off = Math.min(s[i]!, hival) * bn;
+    const off = index(s[i]!) * bn;
     const [r, g, b] = paletteRgb(base, lookup, off);
     out[i * 3] = r;
     out[i * 3 + 1] = g;
@@ -338,6 +525,19 @@ function toColor(
 // One palette entry (8-bit per base component) → RGB.
 function paletteRgb(base: ColorSpace, lookup: Uint8Array, off: number): [number, number, number] {
   if (base.kind === 'rgb') return [lookup[off] ?? 0, lookup[off + 1] ?? 0, lookup[off + 2] ?? 0];
+  if (base.kind === 'lab' && base.lab) {
+    // §8.6.6.3 — a palette entry is one byte per component, and each is read
+    // over its own component's range: `L*` 0..100, `a*`/`b*` over `/Range`.
+    const r = base.lab.range;
+    const at = (i: number, lo: number, hi: number): number =>
+      lo + ((lookup[off + i] ?? 0) / 255) * (hi - lo);
+    const [sr, sg, sb] = labToSrgb(base.lab.white, [
+      at(0, 0, 100),
+      at(1, r[0], r[1]),
+      at(2, r[2], r[3]),
+    ]);
+    return [Math.round(sr * 255), Math.round(sg * 255), Math.round(sb * 255)];
+  }
   if (base.kind === 'cmyk') {
     const c = (lookup[off] ?? 0) / 255;
     const m = (lookup[off + 1] ?? 0) / 255;
@@ -493,15 +693,27 @@ function combineAlpha(color: RawColor, alpha: Alpha): { color: PngColor; samples
 // --- filters ----------------------------------------------------------------
 
 function filterNames(file: PdfFile, d: PdfDict): Array<string> {
-  const f = file.resolve(d.get('Filter') ?? PDF_NULL);
+  // §8.9.7 Table 93 — an inline image abbreviates the key and the filter alike.
+  const f = file.resolve(d.get('Filter') ?? d.get('F') ?? PDF_NULL);
   const arr: ReadonlyArray<PdfValue> = Array.isArray(f) ? f : [f];
   const out: Array<string> = [];
   for (const x of arr) {
     const r = file.resolve(x);
-    if (r instanceof PdfName) out.push(r.value);
+    if (r instanceof PdfName) out.push(FILTER_ABBREVIATIONS[r.value] ?? r.value);
   }
   return out;
 }
+
+/** §8.9.7 Table 93 — the short name an inline image writes a filter under. */
+const FILTER_ABBREVIATIONS: Readonly<Record<string, string>> = {
+  AHx: 'ASCIIHexDecode',
+  A85: 'ASCII85Decode',
+  LZW: 'LZWDecode',
+  Fl: 'FlateDecode',
+  RL: 'RunLengthDecode',
+  CCF: 'CCITTFaxDecode',
+  DCT: 'DCTDecode',
+};
 
 // Decode every filter (the sample path never sees DCT/JPX/CCITT — those are
 // handled before this is called), then reverse any /Predictor. Flate and LZW

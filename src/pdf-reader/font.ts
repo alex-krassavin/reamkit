@@ -4,6 +4,7 @@
 
 import { parseToUnicodeCMap } from './cmap';
 import { textForGlyphName } from './glyph-names';
+import { standardFace, standardWidth } from './standard-widths';
 import { embeddedFontName } from './embedded-fonts';
 import type { PdfDict, PdfValue } from '@/pdf/objects';
 import type { ContentFont, Matrix, Type3Face } from './content';
@@ -65,7 +66,21 @@ export function buildContentFont(file: PdfFile, fontDict: PdfDict): ContentFont 
       ? type3Face(file, fontDict)
       : undefined;
 
-  const simple = simpleWidths(file, fontDict);
+  // §9.6.2.2 — a standard face need not carry a `/Widths` array at all, and
+  // where it does not the reader's own metrics are the only ones there are.
+  // §9.10.2 — a composite font that states NOTHING about its characters: no
+  // `/ToUnicode`, and a program whose `cmap` is missing or unreadable. Its
+  // codes are glyph indices and there is no way back to text from them.
+  // Decoded to the empty string every run in it was dropped where it stood and
+  // the page came back blank with nothing said about it —
+  // issue11131_reduced.pdf is one line, "Operating Account Consolidated
+  // Statement", in a subset whose program carries neither `cmap` nor `post`.
+  // Marked unreadable it is stripped from the output just the same, and the
+  // reconstruction reports it (see `./layout`).
+  const speechless = isType0 && unicode.size === 0;
+  const decodeOne = (code: number): string =>
+    unicode.get(code) ?? (bytesPerCode === 1 ? latin1(code) : speechless ? '\uFFFD' : '');
+  const simple = simpleWidths(file, fontDict, decodeOne);
   // §9.6.5 — a Type 3 font states its widths in GLYPH space, which its
   // `/FontMatrix` maps to text space; every other font states them in
   // thousandths. Scaling here keeps the advance arithmetic (§9.4.4) one rule.
@@ -81,13 +96,53 @@ export function buildContentFont(file: PdfFile, fontDict: PdfDict): ContentFont 
     ...(name !== undefined ? { name } : {}),
     // Map each code to Unicode; an unmapped code in a simple font falls back to
     // its Latin-1 character, a composite font's to nothing (no sensible guess).
-    decode: (codes) =>
-      codes
-        .map((c) => unicode.get(c) ?? (bytesPerCode === 1 ? String.fromCharCode(c) : ''))
-        .join(''),
+    decode: (codes) => codes.map((c) => readable(decodeOne(c))).join(''),
     width,
     ...style,
   };
+}
+
+/**
+ * The character a code stands for when nothing in the font says.
+ *
+ * Latin-1 is the only guess there is, and it is a good one for a text font —
+ * but a C0 control is not a glyph. §9.4.3 shows GLYPHS, and a code falling back
+ * to one has landed there by accident: issue11549_reduced.pdf's one line came
+ * back as U+0007 through U+0011 and was drawn as six empty boxes over a page
+ * that shows nothing at all. A `/ToUnicode` that STATES a control is stating
+ * something and is left alone.
+ */
+function latin1(code: number): string {
+  return code < 0x20 || code === 0x7f ? '\uFFFD' : String.fromCharCode(code);
+}
+
+/**
+ * What a `/ToUnicode` gives, less what Unicode says is not a character.
+ *
+ * `U+FFFE` and `U+FFFF` are noncharacters and the `U+FDD0`–`U+FDEF` block with
+ * them; a lone surrogate is half of a pair that never came. A producer that
+ * maps its glyphs to any of these has said "no text here" in the only way the
+ * format lets it, and carrying them on writes bytes no reader can show —
+ * arial_unicode_ab_cidfont.pdf maps its four Arabic letters to `U+FFFF` and the
+ * page came back holding four of them. They become `U+FFFD`, which the
+ * reconstruction counts and reports rather than passing along.
+ */
+function readable(text: string): string {
+  let out = '';
+  for (const ch of text) {
+    const cp = ch.codePointAt(0) ?? 0;
+    const noncharacter =
+      (cp & 0xfffe) === 0xfffe ||
+      (cp >= 0xfdd0 && cp <= 0xfdef) ||
+      // A C0 control is not a glyph. §9.4.3 shows GLYPHS, and a code that
+      // decodes to one has fallen back to Latin-1 from a font that said
+      // nothing: issue11549_reduced.pdf's one line came back as U+0007 through
+      // U+0011 and was drawn as six empty boxes over a page that shows nothing.
+      cp === 0 ||
+      (cp >= SURROGATE_FIRST && cp <= SURROGATE_LAST);
+    out += noncharacter ? '\uFFFD' : ch;
+  }
+  return out;
 }
 
 /** The last Unicode code point in the BMP, and the surrogate block inside it. */
@@ -205,7 +260,21 @@ function namedGlyphs(file: PdfFile, fontDict: PdfDict): Map<number, string> | un
     const text = textForGlyphName(name);
     if (text !== undefined) out.set(code, text);
   }
-  return out.size > 0 ? out : undefined;
+  if (out.size > 0) return out;
+  // §9.6.5 — a TYPE 3 font's `/Encoding` is the only mapping it has: its codes
+  // select CharProcs, which are drawings, and there is no standard encoding
+  // underneath to fall back on. So a Type 3 face that named its glyphs and
+  // whose names are not characters has unreadable text — bug1011159.pdf calls
+  // its glyphs `LW010000`, and read as Latin-1 its line came back as "¦¦¦K".
+  //
+  // Any other font keeps the fallback: a subset TrueType commonly maps its
+  // codes to `/g34`-style names that say nothing, while the codes themselves
+  // are still the characters. Marking those unreadable cost TAMReview.pdf
+  // eight thousand of its nine thousand words.
+  if (asName(file.resolve(fontDict.get('Subtype') ?? PDF_NULL)) !== 'Type3') return undefined;
+  const unreadable = new Map<number, string>();
+  for (const code of names.keys()) unreadable.set(code, '\uFFFD');
+  return unreadable;
 }
 
 /** §9.6.6.1 `/Encoding` `/Differences` — code → glyph name, as the array runs. */
@@ -227,6 +296,9 @@ function differences(file: PdfFile, fontDict: PdfDict): Map<number, string> {
 /** §9.8.2 `/Flags` — bit 7 is Italic, bit 19 ForceBold (bits numbered from 1). */
 const FLAG_ITALIC = 1 << 6;
 const FLAG_FORCE_BOLD = 1 << 18;
+
+/** §9.8.1 `/FontWeight` — the lightest a face may state; below it is no weight. */
+const LIGHTEST_WEIGHT = 100;
 
 /** §9.8.1 `/FontWeight` — 400 is normal, 700 bold; 600 is where "bold" begins. */
 const BOLD_WEIGHT = 600;
@@ -254,21 +326,57 @@ function faceStyle(
 ): { bold?: boolean; italic?: boolean } {
   const owner = isType0 ? descendantFont(file, fontDict) : fontDict;
   const descriptor = file.resolve(owner.get('FontDescriptor') ?? PDF_NULL);
+  const named = styleFromName(asName(file.resolve(fontDict.get('BaseFont') ?? PDF_NULL)));
   if (descriptor instanceof Map) {
     const flags = asNumber(file.resolve(descriptor.get('Flags') ?? PDF_NULL), 0);
-    const weight = asNumber(file.resolve(descriptor.get('FontWeight') ?? PDF_NULL), 0);
+    const weightVal = file.resolve(descriptor.get('FontWeight') ?? PDF_NULL);
     const slant = asNumber(file.resolve(descriptor.get('ItalicAngle') ?? PDF_NULL), 0);
-    const bold = weight >= BOLD_WEIGHT || (flags & FLAG_FORCE_BOLD) !== 0;
-    const italic = slant !== 0 || (flags & FLAG_ITALIC) !== 0;
-    return { ...(bold ? { bold } : {}), ...(italic ? { italic } : {}) };
+    // §9.8.1 — a descriptor decides only what it STATES. One that gives no
+    // /FontWeight and does not force bold has said nothing about weight, and
+    // reading that silence as "regular" is how TAMReview.pdf's Times-Bold came
+    // back light: every bold word on the page — its title, "Abstract",
+    // "Keywords:" — set in the same face as the body.
+    //
+    // §9.8.2 — but ForceBold is a HINTING flag: it says whether the rasteriser
+    // should thicken the stems at very small sizes, not that the face is a bold
+    // cut. Where the descriptor states a weight, that weight is the answer:
+    // issue10084_reduced.pdf sets "abcdefg" in a Helvetica of /FontWeight 400
+    // with ForceBold set, and read off the flag the whole page came back bold.
+    //
+    // §9.8.1 gives the weight as one of 100…900, and a producer writing
+    // anything else has written a placeholder rather than a weight:
+    // issue10519_reduced.pdf states `/FontWeight 0` on a face called
+    // "Calibri,Bold", and taken at its word every bold word went light.
+    const stated = typeof weightVal === 'number' && weightVal >= LIGHTEST_WEIGHT;
+    const bold = stated
+      ? asNumber(weightVal, 0) >= BOLD_WEIGHT
+      : (flags & FLAG_FORCE_BOLD) !== 0 || named.bold;
+    // The slant and the flag each state italic outright; where neither does,
+    // the name is the only witness left.
+    const italic = slant !== 0 || (flags & FLAG_ITALIC) !== 0 || named.italic;
+    return { ...(bold ? { bold: true } : {}), ...(italic ? { italic: true } : {}) };
   }
-  const name = asName(file.resolve(fontDict.get('BaseFont') ?? PDF_NULL)).replace(
-    /^[A-Z]{6}\+/u,
-    '',
-  );
-  const bold = /bold|black|heavy/iu.test(name);
-  const italic = /italic|oblique/iu.test(name);
-  return { ...(bold ? { bold } : {}), ...(italic ? { italic } : {}) };
+  return { ...(named.bold ? { bold: true } : {}), ...(named.italic ? { italic: true } : {}) };
+}
+
+/**
+ * §9.6.2.2 — the style a font's NAME states, by the PostScript convention:
+ * `Family-Style`, or `Family,Style` as Word writes it.
+ *
+ * The separator is what makes this safe. A family whose name merely CONTAINS
+ * the word — "New Basrah Bold", "Damascus Bold", both real faces in
+ * ArabicCIDTrueType.pdf — is not a bold cut of anything, and reading it as one
+ * set two lines heavy that no reader sets heavy. `Times-Bold` is.
+ */
+function styleFromName(baseFont: string): { bold: boolean; italic: boolean } {
+  // §9.6.4 — six arbitrary capitals and a plus sign mark a subset, and they may
+  // spell anything at all.
+  const name = baseFont.replace(/^[A-Z]{6}\+/u, '');
+  const style = /[-,]([A-Za-z]+)$/u.exec(name)?.[1] ?? '';
+  return {
+    bold: /bold|black|heavy|semib|demi/iu.test(style),
+    italic: /italic|oblique/iu.test(style),
+  };
 }
 
 /** §9.7.4 — a `/Type0` font's one descendant CIDFont, which owns the descriptor. */
@@ -279,7 +387,11 @@ function descendantFont(file: PdfFile, fontDict: PdfDict): PdfDict {
 }
 
 // §9.6.2.1 — a simple font's /Widths array is indexed by (code − /FirstChar).
-function simpleWidths(file: PdfFile, fontDict: PdfDict): (code: number) => number {
+function simpleWidths(
+  file: PdfFile,
+  fontDict: PdfDict,
+  decodeOne: (code: number) => string,
+): (code: number) => number {
   const first = asNumber(file.resolve(fontDict.get('FirstChar') ?? PDF_NULL), 0);
   const widthsVal = file.resolve(fontDict.get('Widths') ?? PDF_NULL);
   const widths = Array.isArray(widthsVal) ? widthsVal : [];
@@ -288,9 +400,16 @@ function simpleWidths(file: PdfFile, fontDict: PdfDict): (code: number) => numbe
     descriptor instanceof Map
       ? asNumber(file.resolve(descriptor.get('MissingWidth') ?? PDF_NULL), 0)
       : 0;
+  // §9.6.2.2 — the built-in metrics, for the face this one asks to be measured
+  // as. Consulted only where the file itself states no width: a file that says
+  // its Helvetica is 700 wide has said so, however unlike Helvetica that is.
+  const face = standardFace(asName(file.resolve(fontDict.get('BaseFont') ?? PDF_NULL)));
   return (code) => {
     const w = widths[code - first];
-    return typeof w === 'number' ? w : missing > 0 ? missing : 500;
+    if (typeof w === 'number') return w;
+    const built = face === undefined ? undefined : standardWidth(face, code, decodeOne(code));
+    if (built !== undefined) return built;
+    return missing > 0 ? missing : 500;
   };
 }
 
