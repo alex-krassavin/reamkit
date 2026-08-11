@@ -153,6 +153,11 @@ function paintedVectors(
       glyph?: Type3Call;
     }> = [
       ...result.vectors.map((vector) => ({ order: vector.order, vector })),
+      // §9.6.6 — a glyph whose code stands for no character is a PATH here,
+      // painted where the page set it. complex_ttf_font.pdf is eight lines of
+      // Arabic in a subset that says nothing about its characters, and without
+      // this the file reconstructs to a blank sheet.
+      ...result.outlines.map((vector) => ({ order: vector.order, vector })),
       ...result.images.map((xobject) => ({ order: xobject.order, xobject })),
       ...result.glyphs.map((glyph) => ({ order: glyph.order, glyph })),
     ].sort((a, b) => a.order - b.order);

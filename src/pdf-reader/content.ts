@@ -57,6 +57,20 @@ export interface ContentFont {
    * procedure paints, in the resources the font states.
    */
   readonly type3?: Type3Face;
+  /**
+   * §9.6.6 — the OUTLINE a code draws, for a code that stands for no
+   * character. A face that can say what its characters are never has one:
+   * this is the last resort before a blank page.
+   */
+  readonly outline?: GlyphOutline;
+}
+
+/** §9.6.6 — the outlines of a face read by glyph index, and their glyph space. */
+export interface GlyphOutline {
+  /** Glyph space to text space, as a Type 3 font's `/FontMatrix` is. */
+  readonly matrix: Matrix;
+  /** The contours one code draws, or `undefined` where it draws none. */
+  readonly path: (code: number) => Array<PathSeg> | undefined;
 }
 
 /** §9.6.5 — the parts of a Type 3 font a caller needs to run its glyphs. */
@@ -316,6 +330,12 @@ export interface InterpretResult {
    * shading's own type, so the placement is carried rather than counted.
    */
   readonly shadings: Array<ShadingPaint>;
+  /**
+   * §9.6.6 — every glyph the stream showed that stands for NO character, as
+   * the path it draws in page space. There is nothing to write for one, and
+   * there is something to draw.
+   */
+  readonly outlines: Array<VectorPlacement>;
 }
 
 /**
@@ -506,6 +526,7 @@ export function interpretContent(
   const vectors: Array<VectorPlacement> = []; // filled paths (EP10)
   const glyphs: Array<Type3Call> = []; // §9.6.5 Type 3 glyph procedures
   const painted: Array<ShadingPaint> = []; // §8.7.4.3 `sh` — regions, not paths
+  const outlines: Array<VectorPlacement> = []; // §9.6.6 glyphs with no character
   const lexer = new Lexer(bytes);
   const stack: Array<TextState> = [];
   let state = initialState();
@@ -613,6 +634,23 @@ export function interpretContent(
           resources: type3.resources,
           ctm: multiply(type3.matrix, multiply(scale, multiply(tm, state.ctm))),
           order: paintOrder++,
+        });
+      }
+    }
+    // §9.6.6 — a glyph whose code stands for no character. Nothing downstream
+    // can write it, so it is DRAWN, at the place and size the page set it.
+    const outline = state.font.outline;
+    if (outline && visible() && state.renderMode !== 3 && state.renderMode !== 7) {
+      const segs = outline.path(code);
+      if (segs) {
+        const scale: Matrix = [state.fontSize * state.hScale, 0, 0, state.fontSize, 0, state.rise];
+        const place = multiply(outline.matrix, multiply(scale, multiply(tm, state.ctm)));
+        outlines.push({
+          order: paintOrder++,
+          segs: segs.map((seg) => mapSeg(seg, place)),
+          ...(state.clip ? { clip: state.clip } : {}),
+          fillHex: state.fillColor,
+          ...(state.fillAlpha < 1 ? { alpha: state.fillAlpha } : {}),
         });
       }
     }
@@ -1053,7 +1091,24 @@ export function interpretContent(
         break;
     }
   }
-  return { texts: runs, images, vectors, glyphs, shadings: painted };
+  return { texts: runs, images, vectors, glyphs, shadings: painted, outlines };
+}
+
+/** One path segment through a matrix — the glyph's own space onto the page. */
+function mapSeg(seg: PathSeg, m: Matrix): PathSeg {
+  const at = (x: number, y: number): [number, number] => [
+    m[0] * x + m[2] * y + m[4],
+    m[1] * x + m[3] * y + m[5],
+  ];
+  if (seg.op === 'close') return seg;
+  if (seg.op === 'cubic') {
+    const [x1, y1] = at(seg.x1, seg.y1);
+    const [x2, y2] = at(seg.x2, seg.y2);
+    const [x, y] = at(seg.x, seg.y);
+    return { op: 'cubic', x1, y1, x2, y2, x, y };
+  }
+  const [x, y] = at(seg.x, seg.y);
+  return { op: seg.op, x, y };
 }
 
 /** §9.3.6 — the rendering modes that put a line round the glyphs. */
