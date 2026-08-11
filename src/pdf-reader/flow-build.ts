@@ -246,6 +246,9 @@ export function imageBlock(
       // §20.1.8.55 — the box above is what the clip left showing, so the source
       // must be cut to match it or the whole picture squeezes into it.
       ...(image.crop ? { crop: image.crop } : {}),
+      // §20.1.8.4 `a:alphaModFix` — the page asked for the picture to be seen
+      // through, and a format that can say so should say so.
+      ...(image.alpha !== undefined ? { alpha: image.alpha } : {}),
       paragraphProperties: {},
       ...(alt ? { altText: alt } : {}),
     },

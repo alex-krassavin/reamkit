@@ -191,6 +191,8 @@ export interface ImagePlacement {
    */
   readonly fillHex: string;
   readonly mcid?: number;
+  /** §11.6.4.4 `/ca` — how opaque the picture is drawn, when the page asked for less. */
+  readonly alpha?: number;
   /** §11.3.5 `/BM` — a blend the page asked for that nothing here performs. */
   readonly blend?: string;
   /** §11.6.5 `/SMask` — the paint faded from place to place; nothing here does. */
@@ -835,7 +837,9 @@ export function interpretContent(
             ...(state.clip ? { clip: state.clip } : {}),
             fillHex: state.fillColor,
             ...(mcid !== undefined ? { mcid } : {}),
+            ...(state.fillAlpha < 1 ? { alpha: state.fillAlpha } : {}),
             ...(state.blendMode !== undefined ? { blend: state.blendMode } : {}),
+            ...(state.softMask ? { masked: true } : {}),
           });
         }
         break;

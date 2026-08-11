@@ -475,6 +475,43 @@ describe('image reconstruction end-to-end (E-PDF EP6)', () => {
     );
     expect(doc.losses.some((l) => /bare-shading/u.test(l.detail))).toBe(true);
   });
+
+  it('draws a picture the page asked to be seen through at the opacity it asked for', () => {
+    // §11.6.4.4 — `/ca` governs a picture as much as a fill, and the model has
+    // `a:alphaModFix` to say so. alphatrans.pdf lays a photograph in at half
+    // strength over three coloured squares, and drawn full-strength it hid all
+    // three.
+    const image =
+      '<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceRGB ' +
+      '/BitsPerComponent 8 /Length 3 >>\nstream\nÿ  \nendstream';
+    const doc = Ream.parse(
+      onePagePdf(
+        'q /GS0 gs 50 0 0 50 20 20 cm /Im0 Do Q',
+        '/ExtGState << /GS0 << /ca 0.5 >> >> /XObject << /Im0 5 0 R >>',
+        [image],
+      ),
+    );
+    const picture = doc.flow.body.find((b) => b.kind === 'image');
+    expect(picture).toBeDefined();
+    if (picture?.kind !== 'image') return;
+    expect(picture.image.alpha).toBe(0.5);
+  });
+
+  it('keeps a fill alpha a later graphics state does not name', () => {
+    // §8.4.5 — a `gs` changes ONLY the parameters its dictionary names.
+    // alphatrans.pdf sets `ca` 0.5 in one state and then names a second holding
+    // `/CA` alone; read as "everything unnamed is the default", the second
+    // turned the fill opaque and every translucent square buried what it
+    // covered.
+    const gs = '/ExtGState << /A << /ca 0.5 >> /B << /CA 1 >> >>';
+    const doc = Ream.parse(
+      onePagePdf('/A gs /B gs 1 0 0 rg 10 10 80 80 re f', `${gs} /XObject << >>`),
+    );
+    const shape = doc.flow.body.find((b) => b.kind === 'shape');
+    expect(shape).toBeDefined();
+    if (shape?.kind !== 'shape') return;
+    expect(shape.shape.fill.alpha).toBe(0.5);
+  });
 });
 
 /**
@@ -486,15 +523,25 @@ function shPdf(content: string, shading?: string, extraResources = ''): Uint8Arr
     shading ??
     '/ShadingType 2 /ColorSpace /DeviceRGB /Coords [0 0 100 0] ' +
       '/Function << /FunctionType 2 /Domain [0 1] /C0 [1 0 0] /C1 [0 0 1] /N 1 >>';
+  return onePagePdf(content, `/Shading << /Sh0 << ${sh} >> >> ${extraResources}`, [
+    // The mask's own group, referenced by an /SMask; never walked when the
+    // paint it masks is skipped.
+    '<< /Type /XObject /Subtype /Form /BBox [0 0 100 100] /Length 0 >>\nstream\n\nendstream',
+  ]);
+}
+
+/** A 100×100-point page with the given content stream and `/Resources` body. */
+function onePagePdf(
+  content: string,
+  resources: string,
+  extraObjects: ReadonlyArray<string> = [],
+): Uint8Array {
   const objects = [
     '<< /Type /Catalog /Pages 2 0 R >>',
     '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
-    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Contents 4 0 R ' +
-      `/Resources << /Shading << /Sh0 << ${sh} >> >> ${extraResources} >> >>`,
+    `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Contents 4 0 R /Resources << ${resources} >> >>`,
     `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
-    // The mask's own group, referenced by the /SMask above; never walked when
-    // the paint it masks is skipped.
-    '<< /Type /XObject /Subtype /Form /BBox [0 0 100 100] /Length 0 >>\nstream\n\nendstream',
+    ...extraObjects,
   ];
   let pdf = '%PDF-1.7\n';
   const offsets: Array<number> = [];

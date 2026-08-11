@@ -52,6 +52,12 @@ export interface PdfImage {
   /** Enclosing marked-content id, if the placement was inside a `/Figure`. */
   readonly mcid?: number;
   /**
+   * §11.6.4.4 `/ca` — how opaque the picture is drawn, `0..1`. Absent is
+   * opaque. alphatrans.pdf lays a photograph in at half strength over three
+   * coloured squares, and drawn full-strength it hid all three.
+   */
+  readonly alpha?: number;
+  /**
    * §8.5.3 — where this was painted, as the chain of positions leading to it.
    * The same key a lifted path carries, so the two can be ordered against each
    * other: a picture drawn over a filled box has the larger key.
@@ -230,7 +236,13 @@ export function collectPageImages(file: PdfFile, page: PdfPage): PageImages {
         );
         if (decoded.ok) {
           images.push({
-            ...geometry(placement.ctm, decoded, placement.mcid ?? inheritedMcid, placement.clip),
+            ...geometry(
+              placement.ctm,
+              decoded,
+              placement.mcid ?? inheritedMcid,
+              placement.clip,
+              placement.alpha,
+            ),
             orderKey: [...prefix, placement.order],
           });
           if (decoded.degraded) addLoss('degraded', decoded.degraded);
@@ -250,7 +262,7 @@ export function collectPageImages(file: PdfFile, page: PdfPage): PageImages {
         const decoded = decodePdfImage(file, stream, placement.fillHex);
         if (decoded.ok) {
           images.push({
-            ...geometry(placement.ctm, decoded, mcid, placement.clip),
+            ...geometry(placement.ctm, decoded, mcid, placement.clip, placement.alpha),
             orderKey: [...prefix, placement.order],
           });
           if (decoded.degraded) addLoss('degraded', decoded.degraded);
@@ -313,6 +325,7 @@ function geometry(
   decoded: { bytes: Uint8Array; format: 'png' | 'jpeg' | 'jpeg2000' },
   mcid: number | undefined,
   clip: ClipRegion | undefined,
+  alpha?: number,
 ): Omit<PdfImage, 'orderKey'> {
   const widthPt = Math.hypot(ctm[0], ctm[1]) || 1;
   const heightPt = Math.hypot(ctm[2], ctm[3]) || 1;
@@ -348,6 +361,7 @@ function geometry(
     ...(crop ? { crop } : {}),
     ...(Math.abs(angle) > 0.5 ? { rotationDeg: angle } : {}),
     ...(mcid !== undefined ? { mcid } : {}),
+    ...(alpha !== undefined ? { alpha } : {}),
   };
 }
 
