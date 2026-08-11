@@ -5,6 +5,7 @@
 // shading's /Function (type 2 exponential, type 3 stitching, type 0 sampled) for
 // the colour stops. The bare `sh` operator (clip-bounded) is not captured.
 
+import type { CieSpace } from './cie-color';
 import type { GradientStop, ShapeGradient } from '@/core/vector';
 import type { PdfDict, PdfValue } from '@/pdf/objects';
 
@@ -235,11 +236,17 @@ export function buildAlphaMap(file: PdfFile, resources: PdfDict | undefined): Ma
       mode !== undefined && mode !== 'Normal' && mode !== 'Compatible' && !darkens
         ? mode
         : undefined;
-    if (alpha === undefined && !darkens && blend === undefined) continue;
+    // §11.6.5 `/SMask` — a mask that varies the paint's opacity from place to
+    // place, out of another group's luminosity or alpha. `/None` is the absence
+    // of one.
+    const smask = file.resolve(state.get('SMask') ?? PDF_NULL);
+    const masked = smask instanceof Map;
+    if (alpha === undefined && !darkens && blend === undefined && !masked) continue;
     out.set(name, {
       ...(alpha !== undefined ? { alpha } : {}),
       ...(darkens ? { darkens: true } : {}),
       ...(blend !== undefined ? { blend } : {}),
+      ...(masked ? { masked: true } : {}),
     });
   }
   return out;
@@ -256,6 +263,11 @@ export interface GsPaint {
    * report can say which. `Normal` is no blend at all and is never named here.
    */
   readonly blend?: string;
+  /**
+   * §11.6.5 `/SMask` — the paint's opacity varies from place to place, out of
+   * another group's luminosity or alpha. Nothing downstream has a mask like it.
+   */
+  readonly masked?: boolean;
 }
 
 /**
@@ -268,6 +280,12 @@ export interface GsPaint {
 export interface ColorSpaceInfo {
   readonly kind: 'gray' | 'rgb' | 'cmyk' | 'tint';
   readonly components: number;
+  /**
+   * §8.6.5.6/§8.6.5.7 — the CIE parameters, for a `CalGray` or `CalRGB` space.
+   * Its numbers look like a device space's and are not: they mean what comes
+   * out of this transform.
+   */
+  readonly cie?: CieSpace;
 }
 
 /**
@@ -310,12 +328,48 @@ function colorSpaceInfo(file: PdfFile, cs: PdfValue): ColorSpaceInfo | undefined
     // image path's business; a bare `sc` into one is rare and left alone.
     return undefined;
   }
+  if (head.value === 'CalGray') {
+    // §8.6.5.6 — one number through one gamma, which is unambiguous.
+    //
+    // `CalRGB` is NOT read this way, though the file states it the same way.
+    // Its transform is well defined on paper and no two renderers agree on the
+    // chromatic adaptation at the end of it: calrgb.pdf's neutral column comes
+    // back light blue-grey from mutool, and neither adapting the stated white
+    // to D65 (Bradford or von Kries) nor ignoring the white reproduces that.
+    // Guessing at it moved the file 0.630 to 0.621 while making some of its
+    // pages worse, so it keeps the device reading until there is something to
+    // check an implementation against.
+    const params = file.resolve(cs[1] ?? PDF_NULL);
+    const cie = params instanceof Map ? cieParams(file, params, false) : undefined;
+    const base = { kind: 'gray' as const, components: 1 };
+    return cie ? { ...base, cie } : base;
+  }
   if (head.value === 'Separation' || head.value === 'DeviceN') {
     const names = file.resolve(cs[1] ?? PDF_NULL);
     const n = head.value === 'Separation' ? 1 : Array.isArray(names) ? names.length : 1;
     return { kind: 'tint', components: n };
   }
   return byFamily(head.value, 0);
+}
+
+/** §8.6.5.6/§8.6.5.7 — the white point, gamma and matrix a CIE space states. */
+function cieParams(file: PdfFile, params: PdfDict, rgb: boolean): CieSpace | undefined {
+  const nums = (v: PdfValue | undefined): Array<number> =>
+    Array.isArray(v)
+      ? v.map((x) => file.resolve(x)).filter((x): x is number => typeof x === 'number')
+      : [];
+  const white = nums(file.get(params, 'WhitePoint'));
+  if (white.length < 3 || !(white[1]! > 0)) return undefined;
+  const gammaRaw = file.get(params, 'Gamma');
+  const gamma = typeof gammaRaw === 'number' ? [gammaRaw] : nums(gammaRaw);
+  const matrix = nums(file.get(params, 'Matrix'));
+  return {
+    white: [white[0]!, white[1]!, white[2]!],
+    gamma: gamma.length > 0 ? gamma : rgb ? [1, 1, 1] : [1],
+    // §8.6.5.7 — the identity is the default, which is also what a matrix of
+    // the wrong length comes to.
+    ...(rgb ? { matrix: matrix.length === 9 ? matrix : [1, 0, 0, 0, 1, 0, 0, 0, 1] } : {}),
+  };
 }
 
 function byFamily(family: string, n: number): ColorSpaceInfo | undefined {

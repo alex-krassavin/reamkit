@@ -253,6 +253,26 @@ export function collectPageVectors(
   // with the pictures it has already placed.
   const painted: Array<Box> = [...occupied];
   const raws = paintedVectors(file, page);
+  // §11.6.5 — a mask that fades the paint from place to place, which no shape
+  // downstream has. bug852992_reduced.pdf fades both its green ground and the
+  // orange box on it toward the edges, and both came back flat with nothing
+  // said. §11.3.5 — and a blend rule nothing here performs, likewise.
+  const losses: Array<Loss> = [];
+  const asked = new Set<string>();
+  for (const raw of raws) {
+    if (raw.masked === true) {
+      asked.add(
+        'PDF soft mask (/SMask in the graphics state) is not applied; the shape is drawn at full opacity throughout',
+      );
+    }
+    if (raw.blend !== undefined) {
+      asked.add(
+        `PDF blend mode /${raw.blend} is not performed; the shape is drawn over what it was to blend with`,
+      );
+    }
+  }
+  for (const detail of asked)
+    losses.push({ severity: 'degraded', feature: FEATURES.images, detail });
   for (const raw of raws) {
     if (out.length >= MAX_VECTORS) break;
     const v = clipped(raw);
@@ -337,18 +357,14 @@ export function collectPageVectors(
   }
   // A cap that says nothing is a cap that reads as "the page had no more".
   const cut = out.length >= MAX_VECTORS || raws.length >= MAX_VECTORS;
-  return {
-    vectors: out,
-    losses: cut
-      ? [
-          {
-            severity: 'dropped' as const,
-            feature: FEATURES.shapes,
-            detail: `page carries more than ${String(MAX_VECTORS)} painted paths; the rest were not read`,
-          },
-        ]
-      : [],
-  };
+  if (cut) {
+    losses.push({
+      severity: 'dropped',
+      feature: FEATURES.shapes,
+      detail: `page carries more than ${String(MAX_VECTORS)} painted paths; the rest were not read`,
+    });
+  }
+  return { vectors: out, losses };
 }
 
 /** The paths lifted off one page, plus a loss if the page ran past the cap. */

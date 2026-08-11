@@ -151,6 +151,14 @@ export function collectPageImages(file: PdfFile, page: PdfPage): PageImages {
               `PDF blend mode /${placement.blend} is not performed; the picture is drawn over what it was to blend with`,
             );
           }
+          // §11.6.5 — a mask that fades the paint from place to place. No
+          // anchored picture has one, so the picture is drawn at full strength.
+          if (placement.masked === true) {
+            addLoss(
+              'degraded',
+              'PDF soft mask (/SMask in the graphics state) is not applied; the picture is drawn at full opacity throughout',
+            );
+          }
         } else {
           addLoss(decoded.severity, decoded.detail);
         }

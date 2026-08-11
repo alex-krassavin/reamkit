@@ -10,6 +10,7 @@
 // font falls back to Latin-1 with a half-em advance so text still surfaces.
 
 import { Lexer } from './lexer';
+import { cieToSrgb } from './cie-color';
 import type { ColorSpaceInfo, GsPaint } from './shading';
 import type { TextMarkup } from './annot-draw';
 import type { ShapeGradient } from '@/core/vector';
@@ -160,6 +161,8 @@ export interface ImagePlacement {
   readonly mcid?: number;
   /** §11.3.5 `/BM` — a blend the page asked for that nothing here performs. */
   readonly blend?: string;
+  /** §11.6.5 `/SMask` — the paint faded from place to place; nothing here does. */
+  readonly masked?: boolean;
 }
 
 /**
@@ -251,6 +254,8 @@ export interface VectorPlacement {
   readonly darkens?: boolean;
   /** §11.3.5 `/BM` — a blend the page asked for that nothing here performs. */
   readonly blend?: string;
+  /** §11.6.5 `/SMask` — the paint faded from place to place; nothing here does. */
+  readonly masked?: boolean;
   /**
    * §8.7.3 — the TILING pattern resource name the path is filled with. Its
    * content is a stream of its own, so what the fill actually shows is only
@@ -345,6 +350,7 @@ interface TextState {
   fillAlpha: number; // §11.6.4.4 `/ca` — how opaque the non-stroking paint is
   fillDarkens: boolean; // §11.3.5 `/BM` Multiply or Darken — the paint only darkens
   blendMode: string | undefined; // §11.3.5 `/BM` — a blend nothing here can perform
+  softMask: boolean; // §11.6.5 `/SMask` — the paint fades from place to place
   clip: ClipRegion | undefined; // §8.5.4 the clipping region in force
 }
 
@@ -370,6 +376,7 @@ function initialState(): TextState {
     fillAlpha: 1,
     fillDarkens: false,
     blendMode: undefined,
+    softMask: false,
     clip: undefined,
   };
 }
@@ -427,6 +434,12 @@ function componentColor(
 ): string | undefined {
   const nums = operands.filter((o): o is number => typeof o === 'number');
   if (nums.length === 0) return undefined;
+  // §8.6.5.6/§8.6.5.7 — a CIE space's numbers mean what its own transform makes
+  // of them, which is not what the same numbers mean to a device space.
+  if (space?.cie) {
+    const [r, g, b] = cieToSrgb(space.cie, nums);
+    return rgbHex(r, g, b);
+  }
   const kind = space?.kind ?? (nums.length === 3 ? 'rgb' : nums.length === 4 ? 'cmyk' : undefined);
   switch (kind) {
     case 'rgb':
@@ -516,6 +529,7 @@ export function interpretContent(
         ...(fill && state.fillAlpha < 1 ? { alpha: state.fillAlpha } : {}),
         ...(fill && state.fillDarkens ? { darkens: true } : {}),
         ...(state.blendMode !== undefined ? { blend: state.blendMode } : {}),
+        ...(state.softMask ? { masked: true } : {}),
         ...(fill && state.fillGradient ? { gradient: state.fillGradient } : {}),
         ...(stroke ? { strokeHex: state.strokeColor, lineWidth: ctmLineWidth() } : {}),
         ...(mcid !== undefined ? { mcid } : {}),
@@ -884,6 +898,7 @@ export function interpretContent(
           state.fillAlpha = paint?.alpha ?? 1;
           state.fillDarkens = paint?.darkens ?? false;
           state.blendMode = paint?.blend;
+          state.softMask = paint?.masked ?? false;
         }
         break;
       }

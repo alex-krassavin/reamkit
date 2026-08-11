@@ -770,3 +770,37 @@ describe('a fill the size of the page', () => {
     expect(collectPageVectors(white, white.pages()[0]!).vectors).toHaveLength(0);
   });
 });
+
+describe('the CIE-based grey space (§8.6.5.6)', () => {
+  /** A page filling a box in a CalGray space with the given parameters. */
+  const calGrayPdf = (params: string, value: string): Uint8Array => {
+    const content = `/Cs cs ${value} sc 20 20 100 100 re f`;
+    return assemble([
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R ' +
+        `/Resources << /ColorSpace << /Cs [/CalGray << ${params} >>] >> >> >>`,
+      `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+    ]);
+  };
+
+  it('puts the value through the gamma the space states', () => {
+    // A CalGray's number looks like a DeviceGray's and is not: calgray.pdf
+    // reads 0.258 against the source as one and 0.044 as the other.
+    const plain = PdfFile.parse(calGrayPdf('/WhitePoint [0.9505 1 1.089]', '0.5'));
+    const [flat] = collectPageVectors(plain, plain.pages()[0]!).vectors;
+    // Gamma 1: the sRGB transfer alone, which lifts a mid grey well above half.
+    expect(flat?.fillHex).toBe('BCBCBC');
+    const dark = PdfFile.parse(calGrayPdf('/WhitePoint [0.9505 1 1.089] /Gamma 2.2', '0.5'));
+    const [gammaed] = collectPageVectors(dark, dark.pages()[0]!).vectors;
+    expect(gammaed?.fillHex).toBe('808080');
+  });
+
+  it('keeps the device reading where the space states no white point', () => {
+    // §8.6.5.6 makes /WhitePoint required; a space without one states nothing
+    // this can transform, and the number is read as the device grey it looks
+    // like — which at gamma 1 is a different grey from the transform's.
+    const odd = PdfFile.parse(calGrayPdf('/Gamma 1', '0.5'));
+    expect(collectPageVectors(odd, odd.pages()[0]!).vectors[0]?.fillHex).toBe('808080');
+  });
+});
