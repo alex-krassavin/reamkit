@@ -34,11 +34,54 @@ export interface CcittParams {
  *   decoded at all).
  */
 export function decodeCcitt(data: Uint8Array, params: CcittParams): Uint8Array | undefined {
+  return decodeInto(new BitReader(data), params);
+}
+
+/**
+ * ISO/IEC 14492 §C.5 — the bitplanes of a grey-scale image, all MMR-coded into
+ * ONE stream, one after another with an EOFB between them.
+ *
+ * They cannot be decoded a plane at a time from the head of the data, because
+ * nothing says how many BYTES a plane took: the reader has to carry its place
+ * across them. Advancing instead by the size of what came OUT left every plane
+ * after the first reading from the middle of the one before it, and
+ * bitmap-halftone-10bpp-mmr.pdf came back as three specks.
+ *
+ * @param data    The stream holding all the planes.
+ * @param columns Each plane's width, in pixels.
+ * @param rows    Each plane's height.
+ * @param count   How many planes to read.
+ * @returns One packed bitmap per plane, or `undefined` if the first will not
+ *          decode at all.
+ */
+export function decodeCcittPlanes(
+  data: Uint8Array,
+  columns: number,
+  rows: number,
+  count: number,
+): Array<Uint8Array> | undefined {
+  const reader = new BitReader(data);
+  const out: Array<Uint8Array> = [];
+  for (let i = 0; i < count; i++) {
+    const plane = decodeInto(reader, { k: -1, columns, rows, byteAlign: false });
+    if (!plane) return out.length > 0 ? out : undefined;
+    out.push(plane);
+    // §C.5 — a plane closes with an EOFB and the next starts on a byte
+    // boundary. Measured on bitmap-halftone-10bpp-mmr.pdf, whose ten planes
+    // decode only when BOTH are stepped over: the EOFB alone leaves the reader
+    // mid-byte and the second plane will not start, and the alignment alone
+    // walks into the EOFB and stops after three.
+    reader.skipEofb();
+    reader.align();
+  }
+  return out;
+}
+
+function decodeInto(reader: BitReader, params: CcittParams): Uint8Array | undefined {
   const { k, columns, rows, byteAlign } = params;
   if (k > 0) return undefined; // Group 3 two-dimensional — not supported
   if (columns <= 0 || rows <= 0 || columns > 1 << 20) return undefined;
 
-  const reader = new BitReader(data);
   const rowBytes = (columns + 7) >> 3;
   const out = new Uint8Array(rowBytes * rows);
   // The reference line for row 0 is an imaginary all-white line: its only
@@ -211,6 +254,36 @@ class BitReader {
     if (this.bitPos !== 0) {
       this.bitPos = 0;
       this.bytePos++;
+    }
+  }
+
+  /**
+   * Step over the end-of-facsimile-block that closes an MMR plane: two EOLs,
+   * each eleven zeroes and a one. Anything else is left where it stands.
+   */
+  skipEofb(): void {
+    const at = { byte: this.bytePos, bit: this.bitPos };
+    for (let eol = 0; eol < 2; eol++) {
+      let zeros = 0;
+      for (;;) {
+        const b = this.readBit();
+        if (b < 0) return;
+        if (b === 0) {
+          zeros++;
+          if (zeros > 64) {
+            this.bytePos = at.byte;
+            this.bitPos = at.bit;
+            return;
+          }
+          continue;
+        }
+        if (zeros < 11) {
+          this.bytePos = at.byte;
+          this.bitPos = at.bit;
+          return;
+        }
+        break;
+      }
     }
   }
 }

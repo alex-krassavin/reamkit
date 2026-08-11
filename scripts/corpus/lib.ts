@@ -187,7 +187,25 @@ function expectPdf(input: string, outDir: string): string {
   return out;
 }
 
+/**
+ * Render a PDF to one PPM per page.
+ *
+ * `mutool` normally, because every other tool here speaks to it — but it
+ * cannot draw a JBIG2 refinement region, and paints the whole page BLACK where
+ * one appears. Twelve files of the pdf.js corpus are that case, and every one
+ * of them scored 0.935 against a reference that was a black rectangle, while
+ * our own decode agreed with poppler and with LibreOffice to the pixel. A
+ * reference that is wrong is worse than no reference: it points at a defect
+ * that is not there and hides the ones that are. Those pages go to poppler,
+ * which decodes them.
+ *
+ * @param pdf        The file to draw.
+ * @param outPattern Where the pages go, with a `%d` for the page number.
+ * @param dpi        The resolution to draw at.
+ * @returns The written files, in page order.
+ */
 export function rasterize(pdf: string, outPattern: string, dpi: number): Array<string> {
+  if (usesJbig2(pdf)) return rasterizeWithPoppler(pdf, outPattern, dpi);
   execFileSync(
     'mutool',
     ['draw', '-c', 'rgb', '-F', 'pnm', '-o', outPattern, '-r', String(dpi), pdf],
@@ -205,8 +223,35 @@ export function rasterize(pdf: string, outPattern: string, dpi: number): Array<s
     .map((f) => resolve(dir, f));
 }
 
+/** §7.4.7 — whether any stream in the file is coded with JBIG2. */
+function usesJbig2(pdf: string): boolean {
+  try {
+    return readFileSync(pdf).includes(JBIG2_FILTER);
+  } catch {
+    return false;
+  }
+}
+
+const JBIG2_FILTER = Buffer.from('/JBIG2Decode');
+
+/** The same pages, drawn by poppler, which reads what mutool will not. */
+function rasterizeWithPoppler(pdf: string, outPattern: string, dpi: number): Array<string> {
+  const prefix = outPattern.replace(/%d\.ppm$/u, '').replace(/\.ppm$/u, '');
+  // No `-gray`: `parsePpm` reads P6, which is what pdftoppm writes by default.
+  execFileSync('pdftoppm', ['-r', String(dpi), pdf, prefix], {
+    stdio: 'ignore',
+    timeout: MUTOOL_TIMEOUT_MS,
+  });
+  const dir = prefix.substring(0, prefix.lastIndexOf('/'));
+  const stem = prefix.substring(prefix.lastIndexOf('/') + 1);
+  return readdirSync(dir)
+    .filter((f) => f.startsWith(stem) && f.endsWith('.ppm'))
+    .sort((a, b) => pageNum(a) - pageNum(b))
+    .map((f) => resolve(dir, f));
+}
+
 function pageNum(f: string): number {
-  const m = f.match(/(\d+)\.ppm$/);
+  const m = /(\d+)\.ppm$/u.exec(f);
   return m ? Number(m[1]) : 0;
 }
 

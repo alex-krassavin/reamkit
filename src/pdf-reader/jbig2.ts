@@ -19,7 +19,7 @@
 //
 // The symbol dictionary, text region and halftone region are a later stage.
 
-import { decodeCcitt } from './ccitt';
+import { decodeCcitt, decodeCcittPlanes } from './ccitt';
 
 /** A bilevel raster, one byte per pixel, 1 = black — JBIG2's own sense. */
 export interface Jbig2Bitmap {
@@ -942,6 +942,25 @@ interface TextRegionParams {
  * shape called 37, here; the shape called 12, four pixels on" — so the letter
  * "e" costs its bitmap once and a few bits per occurrence after that.
  */
+
+/**
+ * §6.4.5 Table 34 — SBSYMCODELEN, how many bits a text region spends naming
+ * one of its symbols.
+ *
+ * `ceil(log2(SBNUMSYMS))`, and for ONE symbol that is ZERO: there is nothing to
+ * choose, so no bits are read and the id is always that symbol.
+ * Rounded up to one — which the HUFFMAN side of the same table does need — the
+ * decoder takes a bit belonging to the next field and reads the id as 1, which
+ * is no symbol at all: bitmap-symbol-big-segmentid.pdf places one instance of
+ * one symbol in each of two regions, and both came back empty.
+ *
+ * @param symbols How many symbols the region has to choose between.
+ * @returns The number of bits an id takes.
+ */
+export function symbolCodeLength(symbols: number): number {
+  return Math.ceil(Math.log2(Math.max(symbols, 1)));
+}
+
 function decodeTextRegion(
   mq: MQDecoder,
   symbols: ReadonlyArray<Jbig2Bitmap>,
@@ -950,7 +969,7 @@ function decodeTextRegion(
 ): Jbig2Bitmap {
   const bmp = makeBitmap(p.width, p.height, p.defPixel);
   const strips = 1 << stripsLog;
-  const codeLen = Math.max(1, Math.ceil(Math.log2(Math.max(symbols.length, 1))));
+  const codeLen = symbolCodeLength(symbols.length);
   const iadt = new IntDecoder(mq);
   const iafs = new IntDecoder(mq);
   const iads = new IntDecoder(mq);
@@ -1467,27 +1486,24 @@ function decodeGrayScale(
 ): Array<number> {
   const cx = newContexts(1 << 16);
   const planes: Array<Jbig2Bitmap> = new Array<Jbig2Bitmap>(bits);
-  // MMR codes every plane into ONE stream, one after another; the arithmetic
-  // form shares a decoder and its contexts the same way.
-  let mmrOffset = 0;
+  // §C.5 — MMR codes every plane into ONE stream, one after another, and the
+  // reader has to carry its place across them; the arithmetic form shares a
+  // decoder and its contexts the same way.
+  const packed = mmr ? decodeCcittPlanes(data, width, height, bits) : undefined;
+  const rowBytes = (width + 7) >> 3;
   const decoder = mq ?? new MQDecoder(data);
   for (let j = bits - 1; j >= 0; j--) {
     if (mmr) {
-      const packed = decodeCcitt(data.subarray(mmrOffset), {
-        k: -1,
-        columns: width,
-        rows: height,
-        byteAlign: false,
-      });
+      // The planes come off the stream from the top down, which is the order
+      // they are consumed in here.
+      const bytes = packed?.[bits - 1 - j];
       const plane = makeBitmap(width, height);
-      if (packed) {
-        const rowBytes = (width + 7) >> 3;
+      if (bytes) {
         for (let y = 0; y < height; y++) {
           for (let x = 0; x < width; x++) {
-            plane.data[y * width + x] = (packed[y * rowBytes + (x >> 3)]! >> (7 - (x & 7))) & 1;
+            plane.data[y * width + x] = (bytes[y * rowBytes + (x >> 3)]! >> (7 - (x & 7))) & 1;
           }
         }
-        mmrOffset += packed.length;
       }
       planes[j] = plane;
     } else {

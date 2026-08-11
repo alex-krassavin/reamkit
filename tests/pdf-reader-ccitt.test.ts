@@ -19,8 +19,10 @@ import {
   SHARED_MAKEUP,
   WHITE_CODES,
   decodeCcitt,
+  decodeCcittPlanes,
 } from '@/pdf-reader/ccitt';
 import { PdfFile } from '@/pdf-reader/document';
+import { symbolCodeLength } from '@/pdf-reader/jbig2';
 import { decodePdfImage } from '@/pdf-reader/image-decode';
 import { dict, name, stream } from '@/pdf/objects';
 
@@ -268,5 +270,79 @@ describe('CCITT image XObject decode (E-PDF EP15)', () => {
     const gray = unzlibSync(prepareImage(decoded.bytes).data);
     const expected = Uint8Array.from(bitmap, (b) => (b ? 0 : 255));
     expect([...gray]).toEqual([...expected]);
+  });
+});
+
+describe('the bitplanes of a grey-scale image (ISO/IEC 14492 §C.5)', () => {
+  /** One plane's worth of pixels, distinct enough to tell the planes apart. */
+  const plane = (width: number, height: number, seed: number): Uint8Array => {
+    const px = new Uint8Array(width * height);
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) px[y * width + x] = (x + y * seed) % 3 === 0 ? 1 : 0;
+    }
+    return px;
+  };
+
+  it('reads plane after plane out of ONE stream', () => {
+    // MMR codes every plane into one stream, one after another, and nothing
+    // says how many BYTES a plane took: the reader has to carry its place
+    // across them. Advancing by the size of what came OUT left every plane
+    // after the first reading from the middle of the one before it, and
+    // bitmap-halftone-10bpp-mmr.pdf came back as three specks.
+    const width = 24;
+    const height = 8;
+    const planes = [plane(width, height, 1), plane(width, height, 2), plane(width, height, 3)];
+    const parts: Array<Uint8Array> = [];
+    for (const p of planes) {
+      const bw = new BitWriter();
+      bw.str(bitsOf(encodeG4(p, width, height)));
+      // §C.5 — an EOFB closes a plane and the next starts on a byte boundary.
+      bw.str('000000000001000000000001');
+      parts.push(bw.bytes());
+    }
+    const stream = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+    let at = 0;
+    for (const p of parts) {
+      stream.set(p, at);
+      at += p.length;
+    }
+    const read = decodeCcittPlanes(stream, width, height, planes.length);
+    expect(read).toBeDefined();
+    expect(read).toHaveLength(planes.length);
+    const rowBytes = (width + 7) >> 3;
+    read!.forEach((packed, i) => {
+      const got = new Uint8Array(width * height);
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          got[y * width + x] = (packed[y * rowBytes + (x >> 3)]! >> (7 - (x & 7))) & 1;
+        }
+      }
+      expect([...got]).toEqual([...planes[i]!]);
+    });
+  });
+});
+
+/** The bits of a byte string, so a plane can be written before its EOFB. */
+function bitsOf(bytes: Uint8Array): string {
+  let out = '';
+  for (const b of bytes) out += b.toString(2).padStart(8, '0');
+  return out;
+}
+
+describe('how a text region names one of its symbols (§6.4.5)', () => {
+  it('spends no bits at all where there is only one symbol', () => {
+    // SBSYMCODELEN is ceil(log2(SBNUMSYMS)), and for ONE symbol that is zero:
+    // there is nothing to choose. Rounded up to one, the decoder takes a bit
+    // belonging to the next field and reads the id as 1, which is no symbol at
+    // all — bitmap-symbol-big-segmentid.pdf places one instance of one symbol
+    // in each of two regions, and both came back empty.
+    expect(symbolCodeLength(1)).toBe(0);
+    expect(symbolCodeLength(2)).toBe(1);
+    expect(symbolCodeLength(3)).toBe(2);
+    expect(symbolCodeLength(4)).toBe(2);
+    expect(symbolCodeLength(5)).toBe(3);
+    expect(symbolCodeLength(256)).toBe(8);
+    // A region with no symbols reads nothing either.
+    expect(symbolCodeLength(0)).toBe(0);
   });
 });
