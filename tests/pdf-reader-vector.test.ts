@@ -8,6 +8,7 @@ import { zlibSync } from 'fflate';
 import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
+import type { PdfImage } from '@/pdf-reader/images';
 import { Ream } from '@/core/converter/ream';
 import { interpretContent } from '@/pdf-reader/content';
 import { PdfFile } from '@/pdf-reader/document';
@@ -737,6 +738,96 @@ describe('a blend the page asks for and nothing here performs (§11.3.5)', () =>
     // picture — a highlighter with its words on top.
     const file = PdfFile.parse(blended('Multiply'));
     expect(collectPageImages(file, file.pages()[0]!).losses).toHaveLength(0);
+  });
+});
+
+describe('a picture the CTM turns and a clip cuts (§8.9.5, §8.5.4)', () => {
+  /** A page whose only mark is one image drawn through `cm`, under `clip`. */
+  const placed = (cm: string, clip: string): Uint8Array => {
+    const gray = zlibSync(Uint8Array.from([0, 255, 255, 0]));
+    const content = `q ${clip}${cm} cm /Im Do Q`;
+    const objects = [
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 400 400] /Contents 4 0 R ' +
+        '/Resources << /XObject << /Im 5 0 R >> >> >>',
+      `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+      '<< /Type /XObject /Subtype /Image /Width 2 /Height 2 /ColorSpace /DeviceGray ' +
+        `/BitsPerComponent 8 /Filter /FlateDecode /Length ${String(gray.length)} >>`,
+    ];
+    let pdf = '%PDF-1.7\n';
+    const offsets: Array<number> = [];
+    objects.forEach((body, i) => {
+      offsets.push(pdf.length);
+      pdf += `${String(i + 1)} 0 obj\n${body}\n`;
+      if (i === 4) pdf += `stream\n${String.fromCharCode(...gray)}\nendstream\n`;
+      pdf += 'endobj\n';
+    });
+    const xref = pdf.length;
+    pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+    for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+    pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`;
+    return Uint8Array.from([...pdf].map((c) => c.charCodeAt(0)));
+  };
+
+  /** The one image such a page carries. */
+  const only = (cm: string, clip = ''): PdfImage => {
+    const file = PdfFile.parse(placed(cm, clip));
+    const { images } = collectPageImages(file, file.pages()[0]!);
+    expect(images).toHaveLength(1);
+    return images[0]!;
+  };
+
+  it('leaves an upright picture upright, and where it was put', () => {
+    const img = only('100 0 0 60 40 30');
+    expect(img.rotationDeg).toBeUndefined();
+    expect(img.crop).toBeUndefined();
+    expect([img.x, img.y, img.widthPt, img.heightPt]).toEqual([40, 30, 100, 60]);
+  });
+
+  it('turns it as the CTM turns it, about its own centre', () => {
+    // 90° counter-clockwise: the columns swap and the second one flips.
+    // image-rotated-black-white-ratio.pdf sets its picture at thirty-one
+    // degrees and it came back upright in the corner, because taking only the
+    // column LENGTHS threw the turn away.
+    const img = only('0 100 -60 0 40 30');
+    expect(Math.round(img.rotationDeg ?? 0)).toBe(90);
+    expect(Math.round(img.widthPt)).toBe(100);
+    expect(Math.round(img.heightPt)).toBe(60);
+    // The unturned box is centred where the turned one is: (40,30) is the
+    // unit square's origin, so its middle lands at (40-30, 30+50).
+    expect([Math.round(img.x + img.widthPt / 2), Math.round(img.y + img.heightPt / 2)]).toEqual([
+      10, 80,
+    ]);
+  });
+
+  it('cuts it to a clip, on the picture\u2019s own edges', () => {
+    // The left half and the top three quarters, of a picture placed square on.
+    const img = only('100 0 0 100 0 0', '0 25 50 75 re W n ');
+    expect(img.crop).toEqual({ left: 0, right: 0.5, top: 0, bottom: 0.25 });
+    expect([img.x, img.y, img.widthPt, img.heightPt]).toEqual([0, 25, 50, 75]);
+  });
+
+  it('cuts along the picture\u2019s axes when clip and picture turn together', () => {
+    // A clip square on in the page's axes but drawn at the picture's own
+    // angle: in the picture's space it is square on, and the crop is exact.
+    // image-rotated-black-white-ratio.pdf turns both by thirty-one degrees.
+    const cm = '0 100 -100 0 100 0';
+    const img = only(cm, '100 25 m 25 25 l 25 75 l 100 75 l h W n ');
+    expect(img.crop?.left).toBeCloseTo(0.25, 6);
+    expect(img.crop?.right).toBeCloseTo(0.25, 6);
+    expect(img.crop?.top).toBeCloseTo(0.25, 6);
+    expect(img.crop?.bottom).toBeCloseTo(0, 6);
+    expect(Math.round(img.widthPt)).toBe(50);
+    expect(Math.round(img.heightPt)).toBe(75);
+  });
+
+  it('draws the whole picture where the clip does not reach it', () => {
+    // A clip that leaves nothing has been read wrong; a hairline is worse
+    // than the picture.
+    const img = only('100 0 0 100 0 0', '300 300 20 20 re W n ');
+    expect(img.crop).toBeUndefined();
+    expect(img.widthPt).toBe(100);
   });
 });
 

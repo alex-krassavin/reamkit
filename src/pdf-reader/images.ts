@@ -11,8 +11,9 @@ import { interpretContent, multiply } from './content';
 import { decodePdfImage } from './image-decode';
 import { collectPageAppearances } from './annots';
 import { buildAlphaMap } from './shading';
-import type { ContentFont, Matrix } from './content';
+import type { ClipRegion, ContentFont, Matrix } from './content';
 import type { PdfDict, PdfValue } from '@/pdf/objects';
+import type { ImageCrop } from '@/core/document-model/types';
 import type { Loss } from '@/core/ir';
 
 import type { PdfFile, PdfPage } from './document';
@@ -34,6 +35,17 @@ export interface PdfImage {
   /** Page-space lower-left corner (points, y-up). */
   readonly x: number;
   readonly y: number;
+  /**
+   * §8.9.5 — how far the CTM turns the picture, in degrees counter-clockwise.
+   * The box above is the picture's own, unturned; a turn spins it about its
+   * centre, which is what every downstream format does with one.
+   */
+  readonly rotationDeg?: number;
+  /**
+   * §8.5.4 — the fraction of each of the picture's OWN edges a clip cut away,
+   * where one bounded it: `a:srcRect` in DrawingML terms. Absent is whole.
+   */
+  readonly crop?: ImageCrop;
   /** Enclosing marked-content id, if the placement was inside a `/Figure`. */
   readonly mcid?: number;
   /**
@@ -136,7 +148,7 @@ export function collectPageImages(file: PdfFile, page: PdfPage): PageImages {
         const decoded = decodePdfImage(file, stream);
         if (decoded.ok) {
           images.push({
-            ...geometry(placement.ctm, decoded, mcid),
+            ...geometry(placement.ctm, decoded, mcid, placement.clip),
             orderKey: [...prefix, placement.order],
           });
           if (decoded.degraded) addLoss('degraded', decoded.degraded);
@@ -198,16 +210,106 @@ function geometry(
   ctm: Matrix,
   decoded: { bytes: Uint8Array; format: 'png' | 'jpeg' | 'jpeg2000' },
   mcid: number | undefined,
+  clip: ClipRegion | undefined,
 ): Omit<PdfImage, 'orderKey'> {
+  const widthPt = Math.hypot(ctm[0], ctm[1]) || 1;
+  const heightPt = Math.hypot(ctm[2], ctm[3]) || 1;
+  // §8.9.5 — a picture is placed by the CTM, and the CTM may TURN it. Taking
+  // only the column lengths and the translation threw the turn away and put
+  // the picture square at the origin of its own space:
+  // image-rotated-black-white-ratio.pdf sets its picture at forty degrees in
+  // the middle of the page and it came back upright in the corner.
+  const angle = (Math.atan2(ctm[1], ctm[0]) * 180) / Math.PI;
+  const box = clippedUnitBox(ctm, clip);
+  // The centre is what a turn leaves in place, so the box is measured off it:
+  // the shown part of the unit square, through the matrix.
+  const u = (box.u0 + box.u1) / 2;
+  const v = (box.v0 + box.v1) / 2;
+  const cx = ctm[0] * u + ctm[2] * v + ctm[4];
+  const cy = ctm[1] * u + ctm[3] * v + ctm[5];
+  const shownW = widthPt * (box.u1 - box.u0);
+  const shownH = heightPt * (box.v1 - box.v0);
+  // §20.1.8.55 — what the clip cut away, as the fraction of each edge. The unit
+  // square's v runs UP and an image's rows run DOWN from its first, so the top
+  // is what is above v1.
+  const crop =
+    box.u0 > 0 || box.v0 > 0 || box.u1 < 1 || box.v1 < 1
+      ? { left: box.u0, right: 1 - box.u1, top: 1 - box.v1, bottom: box.v0 }
+      : undefined;
   return {
     bytes: decoded.bytes,
     format: decoded.format,
-    widthPt: Math.hypot(ctm[0], ctm[1]) || 1,
-    heightPt: Math.hypot(ctm[2], ctm[3]) || 1,
-    x: ctm[4],
-    y: ctm[5],
+    widthPt: shownW,
+    heightPt: shownH,
+    x: cx - shownW / 2,
+    y: cy - shownH / 2,
+    ...(crop ? { crop } : {}),
+    ...(Math.abs(angle) > 0.5 ? { rotationDeg: angle } : {}),
     ...(mcid !== undefined ? { mcid } : {}),
   };
+}
+
+/** Below this the clip took a sliver off an edge and is not worth a crop. */
+const CROPS = 0.01;
+
+/**
+ * §8.5.4 — the part of the unit square a clip leaves showing, in the PICTURE's
+ * own axes.
+ *
+ * A clip is stated in the page's coordinates and a picture may be turned within
+ * them, so intersecting the two boxes as they stand crops along the wrong axes.
+ * Carried back through the placement matrix the clip lands in the unit square
+ * the image is drawn into, where a crop is what `a:srcRect` means: the fraction
+ * off each of the picture's own edges. image-rotated-black-white-ratio.pdf
+ * turns picture and clip together by thirty-one degrees, and in that space the
+ * clip is square on and takes the middle 53% of both sides.
+ *
+ * Where the clip is turned differently from the picture this bounds it rather
+ * than cutting it exactly — a rectangle is all `a:srcRect` can say.
+ */
+function clippedUnitBox(
+  ctm: Matrix,
+  clip: ClipRegion | undefined,
+): { u0: number; v0: number; u1: number; v1: number } {
+  const whole = { u0: 0, v0: 0, u1: 1, v1: 1 };
+  if (!clip) return whole;
+  const det = ctm[0] * ctm[3] - ctm[1] * ctm[2];
+  if (!Number.isFinite(det) || Math.abs(det) < 1e-9) return whole;
+  let u0 = Infinity;
+  let v0 = Infinity;
+  let u1 = -Infinity;
+  let v1 = -Infinity;
+  const add = (x: number, y: number): void => {
+    const dx = x - ctm[4];
+    const dy = y - ctm[5];
+    const u = (ctm[3] * dx - ctm[2] * dy) / det;
+    const v = (ctm[0] * dy - ctm[1] * dx) / det;
+    u0 = Math.min(u0, u);
+    v0 = Math.min(v0, v);
+    u1 = Math.max(u1, u);
+    v1 = Math.max(v1, v);
+  };
+  for (const seg of clip.segs) {
+    if (seg.op === 'close') continue;
+    if (seg.op === 'cubic') {
+      // The hull bounds the curve, which is what a bounding crop wants.
+      add(seg.x1, seg.y1);
+      add(seg.x2, seg.y2);
+    }
+    add(seg.x, seg.y);
+  }
+  if (!Number.isFinite(u0) || !Number.isFinite(v0)) return whole;
+  const cut = {
+    u0: Math.min(1, Math.max(0, u0)),
+    v0: Math.min(1, Math.max(0, v0)),
+    u1: Math.min(1, Math.max(0, u1)),
+    v1: Math.min(1, Math.max(0, v1)),
+  };
+  // A clip that leaves nothing is a clip this has read wrong — draw it whole
+  // rather than drop it to a hairline.
+  if (!(cut.u1 - cut.u0 > CROPS) || !(cut.v1 - cut.v0 > CROPS)) return whole;
+  if (cut.u1 - cut.u0 > 1 - CROPS && cut.v1 - cut.v0 > 1 - CROPS) return whole;
+  return cut;
 }
 
 function matrixOf(file: PdfFile, dict: PdfDict): Matrix {

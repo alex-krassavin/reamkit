@@ -115,12 +115,15 @@ export function placeImages(images: ReadonlyArray<PdfImage>, d: Display): Array<
     const ys = corners.map((c) => c.y);
     const minX = Math.min(...xs);
     const minY = Math.min(...ys);
+    // The page's own turn adds to the picture's.
+    const turned = (img.rotationDeg ?? 0) + d.turnDeg;
     return {
       ...img,
       x: minX,
       y: minY,
       widthPt: Math.max(...xs) - minX,
       heightPt: Math.max(...ys) - minY,
+      ...(Math.abs(turned) > 0.5 ? { rotationDeg: turned } : {}),
     };
   });
 }

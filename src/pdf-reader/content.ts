@@ -158,6 +158,8 @@ export interface ImagePlacement {
   /** XObject resource name (no leading slash). */
   readonly name: string;
   readonly ctm: Matrix;
+  /** §8.5.4 — the clip in force when it was painted, when there was one. */
+  readonly clip?: ClipRegion;
   readonly mcid?: number;
   /** §11.3.5 `/BM` — a blend the page asked for that nothing here performs. */
   readonly blend?: string;
@@ -767,6 +769,7 @@ export function interpretContent(
             order: paintOrder++,
             name: nm.value,
             ctm: state.ctm,
+            ...(state.clip ? { clip: state.clip } : {}),
             ...(mcid !== undefined ? { mcid } : {}),
             ...(state.blendMode !== undefined ? { blend: state.blendMode } : {}),
           });

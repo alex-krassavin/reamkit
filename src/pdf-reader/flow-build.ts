@@ -238,6 +238,14 @@ export function imageBlock(
       resource,
       width: pt(image.widthPt),
       height: pt(image.heightPt),
+      // §20.1.7.6 — a turn is stated in sixtieth-thousandths of a degree, and
+      // clockwise, which is the other way round from the page's own axis.
+      ...(image.rotationDeg !== undefined
+        ? { rotation60k: Math.round(-image.rotationDeg * 60000) }
+        : {}),
+      // §20.1.8.55 — the box above is what the clip left showing, so the source
+      // must be cut to match it or the whole picture squeezes into it.
+      ...(image.crop ? { crop: image.crop } : {}),
       paragraphProperties: {},
       ...(alt ? { altText: alt } : {}),
     },
