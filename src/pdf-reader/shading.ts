@@ -228,10 +228,18 @@ export function buildAlphaMap(file: PdfFile, resources: PdfDict | undefined): Ma
     const first = Array.isArray(bm) ? file.resolve(bm[0] ?? PDF_NULL) : bm;
     const mode = first instanceof PdfName ? first.value : undefined;
     const darkens = mode === 'Multiply' || mode === 'Darken';
-    if (alpha === undefined && !darkens) continue;
+    // §11.3.5 — a mode that mixes two colours by a rule no anchored picture and
+    // no run property can express. `Normal` and `Compatible` are the absence of
+    // one; `Multiply` and `Darken` are carried as `darkens` and approximated.
+    const blend =
+      mode !== undefined && mode !== 'Normal' && mode !== 'Compatible' && !darkens
+        ? mode
+        : undefined;
+    if (alpha === undefined && !darkens && blend === undefined) continue;
     out.set(name, {
       ...(alpha !== undefined ? { alpha } : {}),
       ...(darkens ? { darkens: true } : {}),
+      ...(blend !== undefined ? { blend } : {}),
     });
   }
   return out;
@@ -243,6 +251,11 @@ export interface GsPaint {
   readonly alpha?: number;
   /** §11.3.5 `/BM` — the paint only darkens, so what it covers shows through. */
   readonly darkens?: boolean;
+  /**
+   * §11.3.5 `/BM` — a blend NOTHING downstream can perform, named so the loss
+   * report can say which. `Normal` is no blend at all and is never named here.
+   */
+  readonly blend?: string;
 }
 
 /**

@@ -14,6 +14,7 @@ import { PdfFile } from '@/pdf-reader/document';
 import { reconstructByLayout } from '@/pdf-reader/layout';
 import { shapeBlock } from '@/pdf-reader/flow-build';
 import { collectPageVectors } from '@/pdf-reader/vector';
+import { collectPageImages } from '@/pdf-reader/images';
 
 const FONTS = {
   regular: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Regular.ttf')),
@@ -683,5 +684,58 @@ describe('stroked vector paths (E-PDF EP11)', () => {
     if (lined?.kind !== 'shape') return;
     expect(lined.shape.line?.colorHex).toMatch(/^[0-9A-F]{6}$/);
     expect(lined.shape.fill.kind).toBe('none');
+  });
+});
+
+describe('a blend the page asks for and nothing here performs (§11.3.5)', () => {
+  /** A page that paints an image through a graphics state naming `mode`. */
+  const blended = (mode: string): Uint8Array => {
+    const gray = zlibSync(Uint8Array.from([0, 255, 255, 0]));
+    const content = `q /BM0 gs 50 0 0 50 20 20 cm /Im Do Q`;
+    const objects = [
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R ' +
+        '/Resources << /XObject << /Im 5 0 R >> ' +
+        `/ExtGState << /BM0 << /Type /ExtGState /BM /${mode} >> >> >> >>`,
+      `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+      '<< /Type /XObject /Subtype /Image /Width 2 /Height 2 /ColorSpace /DeviceGray ' +
+        `/BitsPerComponent 8 /Filter /FlateDecode /Length ${String(gray.length)} >>`,
+    ];
+    let pdf = '%PDF-1.7\n';
+    const offsets: Array<number> = [];
+    objects.forEach((body, i) => {
+      offsets.push(pdf.length);
+      pdf += `${String(i + 1)} 0 obj\n${body}\n`;
+      if (i === 4) pdf += `stream\n${String.fromCharCode(...gray)}\nendstream\n`;
+      pdf += 'endobj\n';
+    });
+    const xref = pdf.length;
+    pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+    for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+    pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`;
+    return Uint8Array.from([...pdf].map((c) => c.charCodeAt(0)));
+  };
+
+  it('says so, rather than drawing one picture over the other in silence', () => {
+    // No anchored picture blends, in any format this writes. blendmode.pdf
+    // lays a second photograph over a dog in each of sixteen cells, one blend
+    // to a cell, and every one came back as the dog alone with nothing said.
+    const file = PdfFile.parse(blended('Difference'));
+    const { losses, images } = collectPageImages(file, file.pages()[0]!);
+    expect(images).toHaveLength(1);
+    expect(losses.some((l) => l.detail.includes('/Difference'))).toBe(true);
+  });
+
+  it('says nothing where the blend is Normal, which is no blend', () => {
+    const file = PdfFile.parse(blended('Normal'));
+    expect(collectPageImages(file, file.pages()[0]!).losses).toHaveLength(0);
+  });
+
+  it('says nothing where the mark only DARKENS, which it approximates', () => {
+    // Multiply and Darken go behind the text instead, and come to the same
+    // picture — a highlighter with its words on top.
+    const file = PdfFile.parse(blended('Multiply'));
+    expect(collectPageImages(file, file.pages()[0]!).losses).toHaveLength(0);
   });
 });

@@ -10,6 +10,7 @@
 import { interpretContent, multiply } from './content';
 import { decodePdfImage } from './image-decode';
 import { collectPageAppearances } from './annots';
+import { buildAlphaMap } from './shading';
 import type { ContentFont, Matrix } from './content';
 import type { PdfDict, PdfValue } from '@/pdf/objects';
 import type { Loss } from '@/core/ir';
@@ -66,6 +67,7 @@ export function collectPageImages(file: PdfFile, page: PdfPage): PageImages {
   const images: Array<PdfImage> = [];
   const lossByDetail = new Map<string, Loss>();
   const visiting = new Set<PdfStream>();
+  const alphaCache = new Map<PdfDict | undefined, ReturnType<typeof buildAlphaMap>>();
 
   const addLoss = (severity: 'dropped' | 'degraded', detail: string): void => {
     if (!lossByDetail.has(detail)) {
@@ -83,7 +85,15 @@ export function collectPageImages(file: PdfFile, page: PdfPage): PageImages {
   ): void => {
     const xobjects = resources ? file.get(resources, 'XObject') : PDF_NULL;
     const xobjDict = xobjects instanceof Map ? xobjects : undefined;
-    const result = interpretContent(content, NO_FONTS, baseCtm);
+    // §11.3.5 — `gs` resolves against the resources IN FORCE, and the only
+    // thing wanted from it here is whether the page asked for a blend nothing
+    // downstream can perform. Cached per dictionary, as the paths are.
+    let paints = alphaCache.get(resources);
+    if (!paints) {
+      paints = buildAlphaMap(file, resources);
+      alphaCache.set(resources, paints);
+    }
+    const result = interpretContent(content, NO_FONTS, baseCtm, undefined, paints);
 
     // §8.7.3.1 — a path filled with a TILING pattern shows that pattern's own
     // content stream, drawn through the pattern's `/Matrix`. It is a call like
@@ -130,6 +140,17 @@ export function collectPageImages(file: PdfFile, page: PdfPage): PageImages {
             orderKey: [...prefix, placement.order],
           });
           if (decoded.degraded) addLoss('degraded', decoded.degraded);
+          // §11.3.5 — the picture is here, but the RULE that was to mix it with
+          // what lies under it is not: no anchored picture blends, in any
+          // format this writes. blendmode.pdf lays a second photograph over a
+          // dog in each of sixteen cells, one blend to a cell, and every one of
+          // them came back as the dog alone with nothing said about it.
+          if (placement.blend !== undefined) {
+            addLoss(
+              'degraded',
+              `PDF blend mode /${placement.blend} is not performed; the picture is drawn over what it was to blend with`,
+            );
+          }
         } else {
           addLoss(decoded.severity, decoded.detail);
         }

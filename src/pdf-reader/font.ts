@@ -235,7 +235,21 @@ function namedGlyphs(file: PdfFile, fontDict: PdfDict): Map<number, string> | un
     const text = textForGlyphName(name);
     if (text !== undefined) out.set(code, text);
   }
-  return out.size > 0 ? out : undefined;
+  if (out.size > 0) return out;
+  // §9.6.5 — a TYPE 3 font's `/Encoding` is the only mapping it has: its codes
+  // select CharProcs, which are drawings, and there is no standard encoding
+  // underneath to fall back on. So a Type 3 face that named its glyphs and
+  // whose names are not characters has unreadable text — bug1011159.pdf calls
+  // its glyphs `LW010000`, and read as Latin-1 its line came back as "¦¦¦K".
+  //
+  // Any other font keeps the fallback: a subset TrueType commonly maps its
+  // codes to `/g34`-style names that say nothing, while the codes themselves
+  // are still the characters. Marking those unreadable cost TAMReview.pdf
+  // eight thousand of its nine thousand words.
+  if (asName(file.resolve(fontDict.get('Subtype') ?? PDF_NULL)) !== 'Type3') return undefined;
+  const unreadable = new Map<number, string>();
+  for (const code of names.keys()) unreadable.set(code, '\uFFFD');
+  return unreadable;
 }
 
 /** §9.6.6.1 `/Encoding` `/Differences` — code → glyph name, as the array runs. */

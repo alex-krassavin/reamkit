@@ -17,6 +17,7 @@ import { patternTint } from '@/pdf-reader/pattern-tint';
 import { extractPageText } from '@/pdf-reader/text';
 import { collectPageAppearances } from '@/pdf-reader/annots';
 import { withMeasuredMargins } from '@/pdf-reader/flow-build';
+import { readPdf } from '@/pdf-reader/reader';
 import { displayOf, placeRuns, placeVectors } from '@/pdf-reader/display';
 import { markDrawnRules } from '@/pdf-reader/text-rules';
 import { collectPageVectors } from '@/pdf-reader/vector';
@@ -785,5 +786,66 @@ describe('the metrics of a face the file does not measure (§9.6.2.2)', () => {
     const file = PdfFile.parse(new TextEncoder().encode(pdf));
     const [run] = extractPageText(file, file.pages()[0]!);
     expect((run?.endX ?? 0) - (run?.x ?? 0)).toBeCloseTo((1400 / 1000) * 12, 2);
+  });
+});
+
+describe('what a page shows that this reader cannot state', () => {
+  /** A page showing one string in a font built from `fontBody`. */
+  const showing = (fontBody: string, size: string, text: string): Uint8Array => {
+    const content = `BT /F1 ${size} Tf 72 720 Td (${text}) Tj ET`;
+    const objects = [
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] ' +
+        '/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>',
+      `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+      fontBody,
+    ];
+    let pdf = '%PDF-1.7\n';
+    const offsets: Array<number> = [];
+    objects.forEach((body, i) => {
+      offsets.push(pdf.length);
+      pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+    });
+    const xref = pdf.length;
+    pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+    for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+    pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`;
+    return new TextEncoder().encode(pdf);
+  };
+
+  const SIMPLE =
+    '<< /Type /Font /Subtype /TrueType /BaseFont /Arial /FirstChar 32 /LastChar 126 ' +
+    '/Encoding << /Type /Encoding /Differences [119 /LW010000 /LW020000] >> >>';
+  const TYPE3 =
+    '<< /Type /Font /Subtype /Type3 /FontBBox [0 0 0 0] ' +
+    '/FontMatrix [0.001 0 0 0.001 0 0] /CharProcs << >> ' +
+    '/Encoding << /Type /Encoding /Differences [119 /LW010000 /LW020000] >> >>';
+
+  it('takes the size a NEGATIVE Tf shows at, not the sign it states', () => {
+    // §9.3.1 — a negative size flips the text rather than shrinking it, and a
+    // size below zero is not one any downstream format states. bug1011159.pdf
+    // sets its line at −20.
+    const file = PdfFile.parse(showing(SIMPLE, '-20', 'ab'));
+    expect(extractPageText(file, file.pages()[0]!)[0]?.fontSizePt).toBeCloseTo(20, 5);
+  });
+
+  it('will not guess at a TYPE 3 font whose glyph names are not characters', () => {
+    // §9.6.5 — a Type 3 font's /Encoding is the only mapping it has: its codes
+    // select drawings, and there is no standard encoding underneath. Read as
+    // Latin-1 — the only guess left — bug1011159.pdf's line came back "¦¦¦K".
+    const file = PdfFile.parse(showing(TYPE3, '20', 'ww'));
+    expect(extractPageText(file, file.pages()[0]!)[0]?.text).toBe('\uFFFD\uFFFD');
+    // …and the reconstruction reports it rather than passing it on.
+    const { losses } = readPdf(showing(TYPE3, '20', 'ww'));
+    expect(losses.some((l) => l.detail.includes('map to no character'))).toBe(true);
+  });
+
+  it('leaves every other font its fallback, names or no names', () => {
+    // A subset TrueType commonly maps its codes to names that say nothing while
+    // the codes themselves are still the characters. Marking those unreadable
+    // cost TAMReview.pdf eight thousand of its nine thousand words.
+    const file = PdfFile.parse(showing(SIMPLE, '20', 'ww'));
+    expect(extractPageText(file, file.pages()[0]!)[0]?.text).toBe('ww');
   });
 });

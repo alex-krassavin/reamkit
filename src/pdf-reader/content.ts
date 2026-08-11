@@ -158,6 +158,8 @@ export interface ImagePlacement {
   readonly name: string;
   readonly ctm: Matrix;
   readonly mcid?: number;
+  /** §11.3.5 `/BM` — a blend the page asked for that nothing here performs. */
+  readonly blend?: string;
 }
 
 /**
@@ -247,6 +249,8 @@ export interface VectorPlacement {
    * nothing else.
    */
   readonly darkens?: boolean;
+  /** §11.3.5 `/BM` — a blend the page asked for that nothing here performs. */
+  readonly blend?: string;
   /**
    * §8.7.3 — the TILING pattern resource name the path is filled with. Its
    * content is a stream of its own, so what the fill actually shows is only
@@ -340,6 +344,7 @@ interface TextState {
   fillPattern: string | undefined; // §8.7.3 non-stroking TILING pattern resource name
   fillAlpha: number; // §11.6.4.4 `/ca` — how opaque the non-stroking paint is
   fillDarkens: boolean; // §11.3.5 `/BM` Multiply or Darken — the paint only darkens
+  blendMode: string | undefined; // §11.3.5 `/BM` — a blend nothing here can perform
   clip: ClipRegion | undefined; // §8.5.4 the clipping region in force
 }
 
@@ -364,6 +369,7 @@ function initialState(): TextState {
     fillPattern: undefined,
     fillAlpha: 1,
     fillDarkens: false,
+    blendMode: undefined,
     clip: undefined,
   };
 }
@@ -509,6 +515,7 @@ export function interpretContent(
         ...(fill ? { fillHex: state.fillColor } : {}),
         ...(fill && state.fillAlpha < 1 ? { alpha: state.fillAlpha } : {}),
         ...(fill && state.fillDarkens ? { darkens: true } : {}),
+        ...(state.blendMode !== undefined ? { blend: state.blendMode } : {}),
         ...(fill && state.fillGradient ? { gradient: state.fillGradient } : {}),
         ...(stroke ? { strokeHex: state.strokeColor, lineWidth: ctmLineWidth() } : {}),
         ...(mcid !== undefined ? { mcid } : {}),
@@ -584,7 +591,10 @@ export function interpretContent(
       endX: end[4],
       endY: end[5],
       ...(Math.abs(angle) > UPRIGHT_TOLERANCE_DEG ? { angleDeg: angle } : {}),
-      fontSizePt: state.fontSize * scaleY,
+      // §9.3.1 — `Tf` may be NEGATIVE, which flips the text rather than shrinking
+      // it. bug1011159.pdf sets its line at −20, and a size below zero is not a
+      // size any downstream format states: the magnitude is what was shown.
+      fontSizePt: Math.abs(state.fontSize) * scaleY,
       // §9.4.4 — how far the pen moves for a SPACE here: the face's own width
       // for it, plus the character and word spacing in force, which is exactly
       // the advance `advanceGlyph` gives that code. basicapi.pdf sets its page
@@ -744,6 +754,7 @@ export function interpretContent(
             name: nm.value,
             ctm: state.ctm,
             ...(mcid !== undefined ? { mcid } : {}),
+            ...(state.blendMode !== undefined ? { blend: state.blendMode } : {}),
           });
         }
         break;
@@ -872,6 +883,7 @@ export function interpretContent(
           const paint = alphas.get(nm.value);
           state.fillAlpha = paint?.alpha ?? 1;
           state.fillDarkens = paint?.darkens ?? false;
+          state.blendMode = paint?.blend;
         }
         break;
       }
