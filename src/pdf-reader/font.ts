@@ -123,6 +123,7 @@ export function buildContentFont(file: PdfFile, fontDict: PdfDict): ContentFont 
   return {
     bytesPerCode,
     ...(named ? { splitCodes: (b: Uint8Array): Array<number> => splitPredefined(named, b) } : {}),
+    ...(named?.vertical ? { verticalAdvance: cidVerticalAdvance(file, fontDict) } : {}),
     ...(type3 ? { type3 } : {}),
     ...(name !== undefined ? { name } : {}),
     // Map each code to Unicode; an unmapped code in a simple font falls back to
@@ -307,6 +308,57 @@ function namedGlyphs(file: PdfFile, fontDict: PdfDict): Map<number, string> | un
   for (const code of names.keys()) unreadable.set(code, '\uFFFD');
   return unreadable;
 }
+
+/**
+ * §9.7.4.3 `/DW2` and `/W2` — how far the pen drops for one glyph, in 1000-unit
+ * text space.
+ *
+ * `/DW2`'s default is `[880 -1000]`: the vertical origin sits 880 above the
+ * horizontal one and the displacement is a full em DOWN. Only the displacement
+ * is wanted here — the origin shifts where the glyph is drawn, which a reader
+ * re-setting the words in another face does not reproduce anyway.
+ */
+function cidVerticalAdvance(file: PdfFile, fontDict: PdfDict): (code: number) => number {
+  const cid = descendantFont(file, fontDict);
+  const dw2 = file.resolve(cid.get('DW2') ?? PDF_NULL);
+  const stated =
+    Array.isArray(dw2) && typeof file.resolve(dw2[1] ?? PDF_NULL) === 'number'
+      ? (file.resolve(dw2[1]!) as number)
+      : DEFAULT_DW2_DISPLACEMENT;
+  const perCode = new Map<number, number>();
+  // §9.7.4.3 `/W2` — `c [w1y v1x v1y …]` or `cFirst cLast w1y v1x v1y`.
+  const w2 = file.resolve(cid.get('W2') ?? PDF_NULL);
+  if (Array.isArray(w2)) {
+    for (let i = 0; i < w2.length; ) {
+      const first = file.resolve(w2[i] ?? PDF_NULL);
+      const next = file.resolve(w2[i + 1] ?? PDF_NULL);
+      if (typeof first !== 'number') break;
+      if (Array.isArray(next)) {
+        for (let k = 0; k + 2 < next.length; k += 3) {
+          const v = file.resolve(next[k] ?? PDF_NULL);
+          if (typeof v === 'number') perCode.set(first + k / 3, v);
+        }
+        i += 2;
+      } else if (
+        typeof next === 'number' &&
+        typeof file.resolve(w2[i + 2] ?? PDF_NULL) === 'number'
+      ) {
+        const v = file.resolve(w2[i + 2]!) as number;
+        for (let c = first; c <= next && c - first < MAX_W2_RANGE; c++) perCode.set(c, v);
+        i += 5;
+      } else {
+        break;
+      }
+    }
+  }
+  return (code: number): number => perCode.get(code) ?? stated;
+}
+
+/** §9.7.4.3 — `/DW2`'s default displacement: one em down the page. */
+const DEFAULT_DW2_DISPLACEMENT = -1000;
+
+/** A `/W2` range wider than this is not walked out code by code. */
+const MAX_W2_RANGE = 65_536;
 
 /** §9.6.6.1 `/Encoding` `/Differences` — code → glyph name, as the array runs. */
 function differences(file: PdfFile, fontDict: PdfDict): Map<number, string> {

@@ -37,6 +37,14 @@ export interface ContentFont {
   decode: (codes: ReadonlyArray<number>) => string;
   /** Glyph advance for one code, in 1000-unit text space. */
   width: (code: number) => number;
+  /**
+   * §9.4.4 / §9.7.4.3 — the face sets its text DOWN the page, not across, and
+   * the pen advances by the vertical displacement `w1` rather than by `w0`.
+   * A `…-V` CMap asks for this; `/DW2`'s default `[880 -1000]` is one em down.
+   * The number here is that displacement in 1000-unit text space, and it is
+   * negative because the page's y runs up.
+   */
+  readonly verticalAdvance?: (code: number) => number;
   /** §9.6.2 — the face's own `/BaseFont` name, for a document that embeds it. */
   readonly name?: string;
   /** §9.8.1 — the face is a bold one (weight, the ForceBold flag, or its name). */
@@ -622,10 +630,18 @@ export function interpretContent(
         });
       }
     }
-    const w0 = state.font.width(code) / 1000;
     const isSpace = state.font.bytesPerCode === 1 && code === 0x20;
-    const tx =
-      (w0 * state.fontSize + state.charSpacing + (isSpace ? state.wordSpacing : 0)) * state.hScale;
+    const spacing = state.charSpacing + (isSpace ? state.wordSpacing : 0);
+    // §9.4.4 — in VERTICAL writing the pen goes down the page and the
+    // horizontal scale does not touch it: `Tz` scales the writing direction,
+    // which is the other axis here.
+    const down = state.font.verticalAdvance;
+    if (down) {
+      tm = multiply(translation(0, (down(code) / 1000) * state.fontSize - spacing), tm);
+      return;
+    }
+    const w0 = state.font.width(code) / 1000;
+    const tx = (w0 * state.fontSize + spacing) * state.hScale;
     tm = multiply(translation(tx, 0), tm);
   };
 

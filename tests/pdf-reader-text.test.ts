@@ -1023,7 +1023,16 @@ describe('a CMap the file NAMES rather than embeds (§9.7.5.2)', () => {
     for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
     pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`;
     const file = PdfFile.parse(new TextEncoder().encode(pdf));
-    expect(extractPageText(file, file.pages()[0]!).map((r) => r.text)).toEqual(['abc あいう']);
+    const runs = extractPageText(file, file.pages()[0]!);
+    expect(runs.map((r) => r.text)).toEqual(['abc あいう']);
+    // §9.4.4 / §9.7.4.3 — and a `…-V` CMap sets its text DOWN the page: the pen
+    // advances by `/DW2`'s displacement, one em down by default, not across by
+    // the glyph's width. Read as horizontal the two shows in issue11555.pdf
+    // both sat on one baseline, the second continuing the first sideways where
+    // the file puts it underneath.
+    const run = runs[0]!;
+    expect(run.endX).toBeCloseTo(run.x, 3);
+    expect(run.y - run.endY).toBeCloseTo(7 * 12, 3); // seven glyphs, one em each
   });
 });
 
