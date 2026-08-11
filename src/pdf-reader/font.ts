@@ -48,6 +48,19 @@ export function buildContentFont(file: PdfFile, fontDict: PdfDict): ContentFont 
   // Brotli-Prototype-FileA.pdf sets a floor plan's room names in one, and
   // "LIVING ROOM" and "DINING" never reached the page at all.
   const fromProgram = isType0 && toUnicode.size === 0 ? embeddedCmap(file, fontDict) : undefined;
+  // …and a `/ToUnicode` that EXISTS may not cover the codes the page actually
+  // shows. bug911034.pdf ships one describing 95 codes and then draws glyphs
+  // 0x2000 upward out of a 222 KB Arial Unicode subset; every one of them
+  // decoded to the empty string and the whole page came back blank. The
+  // program is asked for the codes the map has no answer for — built on the
+  // first miss, because walking a font's `cmap` is not free and most fonts
+  // never need it.
+  let programFallback: ReadonlyMap<number, string> | undefined | null = null;
+  const fromProgramFor = (code: number): string | undefined => {
+    if (!isType0 || toUnicode.size === 0) return undefined;
+    programFallback ??= embeddedCmap(file, fontDict);
+    return programFallback?.get(code);
+  };
   // §9.6.6.1 — a SIMPLE font that states no `/ToUnicode` still says what its
   // codes are, in `/Encoding /Differences`: a list of glyph NAMES. A PDF from
   // TeX is nothing but this — a subset font whose codes start wherever the
@@ -77,9 +90,16 @@ export function buildContentFont(file: PdfFile, fontDict: PdfDict): ContentFont 
   // Statement", in a subset whose program carries neither `cmap` nor `post`.
   // Marked unreadable it is stripped from the output just the same, and the
   // reconstruction reports it (see `./layout`).
-  const speechless = isType0 && unicode.size === 0;
   const decodeOne = (code: number): string =>
-    unicode.get(code) ?? (bytesPerCode === 1 ? latin1(code) : speechless ? '\uFFFD' : '');
+    unicode.get(code) ??
+    fromProgramFor(code) ??
+    // A composite code nothing could answer for is unrecoverable text, whether
+    // the font stated NO map or a map that does not reach this code.
+    // bug911034.pdf ships a `/ToUnicode` describing 95 codes and then draws
+    // glyphs 0x2000 upward; decoded to the empty string every run was dropped
+    // where it stood and the page came back blank with nothing said about it,
+    // which is the one loss this reader must never take in silence.
+    (bytesPerCode === 1 ? latin1(code) : '\uFFFD');
   const simple = simpleWidths(file, fontDict, decodeOne);
   // §9.6.5 — a Type 3 font states its widths in GLYPH space, which its
   // `/FontMatrix` maps to text space; every other font states them in

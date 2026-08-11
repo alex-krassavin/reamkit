@@ -20,6 +20,7 @@
 import { unzlibSync } from 'fflate';
 
 import { decodeCcitt } from './ccitt';
+import { ascii85Decode, asciiHexDecode, runLengthDecode } from './stream-filters';
 import { labToSrgb } from './cie-color';
 import { readFunction } from './function';
 import { decodeJbig2 } from './jbig2';
@@ -872,65 +873,6 @@ function lzwEarlyChange(file: PdfFile, d: PdfDict): number {
   const parms = decodeParmsOf(file, d);
   const ec = parms?.get('EarlyChange');
   return ec !== undefined && file.resolve(ec) === 0 ? 0 : 1;
-}
-
-function runLengthDecode(data: Uint8Array): Uint8Array {
-  const out: Array<number> = [];
-  let i = 0;
-  while (i < data.length) {
-    const len = data[i++]!;
-    if (len === 128) break; // EOD
-    if (len < 128) {
-      for (let j = 0; j <= len && i < data.length; j++) out.push(data[i++]!);
-    } else {
-      const b = data[i++] ?? 0;
-      for (let j = 0; j < 257 - len; j++) out.push(b);
-    }
-  }
-  return Uint8Array.from(out);
-}
-
-function ascii85Decode(data: Uint8Array): Uint8Array {
-  const out: Array<number> = [];
-  let tuple = 0;
-  let count = 0;
-  for (const c of data) {
-    if (c === 0x7e) break; // ~> terminator
-    if (c <= 0x20) continue; // whitespace
-    if (c === 0x7a && count === 0) {
-      out.push(0, 0, 0, 0);
-      continue;
-    }
-    if (c < 0x21 || c > 0x75) continue;
-    tuple = tuple * 85 + (c - 0x21);
-    if (++count === 5) {
-      out.push((tuple >>> 24) & 0xff, (tuple >>> 16) & 0xff, (tuple >>> 8) & 0xff, tuple & 0xff);
-      tuple = 0;
-      count = 0;
-    }
-  }
-  if (count > 0) {
-    for (let i = count; i < 5; i++) tuple = tuple * 85 + 84;
-    for (let i = 0; i < count - 1; i++) out.push((tuple >>> (24 - i * 8)) & 0xff);
-  }
-  return Uint8Array.from(out);
-}
-
-function asciiHexDecode(data: Uint8Array): Uint8Array {
-  const out: Array<number> = [];
-  let hi = -1;
-  for (const c of data) {
-    if (c === 0x3e) break; // '>'
-    const v = hexVal(c);
-    if (v < 0) continue;
-    if (hi < 0) hi = v;
-    else {
-      out.push((hi << 4) | v);
-      hi = -1;
-    }
-  }
-  if (hi >= 0) out.push(hi << 4);
-  return Uint8Array.from(out);
 }
 
 // --- small helpers ----------------------------------------------------------

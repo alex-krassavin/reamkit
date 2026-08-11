@@ -991,6 +991,38 @@ describe('the box a viewer shows (§14.11.2)', () => {
   });
 });
 
+describe('a stream wearing a transport filter (§7.4.2–7.4.5)', () => {
+  it('undoes ASCIIHex on the PAGE CONTENT, not only inside an image', () => {
+    // asciihexdecode.pdf writes its whole page as `42540A2F46312033302054660A…`
+    // — that is `BT /F1 30 Tf …`. The general-purpose filters were passed
+    // through on the reasoning that the image decoder undoes them, which is
+    // true of an image and false of every other stream a PDF holds, so the
+    // page came back blank.
+    const inner = 'BT /F1 12 Tf 20 100 Td (Hex) Tj ET';
+    const hex = `${[...inner].map((c) => c.charCodeAt(0).toString(16).padStart(2, '0')).join('')}>`;
+    const objects = [
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R ' +
+        '/Resources << /Font << /F1 5 0 R >> >> >>',
+      `<< /Length ${String(hex.length)} /Filter /ASCIIHexDecode >>\nstream\n${hex}\nendstream`,
+      '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+    ];
+    let pdf = '%PDF-1.7\n';
+    const offsets: Array<number> = [];
+    objects.forEach((body, i) => {
+      offsets.push(pdf.length);
+      pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+    });
+    const xref = pdf.length;
+    pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+    for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+    pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`;
+    const file = PdfFile.parse(new TextEncoder().encode(pdf));
+    expect(extractPageText(file, file.pages()[0]!).map((r) => r.text)).toEqual(['Hex']);
+  });
+});
+
 describe('the layers a file turns off (§8.11)', () => {
   /** A page drawing "Shown" bare and "Hidden" inside `/OC /L1 BDC`. */
   const layered = (config: string): Uint8Array => {
