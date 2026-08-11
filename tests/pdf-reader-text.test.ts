@@ -991,6 +991,42 @@ describe('the box a viewer shows (§14.11.2)', () => {
   });
 });
 
+describe('a CMap the file NAMES rather than embeds (§9.7.5.2)', () => {
+  it('splits a mixed-width code space and reads its bytes as its own encoding', () => {
+    // `90ms-RKSJ` is Shift-JIS: one byte for 00–80 and A0–DF, two for 81–9F
+    // and E0–FC. issue11555.pdf shows `<6162632082a082a282a4>`, which is
+    // "abc " in one-byte codes and あいう in two; read as Identity-H, two
+    // bytes to a code, it came apart into six codes of nonsense.
+    const content = 'BT /F0 12 Tf 20 100 Td <6162632082a082a282a4> Tj ET';
+    const objects = [
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /Contents 4 0 R ' +
+        '/Resources << /Font << /F0 5 0 R >> >> >>',
+      `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+      '<< /Type /Font /Subtype /Type0 /BaseFont /KozMinPro6N-Regular ' +
+        '/Encoding /90ms-RKSJ-V /DescendantFonts [6 0 R] >>',
+      '<< /Type /Font /Subtype /CIDFontType0 /BaseFont /KozMinPro6N-Regular /DW 1000 ' +
+        '/CIDSystemInfo << /Registry (Adobe) /Ordering (Japan1) /Supplement 6 >> ' +
+        '/FontDescriptor 7 0 R >>',
+      '<< /Type /FontDescriptor /FontName /KozMinPro6N-Regular /Flags 4 /ItalicAngle 0 ' +
+        '/FontBBox [0 0 1000 1000] /Ascent 880 /Descent -120 /CapHeight 700 /StemV 80 >>',
+    ];
+    let pdf = '%PDF-1.7\n';
+    const offsets: Array<number> = [];
+    objects.forEach((body, i) => {
+      offsets.push(pdf.length);
+      pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+    });
+    const xref = pdf.length;
+    pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+    for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+    pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`;
+    const file = PdfFile.parse(new TextEncoder().encode(pdf));
+    expect(extractPageText(file, file.pages()[0]!).map((r) => r.text)).toEqual(['abc あいう']);
+  });
+});
+
 describe('an annotation the file drew no appearance for (§12.5.5)', () => {
   /** A page whose only content is the annotations given. */
   const annotated = (annots: ReadonlyArray<string>): Uint8Array => {

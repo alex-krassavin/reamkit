@@ -3,6 +3,7 @@
 // glyph advances from a simple font's /Widths or a composite font's /W array.
 
 import { parseToUnicodeCMap } from './cmap';
+import { decodePredefined, predefinedCMap, splitPredefined } from './predefined-cmap';
 import { textForGlyphName } from './glyph-names';
 import { standardFace, standardWidth } from './standard-widths';
 import { embeddedFontName } from './embedded-fonts';
@@ -29,6 +30,14 @@ export function buildContentFont(file: PdfFile, fontDict: PdfDict): ContentFont 
 
   let toUnicode: ReadonlyMap<number, string> = new Map();
   let codeBytes: 1 | 2 = isType0 ? 2 : 1;
+  // §9.7.5.2 — a composite font's `/Encoding` may NAME a CMap Adobe published
+  // rather than embed one. Its codes are the bytes of a known encoding, and how
+  // many bytes each takes is the leading byte's business: issue11555.pdf shows
+  // `<6162632082a082a282a4>`, which is "abc " in one-byte codes and あいう in
+  // two, and read as Identity-H it came apart into six codes of nonsense.
+  const named = isType0
+    ? predefinedCMap(asName(file.resolve(fontDict.get('Encoding') ?? PDF_NULL)))
+    : undefined;
   const tu = file.resolve(fontDict.get('ToUnicode') ?? PDF_NULL);
   if (tu instanceof PdfStream) {
     const parsed = parseToUnicodeCMap(file.streamData(tu));
@@ -93,6 +102,7 @@ export function buildContentFont(file: PdfFile, fontDict: PdfDict): ContentFont 
   const decodeOne = (code: number): string =>
     unicode.get(code) ??
     fromProgramFor(code) ??
+    (named ? decodePredefined(named, code) : undefined) ??
     // A composite code nothing could answer for is unrecoverable text, whether
     // the font stated NO map or a map that does not reach this code.
     // bug911034.pdf ships a `/ToUnicode` describing 95 codes and then draws
@@ -112,6 +122,7 @@ export function buildContentFont(file: PdfFile, fontDict: PdfDict): ContentFont 
 
   return {
     bytesPerCode,
+    ...(named ? { splitCodes: (b: Uint8Array): Array<number> => splitPredefined(named, b) } : {}),
     ...(type3 ? { type3 } : {}),
     ...(name !== undefined ? { name } : {}),
     // Map each code to Unicode; an unmapped code in a simple font falls back to

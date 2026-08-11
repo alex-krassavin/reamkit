@@ -26,6 +26,13 @@ import { PDF_NULL, PdfHexString, PdfName } from '@/pdf/objects';
 export interface ContentFont {
   /** Bytes per character code: simple fonts read 1 byte/code, Type0 reads 2. */
   readonly bytesPerCode: 1 | 2;
+  /**
+   * §9.7.6.2 — how a shown string breaks into codes, where the CMap is not
+   * fixed-width. A named CMap like `90ms-RKSJ-H` mixes one-byte and two-byte
+   * codes, and split down the middle a Japanese line came apart into nonsense.
+   * Absent means the fixed width above.
+   */
+  readonly splitCodes?: (bytes: Uint8Array) => Array<number>;
   /** Decode a sequence of character codes to a Unicode string. */
   decode: (codes: ReadonlyArray<number>) => string;
   /** Glyph advance for one code, in 1000-unit text space. */
@@ -625,7 +632,10 @@ export function interpretContent(
   // Decode a shown string and advance the matrix glyph by glyph, returning its
   // Unicode (without emitting — Tj and TJ both build on this).
   const consume = (operand: PdfValue): string => {
-    const codes = splitCodes(toBytes(operand), state.font.bytesPerCode);
+    const bytes = toBytes(operand);
+    const codes = state.font.splitCodes
+      ? state.font.splitCodes(bytes)
+      : splitCodes(bytes, state.font.bytesPerCode);
     for (const code of codes) advanceGlyph(code);
     return state.font.decode(codes);
   };
