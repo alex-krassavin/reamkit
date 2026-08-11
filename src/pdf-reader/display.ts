@@ -76,20 +76,44 @@ export function displayOf(page: PdfPage): Display {
  * @returns The runs in the shown page's frame, each carrying the page's turn.
  */
 export function placeRuns(runs: ReadonlyArray<TextRun>, d: Display): Array<TextRun> {
-  return runs.map((r) => {
-    const origin = d.place(r.x, r.y);
-    const end = d.place(r.endX, r.endY);
-    const angle = (((r.angleDeg ?? 0) + d.turnDeg) % 360) + 0;
-    const { angleDeg: _was, ...rest } = r;
-    return {
-      ...rest,
-      x: origin.x,
-      y: origin.y,
-      endX: end.x,
-      endY: end.y,
-      ...(Math.abs(angle) > 0.5 ? { angleDeg: angle } : {}),
-    };
-  });
+  return runs
+    .map((r) => {
+      const origin = d.place(r.x, r.y);
+      const end = d.place(r.endX, r.endY);
+      const angle = (((r.angleDeg ?? 0) + d.turnDeg) % 360) + 0;
+      const { angleDeg: _was, ...rest } = r;
+      return {
+        ...rest,
+        x: origin.x,
+        y: origin.y,
+        endX: end.x,
+        endY: end.y,
+        ...(Math.abs(angle) > 0.5 ? { angleDeg: angle } : {}),
+      };
+    })
+    .filter((r) =>
+      shows(
+        d,
+        Math.min(r.x, r.endX),
+        Math.min(r.y, r.endY) - r.fontSizePt * 0.25,
+        Math.max(r.x, r.endX),
+        Math.max(r.y, r.endY) + r.fontSizePt * 0.85,
+      ),
+    );
+}
+
+/**
+ * §14.11.2 — whether a box falls inside the region the page SHOWS.
+ *
+ * The crop box is the region "to which the contents of the page shall be
+ * clipped", and a page cropped to less than its sheet is generally a page with
+ * something outside the crop: freeculture.pdf carries a printer's slug —
+ * "14773_07_347-348_r4jm.qxd 2/10/04 4:45 PM Page 347" — in the 42 points the
+ * crop cuts off the top, and lifted with the rest it stood at the head of the
+ * page and pushed the sheet taller to hold it.
+ */
+function shows(d: Display, minX: number, minY: number, maxX: number, maxY: number): boolean {
+  return maxX > 0 && minX < d.width && maxY > 0 && minY < d.height;
 }
 
 /**
@@ -102,30 +126,32 @@ export function placeRuns(runs: ReadonlyArray<TextRun>, d: Display): Array<TextR
  * @returns The pictures in the shown page's frame.
  */
 export function placeImages(images: ReadonlyArray<PdfImage>, d: Display): Array<PdfImage> {
-  return images.map((img) => {
-    // The picture's own rectangle, mapped corner to corner: the corners are what
-    // the turn moves, and the box is what is left of them.
-    const corners = [
-      d.place(img.x, img.y),
-      d.place(img.x + img.widthPt, img.y),
-      d.place(img.x + img.widthPt, img.y + img.heightPt),
-      d.place(img.x, img.y + img.heightPt),
-    ];
-    const xs = corners.map((c) => c.x);
-    const ys = corners.map((c) => c.y);
-    const minX = Math.min(...xs);
-    const minY = Math.min(...ys);
-    // The page's own turn adds to the picture's.
-    const turned = (img.rotationDeg ?? 0) + d.turnDeg;
-    return {
-      ...img,
-      x: minX,
-      y: minY,
-      widthPt: Math.max(...xs) - minX,
-      heightPt: Math.max(...ys) - minY,
-      ...(Math.abs(turned) > 0.5 ? { rotationDeg: turned } : {}),
-    };
-  });
+  return images
+    .map((img) => {
+      // The picture's own rectangle, mapped corner to corner: the corners are what
+      // the turn moves, and the box is what is left of them.
+      const corners = [
+        d.place(img.x, img.y),
+        d.place(img.x + img.widthPt, img.y),
+        d.place(img.x + img.widthPt, img.y + img.heightPt),
+        d.place(img.x, img.y + img.heightPt),
+      ];
+      const xs = corners.map((c) => c.x);
+      const ys = corners.map((c) => c.y);
+      const minX = Math.min(...xs);
+      const minY = Math.min(...ys);
+      // The page's own turn adds to the picture's.
+      const turned = (img.rotationDeg ?? 0) + d.turnDeg;
+      return {
+        ...img,
+        x: minX,
+        y: minY,
+        widthPt: Math.max(...xs) - minX,
+        heightPt: Math.max(...ys) - minY,
+        ...(Math.abs(turned) > 0.5 ? { rotationDeg: turned } : {}),
+      };
+    })
+    .filter((img) => shows(d, img.x, img.y, img.x + img.widthPt, img.y + img.heightPt));
 }
 
 /**
@@ -137,40 +163,42 @@ export function placeImages(images: ReadonlyArray<PdfImage>, d: Display): Array<
  * @returns The paths in the shown page's frame.
  */
 export function placeVectors(vectors: ReadonlyArray<PdfVector>, d: Display): Array<PdfVector> {
-  return vectors.map((v) => {
-    const segs: Array<PathSeg> = v.segs.map((s): PathSeg => {
-      switch (s.op) {
-        case 'move':
-        case 'line': {
-          const p = d.place(s.x, s.y);
-          return { op: s.op, x: p.x, y: p.y };
+  return vectors
+    .map((v) => {
+      const segs: Array<PathSeg> = v.segs.map((s): PathSeg => {
+        switch (s.op) {
+          case 'move':
+          case 'line': {
+            const p = d.place(s.x, s.y);
+            return { op: s.op, x: p.x, y: p.y };
+          }
+          case 'cubic': {
+            const c1 = d.place(s.x1, s.y1);
+            const c2 = d.place(s.x2, s.y2);
+            const p = d.place(s.x, s.y);
+            return { op: 'cubic', x1: c1.x, y1: c1.y, x2: c2.x, y2: c2.y, x: p.x, y: p.y };
+          }
+          case 'close':
+            return s;
         }
-        case 'cubic': {
-          const c1 = d.place(s.x1, s.y1);
-          const c2 = d.place(s.x2, s.y2);
-          const p = d.place(s.x, s.y);
-          return { op: 'cubic', x1: c1.x, y1: c1.y, x2: c2.x, y2: c2.y, x: p.x, y: p.y };
-        }
-        case 'close':
-          return s;
+      });
+      const xs: Array<number> = [];
+      const ys: Array<number> = [];
+      for (const s of segs) {
+        if (s.op === 'close') continue;
+        xs.push(s.x);
+        ys.push(s.y);
+        if (s.op === 'cubic') (xs.push(s.x1, s.x2), ys.push(s.y1, s.y2));
       }
-    });
-    const xs: Array<number> = [];
-    const ys: Array<number> = [];
-    for (const s of segs) {
-      if (s.op === 'close') continue;
-      xs.push(s.x);
-      ys.push(s.y);
-      if (s.op === 'cubic') (xs.push(s.x1, s.x2), ys.push(s.y1, s.y2));
-    }
-    if (xs.length === 0) return { ...v, segs };
-    return {
-      ...v,
-      segs,
-      minX: Math.min(...xs),
-      minY: Math.min(...ys),
-      maxX: Math.max(...xs),
-      maxY: Math.max(...ys),
-    };
-  });
+      if (xs.length === 0) return { ...v, segs };
+      return {
+        ...v,
+        segs,
+        minX: Math.min(...xs),
+        minY: Math.min(...ys),
+        maxX: Math.max(...xs),
+        maxY: Math.max(...ys),
+      };
+    })
+    .filter((v) => shows(d, v.minX, v.minY, v.maxX, v.maxY));
 }

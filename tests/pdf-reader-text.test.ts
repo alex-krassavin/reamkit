@@ -880,8 +880,7 @@ describe('what a page shows that this reader cannot state', () => {
 
 describe('the box a viewer shows (§14.11.2)', () => {
   /** A page with a MediaBox of 612×792 and the CropBox given. */
-  const cropped = (crop: string): Uint8Array => {
-    const content = 'BT /F1 12 Tf 100 700 Td (Hi) Tj ET';
+  const cropped = (crop: string, content = 'BT /F1 12 Tf 100 700 Td (Hi) Tj ET'): Uint8Array => {
     const objects = [
       '<< /Type /Catalog /Pages 2 0 R >>',
       '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
@@ -912,6 +911,23 @@ describe('the box a viewer shows (§14.11.2)', () => {
     expect([shown.width, shown.height]).toEqual([200, 50]);
     // …and the content is placed against the crop's corner, not the sheet's.
     expect(shown.place(100, 700)).toEqual({ x: 10, y: 10 });
+  });
+
+  it('leaves BEHIND what the crop cuts away', () => {
+    // §14.11.2 — the crop is the region "to which the contents of the page
+    // shall be clipped", and a page cropped to less than its sheet generally
+    // has something outside it. freeculture.pdf carries a printer's slug —
+    // "14773_07_347-348_r4jm.qxd 2/10/04 4:45 PM Page 347" — in the 42 points
+    // the crop cuts off the top; lifted with the rest it stood at the head of
+    // the page and pushed the sheet taller to hold it.
+    const pdf = cropped(
+      '/CropBox [90 690 290 740]',
+      'BT /F1 12 Tf 100 700 Td (Inside) Tj 0 -600 Td (Slug) Tj ET',
+    );
+    const file = PdfFile.parse(pdf);
+    const page = file.pages()[0]!;
+    const placed = placeRuns(extractPageText(file, page), displayOf(page));
+    expect(placed.map((r) => r.text)).toEqual(['Inside']);
   });
 
   it('keeps the media box where the crop states nothing usable', () => {
