@@ -991,6 +991,67 @@ describe('the box a viewer shows (§14.11.2)', () => {
   });
 });
 
+describe('an annotation the file drew no appearance for (§12.5.5)', () => {
+  /** A page whose only content is the annotations given. */
+  const annotated = (annots: ReadonlyArray<string>): Uint8Array => {
+    const objects = [
+      '<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [] >> >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Annots [${annots
+        .map((_, i) => `${String(i + 4)} 0 R`)
+        .join(' ')}] >>`,
+      ...annots,
+    ];
+    let pdf = '%PDF-1.7\n';
+    const offsets: Array<number> = [];
+    objects.forEach((body, i) => {
+      offsets.push(pdf.length);
+      pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+    });
+    const xref = pdf.length;
+    pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+    for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+    pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`;
+    return new TextEncoder().encode(pdf);
+  };
+
+  const shapesOf = (pdf: Uint8Array): number => {
+    const file = PdfFile.parse(pdf);
+    return collectPageVectors(file, file.pages()[0]!).vectors.length;
+  };
+
+  it('draws a ticked check box, and nothing for an unticked one', () => {
+    // §12.7.4.2 — the state is `/AS`, or `/V` where the widget states none, and
+    // `/Off` means nothing is drawn. checkbox_no_appearance.pdf is two boxes
+    // and no `/AP` between them; the page reconstructed to nothing at all.
+    const on = shapesOf(
+      annotated([
+        '<< /Type /Annot /Subtype /Widget /FT /Btn /V /Yes /AS /Yes /Rect [30 140 70 180] >>',
+      ]),
+    );
+    const off = shapesOf(
+      annotated([
+        '<< /Type /Annot /Subtype /Widget /FT /Btn /V /Off /AS /Off /Rect [90 140 130 180] >>',
+      ]),
+    );
+    expect(on).toBeGreaterThan(0);
+    expect(off).toBe(0);
+  });
+
+  it('draws a text markup where the page has no words to carry it', () => {
+    // §12.5.6.10 — a markup normally goes ON the runs it covers. bug1538111.pdf
+    // has none: four of them over an empty page, and skipped as marks about
+    // text that is not there the page came back blank.
+    const marked = shapesOf(
+      annotated([
+        '<< /Type /Annot /Subtype /Highlight /C [1 1 0] /Rect [20 100 180 120] ' +
+          '/QuadPoints [20 120 180 120 20 100 180 100] >>',
+      ]),
+    );
+    expect(marked).toBeGreaterThan(0);
+  });
+});
+
 describe('a stream wearing a transport filter (§7.4.2–7.4.5)', () => {
   it('undoes ASCIIHex on the PAGE CONTENT, not only inside an image', () => {
     // asciihexdecode.pdf writes its whole page as `42540A2F46312033302054660A…`

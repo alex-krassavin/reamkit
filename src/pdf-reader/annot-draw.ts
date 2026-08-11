@@ -50,7 +50,14 @@ export function drawnAppearance(file: PdfFile, annot: PdfDict): PdfStream | unde
   // §12.7.3.3 — a field whose appearance was never generated still HAS its
   // value, and the value is the form's content. 160F-2019.pdf files seven of
   // them and every one was lost.
-  if (subtype.value === 'Widget') return typedValue(file, annot);
+  if (subtype.value === 'Widget') return typedValue(file, annot) ?? checkedBox(file, annot);
+  // §12.5.6.10 — a text markup normally goes ON the words it covers, and is
+  // skipped here for that reason (see `textMarkupOf`). Where it marks NO words
+  // — the page has none, or none under its quads — the annotation is the only
+  // thing there is, and skipping it leaves the page blank: bug1538111.pdf is
+  // four of them on an empty page and reconstructed to nothing at all.
+  const markup = markupShape(file, annot, subtype.value);
+  if (markup) return markup;
   const pen = borderWidth(file, annot);
   const drawing = pathFor(file, annot, subtype.value, pen);
   if (!drawing || drawing.ops.length === 0) return undefined;
@@ -67,6 +74,156 @@ export function drawnAppearance(file: PdfFile, annot: PdfDict): PdfStream | unde
   ].join('\n');
   return new PdfStream(new Map(), new TextEncoder().encode(body));
 }
+
+/**
+ * §12.7.4.2 — a check box or radio button whose appearance was never generated.
+ *
+ * Its state is `/AS`, or `/V` where the widget states none, and `/Off` means
+ * exactly that: nothing is drawn. Anything else is the ON state, and what a
+ * viewer draws for it is the caption `/MK /CA` — one character of ZapfDingbats,
+ * `4` (a check) by default, `l` (a filled circle) for the radio buttons that
+ * ask for it.
+ *
+ * The border and background come from `/MK`, and where the file gives none
+ * neither is drawn: checkbox_no_appearance.pdf states no `/MK` at all, and
+ * poppler draws its ticked box as a bare check mark on the paper.
+ */
+function checkedBox(file: PdfFile, annot: PdfDict): PdfStream | undefined {
+  if (inherited(file, annot, 'FT') !== 'Btn') return undefined;
+  const as = file.get(annot, 'AS');
+  const state = as instanceof PdfName ? as.value : inherited(file, annot, 'V');
+  const rect = rectangle(file.get(annot, 'Rect'));
+  if (!rect) return undefined;
+  const [x0, y0, x1, y1] = rect;
+  const w = x1 - x0;
+  const h = y1 - y0;
+  if (!(w > 0) || !(h > 0)) return undefined;
+  const mk = file.get(annot, 'MK');
+  const border = mk instanceof Map ? colorOf(file.get(mk, 'BC')) : undefined;
+  const ground = mk instanceof Map ? colorOf(file.get(mk, 'BG')) : undefined;
+  const pen = borderWidth(file, annot);
+  const ops: Array<string> = ['q'];
+  if (ground !== undefined)
+    ops.push(`${ground} rg`, `${num(x0)} ${num(y0)} ${num(w)} ${num(h)} re`, 'f');
+  if (border !== undefined && pen > 0) {
+    ops.push(
+      `${border} RG`,
+      `${num(pen)} w`,
+      `${num(x0 + pen / 2)} ${num(y0 + pen / 2)} ${num(w - pen)} ${num(h - pen)} re`,
+      'S',
+    );
+  }
+  if (state !== undefined && state !== 'Off') {
+    // §12.7.4.2.3 — the mark is `/MK /CA`, one character of ZapfDingbats: `4`
+    // is a check and `l` a filled circle, which is what a radio button wears.
+    //
+    // Drawn as a PATH rather than set as type. The caption is a code in a face
+    // no writer downstream is obliged to have, and re-set in a substitute it
+    // comes out as the LETTER: the check box came back holding a digit 4.
+    const stated = mk instanceof Map ? file.get(mk, 'CA') : undefined;
+    const caption = typeof stated === 'string' && stated.length > 0 ? stated[0]! : '4';
+    const ink = defaultAppearance(file, annot).color;
+    const side = Math.min(w, h) * CAPTION_EM;
+    const cx = x0 + w / 2;
+    const cy = y0 + h / 2;
+    if (caption === 'l' || caption === 'n') {
+      // A filled circle (`l`) or square (`n`) — a radio button's dot.
+      ops.push(`${ink} rg`);
+      ops.push(
+        ...(caption === 'n'
+          ? [`${num(cx - side / 2)} ${num(cy - side / 2)} ${num(side)} ${num(side)} re`]
+          : circleOps(cx, cy, side / 2)),
+        'f',
+      );
+    } else {
+      // The check: a short stroke down to the left foot, a long one up right.
+      const pen = Math.max(0.6, side * CHECK_PEN_EM);
+      ops.push(
+        `${ink} RG`,
+        `${num(pen)} w`,
+        '1 J',
+        '1 j',
+        `${num(cx - side * 0.4)} ${num(cy + side * 0.05)} m`,
+        `${num(cx - side * 0.12)} ${num(cy - side * 0.32)} l`,
+        `${num(cx + side * 0.42)} ${num(cy + side * 0.36)} l`,
+        'S',
+      );
+    }
+  }
+  ops.push('Q');
+  if (ops.length <= 2) return undefined;
+  return new PdfStream(new Map(), new TextEncoder().encode(ops.join('\n')));
+}
+
+/** How much of the box the mark fills, and how thick the check's pen is. */
+const CAPTION_EM = 0.8;
+const CHECK_PEN_EM = 0.13;
+
+/** A circle of `r` about `(cx, cy)`, as the four Bézier arcs that draw one. */
+function circleOps(cx: number, cy: number, r: number): Array<string> {
+  const k = r * 0.5523; // the constant that makes a cubic arc a quarter circle
+  return [
+    `${num(cx - r)} ${num(cy)} m`,
+    `${num(cx - r)} ${num(cy + k)} ${num(cx - k)} ${num(cy + r)} ${num(cx)} ${num(cy + r)} c`,
+    `${num(cx + k)} ${num(cy + r)} ${num(cx + r)} ${num(cy + k)} ${num(cx + r)} ${num(cy)} c`,
+    `${num(cx + r)} ${num(cy - k)} ${num(cx + k)} ${num(cy - r)} ${num(cx)} ${num(cy - r)} c`,
+    `${num(cx - k)} ${num(cy - r)} ${num(cx - r)} ${num(cy - k)} ${num(cx - r)} ${num(cy)} c`,
+  ];
+}
+
+/**
+ * §12.5.6.10 — a text markup drawn as a MARK on the paper.
+ *
+ * The usual reading puts it on the runs it covers, which is right for a page
+ * with words on it. bug1538111.pdf has none: four markup annotations over an
+ * empty page, and read as marks about text that is not there they came back as
+ * nothing at all. Drawn, each is what its subtype says over its own quads.
+ */
+function markupShape(file: PdfFile, annot: PdfDict, kind: string): PdfStream | undefined {
+  const markup = textMarkupOf(file, annot);
+  if (!markup) return undefined;
+  const rgb = colorOf(file.get(annot, 'C')) ?? '0 0 0';
+  const ops: Array<string> = ['q', `${rgb} rg`, `${rgb} RG`];
+  for (const q of markup.quads) {
+    const left = q.x0;
+    const right = q.x1;
+    const bottom = q.y0;
+    const h = q.h;
+    if (!(right > left) || !(h > 0)) continue;
+    if (kind === 'Highlight') {
+      ops.push(`${num(left)} ${num(bottom)} ${num(right - left)} ${num(h)} re`, 'f');
+      continue;
+    }
+    // A rule of a twentieth of the line's height: under it for an underline,
+    // through its middle for a strike.
+    const pen = Math.max(0.5, h * MARK_PEN_EM);
+    if (kind === 'Squiggly') {
+      // §12.5.6.10 — a squiggly underline is a WAVE, which is the whole of
+      // what distinguishes it from an underline; drawn straight the two
+      // subtypes came back identical.
+      const amp = Math.max(0.75, h * SQUIGGLE_AMP_EM);
+      const step = amp * 2;
+      ops.push(`${num(pen)} w`, `${num(left)} ${num(bottom + amp)} m`);
+      let up = true;
+      for (let x = left + step; x < right; x += step, up = !up) {
+        ops.push(`${num(x)} ${num(bottom + (up ? amp * 2 : 0))} l`);
+      }
+      ops.push('S');
+      continue;
+    }
+    const y = kind === 'StrikeOut' ? bottom + h / 2 : bottom + pen;
+    ops.push(`${num(pen)} w`, `${num(left)} ${num(y)} m`, `${num(right)} ${num(y)} l`, 'S');
+  }
+  if (ops.length <= 3) return undefined;
+  ops.push('Q');
+  return new PdfStream(new Map(), new TextEncoder().encode(ops.join('\n')));
+}
+
+/** How thick a drawn underline or strike is, as a share of the line's height. */
+const MARK_PEN_EM = 0.05;
+
+/** How far a squiggle rises above its baseline, likewise. */
+const SQUIGGLE_AMP_EM = 0.07;
 
 /**
  * §12.7.2 `/DR` — the resources a generated field appearance draws with.

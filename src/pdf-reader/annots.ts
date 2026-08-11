@@ -46,6 +46,24 @@ const FLAG_NOVIEW = 32;
  * @param page The page whose annotations are wanted.
  * @returns The appearances, each with the matrix that places it on the page.
  */
+/** Whether the page's own content stream shows any glyphs at all. */
+function pageHasText(file: PdfFile, page: PdfPage): boolean {
+  const had = textful.get(page.dict);
+  if (had !== undefined) return had;
+  // Cheap and sufficient: a page that never opens a text object shows no
+  // words, and one that does is not a page a markup annotation is alone on.
+  const content = file.pageContent(page);
+  let found = false;
+  for (let i = 0; i + 1 < content.length && !found; i++) {
+    found = content[i] === 0x42 && content[i + 1] === 0x54; // "BT"
+  }
+  textful.set(page.dict, found);
+  return found;
+}
+
+/** One answer per page: the collector is called from three passes. */
+const textful = new WeakMap<PdfDict, boolean>();
+
 export function collectPageAppearances(file: PdfFile, page: PdfPage): Array<Appearance> {
   const annots = file.get(page.dict, 'Annots');
   if (!Array.isArray(annots)) return [];
@@ -59,7 +77,11 @@ export function collectPageAppearances(file: PdfFile, page: PdfPage): Array<Appe
     // runs rather than as a mark on the paper (see `textMarkupOf`). Painting
     // its appearance too would lay the band over the words a second time,
     // where the words no longer are.
-    if (textMarkupOf(file, annot)) continue;
+    //
+    // Unless the page has no words at all: then nothing carries the mark and
+    // skipping it leaves the page blank. bug1538111.pdf is four markup
+    // annotations over an empty page and reconstructed to nothing.
+    if (textMarkupOf(file, annot) && pageHasText(file, page)) continue;
     const flags = file.get(annot, 'F');
     if (typeof flags === 'number' && (flags & FLAG_HIDDEN || flags & FLAG_NOVIEW)) continue;
 
