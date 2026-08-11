@@ -10,6 +10,7 @@
 import { interpretContent, multiply } from './content';
 import { decodePdfImage } from './image-decode';
 import { collectPageAppearances } from './annots';
+import { buildFonts } from './text';
 import { hiddenProperties, hiddenXObject } from './optional-content';
 import { buildAlphaMap } from './shading';
 import type { ClipRegion, ContentFont, Matrix } from './content';
@@ -63,7 +64,6 @@ export interface PageImages {
   readonly losses: Array<Loss>;
 }
 
-const NO_FONTS: ReadonlyMap<string, ContentFont> = new Map();
 const MAX_FORM_DEPTH = 12;
 const MAX_IMAGES = 4096; // per-page DoS guard
 
@@ -81,6 +81,20 @@ export function collectPageImages(file: PdfFile, page: PdfPage): PageImages {
   const lossByDetail = new Map<string, Loss>();
   const visiting = new Set<PdfStream>();
   const alphaCache = new Map<PdfDict | undefined, ReturnType<typeof buildAlphaMap>>();
+  // §9.6.5 — the fonts have to be built here, empty though this pass's interest
+  // in text is: without them the interpreter cannot know a face is Type 3, and
+  // a Type 3 glyph is a content stream that may paint a PICTURE. Passed
+  // `NO_FONTS`, this pass saw no glyph calls at all and a page set in a bitmap
+  // Type 3 font came back with nothing on it. Cached per resource dictionary,
+  // as the paint states are.
+  const fontCache = new Map<PdfDict | undefined, ReadonlyMap<string, ContentFont>>();
+  const fontsOf = (resources: PdfDict | undefined): ReadonlyMap<string, ContentFont> => {
+    const had = fontCache.get(resources);
+    if (had) return had;
+    const made = buildFonts(file, resources);
+    fontCache.set(resources, made);
+    return made;
+  };
 
   const addLoss = (severity: 'dropped' | 'degraded', detail: string): void => {
     if (!lossByDetail.has(detail)) {
@@ -108,7 +122,7 @@ export function collectPageImages(file: PdfFile, page: PdfPage): PageImages {
     }
     const result = interpretContent(
       content,
-      NO_FONTS,
+      fontsOf(resources),
       baseCtm,
       undefined,
       paints,
@@ -145,6 +159,26 @@ export function collectPageImages(file: PdfFile, page: PdfPage): PageImages {
         [...prefix, vector.order],
       );
       visiting.delete(stream);
+    }
+
+    // §9.6.5 — a Type 3 glyph is a content stream, and a bitmap font's glyph
+    // is a PICTURE: an inline stencil mask, or a `Do` of one image apiece. The
+    // vector pass has walked these since it learned about Type 3; this one
+    // never did, so a page set in such a font came back with nothing on it at
+    // all. french_diacritics.pdf draws each accented letter as a 40×59 stencil
+    // inside its glyph, and bug1011159.pdf as one XObject per glyph.
+    for (const call of result.glyphs) {
+      if (depth >= MAX_FORM_DEPTH || visiting.has(call.stream)) continue;
+      visiting.add(call.stream);
+      walk(
+        call.resources ?? resources,
+        file.streamData(call.stream),
+        call.ctm,
+        depth + 1,
+        inheritedMcid,
+        [...prefix, call.order],
+      );
+      visiting.delete(call.stream);
     }
 
     for (const placement of result.images) {

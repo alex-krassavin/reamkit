@@ -606,6 +606,54 @@ describe('§8.9.6.2 — a stencil mask, and §8.9.7 — an image written into th
     expect(shot(false)).toBe(255);
     expect(shot(true)).toBe(0);
   });
+  it('lifts the picture a Type 3 glyph PAINTS', () => {
+    // §9.6.5 — a Type 3 glyph is a content stream, and a bitmap font's glyph is
+    // a picture. This pass interpreted with an empty font map, so it never knew
+    // a face was Type 3 and never saw a glyph call at all:
+    // french_diacritics.pdf draws each accented letter as a 40×59 inline
+    // stencil inside its glyph, and the page came back with nothing on it.
+    const glyph = '10 0 0 0 10 10 d1 q 10 0 0 10 0 0 cm BI /W 2 /H 1 /IM true /BPC 1 ID \x40 EI Q';
+    const content = 'BT /T3 10 Tf 20 100 Td (A) Tj ET';
+    const objects = [
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R ' +
+        '/Resources << /Font << /T3 5 0 R >> >> >>',
+      `<< /Length ${String(content.length)} >>`,
+      '<< /Type /Font /Subtype /Type3 /FontBBox [0 0 10 10] /FontMatrix [0.1 0 0 0.1 0 0] ' +
+        '/CharProcs << /square 6 0 R >> /Encoding << /Differences [65 /square] >> ' +
+        '/FirstChar 65 /LastChar 65 /Widths [10] >>',
+      `<< /Length ${String(glyph.length)} >>`,
+    ];
+    const enc = (t: string): Uint8Array => Uint8Array.from([...t].map((c) => c.charCodeAt(0)));
+    // Assembled by hand: `page` above wires its own fixed object list.
+    const bytes: Array<number> = [];
+    const push = (t: string): void => {
+      for (const ch of t) bytes.push(ch.charCodeAt(0) & 0xff);
+    };
+    push('%PDF-1.7\n');
+    const offsets: Array<number> = [];
+    objects.forEach((body, i) => {
+      offsets.push(bytes.length);
+      push(`${String(i + 1)} 0 obj\n${body}\n`);
+      const data = i === 3 ? enc(content) : i === 5 ? enc(glyph) : undefined;
+      if (data) {
+        push('stream\n');
+        for (const b of data) bytes.push(b);
+        push('\nendstream\n');
+      }
+      push('endobj\n');
+    });
+    const xref = bytes.length;
+    push(`xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`);
+    for (const off of offsets) push(`${String(off).padStart(10, '0')} 00000 n \n`);
+    push(
+      `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`,
+    );
+    const file = PdfFile.parse(Uint8Array.from(bytes));
+    expect(collectPageImages(file, file.pages()[0]!).images).toHaveLength(1);
+  });
+
   it('runs a DeviceN image through its own tint transform', () => {
     // §8.6.6.4 — the space names its colorants, an alternate space and the
     // transform between them. Without running it the whole image is
