@@ -5,6 +5,7 @@
 import { parseToUnicodeCMap } from './cmap';
 import { decodePredefined, predefinedCMap, splitPredefined } from './predefined-cmap';
 import { textForGlyphName } from './glyph-names';
+import { cffCidToGid, cffOutlineSource, openTypeCff } from './cff-outline';
 import { outlineSource } from './glyf-outline';
 import { standardFace, standardWidth } from './standard-widths';
 import { embeddedFontName } from './embedded-fonts';
@@ -276,11 +277,24 @@ function outlineOf(
   const cidFont = descendantFont(file, fontDict);
   const descriptor = file.resolve(cidFont.get('FontDescriptor') ?? PDF_NULL);
   if (!(descriptor instanceof Map)) return {};
-  const program = file.resolve(descriptor.get('FontFile2') ?? PDF_NULL);
+  const truetype = file.resolve(descriptor.get('FontFile2') ?? PDF_NULL);
+  const compact = file.resolve(descriptor.get('FontFile3') ?? PDF_NULL);
+  const program = truetype instanceof PdfStream ? truetype : compact;
   if (!(program instanceof PdfStream)) return {};
   let source;
+  let charsetCids: Map<number, number> | undefined;
   try {
-    source = outlineSource(file.streamData(program));
+    const bytes = file.streamData(program);
+    // §9.9 — `/FontFile3` is a CFF program, either bare or wrapped in an
+    // OpenType shell; the shell may carry TrueType outlines instead.
+    source = outlineSource(bytes);
+    if (!source) {
+      const cff = openTypeCff(bytes) ?? bytes;
+      source = cffOutlineSource(cff);
+      // TN 5176 §10 — a CID-keyed CFF is ordered by CID, so the code is not
+      // the index into its charstrings; its charset says which glyph is which.
+      charsetCids = source ? cffCidToGid(cff) : undefined;
+    }
   } catch {
     return {};
   }
@@ -297,7 +311,8 @@ function outlineOf(
         // nothing at all. arial_unicode_ab_cidfont.pdf maps its four Arabic
         // letters to U+FFFF.
         if (readable(decodeOne(code)) !== UNANSWERABLE) return undefined;
-        const gid = cidToGid ? (cidToGid[code] ?? 0) : code;
+        const mapped = cidToGid ? (cidToGid[code] ?? 0) : code;
+        const gid = charsetCids ? (charsetCids.get(mapped) ?? mapped) : mapped;
         return source.path(gid);
       },
     },
