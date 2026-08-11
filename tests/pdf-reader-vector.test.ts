@@ -895,3 +895,72 @@ describe('the CIE-based grey space (§8.6.5.6)', () => {
     expect(collectPageVectors(odd, odd.pages()[0]!).vectors[0]?.fillHex).toBe('808080');
   });
 });
+
+describe('a shading stitched out of shadings (§7.10.4)', () => {
+  /** A page filling one square with pattern `/P1`, whose function is `fn`. */
+  const shaded = (fn: string): Uint8Array => {
+    const content = '/Pattern cs /P1 scn 10 10 80 80 re f';
+    const objects = [
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Contents 4 0 R ' +
+        '/Resources << /Pattern << /P1 5 0 R >> >> >>',
+      `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+      '<< /Type /Pattern /PatternType 2 /Shading << /ShadingType 2 /ColorSpace /DeviceRGB ' +
+        `/Coords [0 0 0 100] /Function ${fn} >> >>`,
+    ];
+    let pdf = '%PDF-1.7\n';
+    const offsets: Array<number> = [];
+    objects.forEach((body, i) => {
+      offsets.push(pdf.length);
+      pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+    });
+    const xref = pdf.length;
+    pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+    for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+    pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`;
+    return Uint8Array.from([...pdf].map((c) => c.charCodeAt(0)));
+  };
+
+  const stopsOf = (fn: string): Array<string> => {
+    const shape = Ream.parse(shaded(fn)).flow.body.find((el) => el.kind === 'shape');
+    if (shape?.kind !== 'shape' || shape.shape.fill.kind !== 'gradient') return [];
+    const gradient = shape.shape.fill.gradient;
+    if (!gradient) return [];
+    return gradient.stops.map((s) => `${s.offset.toFixed(3)}:${s.colorHex}`);
+  };
+
+  const RAMP = '<< /FunctionType 2 /Domain [0 1] /C0 [1 0 0] /C1 [0 0 1] /N 1 >>';
+  /** Green, then a zero-width fade, then blue — which is a hard EDGE. */
+  const STEP =
+    '<< /FunctionType 3 /Domain [0 1] /Bounds [0.5 0.5] /Encode [0 1 0 1 0 1] /Functions [' +
+    '<< /FunctionType 2 /Domain [0 1] /C0 [0 1 0] /C1 [0 1 0] /N 1 >> ' +
+    '<< /FunctionType 2 /Domain [0 1] /C0 [0 1 0] /C1 [0 0 1] /N 1 >> ' +
+    '<< /FunctionType 2 /Domain [0 1] /C0 [0 0 1] /C1 [0 0 1] /N 1 >>] >>';
+
+  it('keeps a plain ramp as its two ends', () => {
+    expect(stopsOf(RAMP)).toEqual(['0.000:FF0000', '1.000:0000FF']);
+  });
+
+  it('keeps a subfunction’s OWN steps, not just its ends', () => {
+    // issue10572.pdf stitches twelve copies of a green/blue pair whose
+    // `/Bounds [0.5 0.5]` makes a hard edge; reduced to first-and-last, each
+    // pair came back a smooth fade instead of two flat bands.
+    expect(stopsOf(STEP)).toEqual(['0.000:00FF00', '0.500:00FF00', '0.500:0000FF', '1.000:0000FF']);
+  });
+
+  it('lays a nested stitch onto the piece of the domain it holds', () => {
+    const outer = `<< /FunctionType 3 /Domain [0 1] /Bounds [0.5] /Encode [0 1 0 1] /Functions [${STEP} ${STEP}] >>`;
+    // Two bands, each stepping green → blue halfway through its own half.
+    expect(stopsOf(outer)).toEqual([
+      '0.000:00FF00',
+      '0.250:00FF00',
+      '0.250:0000FF',
+      '0.500:0000FF',
+      '0.500:00FF00',
+      '0.750:00FF00',
+      '0.750:0000FF',
+      '1.000:0000FF',
+    ]);
+  });
+});

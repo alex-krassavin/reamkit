@@ -99,9 +99,16 @@ function parseFunction(
     const span = d1 - d0 || 1;
     for (let i = 0; i < subs.length; i++) {
       const sub = parseFunction(file, subs[i]);
-      if (!sub || sub.length < 2) continue;
-      pushStop(stops, ((edges[i] ?? d0) - d0) / span, sub[0]!.colorHex);
-      pushStop(stops, ((edges[i + 1] ?? d1) - d0) / span, sub[sub.length - 1]!.colorHex);
+      if (!sub || sub.length === 0) continue;
+      // Each subfunction's own 0..1 laid onto the piece of the domain it holds
+      // — ALL of its stops, not just its ends. A subfunction may be a stitch
+      // itself, and its inner steps are the picture: issue10572.pdf stitches
+      // twelve copies of a green/blue pair whose `/Bounds [0.5 0.5]` makes a
+      // hard edge, and reduced to first-and-last each pair came back a smooth
+      // fade instead of two flat bands.
+      const lo = ((edges[i] ?? d0) - d0) / span;
+      const hi = ((edges[i + 1] ?? d1) - d0) / span;
+      for (const stop of sub) pushStop(stops, lo + stop.offset * (hi - lo), stop.colorHex);
     }
     return stops.length > 0 ? stops : undefined;
   }
