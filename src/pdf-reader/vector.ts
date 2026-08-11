@@ -95,7 +95,7 @@ function paintedVectors(
       maps.spaces,
       hiddenProperties(file, resources),
     );
-    bareShadings += result.bareShadings;
+    bareShadings += result.shadings.length;
 
     // §8.5.3 — later marks cover earlier ones, and a form is drawn where its
     // `Do` stands, not after everything around it. Walking the stream first and

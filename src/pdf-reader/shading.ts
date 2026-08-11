@@ -134,6 +134,54 @@ function parseFunction(
   return undefined;
 }
 
+/**
+ * §8.7.4.5.3 — a FUNCTION-BASED shading, sampled into a picture.
+ *
+ * Type 1 is not a ramp between two points: it is a function of two variables
+ * over a rectangle, and no gradient can stand for one. Painted by a bare `sh`
+ * it fills the clip, and nothing here lifted it at all —
+ * function_based_shading.pdf is nine such squares and 43% of the page's ink,
+ * and reconstructed to a blank sheet.
+ *
+ * Sampled it is exactly a picture, which every format downstream can show. The
+ * grid is fixed: the function is smooth by construction (§8.7.4.5.3 gives it a
+ * `/Domain` and nothing else), so more samples buy nothing a reader can see.
+ *
+ * @param file    The owning file.
+ * @param shading The shading dictionary.
+ * @returns The picture and the domain it covers, or `undefined` for a shading
+ *          of another type or one whose function cannot be run.
+ */
+export function sampledShading(
+  file: PdfFile,
+  shading: PdfDict,
+): { rgb: Uint8Array; size: number; domain: [number, number, number, number] } | undefined {
+  if (numOf(file.get(shading, 'ShadingType')) !== 1) return undefined;
+  const fn = readFunction(file, shading.get('Function'));
+  if (!fn) return undefined;
+  const d = numArray(file, shading.get('Domain')) ?? [0, 1, 0, 1];
+  if (d.length < 4) return undefined;
+  const domain: [number, number, number, number] = [d[0]!, d[1]!, d[2]!, d[3]!];
+  const size = SAMPLED_SIDE;
+  const rgb = new Uint8Array(size * size * 3);
+  for (let row = 0; row < size; row++) {
+    // The raster's first row is the TOP, and the domain's y runs up.
+    const y = domain[3] - ((row + 0.5) / size) * (domain[3] - domain[2]);
+    for (let col = 0; col < size; col++) {
+      const x = domain[0] + ((col + 0.5) / size) * (domain[1] - domain[0]);
+      const hex = colorOf(fn([x, y]));
+      const at = (row * size + col) * 3;
+      rgb[at] = Number.parseInt(hex.slice(0, 2), 16);
+      rgb[at + 1] = Number.parseInt(hex.slice(2, 4), 16);
+      rgb[at + 2] = Number.parseInt(hex.slice(4, 6), 16);
+    }
+  }
+  return { rgb, size, domain };
+}
+
+/** How many samples a side a function-based shading is drawn at. */
+const SAMPLED_SIDE = 128;
+
 /** How many places a type-4 gradient is sampled at along its domain. */
 const PS_STOPS = 16;
 

@@ -12,7 +12,7 @@ import { decodePdfImage } from './image-decode';
 import { collectPageAppearances } from './annots';
 import { buildFonts } from './text';
 import { hiddenProperties, hiddenXObject } from './optional-content';
-import { buildAlphaMap } from './shading';
+import { buildAlphaMap, sampledShading } from './shading';
 import type { ClipRegion, ContentFont, Matrix } from './content';
 import type { PdfDict, PdfValue } from '@/pdf/objects';
 import type { ImageCrop } from '@/core/document-model/types';
@@ -20,6 +20,7 @@ import type { Loss } from '@/core/ir';
 
 import type { PdfFile, PdfPage } from './document';
 import { PDF_NULL, PdfName, PdfStream } from '@/pdf/objects';
+import { encodePng } from '@/core/png-encode';
 import { FEATURES } from '@/core/ir';
 
 /**
@@ -179,6 +180,39 @@ export function collectPageImages(file: PdfFile, page: PdfPage): PageImages {
         [...prefix, call.order],
       );
       visiting.delete(call.stream);
+    }
+
+    // §8.7.4.3 / §8.7.4.5.3 — a bare `sh` paints the clip with a shading, and a
+    // FUNCTION-BASED one is a function of two variables over a rectangle: no
+    // gradient stands for it, but a picture does exactly.
+    // function_based_shading.pdf is nine such squares and the whole page.
+    for (const paint of result.shadings) {
+      if (images.length >= MAX_IMAGES) return;
+      const dict = resources ? file.get(resources, 'Shading') : PDF_NULL;
+      const shading =
+        dict instanceof Map ? file.resolve(dict.get(paint.name) ?? PDF_NULL) : PDF_NULL;
+      const sh =
+        shading instanceof PdfStream ? shading.dict : shading instanceof Map ? shading : undefined;
+      if (!sh) continue;
+      const sampled = sampledShading(file, sh);
+      if (!sampled) continue;
+      // §8.7.4.5.3 — the `/Matrix` on the shading maps its domain onto the
+      // space the `sh` was painted in, and the CTM carries that to the page.
+      const placed = multiply(matrixOf(file, sh), paint.ctm);
+      const [dx0, dx1, dy0, dy1] = sampled.domain;
+      const unit: Matrix = [dx1 - dx0, 0, 0, dy1 - dy0, dx0, dy0];
+      images.push({
+        ...geometry(
+          multiply(unit, placed),
+          {
+            bytes: encodePng(sampled.size, sampled.size, 'rgb', sampled.rgb),
+            format: 'png',
+          },
+          inheritedMcid,
+          paint.clip,
+        ),
+        orderKey: [...prefix, paint.order],
+      });
     }
 
     for (const placement of result.images) {

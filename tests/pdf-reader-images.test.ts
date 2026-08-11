@@ -606,6 +606,60 @@ describe('§8.9.6.2 — a stencil mask, and §8.9.7 — an image written into th
     expect(shot(false)).toBe(255);
     expect(shot(true)).toBe(0);
   });
+  it('samples a function-based shading a bare `sh` paints', () => {
+    // §8.7.4.5.3 — type 1 is a function of TWO variables over a rectangle, and
+    // no gradient stands for one; a picture does exactly.
+    // function_based_shading.pdf is nine such squares and 43% of the page's
+    // ink, and reconstructed to a blank sheet.
+    const ps = '{ pop }'; // grey = x, whatever y is
+    const content = 'q 10 10 100 100 re W n /Sh0 sh Q';
+    const objects = [
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R ' +
+        '/Resources << /Shading << /Sh0 5 0 R >> >> >>',
+      `<< /Length ${String(content.length)} >>`,
+      '<< /ShadingType 1 /ColorSpace /DeviceGray /Domain [0 1 0 1] ' +
+        '/Matrix [100 0 0 100 10 10] /Function 6 0 R >>',
+      `<< /FunctionType 4 /Domain [0 1 0 1] /Range [0 1] /Length ${String(ps.length)} >>`,
+    ];
+    const enc = (t: string): Uint8Array => Uint8Array.from([...t].map((c) => c.charCodeAt(0)));
+    const bytes: Array<number> = [];
+    const push = (t: string): void => {
+      for (const ch of t) bytes.push(ch.charCodeAt(0) & 0xff);
+    };
+    push('%PDF-1.7\n');
+    const offsets: Array<number> = [];
+    objects.forEach((body, i) => {
+      offsets.push(bytes.length);
+      push(`${String(i + 1)} 0 obj\n${body}\n`);
+      const data = i === 3 ? enc(content) : i === 5 ? enc(ps) : undefined;
+      if (data) {
+        push('stream\n');
+        for (const b of data) bytes.push(b);
+        push('\nendstream\n');
+      }
+      push('endobj\n');
+    });
+    const xref = bytes.length;
+    push(`xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`);
+    for (const off of offsets) push(`${String(off).padStart(10, '0')} 00000 n \n`);
+    push(
+      `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`,
+    );
+    const file = PdfFile.parse(Uint8Array.from(bytes));
+    const { images } = collectPageImages(file, file.pages()[0]!);
+    expect(images).toHaveLength(1);
+    // The `/Matrix` maps the unit domain onto 100pt at (10,10).
+    expect([images[0]!.x, images[0]!.y, images[0]!.widthPt, images[0]!.heightPt]).toEqual([
+      10, 10, 100, 100,
+    ]);
+    // …and the picture runs black on the left to white on the right.
+    const { rgba, width } = decodePngPixels(images[0]!.bytes);
+    expect(rgba[0]).toBeLessThan(8);
+    expect(rgba[(width - 1) * 4]).toBeGreaterThan(247);
+  });
+
   it('lifts the picture a Type 3 glyph PAINTS', () => {
     // §9.6.5 — a Type 3 glyph is a content stream, and a bitmap font's glyph is
     // a picture. This pass interpreted with an empty font map, so it never knew

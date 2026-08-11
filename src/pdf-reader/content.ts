@@ -309,19 +309,29 @@ export interface InterpretResult {
   /** §9.6.5 — every Type 3 glyph the stream showed, with where to run it. */
   readonly glyphs: Array<Type3Call>;
   /**
-   * §8.7.4.3 — the stream painted a region with a bare `sh`, which fills the
-   * CLIP rather than a path and is not lifted. Counted so the reader reports it
-   * where it happened: reported unconditionally, it fired on all four hundred
-   * files of the pdf.js corpus, most of which contain no `sh` at all, and a
-   * loss report that cries wolf on every document tells a reader nothing.
+   * §8.7.4.3 — every region the stream painted with a bare `sh`, which fills
+   * the CLIP rather than a path. What a caller can do with one depends on the
+   * shading's own type, so the placement is carried rather than counted.
    */
-  readonly bareShadings: number;
+  readonly shadings: Array<ShadingPaint>;
 }
 
 /**
  * §9.6.5 — one showing of a Type 3 glyph: which procedure, and the matrix that
  * puts glyph space on the page.
  */
+/** §8.7.4.3 — one `sh`: which shading, where the CTM put it, what bounded it. */
+export interface ShadingPaint {
+  /** The `/Shading` resource name (no leading slash). */
+  readonly name: string;
+  /** The CTM in force, which maps the shading's own space onto the page. */
+  readonly ctm: Matrix;
+  /** §8.5.4 — the clip the paint was bounded by, which is its whole extent. */
+  readonly clip?: ClipRegion;
+  /** Where it fell in the painting order (§8.5.3). */
+  readonly order: number;
+}
+
 export interface Type3Call {
   readonly stream: PdfStream;
   readonly resources: PdfDict | undefined;
@@ -519,7 +529,7 @@ export function interpretContent(
   const images: Array<ImagePlacement> = [];
   const vectors: Array<VectorPlacement> = []; // filled paths (EP10)
   const glyphs: Array<Type3Call> = []; // §9.6.5 Type 3 glyph procedures
-  let bareShadings = 0; // §8.7.4.3 `sh` — a region painted, not a path filled
+  const painted: Array<ShadingPaint> = []; // §8.7.4.3 `sh` — regions, not paths
   const lexer = new Lexer(bytes);
   const stack: Array<TextState> = [];
   let state = initialState();
@@ -971,9 +981,18 @@ export function interpretContent(
       // §8.7.4.3 — `sh` paints the CLIP with a shading, not a path with a fill.
       // Nothing here lifts that region; counted so the reader can say so where
       // it happened rather than on every document it reads.
-      case 'sh':
-        bareShadings++;
+      case 'sh': {
+        const nm = operands[0];
+        if (nm instanceof PdfName && visible()) {
+          painted.push({
+            name: nm.value,
+            ctm: state.ctm,
+            ...(state.clip ? { clip: state.clip } : {}),
+            order: paintOrder++,
+          });
+        }
         break;
+      }
       case 'n':
         paintPath(false, false); // end the path with no paint
         break;
@@ -1049,7 +1068,7 @@ export function interpretContent(
         break;
     }
   }
-  return { texts: runs, images, vectors, glyphs, bareShadings };
+  return { texts: runs, images, vectors, glyphs, shadings: painted };
 }
 
 /** §9.3.6 — the rendering modes that put a line round the glyphs. */
