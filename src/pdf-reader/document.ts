@@ -25,6 +25,12 @@ export interface PdfPage {
   readonly dict: PdfDict;
   readonly mediaBox: Rectangle;
   /**
+   * §14.11.2 `/CropBox` — the region of the page a viewer SHOWS, which is what
+   * a page's size means to anyone looking at it. Defaults to the media box and
+   * is clipped to it; inherited down the page tree like the media box is.
+   */
+  readonly cropBox: Rectangle;
+  /**
    * §14.11.1 `/Rotate` — how far the page turns CLOCKWISE when it is shown,
    * normalised to 0, 90, 180 or 270 and inherited down the page tree.
    */
@@ -223,6 +229,7 @@ export class PdfFile {
     node: PdfDict,
     inherited: {
       mediaBox?: Rectangle | undefined;
+      cropBox?: Rectangle | undefined;
       resources?: PdfDict | undefined;
       rotate?: PdfPage['rotate'] | undefined;
     },
@@ -232,6 +239,7 @@ export class PdfFile {
     if (out.length >= MAX_PAGES || seen.has(node)) return;
     seen.add(node);
     const mediaBox = readRectangle(this.get(node, 'MediaBox')) ?? inherited.mediaBox;
+    const cropBox = readRectangle(this.get(node, 'CropBox')) ?? inherited.cropBox;
     const resourcesVal = this.get(node, 'Resources');
     const resources = resourcesVal instanceof Map ? resourcesVal : inherited.resources;
     const rotate = readRotate(this.get(node, 'Rotate')) ?? inherited.rotate;
@@ -241,16 +249,18 @@ export class PdfFile {
       for (const kid of kids) {
         const kidNode = this.resolve(kid);
         if (kidNode instanceof Map) {
-          this.walkPageTree(kidNode, { mediaBox, resources, rotate }, out, seen);
+          this.walkPageTree(kidNode, { mediaBox, cropBox, resources, rotate }, out, seen);
         }
         if (out.length >= MAX_PAGES) break;
       }
       return;
     }
     // A leaf /Page (or an untyped node with no kids).
+    const media = mediaBox ?? DEFAULT_MEDIA_BOX;
     out.push({
       dict: node,
-      mediaBox: mediaBox ?? DEFAULT_MEDIA_BOX,
+      mediaBox: media,
+      cropBox: shownBox(media, cropBox),
       rotate: rotate ?? 0,
       resources,
     });
@@ -696,3 +706,23 @@ function lastIndexOfAscii(buf: Uint8Array, needle: string): number {
 
 /** Re-export for callers that walk a resolved dict's array values. */
 export type { PdfArray };
+
+/**
+ * §14.11.2 — the box a viewer SHOWS: the crop box where there is one, clipped
+ * to the media box, and the media box where there is not.
+ *
+ * A crop box that states nothing usable — zero-sized, or outside the sheet
+ * altogether — is a crop box no viewer honours, and the media box stands.
+ * bug1844576.pdf is 612×792 of paper cropped to 181×53.75, and read as its
+ * media box the form on it arrived a fifth of the way down a letter page.
+ */
+function shownBox(media: Rectangle, crop: Rectangle | undefined): Rectangle {
+  if (!crop) return media;
+  const [mx0, my0, mx1, my1] = media;
+  const [cx0, cy0, cx1, cy1] = crop;
+  const x0 = Math.max(Math.min(mx0, mx1), Math.min(cx0, cx1));
+  const y0 = Math.max(Math.min(my0, my1), Math.min(cy0, cy1));
+  const x1 = Math.min(Math.max(mx0, mx1), Math.max(cx0, cx1));
+  const y1 = Math.min(Math.max(my0, my1), Math.max(cy0, cy1));
+  return x1 - x0 > 1 && y1 - y0 > 1 ? [x0, y0, x1, y1] : media;
+}

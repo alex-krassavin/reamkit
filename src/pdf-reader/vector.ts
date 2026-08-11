@@ -245,7 +245,7 @@ export function collectPageVectors(
   page: PdfPage,
   occupied: ReadonlyArray<Box> = [],
 ): PageVectors {
-  const [px0, py0, px1, py1] = page.mediaBox;
+  const [px0, py0, px1, py1] = page.cropBox;
   const pageArea = Math.max(1, Math.abs((px1 - px0) * (py1 - py0)));
   const out: Array<PdfVector> = [];
   // What the page has painted so far. White paint is invisible only over white:

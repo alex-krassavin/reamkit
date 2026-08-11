@@ -236,7 +236,13 @@ export function textMarkupOf(file: PdfFile, annot: PdfDict): TextMarkupAnnot | u
   const quads = eachQuad(file.get(annot, 'QuadPoints'));
   if (quads.length === 0) return undefined;
   const rgb = colorOf(file.get(annot, 'C'));
-  const hex = rgb === undefined ? undefined : hexOf(rgb);
+  // §12.5.2 `/CA` — how opaque the mark is. A wash cannot be transparent on a
+  // run, so it is mixed with the paper it would have shown through:
+  // highlight_popup.pdf marks its words in a violet at four tenths, and painted
+  // at full strength the line came back solid purple.
+  const opacity = file.get(annot, 'CA');
+  const alpha = typeof opacity === 'number' && opacity > 0 && opacity < 1 ? opacity : 1;
+  const hex = rgb === undefined ? undefined : hexOf(rgb, alpha);
   const mark: TextMarkup =
     kind === 'Highlight'
       ? // A highlighter with no colour named is yellow, which is what one is.
@@ -276,16 +282,17 @@ export interface Quad {
   readonly h: number;
 }
 
-/** The `rg` operands as a 6-hex colour. */
-function hexOf(operands: string): string | undefined {
+/** The `rg` operands as a 6-hex colour, mixed with white by `alpha`. */
+function hexOf(operands: string, alpha = 1): string | undefined {
   const n = operands.split(' ').map(Number);
   if (n.length !== 3 || n.some((v) => !Number.isFinite(v))) return undefined;
   return n
-    .map((v) =>
-      Math.round(Math.min(1, Math.max(0, v)) * 255)
+    .map((v) => {
+      const over = Math.min(1, Math.max(0, v)) * alpha + (1 - alpha);
+      return Math.round(over * 255)
         .toString(16)
-        .padStart(2, '0'),
-    )
+        .padStart(2, '0');
+    })
     .join('')
     .toUpperCase();
 }

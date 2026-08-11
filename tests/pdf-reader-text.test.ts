@@ -502,6 +502,34 @@ describe('text-markup annotations (§12.5.6.10)', () => {
     expect(collectPageAppearances(file, file.pages()[0]!)).toHaveLength(0);
   });
 
+  it('marks only what the quad covers, cutting the run at its edges', () => {
+    // A quad round ONE WORD of a line must not claim the line:
+    // highlight_popup.pdf marks "PDF.js" in "Hello PDF.js World", which the
+    // page sets as a single run, and the whole line came back highlighted.
+    const file = PdfFile.parse(
+      new TextEncoder().encode(
+        new TextDecoder().decode(markedTextPdf('/Subtype /Highlight /C [1 1 0]')).replace(
+          '/QuadPoints [70 734 140 734 70 716 140 716]',
+          // The middle third of the run's advance, which spans 70 to 106.
+          '/QuadPoints [82 734 094 734 82 716 094 716]',
+        ),
+      ),
+    );
+    const runs = extractPageText(file, file.pages()[0]!);
+    expect(runs.map((r) => r.text).join('')).toBe('Marked');
+    expect(runs.filter((r) => r.markup !== undefined).map((r) => r.text)).not.toEqual(['Marked']);
+    expect(runs.some((r) => r.markup === undefined)).toBe(true);
+  });
+
+  it('mixes the wash with the paper it would have shown through (§12.5.2)', () => {
+    // highlight_popup.pdf marks its words in a violet at four tenths, and
+    // painted at full strength the line came back solid purple.
+    const solid = PdfFile.parse(markedTextPdf('/Subtype /Highlight /C [0 0 1]'));
+    expect(extractPageText(solid, solid.pages()[0]!)[0]?.markup?.highlightHex).toBe('0000FF');
+    const faint = PdfFile.parse(markedTextPdf('/Subtype /Highlight /C [0 0 1] /CA 0.4'));
+    expect(extractPageText(faint, faint.pages()[0]!)[0]?.markup?.highlightHex).toBe('9999FF');
+  });
+
   it('reads an underline, a squiggle and a strikeout off the same quads', () => {
     const under = PdfFile.parse(markedTextPdf('/Subtype /Underline /C [0 0.6 0]'));
     expect(extractPageText(under, under.pages()[0]!)[0]?.markup).toEqual({
@@ -847,5 +875,53 @@ describe('what a page shows that this reader cannot state', () => {
     // cost TAMReview.pdf eight thousand of its nine thousand words.
     const file = PdfFile.parse(showing(SIMPLE, '20', 'ww'));
     expect(extractPageText(file, file.pages()[0]!)[0]?.text).toBe('ww');
+  });
+});
+
+describe('the box a viewer shows (§14.11.2)', () => {
+  /** A page with a MediaBox of 612×792 and the CropBox given. */
+  const cropped = (crop: string): Uint8Array => {
+    const content = 'BT /F1 12 Tf 100 700 Td (Hi) Tj ET';
+    const objects = [
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] ${crop} ` +
+        '/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>',
+      `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+      '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+    ];
+    let pdf = '%PDF-1.7\n';
+    const offsets: Array<number> = [];
+    objects.forEach((body, i) => {
+      offsets.push(pdf.length);
+      pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+    });
+    const xref = pdf.length;
+    pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+    for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+    pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`;
+    return new TextEncoder().encode(pdf);
+  };
+
+  it('is the crop box, and the page is the size of what is shown', () => {
+    // bug1844576.pdf is 612×792 of paper cropped to 181×53.75, and read as its
+    // media box the form on it arrived a fifth of the way down a letter page.
+    const page = PdfFile.parse(cropped('/CropBox [90 690 290 740]')).pages()[0]!;
+    expect(page.cropBox).toEqual([90, 690, 290, 740]);
+    const shown = displayOf(page);
+    expect([shown.width, shown.height]).toEqual([200, 50]);
+    // …and the content is placed against the crop's corner, not the sheet's.
+    expect(shown.place(100, 700)).toEqual({ x: 10, y: 10 });
+  });
+
+  it('keeps the media box where the crop states nothing usable', () => {
+    // A crop box outside the sheet, or of no size, is one no viewer honours.
+    expect(PdfFile.parse(cropped('/CropBox [0 0 0 0]')).pages()[0]!.cropBox).toEqual([
+      0, 0, 612, 792,
+    ]);
+    // …and one larger than the sheet is clipped to it.
+    expect(PdfFile.parse(cropped('/CropBox [-50 -50 900 900]')).pages()[0]!.cropBox).toEqual([
+      0, 0, 612, 792,
+    ]);
   });
 });

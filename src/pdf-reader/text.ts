@@ -8,7 +8,7 @@ import { buildContentFont } from './font';
 import { collectPageAppearances } from './annots';
 import { textMarkupOf } from './annot-draw';
 import { patternTint } from './pattern-tint';
-import type { Quad, TextMarkupAnnot } from './annot-draw';
+import type { Quad, TextMarkup, TextMarkupAnnot } from './annot-draw';
 import type { ContentFont, Matrix, TextRun } from './content';
 import type { PdfDict } from '@/pdf/objects';
 import type { PdfFile, PdfPage, Rectangle } from './document';
@@ -49,31 +49,65 @@ export function extractPageText(file: PdfFile, page: PdfPage): Array<TextRun> {
   const links = collectLinks(file, page);
   const marks = collectTextMarkup(file, page);
   if (links.length === 0 && marks.length === 0) return runs;
-  return runs.map((run) => {
+  return runs.flatMap((run) => {
     const link = links.find((l) => inRect(run.x, run.y, l.rect));
-    const marked = marks.find((m) => m.quads.some((q) => covers(q, run)));
-    return {
-      ...run,
-      ...(link ? { href: link.href } : {}),
-      ...(marked ? { markup: marked.mark } : {}),
-    };
+    const linked = link ? { ...run, href: link.href } : run;
+    const marked = marks.find((m) => m.quads.some((q) => touches(q, linked)));
+    if (!marked) return [linked];
+    const quad = marked.quads.find((q) => touches(q, linked));
+    return quad ? markedPieces(linked, quad, marked.mark) : [linked];
   });
 }
 
 /**
- * §12.5.6.10 — whether a marked quad covers this run.
+ * §12.5.6.10 — whether a marked quad reaches this run at all.
  *
  * The quad is a box round a run of text and the run is a baseline with an
  * advance, so the test is the baseline falling inside the box's height while
- * the two overlap horizontally by more than a hair. A quad drawn round one word
- * of a line must not claim the whole line.
+ * the two overlap horizontally by more than a hair.
  */
-function covers(q: Quad, run: TextRun): boolean {
+function touches(q: Quad, run: TextRun): boolean {
   if (run.y < q.y0 || run.y > q.y0 + q.h) return false;
   const left = Math.min(run.x, run.endX);
   const right = Math.max(run.x, run.endX);
-  const shared = Math.min(right, q.x1) - Math.max(left, q.x0);
-  return shared > Math.min(2, (right - left) / 2);
+  return Math.min(right, q.x1) - Math.max(left, q.x0) > 0.5;
+}
+
+/**
+ * The run cut at the quad's edges, so only what the quad covers is marked.
+ *
+ * A quad round ONE WORD of a line must not claim the line: highlight_popup.pdf
+ * marks "PDF.js" in "Hello PDF.js World", which is one run, and the whole line
+ * came back highlighted. The run states its advance and its text and not where
+ * each glyph fell inside it, so the cut is made by proportion of the advance —
+ * a word off by a fraction of a letter where the face is proportional, against
+ * a line marked entirely wrongly.
+ */
+function markedPieces(run: TextRun, q: Quad, mark: TextMarkup): Array<TextRun> {
+  const left = Math.min(run.x, run.endX);
+  const right = Math.max(run.x, run.endX);
+  const advance = right - left;
+  const chars = [...run.text];
+  if (!(advance > 0) || chars.length === 0) return [{ ...run, markup: mark }];
+  const at = (x: number): number =>
+    Math.max(0, Math.min(chars.length, Math.round(((x - left) / advance) * chars.length)));
+  const from = at(q.x0);
+  const to = at(q.x1);
+  if (from <= 0 && to >= chars.length) return [{ ...run, markup: mark }];
+  if (to <= from) return [run];
+  const per = advance / chars.length;
+  const piece = (a: number, b: number, marked: boolean): TextRun => ({
+    ...run,
+    text: chars.slice(a, b).join(''),
+    x: left + a * per,
+    endX: left + b * per,
+    ...(marked ? { markup: mark } : {}),
+  });
+  return [
+    ...(from > 0 ? [piece(0, from, false)] : []),
+    piece(from, to, true),
+    ...(to < chars.length ? [piece(to, chars.length, false)] : []),
+  ];
 }
 
 /** Every text-markup annotation on the page, with the boxes it marks. */

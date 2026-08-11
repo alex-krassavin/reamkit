@@ -28,7 +28,7 @@ export interface Display {
 }
 
 /**
- * The {@link Display} a page's `/MediaBox` and `/Rotate` describe.
+ * The {@link Display} a page's shown box and `/Rotate` describe.
  *
  * `/Rotate` turns the page CLOCKWISE when shown, so the content turns with it —
  * counter-clockwise by the same amount as seen from the content's own frame,
@@ -38,7 +38,9 @@ export interface Display {
  * @returns Its size, its turn, and the map onto it.
  */
 export function displayOf(page: PdfPage): Display {
-  const [x0, y0, x1, y1] = page.mediaBox;
+  // §14.11.2 — what a viewer SHOWS is the crop box, which is the media box
+  // where the page states no other.
+  const [x0, y0, x1, y1] = page.cropBox;
   const left = Math.min(x0, x1);
   const bottom = Math.min(y0, y1);
   const w = Math.abs(x1 - x0);
