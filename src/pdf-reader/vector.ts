@@ -291,8 +291,16 @@ export function collectPageVectors(
     const short = Math.min(w, h);
     const isBox = short >= MIN_SIDE && area >= MIN_AREA;
     const isRule = long >= MIN_RULE_LEN && short > 0;
-    const filled =
-      (v.gradient !== undefined || solidFill) && (isBox || isRule) && area <= 0.85 * pageArea;
+    // No cap on the AREA. A fill the size of the page is a page background, and
+    // a page that is pale blue is pale blue: filled-background.pdf is nothing
+    // but that fill, and it came back a blank sheet. bug1755507.pdf and
+    // bug946506.pdf are a page of blue with a card on it, XiaoBiaoSong.pdf and
+    // SimFang-variant.pdf a page of grey — eight files across the corpus, every
+    // one of them better for it and not one worse. What keeps a background from
+    // burying the words is not its size but where it sits: the flowing reading
+    // puts every mark behind the text, and the placed one keeps the page's own
+    // painting order.
+    const filled = (v.gradient !== undefined || solidFill) && (isBox || isRule);
     // White paint is invisible only over white — the same rule the fill above
     // follows, which the stroke did not. 160F-2019.pdf's every form field is a
     // tinted box with a WHITE one-point border stroked inside it, and dropping

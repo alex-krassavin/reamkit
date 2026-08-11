@@ -14,8 +14,10 @@
 
 import type { PdfDict, PdfValue } from '@/pdf/objects';
 import type { PdfFile, PdfPage } from './document';
+import type { Loss } from '@/core/ir';
 import { PDF_NULL, PdfName, PdfStream } from '@/pdf/objects';
-import { FontRegistry } from '@/core/font';
+import { FontRegistry, parseTtf } from '@/core/font';
+import { FEATURES } from '@/core/ir';
 
 const MAX_FORM_DEPTH = 8;
 
@@ -33,13 +35,22 @@ const MAX_FORM_DEPTH = 8;
  * (`/FontFile`) are different formats that the layout's parser does not take;
  * those keep their substitute.
  *
- * @param file  The owning file.
- * @param pages The pages whose fonts are wanted.
+ * And only one whose OUTLINES this pipeline can carry: a program with no
+ * `glyf`/`loca` cannot be subset, and a face offered here is one the writer
+ * will be asked to embed. bug1186827.pdf ships an OpenType/CFF program under
+ * `/FontFile2`, which parses like any other and then killed the whole
+ * conversion — "Subsetting requires a TrueType font with glyf+loca tables" —
+ * rather than losing one face.
+ *
+ * @param file   The owning file.
+ * @param pages  The pages whose fonts are wanted.
+ * @param losses Appended to for a face the page embeds and this cannot carry.
  * @returns Name → a one-face registry holding that program.
  */
 export function collectEmbeddedFonts(
   file: PdfFile,
   pages: ReadonlyArray<PdfPage>,
+  losses?: Array<Loss>,
 ): Map<string, FontRegistry> {
   const out = new Map<string, FontRegistry>();
   const seen = new Set<PdfDict>();
@@ -53,6 +64,15 @@ export function collectEmbeddedFonts(
     const program = fontProgram(file, fontDict);
     if (!program) return;
     try {
+      const parsed = parseTtf(program);
+      if (!parsed.tables.has('glyf') || !parsed.tables.has('loca')) {
+        losses?.push({
+          severity: 'degraded',
+          feature: FEATURES.text,
+          detail: `embedded font ${name} has no TrueType outlines (a CFF program under /FontFile2); its text is re-set in a substitute face`,
+        });
+        return;
+      }
       out.set(name, FontRegistry.fromBytes({ regular: program }));
     } catch {
       // A program the parser will not take is a program the page keeps to

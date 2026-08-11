@@ -739,3 +739,34 @@ describe('a blend the page asks for and nothing here performs (§11.3.5)', () =>
     expect(collectPageImages(file, file.pages()[0]!).losses).toHaveLength(0);
   });
 });
+
+describe('a fill the size of the page', () => {
+  /** A page whose only mark is one filled rectangle covering `fraction` of it. */
+  const backgroundPdf = (fraction: number, color: string): Uint8Array => {
+    const side = Math.sqrt(fraction) * 200;
+    const content = `${color} rg 0 0 ${String(side)} ${String(side)} re f`;
+    return assemble([
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R >>',
+      `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+    ]);
+  };
+
+  it('is a page background, not clutter', () => {
+    // Capped at 0.85 of the sheet, filled-background.pdf — which is nothing but
+    // that fill — came back a blank page, and bug1755507.pdf's card floated on
+    // white where the file has pale blue. Eight files of the corpus improved
+    // when the cap went and not one worsened.
+    const whole = PdfFile.parse(backgroundPdf(1, '0.7 0.85 0.95'));
+    const [bg] = collectPageVectors(whole, whole.pages()[0]!).vectors;
+    expect(bg?.fillHex).toBe('B3D9F2');
+    expect(bg!.maxX - bg!.minX).toBeCloseTo(200, 3);
+  });
+
+  it('still drops white paint that covers nothing', () => {
+    // White over white paper marks nothing, whatever its size.
+    const white = PdfFile.parse(backgroundPdf(1, '1 1 1'));
+    expect(collectPageVectors(white, white.pages()[0]!).vectors).toHaveLength(0);
+  });
+});

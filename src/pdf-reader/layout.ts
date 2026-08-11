@@ -281,7 +281,7 @@ export function reconstructByLayout(
       // re-set, and a document with no margins prints its words against the
       // edge of the paper — which is what every converted PDF looked like.
       mode === 'positional' ? section : withMeasuredMargins(section, shown, pageRuns),
-      collectEmbeddedFonts(file, pages),
+      collectEmbeddedFonts(file, pages, losses),
     ),
     losses: dedupeLosses(losses),
   };

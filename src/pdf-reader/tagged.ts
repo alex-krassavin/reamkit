@@ -437,7 +437,7 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
       // Without this every tagged PDF came back with its text against all four
       // edges of the paper.
       withMeasuredMargins(sectionFromPdfPages(pages), shown, placedRuns),
-      collectEmbeddedFonts(file, pages),
+      collectEmbeddedFonts(file, pages, imageLosses),
     ),
     losses: imageLosses,
   };

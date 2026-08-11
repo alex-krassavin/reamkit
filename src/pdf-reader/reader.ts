@@ -31,7 +31,26 @@ function sniffPdf(bytes: Uint8Array): boolean {
       return true;
     }
   }
-  return false;
+  return endsLikePdf(bytes);
+}
+
+/**
+ * §7.5.5 — a file with no header at all, recognised by how it ENDS.
+ *
+ * bug1606566.pdf begins with the binary comment that normally FOLLOWS the
+ * header and has no `%PDF-` anywhere: the producer wrote the second line and
+ * not the first. Every reader takes it — poppler says "May not be a PDF file
+ * (continuing anyway)" and reads its one line of text — and we refused the file
+ * outright, which is the worst answer of the three.
+ *
+ * The two tokens that close every PDF and close nothing else: the cross-
+ * reference offset and the end-of-file marker, in that order, at the end.
+ */
+function endsLikePdf(bytes: Uint8Array): boolean {
+  const tail = bytes.subarray(Math.max(0, bytes.length - 2048));
+  const text = new TextDecoder('latin1').decode(tail);
+  const eof = text.lastIndexOf('%%EOF');
+  return eof >= 0 && text.lastIndexOf('startxref') < eof;
 }
 
 /**
