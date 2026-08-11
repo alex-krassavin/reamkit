@@ -129,14 +129,6 @@ export function readPdf(
   }
   // Per-image losses from EP6 (undecodable colour spaces, dropped alpha, …).
   losses.push(...reconstruction.losses);
-  // Filled paths (EP10), stroked lines (EP11), shading-pattern gradients
-  // (EP16c) and the clipping paths that bound them are all lifted; a bare `sh`
-  // shading, which paints a region rather than filling a path, is not.
-  losses.push({
-    severity: 'dropped',
-    feature: FEATURES.images,
-    detail: 'PDF bare-shading (sh) vector regions are not reconstructed',
-  });
   return { doc: reconstruction.doc, losses };
 }
 

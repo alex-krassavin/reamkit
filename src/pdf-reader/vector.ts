@@ -50,8 +50,13 @@ interface ResourceMaps {
 function paintedVectors(
   file: PdfFile,
   page: PdfPage,
-): Array<VectorPlacement & { orderKey: ReadonlyArray<number> }> {
+): {
+  placements: Array<VectorPlacement & { orderKey: ReadonlyArray<number> }>;
+  /** §8.7.4.3 — how many `sh` regions the page painted that this does not lift. */
+  bareShadings: number;
+} {
   const out: Array<VectorPlacement & { orderKey: ReadonlyArray<number> }> = [];
+  let bareShadings = 0;
   const visiting = new Set<PdfStream>();
   // §7.8.3 — a name resolves against the resources IN FORCE, which is the
   // form's or the appearance's own where it has one. annotation-highlight.pdf
@@ -90,6 +95,7 @@ function paintedVectors(
       maps.spaces,
       hiddenProperties(file, resources),
     );
+    bareShadings += result.bareShadings;
 
     // §8.5.3 — later marks cover earlier ones, and a form is drawn where its
     // `Do` stands, not after everything around it. Walking the stream first and
@@ -159,7 +165,7 @@ function paintedVectors(
       [Number.MAX_SAFE_INTEGER, index],
     );
   });
-  return out;
+  return { placements: out, bareShadings };
 }
 
 /** §8.10.2 `/Matrix` — the form's own space, composed onto the placement CTM. */
@@ -257,12 +263,14 @@ export function collectPageVectors(
   // over anything else it is the thing that HIDES it, and the caller seeds this
   // with the pictures it has already placed.
   const painted: Array<Box> = [...occupied];
-  const raws = paintedVectors(file, page);
+  const lifted = paintedVectors(file, page);
+  const raws = lifted.placements;
   // §11.6.5 — a mask that fades the paint from place to place, which no shape
   // downstream has. bug852992_reduced.pdf fades both its green ground and the
   // orange box on it toward the edges, and both came back flat with nothing
   // said. §11.3.5 — and a blend rule nothing here performs, likewise.
   const losses: Array<Loss> = [];
+  const bareShadings = lifted.bareShadings;
   const asked = new Set<string>();
   for (const raw of raws) {
     if (raw.masked === true) {
@@ -367,6 +375,18 @@ export function collectPageVectors(
       severity: 'dropped',
       feature: FEATURES.shapes,
       detail: `page carries more than ${String(MAX_VECTORS)} painted paths; the rest were not read`,
+    });
+  }
+  // §8.7.4.3 — a bare `sh` paints the clip region rather than filling a path,
+  // and nothing here lifts it. Said where it HAPPENED: reported for every
+  // document instead, it fired on all four hundred files of the pdf.js corpus,
+  // most of which contain no `sh` at all, and a loss report that cries wolf on
+  // every document tells a reader nothing.
+  if (bareShadings > 0) {
+    losses.push({
+      severity: 'dropped',
+      feature: FEATURES.images,
+      detail: `${String(bareShadings)} bare-shading (sh) region${bareShadings === 1 ? '' : 's'} painted the clip rather than a path, and ${bareShadings === 1 ? 'was' : 'were'} not reconstructed`,
     });
   }
   return { vectors: out, losses };

@@ -391,10 +391,36 @@ describe('image reconstruction end-to-end (E-PDF EP6)', () => {
     expect(html).toContain('data:image/');
   });
 
-  it('still reports vector graphics as an unreconstructed loss', async () => {
-    const pdf = await Ream.parse(docxWithImage()).convert('pdf', { fonts: FONTS });
-    const doc = Ream.parse(pdf);
-    expect(doc.losses.some((l) => /vector/i.test(l.detail))).toBe(true);
+  it('reports a bare `sh` region where there is one, and NOT where there is none', async () => {
+    // §8.7.4.3 — `sh` paints the clip rather than filling a path, and nothing
+    // here lifts it. Reported unconditionally it fired on all four hundred
+    // files of the pdf.js corpus, most of which contain no `sh` at all — and a
+    // loss report that cries wolf on every document tells a reader nothing.
+    const plain = await Ream.parse(docxWithImage()).convert('pdf', { fonts: FONTS });
+    expect(Ream.parse(plain).losses.some((l) => /bare-shading/u.test(l.detail))).toBe(false);
+
+    const content = '/Sh0 sh';
+    const objects = [
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Contents 4 0 R ' +
+        '/Resources << /Shading << /Sh0 << /ShadingType 2 /ColorSpace /DeviceRGB ' +
+        '/Coords [0 0 100 0] /Function << /FunctionType 2 /Domain [0 1] ' +
+        '/C0 [1 0 0] /C1 [0 0 1] /N 1 >> >> >> >> >>',
+      `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+    ];
+    let pdf = '%PDF-1.7\n';
+    const offsets: Array<number> = [];
+    objects.forEach((body, i) => {
+      offsets.push(pdf.length);
+      pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+    });
+    const xref = pdf.length;
+    pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+    for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+    pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`;
+    const shaded = Ream.parse(new TextEncoder().encode(pdf));
+    expect(shaded.losses.some((l) => /bare-shading/u.test(l.detail))).toBe(true);
   });
 });
 

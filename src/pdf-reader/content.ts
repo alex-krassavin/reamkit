@@ -293,6 +293,14 @@ export interface InterpretResult {
   readonly vectors: Array<VectorPlacement>;
   /** §9.6.5 — every Type 3 glyph the stream showed, with where to run it. */
   readonly glyphs: Array<Type3Call>;
+  /**
+   * §8.7.4.3 — the stream painted a region with a bare `sh`, which fills the
+   * CLIP rather than a path and is not lifted. Counted so the reader reports it
+   * where it happened: reported unconditionally, it fired on all four hundred
+   * files of the pdf.js corpus, most of which contain no `sh` at all, and a
+   * loss report that cries wolf on every document tells a reader nothing.
+   */
+  readonly bareShadings: number;
 }
 
 /**
@@ -496,6 +504,7 @@ export function interpretContent(
   const images: Array<ImagePlacement> = [];
   const vectors: Array<VectorPlacement> = []; // filled paths (EP10)
   const glyphs: Array<Type3Call> = []; // §9.6.5 Type 3 glyph procedures
+  let bareShadings = 0; // §8.7.4.3 `sh` — a region painted, not a path filled
   const lexer = new Lexer(bytes);
   const stack: Array<TextState> = [];
   let state = initialState();
@@ -933,6 +942,12 @@ export function interpretContent(
         path.push({ op: 'close' });
         paintPath(true, true);
         break;
+      // §8.7.4.3 — `sh` paints the CLIP with a shading, not a path with a fill.
+      // Nothing here lifts that region; counted so the reader can say so where
+      // it happened rather than on every document it reads.
+      case 'sh':
+        bareShadings++;
+        break;
       case 'n':
         paintPath(false, false); // end the path with no paint
         break;
@@ -1008,7 +1023,7 @@ export function interpretContent(
         break;
     }
   }
-  return { texts: runs, images, vectors, glyphs };
+  return { texts: runs, images, vectors, glyphs, bareShadings };
 }
 
 /** §9.3.6 — the rendering modes that put a line round the glyphs. */

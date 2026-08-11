@@ -47,7 +47,10 @@ describe('pdfReader facade wiring (E-PDF EP5)', () => {
     const doc = Ream.parse(await pdfOf('InterlayerText'));
     expect(doc.format).toBe('pdf');
     expect(bodyText(doc.flow)).toContain('InterlayerText');
-    expect(doc.losses.some((l) => l.feature === 'images')).toBe(true);
+    // …and it says HOW it read the page. A page of prose is re-set as a
+    // document; the loss report names the reading rather than leaving the
+    // caller to guess which of the two it got.
+    expect(doc.losses.some((l) => /read as a DOCUMENT/u.test(l.detail))).toBe(true);
   });
 
   it('converts a parsed PDF to HTML carrying its text', async () => {
