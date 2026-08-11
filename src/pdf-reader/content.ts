@@ -451,8 +451,16 @@ function componentColor(
     case 'gray':
       return grayHex(nums[0]!);
     case 'tint':
-      // §8.6.6.4 — a tint of 1 is the colorant at full strength. Without
-      // running the space's own transform, the honest reading is "this much
+      // §8.6.6.4/§8.6.6.5 — a tint is a strength of colorant, and the space's
+      // own transform says what colour that strength comes to. Run it and the
+      // answer is in the alternate space; devicen.pdf's three triangles are
+      // green, blue and red.
+      if (space?.tint) {
+        const out = space.tint.transform(nums);
+        const hex = componentColor(out, space.tint.alternate);
+        if (hex !== undefined) return hex;
+      }
+      // Without a transform this can run, the honest reading is "this much
       // ink", which is the inverse of a grey level.
       return grayHex(1 - Math.max(...nums));
     default:

@@ -2,10 +2,17 @@
 // shape filled with a shading pattern (`/Pattern cs /Pn scn` … fill) is the
 // path-bounded case the interpreter captures; this resolves the page's
 // /Pattern resources into ShapeGradients keyed by resource name, evaluating the
-// shading's /Function (type 2 exponential, type 3 stitching, type 0 sampled) for
-// the colour stops. The bare `sh` operator (clip-bounded) is not captured.
+// shading's /Function (type 2 exponential, type 3 stitching, type 0 sampled, and
+// type 4 by running it through `./function`) for the colour stops. The bare `sh`
+// operator (clip-bounded) is not captured.
+//
+// The colour SPACES a page names are read here too, including the way out of a
+// `/Separation` or `/DeviceN` (§8.6.6.4): its tint transform, as something the
+// interpreter can call.
 
+import { readFunction } from './function';
 import type { CieSpace } from './cie-color';
+import type { PdfFunction } from './function';
 import type { GradientStop, ShapeGradient } from '@/core/vector';
 import type { PdfDict, PdfValue } from '@/pdf/objects';
 
@@ -102,8 +109,26 @@ function parseFunction(
   if (type === 0 && resolved instanceof PdfStream) {
     return sampleFunction(file, resolved);
   }
-  return undefined; // type 4 (PostScript calculator) — not evaluated
+  if (type === 4) {
+    // §7.10.5 — a program, not a table: the only way to a stop is to RUN it,
+    // which `./function` does. Sampled along the domain like any other curve.
+    const fn = readFunction(file, resolved);
+    if (!fn) return undefined;
+    const domain = numArray(file, dict.get('Domain')) ?? [0, 1];
+    const d0 = domain[0] ?? 0;
+    const d1 = domain[1] ?? 1;
+    const stops: Array<GradientStop> = [];
+    for (let s = 0; s < PS_STOPS; s++) {
+      const off = s / (PS_STOPS - 1);
+      pushStop(stops, off, colorOf(fn([d0 + off * (d1 - d0)])));
+    }
+    return stops.length > 0 ? stops : undefined;
+  }
+  return undefined;
 }
+
+/** How many places a type-4 gradient is sampled at along its domain. */
+const PS_STOPS = 16;
 
 // §7.10.2 sampled function — read the table and sample it at a few offsets.
 function sampleFunction(file: PdfFile, stream: PdfStream): Array<GradientStop> | undefined {
@@ -286,6 +311,15 @@ export interface ColorSpaceInfo {
    * out of this transform.
    */
   readonly cie?: CieSpace;
+  /**
+   * §8.6.6.4/§8.6.6.5 — for a `Separation` or `DeviceN`, the way OUT of it: the
+   * tint transform and the space its numbers land in. Absent where the file
+   * states a transform this cannot run, and then a tint is only "this much ink".
+   */
+  readonly tint?: {
+    readonly transform: PdfFunction;
+    readonly alternate: ColorSpaceInfo;
+  };
 }
 
 /**
@@ -304,14 +338,17 @@ export function buildColorSpaceMap(
   const spaces = file.get(resources, 'ColorSpace');
   if (!(spaces instanceof Map)) return out;
   for (const [name, value] of spaces) {
-    const info = colorSpaceInfo(file, file.resolve(value));
+    const info = colorSpaceAt(file, file.resolve(value), 0);
     if (info) out.set(name, info);
   }
   return out;
 }
 
+/** An alternate space may name another; this is where that stops. */
+const MAX_ALTERNATE = 4;
+
 /** What a colour space object comes to, or `undefined` for one not read. */
-function colorSpaceInfo(file: PdfFile, cs: PdfValue): ColorSpaceInfo | undefined {
+function colorSpaceAt(file: PdfFile, cs: PdfValue, depth: number): ColorSpaceInfo | undefined {
   if (cs instanceof PdfName) return byFamily(cs.value, 0);
   if (!Array.isArray(cs) || cs.length === 0) return undefined;
   const head = file.resolve(cs[0]!);
@@ -347,6 +384,18 @@ function colorSpaceInfo(file: PdfFile, cs: PdfValue): ColorSpaceInfo | undefined
   if (head.value === 'Separation' || head.value === 'DeviceN') {
     const names = file.resolve(cs[1] ?? PDF_NULL);
     const n = head.value === 'Separation' ? 1 : Array.isArray(names) ? names.length : 1;
+    // §8.6.6.4 — the space names its colorants, an ALTERNATE space, and the
+    // transform between them; run it and the tint is a colour rather than an
+    // amount of ink. devicen.pdf's three triangles are green, blue and red, and
+    // read as ink at full strength all three came back black.
+    const alternate =
+      depth < MAX_ALTERNATE
+        ? colorSpaceAt(file, file.resolve(cs[2] ?? PDF_NULL), depth + 1)
+        : undefined;
+    const transform = readFunction(file, cs[3]);
+    if (alternate && transform && alternate.kind !== 'tint') {
+      return { kind: 'tint', components: n, tint: { transform, alternate } };
+    }
     return { kind: 'tint', components: n };
   }
   return byFamily(head.value, 0);
