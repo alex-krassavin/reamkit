@@ -14,12 +14,18 @@ const ROWS = 18;
 
 // A page with two columns of short runs (left x=72, right x=380) sharing each
 // baseline. 36 runs clears the heuristic's confidence threshold.
-function twoColumnPdf(): Uint8Array {
+// `heading` prepends a line reaching right across the page, the way a paper's
+// title does.
+function twoColumnPdf(heading = false): Uint8Array {
   const doc = new PdfDocument();
   const font = doc.add(
     dict({ Type: name('Font'), Subtype: name('Type1'), BaseFont: name('Helvetica') }),
   );
   const ops = ['BT /F1 10 Tf'];
+  if (heading) {
+    ops.push('1 0 0 1 72 760 Tm (TITLE ACROSS THE WHOLE PAGE WIDTH HERE) Tj');
+    ops.push('1 0 0 1 72 744 Tm (AUTHORS ACROSS THE WHOLE PAGE WIDTH TOO) Tj');
+  }
   for (let i = 0; i < ROWS; i++) {
     const y = 720 - i * 24;
     const n = String(i + 1).padStart(2, '0');
@@ -50,7 +56,7 @@ const bodyTokens = (pdf: Uint8Array): Array<string> => {
       el.kind === 'paragraph' ? el.paragraph.runs.map((r) => r.text).join('') : '',
     )
     .join(' ');
-  return text.match(/[LR]\d\d/g) ?? [];
+  return text.match(/[LR]\d\d|TITLE|AUTHORS/g) ?? [];
 };
 
 describe('two-column reconstruction (E-PDF EP17)', () => {
@@ -60,5 +66,19 @@ describe('two-column reconstruction (E-PDF EP17)', () => {
     const right = Array.from({ length: ROWS }, (_, i) => `R${String(i + 1).padStart(2, '0')}`);
     expect(tokens.slice(0, ROWS)).toEqual(left); // left column, top-to-bottom
     expect(tokens.slice(ROWS)).toEqual(right); // then the right column
+  });
+
+  it('reads a full-width heading before the columns it stands over', () => {
+    // A page is rarely two columns and nothing else. comments.pdf is a
+    // conference paper — a full-width title, a full-width author block, then
+    // two columns — and asking for a band NO line crosses found no gutter at
+    // all: its columns were joined line by line, "Abstract and is used for the
+    // application logic of browser-based productivity Dynamic languages…".
+    const tokens = bodyTokens(twoColumnPdf(true));
+    expect(tokens.slice(0, 2)).toEqual(['TITLE', 'AUTHORS']);
+    const left = Array.from({ length: ROWS }, (_, i) => `L${String(i + 1).padStart(2, '0')}`);
+    const right = Array.from({ length: ROWS }, (_, i) => `R${String(i + 1).padStart(2, '0')}`);
+    expect(tokens.slice(2, 2 + ROWS)).toEqual(left);
+    expect(tokens.slice(2 + ROWS)).toEqual(right);
   });
 });

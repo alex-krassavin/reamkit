@@ -120,7 +120,13 @@ export function reconstructByLayout(
     const stepped = stepsBetweenWords(runs);
     // Blocks carry a column key so the final sort reads column-by-column: left
     // column top-to-bottom, then right column.
-    const blocks: Array<{ col: number; top: number; el: BodyElement }> = [];
+    const blocks: Array<{ band: number; col: number; top: number; el: BodyElement }> = [];
+    // EP17 — a full-width line cuts the page in two: what is above it is read
+    // before it and what is below after, so a paper's columns do not start at
+    // the top of the sheet.
+    const split = gutter !== undefined ? assignColumns(runs, gutter) : undefined;
+    const bandEpsilon = (median(runs.map((r) => r.fontSizePt).filter((s) => s > 0)) || 10) / 2;
+    const bandAt = (top: number): number => bandOf(split?.breaks ?? [], top, bandEpsilon);
     const addColumn = (allRuns: ReadonlyArray<TextRun>, col: number): void => {
       // §9.6.5 — a Type 3 run's marks are its glyph PROCEDURES, which the path
       // and picture passes lift. Re-setting its codes in a substitute face
@@ -173,6 +179,7 @@ export function reconstructByLayout(
           : undefined;
       for (const para of groupIntoParagraphs(lines, measure, display.height)) {
         blocks.push({
+          band: bandAt(para.top),
           col,
           top: para.top,
           el: paragraphFromRuns(para.spans, headingLevel(para.fontSize, medianFont), {
@@ -188,7 +195,9 @@ export function reconstructByLayout(
       top: number;
       make: (z: number) => BodyElement;
     }> = [];
-    const colOf = (centerX: number): number => (gutter !== undefined && centerX >= gutter ? 1 : 0);
+
+    const colOf = (centerX: number): number =>
+      gutter !== undefined && centerX >= gutter.mid ? 1 : 0;
     // The shown page has its own corner: the turn has already been applied, so
     // what is left is a box that starts at the origin.
     const frame = { left: 0, top: display.height };
@@ -215,15 +224,17 @@ export function reconstructByLayout(
     const placedVectors = placeVectors(lifted.vectors, display);
     const ruled = markDrawnRules(runs, placedVectors);
     const vectors = placedVectors.filter((v) => !ruled.consumed.has(v));
-    if (gutter !== undefined) {
-      addColumn(
-        ruled.runs.filter((r) => r.x < gutter),
-        0,
-      );
-      addColumn(
-        ruled.runs.filter((r) => r.x >= gutter),
-        1,
-      );
+    if (split) {
+      // A run the rules pass rebuilt is not the one the split was measured on,
+      // so its column is looked up by where it stands.
+      const columnFor = (r: TextRun): number =>
+        split.columnOf.get(r) ?? (r.x < gutter!.mid ? 0 : 1);
+      for (const col of [SPANNING_COLUMN, 0, 1]) {
+        addColumn(
+          ruled.runs.filter((r) => columnFor(r) === col),
+          col,
+        );
+      }
     } else {
       addColumn(ruled.runs, 0);
     }
@@ -253,9 +264,9 @@ export function reconstructByLayout(
       ...placed,
     ].sort((a, b) => compareOrder(a.key, b.key));
     marks.forEach((mark, z) => {
-      blocks.push({ col: mark.col, top: mark.top, el: mark.make(z) });
+      blocks.push({ band: bandAt(mark.top), col: mark.col, top: mark.top, el: mark.make(z) });
     });
-    blocks.sort((a, b) => a.col - b.col || b.top - a.top);
+    blocks.sort((a, b) => a.band - b.band || a.col - b.col || b.top - a.top);
     // Each source page after the first opens an output page of its own. Flowed,
     // the layout repaginates and this hardly shows; PLACED, every mark is
     // anchored to "the page", so without it all twenty-five pages of
@@ -287,35 +298,209 @@ export function reconstructByLayout(
   };
 }
 
-// EP17 — a two-column gutter: the centre of the widest vertical whitespace band
-// that no run's horizontal extent crosses. Conservative on purpose — it fires
-// only on a genuine two-column page (a full-width line spans the centre, leaving
-// no gap there, so title/single-column pages keep their existing reading order).
-function detectGutter(runs: ReadonlyArray<TextRun>, pageWidth: number): number | undefined {
+// EP17 — the gutter of a two-column page: the vertical band the fewest lines
+// cross.
+//
+// It used to be the widest band NO run crossed, which asked a page to be two
+// columns and nothing else. Almost none are: comments.pdf is a conference paper
+// — a full-width title, a full-width author block, then two columns of body —
+// and no such band exists on it, because the title crosses everything. Read
+// flat, its columns were joined line by line: "Abstract and is used for the
+// application logic of browser-based productivity Dynamic languages such as
+// JavaScript are more difficult to com-…".
+//
+// So the measure is how many runs cross each x. Inside a column that is every
+// line of it; in the gutter it is only the handful of full-width lines, and the
+// two counts are far enough apart to tell one from the other. Those full-width
+// lines are then what cuts the page into BANDS (see `assignColumns`).
+interface Gutter {
+  /** The middle of the band, which is what a run is placed left or right of. */
+  readonly mid: number;
+  /** The band itself — a run crossing all of it is a full-width line. */
+  readonly from: number;
+  readonly to: number;
+}
+
+function detectGutter(runs: ReadonlyArray<TextRun>, pageWidth: number): Gutter | undefined {
   if (runs.length < 30 || pageWidth <= 0) return undefined;
   const fontSize = median(runs.map((r) => r.fontSizePt).filter((s) => s > 0)) || 10;
-  const intervals = runs
-    .map((r): [number, number] => [r.x, Math.max(r.endX, r.x + 1)])
-    .sort((a, b) => a[0] - b[0]);
-  const minX = intervals[0]![0];
-  const maxX = Math.max(...intervals.map((iv) => iv[1]));
+  const spans = runs.map((r): [number, number] => [r.x, Math.max(r.endX, r.x + 1)]);
+  const minX = Math.min(...spans.map((iv) => iv[0]));
+  const maxX = Math.max(...spans.map((iv) => iv[1]));
   const span = maxX - minX;
   if (span < pageWidth * 0.5) return undefined; // text doesn't span enough of the page
-  let curEnd = intervals[0]![1];
-  let gapMid = 0;
-  let gapW = 0;
-  for (const [l, r] of intervals) {
-    if (l - curEnd > gapW) {
-      gapW = l - curEnd;
-      gapMid = (curEnd + l) / 2;
+  // First the strict reading: the widest band NO run crosses. It is exactly
+  // right where it fires, and it fires on a page set in columns and nothing
+  // else — including a sparse one, where the crossing count below is zero
+  // nearly everywhere and says nothing.
+  const sorted = [...spans].sort((a, b) => a[0] - b[0]);
+  let curEnd = sorted[0]![1];
+  let emptyMid = 0;
+  let emptyFrom = 0;
+  let emptyTo = 0;
+  for (const [l, r] of sorted) {
+    if (l - curEnd > emptyTo - emptyFrom) {
+      emptyFrom = curEnd;
+      emptyTo = l;
+      emptyMid = (curEnd + l) / 2;
     }
     if (r > curEnd) curEnd = r;
   }
-  const frac = (gapMid - minX) / span;
-  if (gapW < fontSize * 3 || frac < 0.35 || frac > 0.65) return undefined; // not a central gutter
-  const left = runs.filter((r) => r.x < gapMid).length;
-  if (left < runs.length * 0.25 || left > runs.length * 0.75) return undefined; // unbalanced
-  return gapMid;
+  const emptyFrac = (emptyMid - minX) / span;
+  if (emptyTo - emptyFrom >= fontSize * 3 && emptyFrac >= 0.35 && emptyFrac <= 0.65) {
+    const onLeft = spans.filter(([l]) => l < emptyMid).length;
+    if (onLeft >= runs.length * 0.25 && onLeft <= runs.length * 0.75) {
+      return { mid: emptyMid, from: emptyFrom, to: emptyTo };
+    }
+  }
+  // Otherwise the question is asked a LINE at a time: at the gutter, most lines
+  // have ink on both sides of it and cross none of it, while the few that do
+  // cross are the full-width ones. A page set in one column has no such place —
+  // every line crosses its middle.
+  const rows = rowsOf(runs, fontSize).map((row) =>
+    [...row]
+      .map((r): [number, number] => [r.x, Math.max(r.endX, r.x + 1)])
+      .sort((a, b) => a[0] - b[0]),
+  );
+  let best: { x: number; score: number } | undefined;
+  let bestFrom = 0;
+  let bestTo = 0;
+  for (const x of sample(minX + span * 0.3, minX + span * 0.7, 1)) {
+    let columned = 0;
+    let crossing = 0;
+    for (const row of rows) {
+      if (row.some(([l, r]) => l < x && r > x)) {
+        crossing++;
+        continue;
+      }
+      // Ink on both sides is not enough: what separates two columns is a GAP,
+      // and a gap the width of a word space separates two words.
+      const before = row.filter(([, r]) => r <= x);
+      const after = row.filter(([l]) => l >= x);
+      if (before.length === 0 || after.length === 0) continue;
+      const gap = Math.min(...after.map(([l]) => l)) - Math.max(...before.map(([, r]) => r));
+      if (gap >= fontSize * MIN_GUTTER_EM) columned++;
+    }
+    // Enough lines have to be split at the SAME x, or it is not a gutter: a
+    // form's label-and-value rows have a wide gap on every line and it is in a
+    // different place on each, so no single x splits many of them. And more
+    // lines must be split here than reach across it — on a page set in one
+    // column every line reaches across the middle.
+    if (columned < MIN_COLUMNED_ROWS || crossing >= columned) continue;
+    if (!best || columned > best.score) {
+      best = { x, score: columned };
+      bestFrom = x;
+      bestTo = x;
+    } else if (columned === best.score && x - bestTo <= 1) {
+      bestTo = x;
+    }
+  }
+  if (!best) return undefined;
+  return { mid: (bestFrom + bestTo) / 2, from: bestFrom, to: bestTo };
+}
+
+/** How many lines have to be split at the same place before the page is in columns. */
+const MIN_COLUMNED_ROWS = 12;
+
+/**
+ * The page's runs grouped by baseline.
+ *
+ * Swept in order rather than bucketed: a superscript sits a few points above
+ * the baseline it belongs to, and a bucket boundary between the two would leave
+ * it a line of its own — bug1885505.pdf's author block came back with the
+ * asterisks and daggers standing alone on five separate lines.
+ */
+function rowsOf(runs: ReadonlyArray<TextRun>, fontSize: number): Array<Array<TextRun>> {
+  const tolerance = Math.max(fontSize * 0.6, 1);
+  const rows: Array<Array<TextRun>> = [];
+  let row: Array<TextRun> = [];
+  let rowY = Number.POSITIVE_INFINITY;
+  for (const run of [...runs].sort((a, b) => b.y - a.y)) {
+    if (row.length > 0 && rowY - run.y > tolerance) {
+      rows.push(row);
+      row = [];
+    }
+    if (row.length === 0) rowY = run.y;
+    row.push(run);
+  }
+  if (row.length > 0) rows.push(row);
+  return rows;
+}
+
+/** The x's to measure at, from `a` to `b` inclusive. */
+function sample(a: number, b: number, step: number): Array<number> {
+  const out: Array<number> = [];
+  for (let x = a; x <= b; x += Math.max(step, 0.5)) out.push(x);
+  return out;
+}
+
+/**
+ * EP17 — which column each run belongs to, and where the page's bands break.
+ *
+ * The decision is made a LINE at a time, not a run at a time: a title is drawn
+ * as several runs and only one of them may reach across the gutter, so judging
+ * each on its own would leave the rest of the title standing in a column.
+ *
+ * @param runs   The page's runs.
+ * @param gutter The band from {@link detectGutter}.
+ * @returns The column of each run (0, 1, or {@link SPANNING_COLUMN}) and the
+ *          baselines of the full-width lines, which separate the bands.
+ */
+function assignColumns(
+  runs: ReadonlyArray<TextRun>,
+  gutter: Gutter,
+): { columnOf: Map<TextRun, number>; breaks: Array<number> } {
+  const fontSize = median(runs.map((r) => r.fontSizePt).filter((s) => s > 0)) || 10;
+  const rows = rowsOf(runs, fontSize);
+  const columnOf = new Map<TextRun, number>();
+  const breaks: Array<number> = [];
+  for (const row of rows) {
+    const sorted = [...row].sort((a, b) => a.x - b.x);
+    const leftmost = sorted[0]!.x;
+    const rightmost = Math.max(...sorted.map((r) => Math.max(r.endX, r.x)));
+    if (rightmost <= gutter.mid || leftmost >= gutter.mid) {
+      const col = rightmost <= gutter.mid ? 0 : 1;
+      for (const run of row) columnOf.set(run, col);
+      continue;
+    }
+    // Ink on both sides. Two columns, or one line reaching across? The gutter
+    // is what tells them apart: a line set across the page may have a WORD
+    // space over the middle, and a word space is nothing like a column gap.
+    // comments.pdf centres its author block, and split on the word gaps that
+    // happened to fall in the middle the names came apart into both columns.
+    let cur = Math.max(sorted[0]!.endX, sorted[0]!.x);
+    let gap = 0;
+    for (const run of sorted.slice(1)) {
+      if (run.x > cur && cur <= gutter.mid && run.x >= gutter.mid) gap = run.x - cur;
+      cur = Math.max(cur, run.endX, run.x);
+    }
+    if (gap >= fontSize * MIN_GUTTER_EM) {
+      for (const run of row) columnOf.set(run, run.x < gutter.mid ? 0 : 1);
+      continue;
+    }
+    for (const run of row) columnOf.set(run, SPANNING_COLUMN);
+    breaks.push(Math.max(...row.map((r) => r.y)));
+  }
+  return { columnOf, breaks: breaks.sort((a, b) => b - a) };
+}
+
+/**
+ * A line that spans the page belongs to no column: it stands between the bands
+ * it separates, ahead of either column's blocks in its own band.
+ */
+const SPANNING_COLUMN = -1;
+
+/**
+ * How wide, in ems, the gap over the middle has to be for a line to be two
+ * lines. Word spaces run well under one em; a column gutter runs to several.
+ */
+const MIN_GUTTER_EM = 1.5;
+
+/** Which band a mark at this height belongs to — how many breaks stand above it. */
+function bandOf(breaks: ReadonlyArray<number>, top: number, epsilon: number): number {
+  let n = 0;
+  for (const y of breaks) if (y > top + epsilon) n++;
+  return n;
 }
 
 /**
