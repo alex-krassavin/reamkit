@@ -68,8 +68,7 @@ export function markDrawnRules(
 ): DrawnRules {
   const marks = new Map<TextRun, { underline?: string; strike?: boolean }>();
   const consumed = new Set<PdfVector>();
-  for (const v of vectors) {
-    if (!isRule(v)) continue;
+  for (const { rule: v, parts } of joinRules(vectors)) {
     const under = coveredRuns(runs, v, 'under');
     const through = under.length > 0 ? [] : coveredRuns(runs, v, 'through');
     const hit = under.length > 0 ? under : through;
@@ -83,14 +82,15 @@ export function markDrawnRules(
     if (left - v.minX > OVERHANG_PT || v.maxX - right > OVERHANG_PT) continue;
     for (const run of hit) {
       const had = marks.get(run) ?? {};
+      const hex = ruleHex(v);
       marks.set(
         run,
-        under.length > 0 && v.fillHex !== undefined
-          ? { ...had, underline: v.fillHex }
+        under.length > 0 && hex !== undefined
+          ? { ...had, underline: hex }
           : { ...had, strike: true },
       );
     }
-    consumed.add(v);
+    for (const part of parts) consumed.add(part);
   }
   if (marks.size === 0) return { runs: [...runs], consumed };
   return {
@@ -113,18 +113,101 @@ export function markDrawnRules(
   };
 }
 
-/** A thin filled bar, which is the only shape an underline is drawn as. */
-function isRule(v: PdfVector): boolean {
-  if (v.fillHex === undefined || v.strokeHex !== undefined || v.gradient !== undefined) {
-    return false;
+/** Two segments this far apart are still one line: a word space, no more. */
+const JOIN_PT = 6;
+
+/** Two segments within this of each other sit at the same height. */
+const SAME_HEIGHT_PT = 0.5;
+
+/**
+ * The rules, with the ones a page drew in PIECES joined back into one.
+ *
+ * An underline is a mark about a phrase, but a producer may stroke it a word at
+ * a time: TAMReview.pdf draws its copyright licence as six segments end to end.
+ * Matched one by one none of them covers enough of the long run it belongs to,
+ * so each was rejected and the phrase came back unmarked.
+ *
+ * Joined only along a straight, level line, with no more than a word space
+ * between the pieces — which is what a broken underline is and what a row of
+ * separate table rules is not.
+ */
+function joinRules(
+  vectors: ReadonlyArray<PdfVector>,
+): Array<{ rule: PdfVector; parts: Array<PdfVector> }> {
+  const rules = vectors.filter((v) => isRule(v));
+  const byRow = new Map<string, Array<PdfVector>>();
+  for (const v of rules) {
+    const mid = (v.minY + v.maxY) / 2;
+    const key = `${ruleHex(v) ?? ''}@${String(Math.round(mid / SAME_HEIGHT_PT))}`;
+    const row = byRow.get(key);
+    if (row) row.push(v);
+    else byRow.set(key, [v]);
   }
+  const out: Array<{ rule: PdfVector; parts: Array<PdfVector> }> = [];
+  for (const row of byRow.values()) {
+    row.sort((a, b) => a.minX - b.minX);
+    let run: Array<PdfVector> = [];
+    const flush = (): void => {
+      if (run.length === 0) return;
+      const first = run[0]!;
+      out.push({
+        rule: {
+          ...first,
+          minX: Math.min(...run.map((v) => v.minX)),
+          maxX: Math.max(...run.map((v) => v.maxX)),
+          minY: Math.min(...run.map((v) => v.minY)),
+          maxY: Math.max(...run.map((v) => v.maxY)),
+        },
+        parts: run,
+      });
+      run = [];
+    };
+    for (const v of row) {
+      const last = run[run.length - 1];
+      if (last && v.minX - last.maxX > JOIN_PT) flush();
+      run.push(v);
+    }
+    flush();
+  }
+  return out;
+}
+
+/**
+ * A thin bar under words — filled OR stroked.
+ *
+ * A page draws an underline either way, and the stroked one is the commoner:
+ * TAMReview.pdf strokes its copyright licence with six zero-height segments,
+ * one per word. Read as a filled bar only, none of them was a mark at all —
+ * they stayed artwork, and when the words re-set the artwork stayed where it
+ * was drawn and came back crossing the line it should have sat under.
+ */
+function isRule(v: PdfVector): boolean {
+  if (v.gradient !== undefined) return false;
+  const stroked = v.strokeHex !== undefined && v.fillHex === undefined;
+  const colour = stroked ? v.strokeHex : v.fillHex;
+  if (colour === undefined) return false;
   // Nothing is underlined in white: white over white paper is not a mark, and
   // where a page paints a white seam between two table cells it is hiding a
   // join, not marking the words above it.
-  if (v.fillHex === 'FFFFFF') return false;
-  const h = v.maxY - v.minY;
+  if (colour === 'FFFFFF') return false;
   const w = v.maxX - v.minX;
-  return h >= THINNEST_PT && h <= THICKEST_PT && w > 2;
+  if (w <= 2) return false;
+  if (stroked) {
+    // A stroked line has no height of its own — the pen's width is its
+    // thickness, and a hairline pen is a real underline. What it must be is
+    // LEVEL: a path that climbs is a rule about something else.
+    if (v.maxY - v.minY > THICKEST_PT) return false;
+    return (v.lineWidth ?? 1) <= THICKEST_PT;
+  }
+  // A filled bar has to have some body to it. Below this the page drew a seam
+  // between two cells, not a mark under the words.
+  const h = v.maxY - v.minY;
+  return h >= THINNEST_PT && h <= THICKEST_PT;
+}
+
+/** The colour a rule marks in, whichever way the page drew it. */
+function ruleHex(v: PdfVector): string | undefined {
+  return v.fillHex ?? v.strokeHex;
 }
 
 /**

@@ -647,6 +647,38 @@ describe('the underline a PDF draws rather than states', () => {
     expect(markDrawnRules(seam.runs, seam.vectors).consumed.size).toBe(0);
   });
 
+  it('reads a STROKED line as an underline too', () => {
+    // A page draws an underline either way, and the stroked one is the
+    // commoner. TAMReview.pdf strokes its copyright licence; read as a filled
+    // bar only it was not a mark at all, stayed artwork, and after the words
+    // re-set it came back crossing the line it should have sat under.
+    const { runs, vectors } = pageOf(ruledTextPdf('0.5 w 0 0 0.5 RG 72 718 m 120 718 l S'));
+    const ruled = markDrawnRules(runs, vectors);
+    expect(ruled.runs[0]?.markup).toEqual({ underline: 'single', underlineHex: '000080' });
+    expect(ruled.consumed.size).toBe(1);
+  });
+
+  it('joins an underline a page drew in PIECES', () => {
+    // A producer may stroke it a word at a time — TAMReview.pdf draws its
+    // licence as six segments end to end. Matched one by one none of them
+    // covers enough of the run it belongs to, and the phrase came back bare.
+    const { runs, vectors } = pageOf(
+      ruledTextPdf('0.5 w 0 0 0.5 RG 72 718 m 90 718 l S 91 718 m 120 718 l S'),
+    );
+    const ruled = markDrawnRules(runs, vectors);
+    expect(ruled.runs[0]?.markup?.underline).toBe('single');
+    // Both pieces are taken over, or the leftover is drawn again as artwork.
+    expect(ruled.consumed.size).toBe(2);
+  });
+
+  it('does not join two rules a word space apart is too far for', () => {
+    // A row of separate table rules is not a broken underline.
+    const { runs, vectors } = pageOf(
+      ruledTextPdf('0.5 w 0 0 0.5 RG 72 718 m 82 718 l S 108 718 m 120 718 l S'),
+    );
+    expect(markDrawnRules(runs, vectors).runs[0]?.markup?.underline).toBeUndefined();
+  });
+
   it('reads a bar ACROSS the words as a strikeout', () => {
     const { runs, vectors } = pageOf(ruledTextPdf('0 0 0 rg 72 723 48 0.7 re f'));
     expect(markDrawnRules(runs, vectors).runs[0]?.markup?.strike).toBe(true);
