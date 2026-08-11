@@ -606,6 +606,31 @@ describe('§8.9.6.2 — a stencil mask, and §8.9.7 — an image written into th
     expect(shot(false)).toBe(255);
     expect(shot(true)).toBe(0);
   });
+  it('runs a DeviceN image through its own tint transform', () => {
+    // §8.6.6.4 — the space names its colorants, an alternate space and the
+    // transform between them. Without running it the whole image is
+    // unreadable and the page comes back BLANK: colorspace_sin.pdf is one
+    // 256×256 picture in a `/DeviceN [/X /Y /Z]` whose transform is a
+    // PostScript program, and that picture was the entire page.
+    const ps = '{ 3 1 roll exch }'; // hands the components back reversed
+    const pdf = page(
+      '0 0 100 100 cm /Im Do',
+      [
+        '<< /Type /XObject /Subtype /Image /Width 2 /Height 1 /BitsPerComponent 8 ' +
+          '/ColorSpace [/DeviceN [/X /Y /Z] /DeviceRGB 6 0 R] /Length 6 >>',
+        `<< /FunctionType 4 /Domain [0 1 0 1 0 1] /Range [0 1 0 1 0 1] /Length ${String(ps.length)} >>`,
+      ],
+      new Map([
+        [5, Uint8Array.from([255, 0, 0, 0, 0, 255])],
+        [6, Uint8Array.from([...ps].map((c) => c.charCodeAt(0)))],
+      ]),
+    );
+    const { rgba } = pixels(pdf);
+    // (1,0,0) reversed is blue; (0,0,1) reversed is red.
+    expect([...rgba.slice(0, 3)]).toEqual([0, 0, 255]);
+    expect([...rgba.slice(4, 7)]).toEqual([255, 0, 0]);
+  });
+
   it('reads a Lab image, and an Indexed palette whose base is one', () => {
     // §8.6.5.8 — `L*` 0..100 and `a*`/`b*` over the stated range, against the
     // stated white. issue10339_reduced.pdf paints two grids of blue swatches
