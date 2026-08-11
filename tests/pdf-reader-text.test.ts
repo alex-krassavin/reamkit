@@ -941,3 +941,56 @@ describe('the box a viewer shows (§14.11.2)', () => {
     ]);
   });
 });
+
+describe('the layers a file turns off (§8.11)', () => {
+  /** A page drawing "Shown" bare and "Hidden" inside `/OC /L1 BDC`. */
+  const layered = (config: string): Uint8Array => {
+    const content =
+      'BT /F1 12 Tf 20 100 Td (Shown) Tj ET\n' +
+      '/OC /L1 BDC BT /F1 12 Tf 20 60 Td (Hidden) Tj ET EMC';
+    const objects = [
+      `<< /Type /Catalog /Pages 2 0 R /OCProperties << /OCGs [6 0 R] /D << ${config} >> >> >>`,
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R ' +
+        '/Resources << /Font << /F1 5 0 R >> /Properties << /L1 6 0 R >> >> >>',
+      `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+      '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+      '<< /Type /OCG /Name (Layer 1) >>',
+    ];
+    let pdf = '%PDF-1.7\n';
+    const offsets: Array<number> = [];
+    objects.forEach((body, i) => {
+      offsets.push(pdf.length);
+      pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+    });
+    const xref = pdf.length;
+    pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+    for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+    pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`;
+    return new TextEncoder().encode(pdf);
+  };
+
+  const wordsOf = (config: string): Array<string> => {
+    const file = PdfFile.parse(layered(config));
+    return extractPageText(file, file.pages()[0]!).map((r) => r.text);
+  };
+
+  it('leaves out what the default configuration turns off', () => {
+    // §8.11.4.3 — the `/OFF` array names the groups a viewer does not show, and
+    // reading them anyway is not a smaller loss than reading none: the hidden
+    // layers are drawn OVER the visible one.  issue11144_reduced.pdf keeps
+    // three versions of its page on three layers, two of them off, and came
+    // back showing text no viewer shows and colours no viewer shows either.
+    expect(wordsOf('/OFF [6 0 R]')).toEqual(['Shown']);
+  });
+
+  it('shows a group the file says nothing about, and one it turns on', () => {
+    expect(wordsOf('')).toEqual(['Shown', 'Hidden']);
+    expect(wordsOf('/ON [6 0 R]')).toEqual(['Shown', 'Hidden']);
+  });
+
+  it('takes /BaseState /OFF as "all of them, unless named in /ON"', () => {
+    expect(wordsOf('/BaseState /OFF')).toEqual(['Shown']);
+    expect(wordsOf('/BaseState /OFF /ON [6 0 R]')).toEqual(['Shown', 'Hidden']);
+  });
+});

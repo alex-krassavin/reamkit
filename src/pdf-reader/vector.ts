@@ -9,6 +9,7 @@
 import { IDENTITY, interpretContent, multiply } from './content';
 import { buildAlphaMap, buildColorSpaceMap, buildShadingMap } from './shading';
 import { collectPageAppearances } from './annots';
+import { hiddenProperties, hiddenXObject } from './optional-content';
 import { buildFonts } from './text';
 import type { ColorSpaceInfo, GsPaint } from './shading';
 import type {
@@ -87,6 +88,7 @@ function paintedVectors(
       maps.shadings,
       maps.alphas,
       maps.spaces,
+      hiddenProperties(file, resources),
     );
 
     // §8.5.3 — later marks cover earlier ones, and a form is drawn where its
@@ -128,6 +130,9 @@ function paintedVectors(
       if (depth >= MAX_FORM_DEPTH) continue;
       const stream = xobjDict ? file.resolve(xobjDict.get(placement.name) ?? PDF_NULL) : PDF_NULL;
       if (!(stream instanceof PdfStream) || visiting.has(stream)) continue;
+      // §8.11.3.1 — a form may carry its own `/OC`, and a hidden one paints
+      // nothing at all.
+      if (hiddenXObject(file, stream)) continue;
       const subtype = file.get(stream.dict, 'Subtype');
       if (!(subtype instanceof PdfName) || subtype.value !== 'Form') continue;
       visiting.add(stream);

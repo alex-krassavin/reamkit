@@ -580,4 +580,55 @@ describe('§8.9.6.2 — a stencil mask, and §8.9.7 — an image written into th
     expect(shot(false)).toBe(255);
     expect(shot(true)).toBe(0);
   });
+  it('reads a Lab image, and an Indexed palette whose base is one', () => {
+    // §8.6.5.8 — `L*` 0..100 and `a*`/`b*` over the stated range, against the
+    // stated white. issue10339_reduced.pdf paints two grids of blue swatches
+    // through an Indexed palette whose base is one, and read as anything else
+    // the page came back blank.
+    //
+    // Two 8-bit pixels: pure white (L*=100, a*=b*=0) and mid grey (L*≈54).
+    const lab = Uint8Array.from([255, 128, 128, 138, 128, 128]);
+    const pdf = page(
+      '0 0 100 100 cm /Im Do',
+      [
+        '<< /Type /XObject /Subtype /Image /Width 2 /Height 1 /BitsPerComponent 8 ' +
+          '/ColorSpace [/Lab << /WhitePoint [0.9505 1 1.089] /Range [-128 127 -128 127] >>] ' +
+          `/Length ${String(lab.length)} >>`,
+      ],
+      new Map([[5, lab]]),
+    );
+    const { rgba } = pixels(pdf);
+    // White stays white; the mid grey is neutral and close to sRGB's middle.
+    expect([...rgba.slice(0, 3)]).toEqual([255, 255, 255]);
+    expect(rgba[4]).toBe(rgba[5]);
+    expect(rgba[5]).toBe(rgba[6]);
+    expect(rgba[4]).toBeGreaterThan(110);
+    expect(rgba[4]).toBeLessThan(150);
+  });
+
+  it('maps an Indexed image through /Decode, which gives INDEX values', () => {
+    // §8.9.5.2 — an Indexed image's decode default is `[0 2^bpc − 1]`, so the
+    // sample IS the index unless the file says otherwise.
+    // issue10339_reduced.pdf draws its two grids from one palette, the second
+    // through `/Decode [255 0]`, and read without it the two came back
+    // identical instead of mirrored.
+    const shot = (decode: string): Array<number> => {
+      const pdf = page(
+        '0 0 100 100 cm /Im Do',
+        [
+          '<< /Type /XObject /Subtype /Image /Width 2 /Height 1 /BitsPerComponent 8 ' +
+            '/ColorSpace [/Indexed /DeviceRGB 1 <FF000000FF00>] ' +
+            `${decode} /Length 2 >>`,
+        ],
+        new Map([[5, Uint8Array.from([0, 255])]]),
+      );
+      const { rgba } = pixels(pdf);
+      return [rgba[0]!, rgba[1]!, rgba[4]!, rgba[5]!];
+    };
+    // The samples run the width of the 8-bit range, as an Indexed image's do:
+    // 0 is the palette's first entry (red) and 255 its last (green).
+    expect(shot('')).toEqual([255, 0, 0, 255]);
+    // …and a decode that runs the other way swaps them.
+    expect(shot('/Decode [255 0]')).toEqual([0, 255, 255, 0]);
+  });
 });

@@ -8,6 +8,7 @@ import { buildContentFont } from './font';
 import { collectPageAppearances } from './annots';
 import { textMarkupOf } from './annot-draw';
 import { patternTint } from './pattern-tint';
+import { hiddenProperties, hiddenXObject } from './optional-content';
 import type { Quad, TextMarkup, TextMarkupAnnot } from './annot-draw';
 import type { ContentFont, Matrix, TextRun } from './content';
 import type { PdfDict } from '@/pdf/objects';
@@ -136,7 +137,15 @@ function collectRuns(
   visiting: Set<PdfStream>,
   out: Array<TextRun>,
 ): void {
-  const result = interpretContent(content, buildFonts(file, resources), baseCtm);
+  const result = interpretContent(
+    content,
+    buildFonts(file, resources),
+    baseCtm,
+    undefined,
+    undefined,
+    undefined,
+    hiddenProperties(file, resources),
+  );
   out.push(...result.texts.map((r) => withPatternColour(file, resources, r, visiting)));
   if (depth >= MAX_FORM_DEPTH) return;
   // §9.6.5 — a Type 3 glyph's procedure may show text of its own, and it is
@@ -162,6 +171,8 @@ function collectRuns(
   for (const placement of result.images) {
     const stream = file.resolve(xobjects.get(placement.name) ?? PDF_NULL);
     if (!(stream instanceof PdfStream) || visiting.has(stream)) continue;
+    // §8.11.3.1 — a form the file's own configuration turns off shows no text.
+    if (hiddenXObject(file, stream)) continue;
     const sub = file.get(stream.dict, 'Subtype');
     if (!(sub instanceof PdfName) || sub.value !== 'Form') continue;
     visiting.add(stream);

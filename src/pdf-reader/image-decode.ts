@@ -18,6 +18,7 @@
 import { unzlibSync } from 'fflate';
 
 import { decodeCcitt } from './ccitt';
+import { labToSrgb } from './cie-color';
 import { decodeJbig2 } from './jbig2';
 import { decodeJpeg } from './jpeg';
 import { reversePredictor } from './predictor';
@@ -336,11 +337,16 @@ function jbig2Bits(
 }
 
 interface ColorSpace {
-  readonly kind: 'gray' | 'rgb' | 'cmyk' | 'indexed';
+  readonly kind: 'gray' | 'rgb' | 'cmyk' | 'indexed' | 'lab';
   readonly components: number;
   readonly base?: ColorSpace; // indexed
   readonly hival?: number;
   readonly lookup?: Uint8Array;
+  /** §8.6.5.8 — the `Lab` space's white point and the range of `a*`/`b*`. */
+  readonly lab?: {
+    readonly white: readonly [number, number, number];
+    readonly range: readonly [number, number, number, number];
+  };
 }
 
 function resolveColorSpace(file: PdfFile, csVal: PdfValue | undefined): ColorSpace | undefined {
@@ -371,7 +377,34 @@ function resolveColorSpace(file: PdfFile, csVal: PdfValue | undefined): ColorSpa
     if (!base || base.kind === 'indexed' || !lookup) return undefined;
     return { kind: 'indexed', components: 1, base, hival, lookup };
   }
-  // Separation / DeviceN / Lab / Pattern — tint transforms not reconstructed.
+  if (tag === 'Lab') {
+    // §8.6.5.8 — `L*` runs 0..100 and `a*`/`b*` over the stated `/Range`,
+    // which defaults to ±100. issue10339_reduced.pdf paints two grids of blue
+    // swatches through an Indexed palette whose base is one.
+    const params = file.resolve(cs[1] ?? PDF_NULL);
+    const dict = params instanceof Map ? params : undefined;
+    const nums = (v: PdfValue | undefined): Array<number> => {
+      const r = v !== undefined ? file.resolve(v) : undefined;
+      return Array.isArray(r)
+        ? r.map((x) => (typeof file.resolve(x) === 'number' ? (file.resolve(x) as number) : 0))
+        : [];
+    };
+    const white = dict ? nums(file.get(dict, 'WhitePoint')) : [];
+    if (white.length < 3 || !(white[1]! > 0)) return undefined;
+    const range = dict ? nums(file.get(dict, 'Range')) : [];
+    return {
+      kind: 'lab',
+      components: 3,
+      lab: {
+        white: [white[0]!, white[1]!, white[2]!],
+        range:
+          range.length === 4
+            ? [range[0]!, range[1]!, range[2]!, range[3]!]
+            : [-100, 100, -100, 100],
+      },
+    };
+  }
+  // Separation / DeviceN / Pattern — tint transforms not reconstructed.
   return undefined;
 }
 
@@ -431,19 +464,56 @@ function toColor(
     }
     return { color: 'rgb', samples: out };
   }
+  if (cs.kind === 'lab') {
+    // §8.6.5.8 — the samples are already the components; only the DEFAULT
+    // decode differs, running `a*`/`b*` over the space's own range rather than
+    // 0..1. `c01` has applied a stated `/Decode`, so this undoes that scaling.
+    const lab = cs.lab!;
+    const out = new Uint8Array(px * 3);
+    const span = (i: number): [number, number] =>
+      decode && decode.length >= 6
+        ? [0, 1]
+        : i === 0
+          ? [0, 100]
+          : [lab.range[(i - 1) * 2]!, lab.range[(i - 1) * 2 + 1]!];
+    for (let i = 0; i < px; i++) {
+      const comp = [0, 1, 2].map((k) => {
+        const t = c01(s[i * 3 + k]!, k);
+        const [lo, hi] = span(k);
+        return lo + t * (hi - lo);
+      });
+      const [r, g, b] = labToSrgb(lab.white, [comp[0]!, comp[1]!, comp[2]!]);
+      out[i * 3] = Math.round(r * 255);
+      out[i * 3 + 1] = Math.round(g * 255);
+      out[i * 3 + 2] = Math.round(b * 255);
+    }
+    return { color: 'rgb', samples: out };
+  }
   // indexed
   const base = cs.base!;
   const lookup = cs.lookup!;
   const hival = cs.hival ?? 255;
   const bn = base.components;
+  // §8.9.5.2 — an Indexed image's `/Decode` maps to INDEX values, not to 0..1:
+  // its default is `[0 2^bpc − 1]`, so the sample IS the index unless the file
+  // says otherwise. issue10339_reduced.pdf draws its two grids of swatches from
+  // one palette, the second through `/Decode [255 0]`, and read without it the
+  // two came back identical instead of mirrored.
+  const index = (v: number): number => {
+    if (!decode || decode.length < 2) return Math.min(v, hival);
+    const lo = decode[0]!;
+    const hi = decode[1]!;
+    const at = maxv > 0 ? lo + (v / maxv) * (hi - lo) : lo;
+    return Math.min(Math.max(0, Math.round(at)), hival);
+  };
   if (base.kind === 'gray') {
     const out = new Uint8Array(px);
-    for (let i = 0; i < px; i++) out[i] = lookup[Math.min(s[i]!, hival) * bn] ?? 0;
+    for (let i = 0; i < px; i++) out[i] = lookup[index(s[i]!) * bn] ?? 0;
     return { color: 'gray', samples: out };
   }
   const out = new Uint8Array(px * 3);
   for (let i = 0; i < px; i++) {
-    const off = Math.min(s[i]!, hival) * bn;
+    const off = index(s[i]!) * bn;
     const [r, g, b] = paletteRgb(base, lookup, off);
     out[i * 3] = r;
     out[i * 3 + 1] = g;
@@ -455,6 +525,19 @@ function toColor(
 // One palette entry (8-bit per base component) → RGB.
 function paletteRgb(base: ColorSpace, lookup: Uint8Array, off: number): [number, number, number] {
   if (base.kind === 'rgb') return [lookup[off] ?? 0, lookup[off + 1] ?? 0, lookup[off + 2] ?? 0];
+  if (base.kind === 'lab' && base.lab) {
+    // §8.6.6.3 — a palette entry is one byte per component, and each is read
+    // over its own component's range: `L*` 0..100, `a*`/`b*` over `/Range`.
+    const r = base.lab.range;
+    const at = (i: number, lo: number, hi: number): number =>
+      lo + ((lookup[off + i] ?? 0) / 255) * (hi - lo);
+    const [sr, sg, sb] = labToSrgb(base.lab.white, [
+      at(0, 0, 100),
+      at(1, r[0], r[1]),
+      at(2, r[2], r[3]),
+    ]);
+    return [Math.round(sr * 255), Math.round(sg * 255), Math.round(sb * 255)];
+  }
   if (base.kind === 'cmyk') {
     const c = (lookup[off] ?? 0) / 255;
     const m = (lookup[off + 1] ?? 0) / 255;

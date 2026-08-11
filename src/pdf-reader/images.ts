@@ -10,6 +10,7 @@
 import { interpretContent, multiply } from './content';
 import { decodePdfImage } from './image-decode';
 import { collectPageAppearances } from './annots';
+import { hiddenProperties, hiddenXObject } from './optional-content';
 import { buildAlphaMap } from './shading';
 import type { ClipRegion, ContentFont, Matrix } from './content';
 import type { PdfDict, PdfValue } from '@/pdf/objects';
@@ -105,7 +106,15 @@ export function collectPageImages(file: PdfFile, page: PdfPage): PageImages {
       paints = buildAlphaMap(file, resources);
       alphaCache.set(resources, paints);
     }
-    const result = interpretContent(content, NO_FONTS, baseCtm, undefined, paints);
+    const result = interpretContent(
+      content,
+      NO_FONTS,
+      baseCtm,
+      undefined,
+      paints,
+      undefined,
+      hiddenProperties(file, resources),
+    );
 
     // §8.7.3.1 — a path filled with a TILING pattern shows that pattern's own
     // content stream, drawn through the pattern's `/Matrix`. It is a call like
@@ -161,6 +170,9 @@ export function collectPageImages(file: PdfFile, page: PdfPage): PageImages {
       }
       const stream = xobjDict ? file.resolve(xobjDict.get(placement.name) ?? PDF_NULL) : PDF_NULL;
       if (!(stream instanceof PdfStream)) continue;
+      // §8.11.3.1 — an XObject may carry its own `/OC`, and a hidden one is
+      // not painted at all.
+      if (hiddenXObject(file, stream)) continue;
       const subtype = nameOf(file.get(stream.dict, 'Subtype'));
       const mcid = placement.mcid ?? inheritedMcid;
       if (subtype === 'Image') {

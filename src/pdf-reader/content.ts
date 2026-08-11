@@ -490,6 +490,7 @@ export function interpretContent(
   shadings: ReadonlyMap<string, ShapeGradient> = new Map(),
   alphas: ReadonlyMap<string, GsPaint> = new Map(),
   spaces: ReadonlyMap<string, ColorSpaceInfo> = new Map(),
+  hiddenOc: ReadonlySet<string> = new Set(),
 ): InterpretResult {
   const runs: Array<TextRun> = [];
   const images: Array<ImagePlacement> = [];
@@ -506,6 +507,12 @@ export function interpretContent(
   let paintOrder = 0; // §8.5.3 the sequence marks are laid down in
   let operands: Array<PdfValue> = [];
   const mcStack: Array<number | undefined> = []; // marked-content (MCID) nesting
+  // §8.11.3.2 — how deep inside a `/OC … BDC` naming a group the page does NOT
+  // show. The marks are still interpreted, because the graphics state they set
+  // outlives them; they are simply not emitted.
+  const ocStack: Array<boolean> = [];
+  let hiddenDepth = 0;
+  const visible = (): boolean => hiddenDepth === 0;
 
   // Apply the CTM to a user-space point → page space (§8.3.4).
   const toPage = (x: number, y: number): [number, number] => [
@@ -543,7 +550,7 @@ export function interpretContent(
   // Emit the current path as a painted vector (§8.5.3): filled, stroked, or both.
   // `n` and clip operators paint nothing — they pass fill=stroke=false to clear.
   const paintPath = (fill: boolean, stroke: boolean): void => {
-    if (path.length >= 2 && (fill || stroke)) {
+    if (path.length >= 2 && (fill || stroke) && visible()) {
       const mcid = mcStack.length > 0 ? mcStack[mcStack.length - 1] : undefined;
       vectors.push({
         order: paintOrder++,
@@ -589,7 +596,7 @@ export function interpretContent(
     const type3 = state.font.type3;
     if (type3) {
       const stream = type3.proc(code);
-      if (stream) {
+      if (stream && visible()) {
         const scale: Matrix = [state.fontSize * state.hScale, 0, 0, state.fontSize, 0, state.rise];
         glyphs.push({
           stream,
@@ -623,6 +630,7 @@ export function interpretContent(
     // §9.4.2 — the text matrix turns as well as moves. The baseline's own
     // direction is the first column of it; upright text leaves this at zero.
     const angle = (Math.atan2(origin[1], origin[0]) * 180) / Math.PI;
+    if (!visible()) return;
     runs.push({
       text,
       x: origin[4],
@@ -773,20 +781,33 @@ export function interpretContent(
         const isArtifact = tag instanceof PdfName && tag.value === 'Artifact';
         const mcidVal = !isArtifact && props instanceof Map ? props.get('MCID') : undefined;
         mcStack.push(typeof mcidVal === 'number' ? mcidVal : undefined);
+        // §8.11.3.2 — `/OC /Name BDC` guards everything up to its `EMC` on a
+        // group the file may have turned off. issue11144_reduced.pdf keeps
+        // three versions of its page this way, two of them off, and read
+        // without this they were drawn over the one a viewer shows.
+        const isOc =
+          tag instanceof PdfName &&
+          tag.value === 'OC' &&
+          props instanceof PdfName &&
+          hiddenOc.has(props.value);
+        ocStack.push(isOc);
+        if (isOc) hiddenDepth++;
         break;
       }
       case 'BMC':
         mcStack.push(undefined); // `tag BMC` — no properties, so no MCID
+        ocStack.push(false);
         break;
       case 'EMC':
         mcStack.pop();
+        if (ocStack.pop() === true) hiddenDepth--;
         break;
       case 'Do': {
         // Paint an XObject (image or form). Record its name + the CTM (which
         // already folds in the placement `cm`) so a later stage can resolve and
         // size it; tag it with the enclosing structure id (a /Figure).
         const nm = operands[0];
-        if (nm instanceof PdfName) {
+        if (nm instanceof PdfName && visible()) {
           const mcid = mcStack.length > 0 ? mcStack[mcStack.length - 1] : undefined;
           images.push({
             order: paintOrder++,
@@ -967,7 +988,7 @@ export function interpretContent(
         if (tok.value === 'BI') {
           // §8.9.7 — an image written into the stream itself rather than named.
           const inline = readInlineImage(lexer);
-          if (inline) {
+          if (inline && visible()) {
             images.push({
               order: paintOrder++,
               name: '',

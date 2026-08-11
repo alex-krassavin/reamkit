@@ -55,6 +55,44 @@ export function cieToSrgb(space: CieSpace, abc: ReadonlyArray<number>): [number,
   return [srgbTransfer(clamp01(r)), srgbTransfer(clamp01(g)), srgbTransfer(clamp01(bl))];
 }
 
+/**
+ * §8.6.5.8 — one colour in a `Lab` space, as sRGB in 0..1.
+ *
+ * Lab is the one CIE space a file states in absolute terms: `L*` from 0 to 100
+ * is lightness and `a*`/`b*` are the two opponent axes, and unlike `CalRGB`
+ * (see the note above) there is no argument about the way out — every renderer
+ * takes it through XYZ against the stated white and adapts to the screen's.
+ * issue10339_reduced.pdf paints two grids of blue swatches through an `Indexed`
+ * palette whose base is one, and read as anything else the page came back
+ * blank.
+ *
+ * @param white The space's `/WhitePoint`, in XYZ.
+ * @param lab   `L*`, `a*`, `b*`.
+ * @returns The sRGB triple a viewer shows for it.
+ */
+export function labToSrgb(
+  white: readonly [number, number, number],
+  lab: readonly [number, number, number],
+): [number, number, number] {
+  const m = (Math.min(100, Math.max(0, lab[0])) + 16) / 116;
+  const l = m + lab[1] / 500;
+  const n = m - lab[2] / 200;
+  const x = white[0] * inverseTransfer(l);
+  const y = white[1] * inverseTransfer(m);
+  const z = white[2] * inverseTransfer(n);
+  const [ax, ay, az] = adaptToD65(x, y, z, white);
+  const r = 3.2404542 * ax - 1.5371385 * ay - 0.4985314 * az;
+  const g = -0.969266 * ax + 1.8760108 * ay + 0.041556 * az;
+  const b = 0.0556434 * ax - 0.2040259 * ay + 1.0572252 * az;
+  const clamp01 = (v: number): number => Math.min(1, Math.max(0, v));
+  return [srgbTransfer(clamp01(r)), srgbTransfer(clamp01(g)), srgbTransfer(clamp01(b))];
+}
+
+/** §8.6.5.8 — the `g` of the Lab definition, which is a cube with a linear toe. */
+function inverseTransfer(v: number): number {
+  return v >= 6 / 29 ? v ** 3 : (108 / 841) * (v - 4 / 29);
+}
+
 /** The D65 white every sRGB screen is referred to. */
 const D65: readonly [number, number, number] = [0.9505, 1, 1.089];
 
