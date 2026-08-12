@@ -11,6 +11,7 @@ import { outlineSource } from './glyf-outline';
 import { standardFace, standardWidth } from './standard-widths';
 import { embeddedFontName, hasLiftableProgram } from './embedded-fonts';
 import { isZapfDingbats, zapfDingbatsChar } from './dingbats';
+import { baseEncodingTable, isStandardLatinFace, standardEncodingTable } from './encodings';
 import type { PdfDict, PdfValue } from '@/pdf/objects';
 import type { ContentFont, GlyphOutline, Matrix, PathSeg, Type3Face } from './content';
 import type { PdfFile } from './document';
@@ -115,6 +116,8 @@ export function buildContentFont(file: PdfFile, fontDict: PdfDict): ContentFont 
   // §9.6.2.2 — a standard face whose own encoding is not the Latin one.
   const dingbats =
     !isType0 && isZapfDingbats(asName(file.resolve(fontDict.get('BaseFont') ?? PDF_NULL)));
+  // Annex D.2 — the encoding the codes are read through under /Differences.
+  const fromBase = isType0 ? undefined : baseEncoding(file, fontDict);
   const style = faceStyle(file, fontDict, isType0);
   const name = runFontName(file, fontDict, isType0);
   const type3 =
@@ -148,6 +151,12 @@ export function buildContentFont(file: PdfFile, fontDict: PdfDict): ContentFont 
     // which is all a reader can do for a font that states none —
     // ZapfDingbats.pdf's five hundred pictures came back as the alphabet.
     (dingbats ? zapfDingbatsChar(code) : undefined) ??
+    // Annex D.2 — the BASE encoding, which is the font's own reading of every
+    // code `/Differences` does not restate. Latin-1 below is a good guess for a
+    // text font and it is only a guess: 0xD0 is Eth there and an em dash in
+    // StandardEncoding, and ZapfDingbats.pdf's title — Times, no /Encoding at
+    // all — came back as "Character Sets Ð Zapf Dingbats".
+    fromBase?.get(code) ??
     // A composite code nothing could answer for is unrecoverable text, whether
     // the font stated NO map or a map that does not reach this code.
     // bug911034.pdf ships a `/ToUnicode` describing 95 codes and then draws
@@ -646,6 +655,43 @@ const DEFAULT_DW2_DISPLACEMENT = -1000;
 
 /** A `/W2` range wider than this is not walked out code by code. */
 const MAX_W2_RANGE = 65_536;
+
+/**
+ * Annex D.2 — code → text for the encoding a simple font is read through, under
+ * whatever `/Differences` restates.
+ *
+ * `/Encoding` either names one of the base encodings, or is a dictionary that
+ * may name one in `/BaseEncoding`, or is absent — and absent means the encoding
+ * built into the FACE. Only the standard Latin faces can be answered for there:
+ * a file that names them embeds no program, and what they are is known
+ * (§9.6.2.2). An embedded font's built-in encoding lives in the program and a
+ * substituted face has none worth guessing at, so both keep the Latin-1
+ * reading, which is what the codes of such a file nearly always are.
+ *
+ * @returns The map, or `undefined` where nothing better than Latin-1 is known.
+ */
+function baseEncoding(file: PdfFile, fontDict: PdfDict): ReadonlyMap<number, string> | undefined {
+  const encoding = file.resolve(fontDict.get('Encoding') ?? PDF_NULL);
+  const named =
+    encoding instanceof PdfName
+      ? encoding.value
+      : encoding instanceof Map
+        ? asName(file.resolve(encoding.get('BaseEncoding') ?? PDF_NULL))
+        : '';
+  const table =
+    named.length > 0
+      ? baseEncodingTable(named)
+      : isStandardLatinFace(asName(file.resolve(fontDict.get('BaseFont') ?? PDF_NULL)))
+        ? standardEncodingTable()
+        : undefined;
+  if (table === undefined) return undefined;
+  const out = new Map<number, string>();
+  for (const [code, glyph] of table) {
+    const text = textForGlyphName(glyph);
+    if (text !== undefined) out.set(code, text);
+  }
+  return out;
+}
 
 /** §9.6.6.1 `/Encoding` `/Differences` — code → glyph name, as the array runs. */
 function differences(file: PdfFile, fontDict: PdfDict): Map<number, string> {

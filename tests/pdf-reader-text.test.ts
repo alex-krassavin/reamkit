@@ -225,8 +225,11 @@ describe('a font that names its glyphs rather than mapping them (§9.6.6.1)', ()
   });
 });
 
-/** A one-page PDF drawing `hex` in one of the fourteen standard faces. */
-function standardFacePdf(baseFont: string, hex: string): Uint8Array {
+/**
+ * A one-page PDF drawing `hex` in one of the fourteen standard faces, with
+ * whatever `/Encoding` entry `encoding` gives (none by default).
+ */
+function standardFacePdf(baseFont: string, hex: string, encoding = ''): Uint8Array {
   const content = `BT /F1 12 Tf 72 720 Td <${hex}> Tj ET`;
   const objects = [
     '<< /Type /Catalog /Pages 2 0 R >>',
@@ -234,7 +237,7 @@ function standardFacePdf(baseFont: string, hex: string): Uint8Array {
     '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] ' +
       '/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>',
     `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
-    `<< /Type /Font /Subtype /Type1 /BaseFont /${baseFont} >>`,
+    `<< /Type /Font /Subtype /Type1 /BaseFont /${baseFont} ${encoding} >>`,
   ];
   let pdf = '%PDF-1.7\n';
   const offsets: Array<number> = [];
@@ -250,10 +253,45 @@ function standardFacePdf(baseFont: string, hex: string): Uint8Array {
   return new TextEncoder().encode(pdf);
 }
 
-const standardFaceText = (baseFont: string, hex: string): string | undefined => {
-  const file = PdfFile.parse(standardFacePdf(baseFont, hex));
+const standardFaceText = (baseFont: string, hex: string, encoding = ''): string | undefined => {
+  const file = PdfFile.parse(standardFacePdf(baseFont, hex, encoding));
   return extractPageText(file, file.pages()[0]!)[0]?.text;
 };
+
+describe('the encoding a font is read through (Annex D.2)', () => {
+  it('reads a standard Latin face by its BUILT-IN encoding, not Latin-1', () => {
+    // ZapfDingbats.pdf sets its title in Times with no /Encoding at all, and
+    // read as Latin-1 "Character Sets — Zapf Dingbats" came back as
+    // "Character Sets Ð Zapf Dingbats": 0xD0 is Eth there and an em dash here.
+    expect(standardFaceText('Times-Roman', 'd0b1')).toBe('—–');
+    // The typewriter quotes are the typographic ones, which is how a TeX page
+    // writes ``quoted'' — bug1050040.pdf is that and nothing else.
+    expect(standardFaceText('Times-Roman', '606061612727')).toBe('‘‘aa’’');
+  });
+
+  it('reads the punctuation block of a font that names WinAnsiEncoding', () => {
+    // Latin-1 has C1 CONTROLS where CP-1252 has the curly quotes and the
+    // dashes, and a control is dropped as unreadable: the words closed up.
+    expect(standardFaceText('Helvetica', '93619492', '/Encoding /WinAnsiEncoding')).toBe('“a”’');
+    expect(standardFaceText('Helvetica', '968097', '/Encoding /WinAnsiEncoding')).toBe('–€—');
+  });
+
+  it('reads MacRomanEncoding, where the dashes sit elsewhere again', () => {
+    expect(standardFaceText('Helvetica', 'd0d1d5', '/Encoding /MacRomanEncoding')).toBe('–—’');
+    // …and through /BaseEncoding inside an /Encoding dictionary, under which
+    // /Differences still has the last word.
+    const dict =
+      '/Encoding << /Type /Encoding /BaseEncoding /MacRomanEncoding ' +
+      '/Differences [208 /bullet] >>';
+    expect(standardFaceText('Helvetica', 'd0d1', dict)).toBe('•—');
+  });
+
+  it('leaves a face whose encoding nobody knows to Latin-1', () => {
+    // A subset of some sans: its built-in encoding is in the program, and what
+    // a producer meant by its high codes is nearly always Latin-1.
+    expect(standardFaceText('ABCDEF+SomeSans', 'd0e9')).toBe('Ðé');
+  });
+});
 
 describe('a standard face whose own encoding is not the Latin one (Annex D.6)', () => {
   it('reads ZapfDingbats as the pictures it draws', () => {

@@ -246,7 +246,14 @@ describe('a word broken across a line comes back together', () => {
             'BT /F0 10 Tf 1 0 0 1 40 346 Tm (ment and a two\\055) Tj ET',
             'BT /F0 10 Tf 1 0 0 1 40 332 Tm (column word after it) Tj ET',
           ].join('\n'),
-          ['<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'],
+          // WinAnsiEncoding, which is what a producer writing 0xAD for a
+          // discretionary hyphen means by it: StandardEncoding — the built-in
+          // encoding of the face, and its reading with no /Encoding at all —
+          // has a single guillemet at that code (Annex D.2).
+          [
+            '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica ' +
+              '/Encoding /WinAnsiEncoding >>',
+          ],
         ),
       ),
     ).doc;
