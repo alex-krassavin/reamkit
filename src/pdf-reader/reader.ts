@@ -150,8 +150,17 @@ export function readPdf(
  * records which reading it took and why, and the caller can name the other.
  */
 function readingOf(file: PdfFile): 'flow' | 'positional' {
-  /** Below this many marks a page is prose with decoration, whatever the ratio. */
-  const ENOUGH_MARKS = 20;
+  /**
+   * Below this many marks a page is prose with decoration, whatever the ratio.
+   *
+   * It stood at twenty, and calgray.pdf is a five-by-four grid of grey swatches
+   * with a label in each: twenty boxes, of which the one painted white is not a
+   * mark anybody can see. Nineteen — one short — and all three pages of it were
+   * read as prose, the labels of each row run together into a line and the
+   * sheet spilling onto a second page. Nineteen boxes in a grid are not a page
+   * of prose with a rule under its heading.
+   */
+  const ENOUGH_MARKS = 12;
   /** Twice as many marks as lines is a page that is drawn rather than written. */
   const DRAWN = 2;
   /** Below this many runs, an angle is a stamp or a watermark and not the page. */

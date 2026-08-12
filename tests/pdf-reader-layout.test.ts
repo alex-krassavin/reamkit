@@ -131,6 +131,34 @@ describe('a page of turned words is a page, not prose (§9.4.2)', () => {
     );
     expect(flowed.losses.some((l) => /read as a PAGE/u.test(l.detail))).toBe(false);
   });
+
+  it('reads a GRID of boxes with a label in each as the page it is', () => {
+    // calgray.pdf is five rows of four grey swatches, each labelled "A = 0.75"
+    // and the like. Nineteen of the twenty boxes are a mark anybody can see —
+    // the twentieth is painted white — and the count had to reach twenty before
+    // the ratio was consulted at all. One short, the page was read as prose: the
+    // four labels of each row ran together into a line and the sheet spilled
+    // onto a second page.
+    const cells: Array<string> = [];
+    for (let row = 0; row < 5; row++) {
+      for (let col = 0; col < 4; col++) {
+        const x = 20 + col * 65;
+        const y = 30 + row * 50;
+        cells.push(`0.${String(row + 3)} g ${String(x)} ${String(y)} 60 45 re f`);
+        cells.push(
+          `0 g BT /F0 8 Tf 1 0 0 1 ${String(x + 4)} ${String(y + 6)} Tm (A=0.${String(row)}${String(col)}) Tj ET`,
+        );
+      }
+    }
+    const doc = Ream.parse(
+      onePagePdf(
+        '/MediaBox [0 0 300 300] /Resources << /Font << /F0 5 0 R >> >>',
+        cells.join('\n'),
+        ['<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'],
+      ),
+    );
+    expect(doc.losses.some((l) => /read as a PAGE/u.test(l.detail))).toBe(true);
+  });
 });
 
 describe('a leader is not a row of spaced dots (§17.3.1.25)', () => {
