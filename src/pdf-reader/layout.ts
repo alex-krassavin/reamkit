@@ -108,6 +108,17 @@ export function reconstructByLayout(
         'text filled with a tiling pattern is drawn as a flat tint of the pattern’s colour, not as the pattern',
     });
   }
+  // EP17 — the gutters of every page, and then the DOCUMENT's own. A page is
+  // set the way its document is set: bug1997343.pdf's second sheet carries a
+  // figure across both columns and a float beside it, which leaves too few
+  // clean lines for the vote to answer, and read as one column its citations
+  // ran into its theorems. Where a page says nothing, the answer the rest of
+  // the document gave is put to it, and kept only if its own lines agree.
+  const perPage = pages.map((_, i) => detectGutters(pageRuns[i]!, shown[i]!.width));
+  const shared = commonGutters(perPage);
+  const pageGutters = perPage.map((own, i) =>
+    own.length > 0 ? own : shared && fitsGutters(pageRuns[i]!, shared) ? shared : own,
+  );
   const body: Array<BodyElement> = [];
   // §17.6 — where the pages differ in size the document is several sections,
   // each ending at the body index its last page's blocks end at.
@@ -132,8 +143,8 @@ export function reconstructByLayout(
     const display = shown[i]!;
     // EP17 — the page's gutters, and so its columns. Each column is grouped and
     // read independently, and its blocks precede the next column's.
+    const gutters = pageGutters[i]!;
     const pageWidth = display.width;
-    const gutters = detectGutters(runs, pageWidth);
     // Whether this page steps between its words or writes spaces of its own,
     // which decides how wide a gap has to be to mean one.
     const stepped = stepsBetweenWords(runs);
@@ -539,6 +550,88 @@ function separating(
 
 /** How much of a page's text the narrowest column holds before it is a column. */
 const MIN_COLUMN_SHARE = 0.08;
+
+/**
+ * The gutters MOST of the document's pages agree on.
+ *
+ * A document is set one way: §17.6.4 puts the column setup on the section, and
+ * a paper does not change it from sheet to sheet. So a page that says nothing
+ * on its own — one carrying a figure across both columns, with too few clean
+ * lines left for the vote — can be asked the question the rest of the document
+ * already answered.
+ *
+ * @param perPage Each page's own answer, in page order.
+ * @returns The answer given by more pages than any other, or `undefined` where
+ *          no two pages agree.
+ */
+function commonGutters(
+  perPage: ReadonlyArray<ReadonlyArray<Gutter>>,
+): ReadonlyArray<Gutter> | undefined {
+  const seen = new Map<string, { gutters: ReadonlyArray<Gutter>; pages: number }>();
+  for (const gutters of perPage) {
+    if (gutters.length === 0) continue;
+    // To the point: two pages set alike put their gutters within a point or two
+    // of each other, not at the same fraction of a millimetre.
+    const key = gutters.map((g) => Math.round(g.mid / 2)).join(',');
+    const had = seen.get(key);
+    if (had) had.pages++;
+    else seen.set(key, { gutters, pages: 1 });
+  }
+  let best: { gutters: ReadonlyArray<Gutter>; pages: number } | undefined;
+  for (const entry of seen.values()) if (!best || entry.pages > best.pages) best = entry;
+  // One page is evidence enough: what protects the others is their own veto
+  // (see {@link fitsGutters}), and a paper of two sheets has only one to give.
+  return best?.gutters;
+}
+
+/**
+ * Whether a page's own lines agree with gutters the document states.
+ *
+ * The document's answer is a suggestion, not a licence: a sheet whose lines run
+ * straight through the gutter is set in one column whatever its neighbours do.
+ * The bar is lower than the vote's own — the evidence from the other pages is
+ * already in — but it is still the page that decides.
+ *
+ * @param runs    The page's runs.
+ * @param gutters The document's gutters.
+ */
+function fitsGutters(runs: ReadonlyArray<TextRun>, gutters: ReadonlyArray<Gutter>): boolean {
+  if (runs.length < 30) return false;
+  const fontSize = median(runs.map((r) => r.fontSizePt).filter((s) => s > 0)) || 10;
+  const rows = rowsOf(runs, fontSize).map((row) =>
+    row
+      .flatMap((r) => {
+        const ink = runInk(r);
+        return ink ? [ink] : [];
+      })
+      .sort((a, b) => a[0] - b[0]),
+  );
+  for (const gutter of gutters) {
+    let columned = 0;
+    let crossing = 0;
+    for (const row of rows) {
+      if (row.some(([l, r]) => l < gutter.mid && r > gutter.mid)) {
+        crossing++;
+        continue;
+      }
+      const before = row.filter(([, r]) => r <= gutter.mid);
+      const after = row.filter(([l]) => l >= gutter.mid);
+      if (before.length === 0 || after.length === 0) continue;
+      const gap = Math.min(...after.map(([l]) => l)) - Math.max(...before.map(([, r]) => r));
+      if (gap >= fontSize * MIN_GUTTER_EM) columned++;
+    }
+    // A page NO line crosses is a page the gutter fits, however few of its
+    // lines happen to reach both sides of it: bug1997343.pdf's second sheet
+    // sets a figure across the top and then a column at a time, so two of its
+    // thirty-three rows have ink on both sides — and not one runs through.
+    if (crossing === 0) continue;
+    if (columned < MIN_SHARED_ROWS || crossing >= columned) return false;
+  }
+  return true;
+}
+
+/** How many lines a page must split at a gutter the DOCUMENT already states. */
+const MIN_SHARED_ROWS = 3;
 
 /** How many lines have to be split at the same place before the page is in columns. */
 const MIN_COLUMNED_ROWS = 12;
