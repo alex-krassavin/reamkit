@@ -101,6 +101,38 @@ describe('a multi-page PDF keeps its pages (E-PDF EP4)', () => {
   });
 });
 
+describe('a leader is not a row of spaced dots (§17.3.1.25)', () => {
+  it('joins the dots and ends the entry at the line', () => {
+    // A leader is drawn one character at a time with a step about as wide as a
+    // word space, so every threshold that tells a space from a kern says
+    // "space" between every dot. bug886717.pdf's contents came back as
+    // "Abstract . . . . . . . . 3", four times as long as the page sets it, and
+    // its forty entries reflowed into one paragraph across two pages.
+    const line = (y: number, word: string, page: string): string => {
+      const ops = [`BT /F0 12 Tf 1 0 0 1 40 ${String(y)} Tm (${word}) Tj ET`];
+      for (let i = 0; i < 30; i++) {
+        ops.push(`BT /F0 12 Tf 1 0 0 1 ${String(100 + i * 5.3)} ${String(y)} Tm (.) Tj ET`);
+      }
+      ops.push(`BT /F0 12 Tf 1 0 0 1 262 ${String(y)} Tm (${page}) Tj ET`);
+      return ops.join('\n');
+    };
+    const doc = Ream.parse(
+      onePagePdf(
+        '/MediaBox [0 0 300 200] /Resources << /Font << /F0 5 0 R >> >>',
+        `${line(150, 'Abstract', '3')}\n${line(135, 'Foreword', '5')}`,
+        ['<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'],
+      ),
+    ).flow;
+    const texts = doc.body.flatMap((b) =>
+      b.kind === 'paragraph' ? [b.paragraph.runs.map((r) => r.text).join('')] : [],
+    );
+    // Two entries, two paragraphs — not one paragraph of both.
+    expect(texts).toHaveLength(2);
+    expect(texts[0]).toMatch(/^Abstract \.{30} 3$/u);
+    expect(texts[1]).toMatch(/^Foreword \.{30} 5$/u);
+  });
+});
+
 /** Two pages, 200×100 then 600×400, each with one word on it. */
 function twoSizePdf(): Uint8Array {
   const content = 'BT /F0 12 Tf 20 40 Td (Word) Tj ET';
@@ -128,12 +160,13 @@ function twoSizePdf(): Uint8Array {
 }
 
 /** A one-page PDF of hand-written objects; `page` is the page dict's body. */
-function onePagePdf(page: string, content: string): Uint8Array {
+function onePagePdf(page: string, content: string, extra: ReadonlyArray<string> = []): Uint8Array {
   const objects = [
     '<< /Type /Catalog /Pages 2 0 R >>',
     '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
     `<< /Type /Page /Parent 2 0 R /Contents 4 0 R ${page} >>`,
     `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+    ...extra,
   ];
   let pdf = '%PDF-1.7\n';
   const offsets: Array<number> = [];

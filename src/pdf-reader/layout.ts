@@ -789,6 +789,23 @@ function spaceGap(prev: TextRun, fontSize: number, stepped: boolean): number {
   return (prev.fontSizePt || fontSize) * (stepped ? STEPPED_SPACE_EM : DRAWN_SPACE_EM);
 }
 
+/**
+ * §17.3.1.25 — one character of a LEADER, the dotted rule that carries the eye
+ * across a table of contents.
+ *
+ * A leader is drawn one character at a time with a step about as wide as a word
+ * space, so every threshold that tells a space from a kern says "space" between
+ * every dot. bug886717.pdf's contents came back as
+ * "Abstract . . . . . . . . . . . . 3", four times as long as the page sets it,
+ * and its forty entries spilled onto a second page. What tells a leader from
+ * words is that it is the SAME character over and over.
+ */
+function isLeader(text: string): boolean {
+  return text.length === 1 && LEADER_CHARS.has(text);
+}
+
+const LEADER_CHARS = new Set(['.', '\u00b7', '_', '-', '\u2010', '\u2013']);
+
 /** A page that writes its own spaces: only a wide gap means anything more. */
 const DRAWN_SPACE_EM = 0.25;
 
@@ -819,7 +836,11 @@ function lineSpans(
   const spans: Array<TextSpan> = [];
   let prev: TextRun | undefined;
   for (const run of runs) {
-    if (prev !== undefined && run.x - prev.endX > spaceGap(prev, fontSize, stepped)) {
+    if (
+      prev !== undefined &&
+      run.x - prev.endX > spaceGap(prev, fontSize, stepped) &&
+      !(isLeader(prev.text) && prev.text === run.text)
+    ) {
       spans.push({ text: ' ' });
     }
     // §9.3.1/§8.6.8 — the size and colour the page showed the glyphs at. The
@@ -846,6 +867,21 @@ function lineSpans(
   return spans;
 }
 
+/**
+ * §17.3.1.25 — whether a line carries a LEADER, which makes it an entry in a
+ * directory rather than a line of prose.
+ *
+ * A contents line runs the full measure — the dots are there to make it — so
+ * the ragged-edge test that ends every other paragraph never fires on one, and
+ * bug886717.pdf's forty entries came back as a single reflowing paragraph.
+ */
+function carriesLeader(line: Line): boolean {
+  return LEADER_RUN.test(line.text);
+}
+
+/** Three of the same leader character in a row is a leader and not punctuation. */
+const LEADER_RUN = /([.\u00b7_])\1{2,}/u;
+
 // Group consecutive lines into paragraphs: a vertical gap well over a single
 // line's leading starts a new paragraph. `top` is the paragraph's first (highest) line.
 function groupIntoParagraphs(
@@ -868,7 +904,7 @@ function groupIntoParagraphs(
     if (
       groups.length === 0 ||
       opened ||
-      (prev !== undefined && endedParagraph(prev, line, column))
+      (prev !== undefined && (endedParagraph(prev, line, column) || carriesLeader(prev)))
     ) {
       groups.push([]);
       gaps.push(prev === undefined ? 0 : gap);
