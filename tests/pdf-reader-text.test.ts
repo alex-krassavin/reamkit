@@ -1301,3 +1301,52 @@ describe('text colour through a named space (§8.6.8)', () => {
     expect(run?.colorHex).toBe('000000');
   });
 });
+
+describe('the same text struck twice (§9.4.3)', () => {
+  it('reads a re-struck line once, not once per strike', () => {
+    // A page with no bold face to hand fakes one by drawing its text several
+    // times a fraction of a point apart. bug900822.pdf draws one line FOUR
+    // times — twice 0.16pt apart across, twice 0.32pt apart down — and read as
+    // four lines its letters came back interleaved: "TTTTeeeesssstttt" where
+    // the page shows "Test test".
+    const strikes = [
+      '20 40 Td (Test) Tj',
+      '1 0 0 1 20.16 40 Tm (Test) Tj',
+      '1 0 0 1 20 39.68 Tm (Test) Tj',
+      '1 0 0 1 20.16 39.68 Tm (Test) Tj',
+    ].join(' ');
+    const runs = runsOf(`BT /F0 16 Tf ${strikes} ET`);
+    expect(runs.map((r) => r.text)).toEqual(['Test']);
+  });
+
+  it('keeps a letter the page really does repeat', () => {
+    // The tolerance is well inside the advance of even the narrowest letter,
+    // so "ll" is two letters and not one struck twice.
+    const runs = runsOf('BT /F0 16 Tf 20 40 Td (l) Tj 1 0 0 1 24 40 Tm (l) Tj ET');
+    expect(runs.map((r) => r.text)).toEqual(['l', 'l']);
+  });
+});
+
+/** The runs a one-page PDF of this content stream yields. */
+function runsOf(content: string): Array<TextRun> {
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Contents 4 0 R ' +
+      '/Resources << /Font << /F0 5 0 R >> >> >>',
+    `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+  ];
+  let pdf = '%PDF-1.7\n';
+  const offsets: Array<number> = [];
+  objects.forEach((body, i) => {
+    offsets.push(pdf.length);
+    pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+  });
+  const xref = pdf.length;
+  pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+  for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+  pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`;
+  const file = PdfFile.parse(new TextEncoder().encode(pdf));
+  return extractPageText(file, file.pages()[0]!);
+}
