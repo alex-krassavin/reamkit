@@ -1381,7 +1381,7 @@ function groupIntoParagraphs(
     const most = pageHeight > 0 ? pageHeight / 3 : fontSize * 3;
     const spacingBefore = opened > fontSize * 0.3 ? Math.min(opened, most) : undefined;
     return {
-      spans: g.flatMap((l, k) => (k > 0 ? [{ text: ' ' }, ...l.spans] : [...l.spans])),
+      spans: joinLines(g),
       fontSize,
       top: first.y,
       ...(spacingBefore !== undefined ? { spacingBefore } : {}),
@@ -1390,6 +1390,43 @@ function groupIntoParagraphs(
     };
   });
 }
+
+/**
+ * A paragraph's lines as one run of spans, joined the way the page broke them.
+ *
+ * A line that ends in a hyphen was broken THERE, and the break is not part of
+ * the text: re-set at another measure the word has to come back together. Which
+ * hyphen decides what is left of it — U+00AD is the discretionary one, put in
+ * to mark a place a word MAY break, and it goes with the break; a plain hyphen
+ * belongs to the word ("two-" and "column" are "two-column") and stays.
+ *
+ * Read as prose with a space between every line, bug1997343.pdf came back
+ * "typical two-column docu ment incorporating tables, figures and mathemat
+ * ics" — the soft hyphens dropped by the page and a space in their place.
+ *
+ * @param lines The paragraph's lines, in order.
+ */
+function joinLines(lines: ReadonlyArray<Line>): Array<TextSpan> {
+  const out: Array<TextSpan> = [];
+  lines.forEach((line, i) => {
+    if (i > 0) {
+      const prev = out[out.length - 1];
+      const ends = prev?.text ?? '';
+      const soft = ends.endsWith(SOFT_HYPHEN);
+      const hard = HYPHENS.has(ends.slice(-1));
+      if (soft && prev) out[out.length - 1] = { ...prev, text: ends.slice(0, -1) };
+      else if (!hard) out.push({ text: ' ' });
+    }
+    out.push(...line.spans);
+  });
+  return out;
+}
+
+/** §17.3.3.29 — the hyphen that is a PLACE a word may break, not a hyphen. */
+const SOFT_HYPHEN = '\u00ad';
+
+/** The hyphens that belong to the word they end. */
+const HYPHENS = new Set(['-', '\u2010', '\u2011']);
 
 /** How many lines' worth of indent still reads as a first line, not a placement. */
 const INDENT_LINES = 3;

@@ -232,6 +232,34 @@ describe('a paragraph keeps the indent the page set it with (§17.3.1.12)', () =
   });
 });
 
+describe('a word broken across a line comes back together', () => {
+  it('joins on the discretionary hyphen and drops it', () => {
+    // A line that ends in a hyphen was broken THERE. Read as prose with a
+    // space between every line, bug1997343.pdf came back "typical two-column
+    // docu ment incorporating tables, figures and mathemat ics".
+    const doc = reconstructByLayout(
+      PdfFile.parse(
+        onePagePdf(
+          '/MediaBox [0 0 400 400] /Resources << /Font << /F0 5 0 R >> >>',
+          [
+            'BT /F0 10 Tf 1 0 0 1 40 360 Tm (A line that ends in a docu\\255) Tj ET',
+            'BT /F0 10 Tf 1 0 0 1 40 346 Tm (ment and a two\\055) Tj ET',
+            'BT /F0 10 Tf 1 0 0 1 40 332 Tm (column word after it) Tj ET',
+          ].join('\n'),
+          ['<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'],
+        ),
+      ),
+    ).doc;
+    const text = doc.body
+      .flatMap((b) => (b.kind === 'paragraph' ? b.paragraph.runs.map((r) => r.text) : []))
+      .join('');
+    // The soft hyphen goes with the break…
+    expect(text).toContain('document and');
+    // …and the plain one belongs to the word it ends.
+    expect(text).toContain('two-column word');
+  });
+});
+
 describe('mathematics is set the way the page sets it', () => {
   const spansOf = (content: string) => {
     const doc = reconstructByLayout(
