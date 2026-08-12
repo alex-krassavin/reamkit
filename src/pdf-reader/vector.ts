@@ -382,7 +382,11 @@ export function collectPageVectors(
     // burying the words is not its size but where it sits: the flowing reading
     // puts every mark behind the text, and the placed one keeps the page's own
     // painting order.
-    const filled = (v.gradient !== undefined || solidFill) && (isBox || isRule);
+    // §9.6.6 — a traced GLYPH is type, and none of the de-cluttering below
+    // applies to it: TAMReview.pdf's full stops are marks a point across, which
+    // every bound here would throw out as specks, and the page came back with
+    // no sentence ending anywhere.
+    const filled = (v.gradient !== undefined || solidFill) && (isBox || isRule || v.glyph === true);
     // White paint is invisible only over white — the same rule the fill above
     // follows, which the stroke did not. 160F-2019.pdf's every form field is a
     // tinted box with a WHITE one-point border stroked inside it, and dropping

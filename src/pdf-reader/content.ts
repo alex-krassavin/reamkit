@@ -305,6 +305,13 @@ export interface VectorPlacement {
   /** §11.6.5 `/SMask` — the paint faded from place to place; nothing here does. */
   readonly masked?: boolean;
   /**
+   * §9.6.6 — this path is a GLYPH, traced from the face because its code stands
+   * for no character. It is type, not artwork, so the de-cluttering a page's
+   * paths go through does not apply: a full stop is a mark one point across and
+   * every filter there would throw it out.
+   */
+  readonly glyph?: boolean;
+  /**
    * §8.7.3 — the TILING pattern resource name the path is filled with. Its
    * content is a stream of its own, so what the fill actually shows is only
    * known by walking into it; the `fillHex` beside this is not the fill.
@@ -651,6 +658,7 @@ export function interpretContent(
           ...(state.clip ? { clip: state.clip } : {}),
           fillHex: state.fillColor,
           ...(state.fillAlpha < 1 ? { alpha: state.fillAlpha } : {}),
+          glyph: true,
         });
       }
     }

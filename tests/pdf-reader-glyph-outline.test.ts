@@ -12,6 +12,7 @@ import { describe, expect, it } from 'vitest';
 
 import { Ream } from '@/core/converter/ream';
 import { cffOutlineSource } from '@/pdf-reader/cff-outline';
+import { type1Font } from '@/pdf-reader/type1-outline';
 import { outlineSource } from '@/pdf-reader/glyf-outline';
 import { parseTtf } from '@/core/font';
 
@@ -115,6 +116,44 @@ describe('glyph outlines (§9.6.6)', () => {
     expect(shapes[0]?.shape.height).toBeCloseTo(20, 1);
   });
 
+  it('runs a Type 1 charstring out from under its two layers of encryption', () => {
+    // Adobe "Type 1 Font Format" §6–7 — `eexec` hides the private dictionary
+    // and every charstring inside it is encrypted again on its own, so reading
+    // one means undoing both and then running it.
+    const face = type1Font(squareType1());
+    expect(face).toBeDefined();
+    const path = face?.path('square');
+    expect(path).toBeDefined();
+    if (!path) return;
+    const xs = path.flatMap((seg) => (seg.op === 'close' ? [] : [seg.x]));
+    const ys = path.flatMap((seg) => (seg.op === 'close' ? [] : [seg.y]));
+    // `hsbw` puts the origin at the sidebearing, so the square drawn 100 to the
+    // right of a 50-unit sidebearing stands at 150, and its far side at 650.
+    expect(Math.min(...xs)).toBeCloseTo(0.15, 6);
+    expect(Math.max(...xs)).toBeCloseTo(0.65, 6);
+    expect(Math.min(...ys)).toBeCloseTo(0.1, 6);
+    expect(Math.max(...ys)).toBeCloseTo(0.6, 6);
+    // And the program's own `/Encoding` is read, which is all a face with no
+    // `/Differences` says about its codes.
+    expect(face?.encoding?.get(65)).toBe('square');
+  });
+
+  it('takes the glyph index out of a name that carries one', () => {
+    // A subsetter that drops a font's `cmap` renames its glyphs after their
+    // INDEX. bug1151216.pdf writes them `g24` and bug1027533.pdf `g0024`, which
+    // is the same number in hexadecimal — read as decimal its eight letters
+    // came back as eight different ones.
+    const gid = glyphFor('A');
+    for (const name of [`g${String(gid)}`, `g${gid.toString(16).padStart(4, '0')}`]) {
+      const doc = Ream.parse(simpleTruetypePdf(name));
+      const shapes = doc.flow.body.filter((b) => b.kind === 'shape');
+      expect(shapes).toHaveLength(1);
+      // A capital set at 40pt stands around 28pt tall.
+      expect(shapes[0]?.shape.height).toBeGreaterThan(20);
+      expect(shapes[0]?.shape.height).toBeLessThan(40);
+    }
+  });
+
   it('keeps two bytes to a code under Identity-H whatever a /ToUnicode says', () => {
     // §9.7.6.2 — the CMap the font NAMES says how wide a code is; a
     // `/ToUnicode` is a second mapping and has no vote.
@@ -130,6 +169,84 @@ describe('glyph outlines (§9.6.6)', () => {
     expect(doc.flow.body.filter((b) => b.kind === 'shape')).toHaveLength(2);
   });
 });
+
+/**
+ * A one-page PDF setting code 65 in a SIMPLE TrueType font whose `/Differences`
+ * name that code `name` — the shape of a subset whose `cmap` was dropped.
+ */
+function simpleTruetypePdf(name: string): Uint8Array {
+  const content = 'BT /F0 40 Tf 20 40 Td (A) Tj ET';
+  return assemble([
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Contents 4 0 R ' +
+      '/Resources << /Font << /F0 5 0 R >> >> >>',
+    `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+    '<< /Type /Font /Subtype /TrueType /BaseFont /Roboto /FirstChar 65 /LastChar 65 ' +
+      `/Widths [600] /FontDescriptor 6 0 R /Encoding << /Type /Encoding /Differences [65 /${name}] >> >>`,
+    '<< /Type /FontDescriptor /FontName /Roboto /Flags 4 /ItalicAngle 0 /StemV 80 ' +
+      '/Ascent 900 /Descent -200 /CapHeight 700 /FontBBox [-500 -300 1500 1000] /FontFile2 7 0 R >>',
+    fontStreamObject(withoutCmap()),
+  ]);
+}
+
+/**
+ * A Type 1 program of one glyph, `square`, drawing a 500-unit box — the
+ * smallest thing the charstring interpreter can be asked to run.
+ */
+function squareType1(): Uint8Array {
+  const encrypt = (data: Uint8Array, key: number, lead: number): Uint8Array => {
+    let r = key;
+    const out = new Uint8Array(data.length + lead);
+    const plain = new Uint8Array(out.length);
+    plain.set(data, lead);
+    for (let i = 0; i < plain.length; i++) {
+      const p = plain[i]!;
+      const c = p ^ (r >> 8);
+      out[i] = c & 0xff;
+      r = ((out[i]! + r) * 52845 + 22719) & 0xffff;
+    }
+    return out;
+  };
+  const num = (v: number): Array<number> =>
+    v >= -107 && v <= 107
+      ? [v + 139]
+      : [255, (v >> 24) & 0xff, (v >> 16) & 0xff, (v >> 8) & 0xff, v & 0xff];
+  const charstring = Uint8Array.from([
+    ...num(50),
+    ...num(600),
+    13, // 50 600 hsbw — sidebearing, then the width
+    ...num(100),
+    ...num(100),
+    21, // 100 100 rmoveto
+    ...num(500),
+    6, // 500 hlineto
+    ...num(500),
+    7, // 500 vlineto
+    ...num(-500),
+    6, // -500 hlineto
+    9, // closepath
+    14, // endchar
+  ]);
+  const glyph = encrypt(charstring, 4330, 4);
+  const encoder = new TextEncoder();
+  const priv = [
+    ...encoder.encode('XXXXdup /Private 8 dict dup begin\n/lenIV 4 def\n/Subrs 0 array ND\n'),
+    ...encoder.encode(`/CharStrings 1 dict dup begin\n/square ${String(glyph.length)} RD `),
+    ...glyph,
+    ...encoder.encode(' ND\nend end\n'),
+  ];
+  // The first four bytes of the eexec plaintext are discarded on the way back.
+  const body = encrypt(Uint8Array.from(priv.slice(4)), 55665, 4);
+  const head = encoder.encode(
+    '%!PS-AdobeFont-1.0: Square\n/FontMatrix [0.001 0 0 0.001 0 0] readonly def\n' +
+      '/Encoding 256 array\ndup 65 /square put\nreadonly def\ncurrentdict end\ncurrentfile eexec\n',
+  );
+  const out = new Uint8Array(head.length + body.length);
+  out.set(head, 0);
+  out.set(body, head.length);
+  return out;
+}
 
 /** Four hex digits, as a two-byte code is written in a shown string. */
 function hex4(code: number): string {
