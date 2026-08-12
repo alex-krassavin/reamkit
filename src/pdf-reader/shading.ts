@@ -11,8 +11,10 @@
 // interpreter can call.
 
 import { cieToSrgb } from './cie-color';
+import { iccTransform } from './icc';
 import { readFunction } from './function';
 import type { CieSpace } from './cie-color';
+import type { IccTransform } from './icc';
 import type { PdfFunction } from './function';
 import type { GradientStop, ShapeGradient } from '@/core/vector';
 import type { PdfDict, PdfValue } from '@/pdf/objects';
@@ -316,6 +318,12 @@ export function spaceColor(
   space: ColorSpaceInfo | undefined,
 ): string | undefined {
   if (nums.length === 0) return undefined;
+  // §8.6.5.5 — an ICC profile states its own transform, and where it was read
+  // that transform is what the numbers mean.
+  if (space?.icc && nums.length >= space.components) {
+    const [r, g, b] = space.icc(nums);
+    return rgbHex(r, g, b);
+  }
   // §8.6.5.6/§8.6.5.7 — a CIE space's numbers mean what its own transform makes
   // of them, which is not what the same numbers mean to a device space.
   if (space?.cie) {
@@ -499,6 +507,12 @@ export interface ColorSpaceInfo {
    */
   readonly cie?: CieSpace;
   /**
+   * §8.6.5.5 — the transform an `/ICCBased` profile states, where its form is
+   * one this reads. Its numbers mean what the PROFILE makes of them, which for
+   * anything but an sRGB-like profile is not what a device space would.
+   */
+  readonly icc?: IccTransform;
+  /**
    * §8.6.6.4/§8.6.6.5 — for a `Separation` or `DeviceN`, the way OUT of it: the
    * tint transform and the space its numbers land in. Absent where the file
    * states a transform this cannot run, and then a tint is only "this much ink".
@@ -541,11 +555,22 @@ function colorSpaceAt(file: PdfFile, cs: PdfValue, depth: number): ColorSpaceInf
   const head = file.resolve(cs[0]!);
   if (!(head instanceof PdfName)) return undefined;
   if (head.value === 'ICCBased') {
-    // §8.6.5.5 — the stream's `/N` is the component count, and that is all this
-    // needs: an ICC profile of three components reads as RGB.
+    // §8.6.5.5 — the stream's `/N` is the component count, and where the
+    // PROFILE can be read it says more than that: franz_2.pdf paints one flat
+    // rectangle `0.5 0.5 0.5` in Apple's Generic RGB (gamma 1.8, its own
+    // primaries), and read as a device space it came back 128 where every
+    // colour-managed renderer shows 145.
     const stream = file.resolve(cs[1] ?? PDF_NULL);
     const n = stream instanceof PdfStream ? file.get(stream.dict, 'N') : undefined;
-    return byFamily('ICCBased', typeof n === 'number' ? n : 3);
+    const base = byFamily('ICCBased', typeof n === 'number' ? n : 3);
+    if (!base || !(stream instanceof PdfStream)) return base;
+    let icc;
+    try {
+      icc = iccTransform(file.streamData(stream));
+    } catch {
+      icc = undefined;
+    }
+    return icc ? { ...base, icc } : base;
   }
   if (head.value === 'Indexed') {
     // §8.6.6.3 — one operand, an index into a table. Reading the table is the
