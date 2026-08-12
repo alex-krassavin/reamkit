@@ -142,6 +142,9 @@ export function reconstructByLayout(
     // before it and what is below after, so a paper's columns do not start at
     // the top of the sheet.
     const split = gutters.length > 0 ? assignColumns(runs, gutters) : undefined;
+    // Where the page's text starts and ends, which is the measure a line that
+    // spans the page is set across.
+    const textEdges = pageTextEdges(runs);
     const bandEpsilon = (median(runs.map((r) => r.fontSizePt).filter((s) => s > 0)) || 10) / 2;
     const bandAt = (top: number): number => bandOf(split?.breaks ?? [], top, bandEpsilon);
     const addColumn = (allRuns: ReadonlyArray<TextRun>, col: number): void => {
@@ -187,13 +190,13 @@ export function reconstructByLayout(
       const lines = groupIntoLines(colRuns, false, stepped).filter((l) => l.text.length > 0);
       // The column the paragraphs were set in — its own edges, not the page's,
       // so a two-column page judges each side against the side it belongs to.
-      const measure =
-        lines.length > 0
-          ? {
-              left: Math.min(...lines.map((l) => l.x)),
-              right: Math.max(...lines.map((l) => l.x + l.width)),
-            }
-          : undefined;
+      //
+      // The column, not the lines IN it: a measure taken from the very lines
+      // being judged is one no line can be inset from, and a title standing
+      // alone over the page was never centred because it WAS the measure.
+      // bug1997343.pdf sets "A Two Column Example" in the middle of the sheet
+      // and we set it flush left.
+      const measure = measureOf(col, gutters, textEdges) ?? measureOfLines(lines);
       for (const para of groupIntoParagraphs(lines, measure, display.height)) {
         blocks.push({
           band: bandAt(para.top),
@@ -591,6 +594,52 @@ function runInk(run: TextRun): [number, number] | undefined {
 }
 
 const SPACE = /\s/u;
+
+/** Where the page's text starts and ends, ignoring what is only a space. */
+function pageTextEdges(runs: ReadonlyArray<TextRun>): { left: number; right: number } | undefined {
+  let left = Number.POSITIVE_INFINITY;
+  let right = Number.NEGATIVE_INFINITY;
+  for (const run of runs) {
+    const ink = runInk(run);
+    if (!ink) continue;
+    left = Math.min(left, ink[0]);
+    right = Math.max(right, ink[1]);
+  }
+  return right > left ? { left, right } : undefined;
+}
+
+/**
+ * The measure a column is set across: from the gutter on its left to the one
+ * on its right, and to the page's own text edge where there is none.
+ *
+ * A line that spans the page (see {@link SPANNING_COLUMN}) is set across all of
+ * them, which is what makes a centred title centred.
+ *
+ * @param col     The column, or {@link SPANNING_COLUMN}.
+ * @param gutters The page's gutters, left to right.
+ * @param edges   Where the page's text starts and ends.
+ */
+function measureOf(
+  col: number,
+  gutters: ReadonlyArray<Gutter>,
+  edges: { left: number; right: number } | undefined,
+): { left: number; right: number } | undefined {
+  if (!edges) return undefined;
+  if (col === SPANNING_COLUMN || gutters.length === 0) return edges;
+  return {
+    left: col === 0 ? edges.left : (gutters[col - 1]?.to ?? edges.left),
+    right: col >= gutters.length ? edges.right : (gutters[col]?.from ?? edges.right),
+  };
+}
+
+/** The measure the lines themselves reach across, where the page states none. */
+function measureOfLines(lines: ReadonlyArray<Line>): { left: number; right: number } | undefined {
+  if (lines.length === 0) return undefined;
+  return {
+    left: Math.min(...lines.map((l) => l.x)),
+    right: Math.max(...lines.map((l) => l.x + l.width)),
+  };
+}
 
 /** The x's to measure at, from `a` to `b` inclusive. */
 function sample(a: number, b: number, step: number): Array<number> {
