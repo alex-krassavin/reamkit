@@ -23,7 +23,8 @@ describe('the script a character belongs to', () => {
     expect(scriptForCodepoint(cp('ก'))).toBe('thai');
     expect(scriptForCodepoint(cp('か'))).toBe('jp');
     expect(scriptForCodepoint(cp('한'))).toBe('kr');
-    expect(scriptForCodepoint(cp('☐'))).toBe('symbols');
+    expect(scriptForCodepoint(cp('☐'))).toBe('symbols2');
+    expect(scriptForCodepoint(cp('①'))).toBe('symbols1');
     // A Latin family draws these itself.
     expect(scriptForCodepoint(cp('A'))).toBeUndefined();
     expect(scriptForCodepoint(cp('Я'))).toBeUndefined();
@@ -73,6 +74,17 @@ describe('a face for a script the substitutes lack', () => {
     // …in the regular weight only: ten megabytes of Noto Sans SC four times
     // over is not a substitute, it is a download.
     expect(asked.filter((f) => f.startsWith('NotoSansArabic'))).toHaveLength(1);
+  });
+
+  it('asks for BOTH symbol faces when a document holds one symbol', async () => {
+    // The repertory did not fit in one file and Noto's two barely overlap: the
+    // ballot box is in the second face, the circled one in the first. Given
+    // only the second, ZapfDingbats.pdf drew its stars and boxed its crosses.
+    clearFontCache();
+    const asked: Array<string> = [];
+    await Ream.parse(sheet('☐')).convert('pdf', { fontFetch: serveRoboto(asked) });
+    expect(asked.some((f) => f.startsWith('NotoSansSymbols_'))).toBe(true);
+    expect(asked.some((f) => f.startsWith('NotoSansSymbols2'))).toBe(true);
   });
 
   it('…and not when it does not', async () => {

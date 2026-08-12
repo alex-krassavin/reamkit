@@ -10,6 +10,7 @@ import { type1Font } from './type1-outline';
 import { outlineSource } from './glyf-outline';
 import { standardFace, standardWidth } from './standard-widths';
 import { embeddedFontName, hasLiftableProgram } from './embedded-fonts';
+import { isZapfDingbats, zapfDingbatsChar } from './dingbats';
 import type { PdfDict, PdfValue } from '@/pdf/objects';
 import type { ContentFont, GlyphOutline, Matrix, PathSeg, Type3Face } from './content';
 import type { PdfFile } from './document';
@@ -111,6 +112,9 @@ export function buildContentFont(file: PdfFile, fontDict: PdfDict): ContentFont 
   const unicode = fromProgram ?? (toUnicode.size > 0 ? toUnicode : (fromNames ?? toUnicode));
 
   const bytesPerCode = codeBytes;
+  // §9.6.2.2 — a standard face whose own encoding is not the Latin one.
+  const dingbats =
+    !isType0 && isZapfDingbats(asName(file.resolve(fontDict.get('BaseFont') ?? PDF_NULL)));
   const style = faceStyle(file, fontDict, isType0);
   const name = runFontName(file, fontDict, isType0);
   const type3 =
@@ -138,6 +142,12 @@ export function buildContentFont(file: PdfFile, fontDict: PdfDict): ContentFont 
     // ordinary, and read as Latin-1 the space is a control and is dropped:
     // TAMReview.pdf's figure labels came back "SystemFeatures".
     fromNames?.get(code) ??
+    // Annex D.6 — the built-in encoding of a standard face that has one of its
+    // own. ZapfDingbats is a font of PICTURES: its 0x4B is not the letter K but
+    // `a38`, the six-pointed star, and read through the Latin encoding below —
+    // which is all a reader can do for a font that states none —
+    // ZapfDingbats.pdf's five hundred pictures came back as the alphabet.
+    (dingbats ? zapfDingbatsChar(code) : undefined) ??
     // A composite code nothing could answer for is unrecoverable text, whether
     // the font stated NO map or a map that does not reach this code.
     // bug911034.pdf ships a `/ToUnicode` describing 95 codes and then draws

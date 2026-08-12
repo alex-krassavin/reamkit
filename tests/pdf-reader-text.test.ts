@@ -225,6 +225,60 @@ describe('a font that names its glyphs rather than mapping them (§9.6.6.1)', ()
   });
 });
 
+/** A one-page PDF drawing `hex` in one of the fourteen standard faces. */
+function standardFacePdf(baseFont: string, hex: string): Uint8Array {
+  const content = `BT /F1 12 Tf 72 720 Td <${hex}> Tj ET`;
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] ' +
+      '/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>',
+    `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+    `<< /Type /Font /Subtype /Type1 /BaseFont /${baseFont} >>`,
+  ];
+  let pdf = '%PDF-1.7\n';
+  const offsets: Array<number> = [];
+  objects.forEach((body, i) => {
+    offsets.push(pdf.length);
+    pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+  });
+  const xref = pdf.length;
+  pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+  for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+  pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\n`;
+  pdf += `startxref\n${String(xref)}\n%%EOF\n`;
+  return new TextEncoder().encode(pdf);
+}
+
+const standardFaceText = (baseFont: string, hex: string): string | undefined => {
+  const file = PdfFile.parse(standardFacePdf(baseFont, hex));
+  return extractPageText(file, file.pages()[0]!)[0]?.text;
+};
+
+describe('a standard face whose own encoding is not the Latin one (Annex D.6)', () => {
+  it('reads ZapfDingbats as the pictures it draws', () => {
+    // The face states no /Encoding — none of the fourteen need to — and read
+    // through the Latin encoding, which is all that is left for a font that
+    // says nothing, ZapfDingbats.pdf's five hundred pictures came back as the
+    // alphabet: K L M for ✫ ✬ ✭.
+    expect(standardFaceText('ZapfDingbats', '4b4c4d')).toBe('✫✬✭');
+    // A subset keeps the encoding of the face it was cut from.
+    expect(standardFaceText('ABCDEF+ZapfDingbats', '4b')).toBe('✫');
+  });
+
+  it('reads the pictures by NAME as well, for a font that names its glyphs', () => {
+    expect(textForGlyphName('a38')).toBe('✫');
+    expect(textForGlyphName('a1')).toBe('✁');
+    expect(textForGlyphName('a202')).toBe('✃');
+    // `a` alone is a letter, not a dingbat.
+    expect(textForGlyphName('a')).toBe('a');
+  });
+
+  it('leaves the other thirteen faces to the Latin encoding', () => {
+    expect(standardFaceText('Helvetica', '4b4c4d')).toBe('KLM');
+  });
+});
+
 describe('the face a run was shown in (§9.8.1)', () => {
   it('reads the weight and the slant off the descriptor', () => {
     // 160F-2019.pdf sets its title in Arial-BoldMT at /FontWeight 700, and

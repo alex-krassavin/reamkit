@@ -21,11 +21,13 @@ const RANGES: ReadonlyArray<readonly [number, number, ScriptKey | 'han']> = [
   [0x08a0, 0x08ff, 'arabic'],
   [0x0e00, 0x0e7f, 'thai'],
   [0x1100, 0x11ff, 'kr'], // Hangul Jamo
-  [0x2190, 0x21ff, 'symbols'], // arrows
-  [0x2300, 0x23ff, 'symbols'], // technical
-  [0x2460, 0x24ff, 'symbols'], // enclosed alphanumerics
-  [0x2500, 0x27bf, 'symbols'], // box drawing, geometric shapes, dingbats
-  [0x2b00, 0x2bff, 'symbols'],
+  // Both symbol faces are fetched whenever either is called for, so these say
+  // only which one is TRIED first — the other answers for what it lacks.
+  [0x2190, 0x21ff, 'symbols1'], // arrows
+  [0x2300, 0x23ff, 'symbols1'], // technical
+  [0x2460, 0x24ff, 'symbols1'], // enclosed alphanumerics
+  [0x2500, 0x27bf, 'symbols2'], // box drawing, geometric shapes, dingbats
+  [0x2b00, 0x2bff, 'symbols2'],
   [0x3000, 0x303f, 'han'], // CJK punctuation
   [0x3040, 0x30ff, 'jp'], // Hiragana + Katakana
   [0x3130, 0x318f, 'kr'], // Hangul compatibility Jamo
@@ -84,6 +86,16 @@ export function scriptsInFlow(flow: FlowDoc): {
       if (key === undefined) continue;
       if (key === 'sc') {
         marks.add('han');
+        continue;
+      }
+      // One symbol calls for both symbol faces. Neither covers the other's
+      // half — ZapfDingbats.pdf prints the whole repertory, and read with the
+      // second face alone its crosses and its circled numbers came out boxes —
+      // and which of the two holds a given character is not something the
+      // ranges above can say block by block.
+      if (key === 'symbols1' || key === 'symbols2') {
+        scripts.add('symbols1');
+        scripts.add('symbols2');
         continue;
       }
       scripts.add(key);

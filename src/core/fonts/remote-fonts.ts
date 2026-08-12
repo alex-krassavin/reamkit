@@ -46,7 +46,7 @@ export type FamilyKey = 'arimo' | 'tinos' | 'cousine' | 'carlito' | 'caladea';
  * only in the regular weight: Noto Sans SC is ten megabytes, and a bold run in
  * it is better stroked (see `SyntheticFace`) than downloaded four times over.
  */
-export type ScriptKey = 'jp' | 'kr' | 'sc' | 'arabic' | 'hebrew' | 'thai' | 'symbols';
+export type ScriptKey = 'jp' | 'kr' | 'sc' | 'arabic' | 'hebrew' | 'thai' | 'symbols1' | 'symbols2';
 
 /** Either kind of substitute — a Latin family or a per-script face. */
 export type SubstituteKey = FamilyKey | ScriptKey;
@@ -63,7 +63,14 @@ const SCRIPTS: Record<ScriptKey, ScriptFamily> = {
   arabic: { pkg: 'noto-sans-arabic', file: 'NotoSansArabic' },
   hebrew: { pkg: 'noto-sans-hebrew', file: 'NotoSansHebrew' },
   thai: { pkg: 'noto-sans-thai', file: 'NotoSansThai' },
-  symbols: { pkg: 'noto-sans-symbols-2', file: 'NotoSansSymbols2' },
+  // The symbol repertory did not fit in one file, and Noto ships two that
+  // barely overlap: of the dingbats U+2700–27BF, 145 are in the second face and
+  // 35 — the crosses U+271D–2721 among them — only in the first, and the
+  // circled numbers U+2460–24FF are the first face's alone. So a document that
+  // holds one symbol is given BOTH (see `scriptsInFlow`): whichever is tried
+  // first, the other answers for what it lacks.
+  symbols1: { pkg: 'noto-sans-symbols', file: 'NotoSansSymbols' },
+  symbols2: { pkg: 'noto-sans-symbols-2', file: 'NotoSansSymbols2' },
 };
 
 /** Whether a substitute key names a writing system rather than a Latin family. */
