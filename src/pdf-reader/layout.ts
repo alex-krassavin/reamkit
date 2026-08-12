@@ -35,8 +35,9 @@ import type { PdfFile, PdfPage } from './document';
 import type { Reconstruction, TextSpan } from './flow-build';
 import { FEATURES, ResourceStore, pt } from '@/core/ir';
 
-/** The relationship the reconstruction files its running foot under. */
+/** The relationships the reconstruction files its running head and foot under. */
 const FOOTER_PART = 'pdf-running-foot';
+const HEADER_PART = 'pdf-running-head';
 
 /** §9.10.2 — a glyph the face maps to no character (see `./font`). */
 export const UNMAPPED = '\uFFFD';
@@ -81,10 +82,14 @@ export function reconstructByLayout(
   // foot, not a paragraph of the body. Lifted off before anything else reads
   // the page: it must not measure the margins either, and a page number in the
   // text block is a page number in the wrong place.
-  const foot = mode === 'positional' ? undefined : runningFoot(allRuns, shown);
-  const pageRuns = foot
-    ? allRuns.map((runs, i) => runs.filter((r) => foot.lift[i]?.has(r) !== true))
-    : allRuns;
+  const foot = mode === 'positional' ? undefined : runningFoot(allRuns, shown, 'foot');
+  const head = mode === 'positional' ? undefined : runningFoot(allRuns, shown, 'head');
+  const pageRuns =
+    foot || head
+      ? allRuns.map((runs, i) =>
+          runs.filter((r) => foot?.lift[i]?.has(r) !== true && head?.lift[i]?.has(r) !== true),
+        )
+      : allRuns;
   const medianFont =
     median(
       pageRuns
@@ -406,12 +411,21 @@ export function reconstructByLayout(
       : [];
   // The band is built from the page that showed it first, and referenced by
   // every section: the foot runs through the document, not through a section.
-  const band = foot
-    ? footerBand(foot.band, stepsBetweenWords(allRuns[0] ?? []), pageTextEdges(allRuns[0] ?? []))
-    : [];
+  const stepped0 = stepsBetweenWords(allRuns[0] ?? []);
+  const edges0 = pageTextEdges(allRuns[0] ?? []);
+  const band = foot ? footerBand(foot.band, stepped0, edges0) : [];
+  const headBand = head ? footerBand(head.band, stepped0, edges0) : [];
   const withFooter = (properties: SectionProperties | undefined): SectionProperties | undefined =>
-    properties && band.length > 0
-      ? { ...properties, footers: [{ type: 'default', relationshipId: FOOTER_PART }] }
+    properties
+      ? {
+          ...properties,
+          ...(band.length > 0
+            ? { footers: [{ type: 'default' as const, relationshipId: FOOTER_PART }] }
+            : {}),
+          ...(headBand.length > 0
+            ? { headers: [{ type: 'default' as const, relationshipId: HEADER_PART }] }
+            : {}),
+        }
       : properties;
   return {
     doc: buildFlowDoc(
@@ -420,7 +434,12 @@ export function reconstructByLayout(
       withFooter(setUp(0, pages.length)),
       collectEmbeddedFonts(file, pages, losses),
       sections.map((s) => ({ ...s, properties: withFooter(s.properties) ?? s.properties })),
-      band.length > 0 ? new Map([[FOOTER_PART, band]]) : undefined,
+      band.length > 0 || headBand.length > 0
+        ? new Map([
+            ...(band.length > 0 ? ([[FOOTER_PART, band]] as const) : []),
+            ...(headBand.length > 0 ? ([[HEADER_PART, headBand]] as const) : []),
+          ])
+        : undefined,
     ),
     losses: dedupeLosses(losses),
   };
@@ -1437,8 +1456,9 @@ function compareOrder(a: ReadonlyArray<number>, b: ReadonlyArray<number>): numbe
 function runningFoot(
   pageRuns: ReadonlyArray<ReadonlyArray<TextRun>>,
   shown: ReadonlyArray<{ height: number }>,
+  where: 'head' | 'foot',
 ): { lift: ReadonlyArray<ReadonlySet<TextRun>>; band: ReadonlyArray<TextRun> } | undefined {
-  const feet = pageRuns.map((runs, i) => footLine(runs, shown[i]?.height ?? 0));
+  const feet = pageRuns.map((runs, i) => edgeLine(runs, shown[i]?.height ?? 0, where));
   const found = feet.filter((f) => f !== undefined);
   if (found.length < 2 || found.length < pageRuns.length * FOOT_SHARE) return undefined;
   // The same place on every page: a foot that wanders is a last paragraph.
@@ -1463,27 +1483,36 @@ const FOOT_DRIFT = 4;
  * Alone means the white above it is more than the page's own leading — a last
  * paragraph is a line's gap from the one before it, a running foot is several.
  */
-function footLine(
+function edgeLine(
   runs: ReadonlyArray<TextRun>,
   pageHeight: number,
+  where: 'head' | 'foot',
 ): { y: number; runs: ReadonlyArray<TextRun> } | undefined {
   if (runs.length < 4 || pageHeight <= 0) return undefined;
   const fontSize = median(runs.map((r) => r.fontSizePt).filter((s) => s > 0)) || 10;
   const rows = rowsOf(runs, fontSize);
   if (rows.length < 4) return undefined;
-  const last = rows[rows.length - 1]!;
-  const above = rows[rows.length - 2]!;
-  const y = Math.max(...last.map((r) => r.y));
-  const gap = Math.min(...above.map((r) => r.y)) - y;
+  // `rowsOf` runs down the page, so the foot is its last row and the head its
+  // first; the gap is to the row on the text's side of it either way.
+  const edge = where === 'foot' ? rows[rows.length - 1]! : rows[0]!;
+  const inside = where === 'foot' ? rows[rows.length - 2]! : rows[1]!;
+  const y =
+    where === 'foot' ? Math.max(...edge.map((r) => r.y)) : Math.min(...edge.map((r) => r.y));
+  const gap =
+    where === 'foot'
+      ? Math.min(...inside.map((r) => r.y)) - y
+      : y - Math.max(...inside.map((r) => r.y));
   if (gap < fontSize * FOOT_GAP_EM) return undefined;
-  // In the margin, not in the text: a foot sits in the bottom eighth of the
-  // sheet, and a short line at that.
-  if (y > pageHeight * FOOT_BAND) return undefined;
-  const text = last
+  // In the margin, not in the text: an eighth of the sheet at its own end, and
+  // a short line at that.
+  if (where === 'foot' ? y > pageHeight * FOOT_BAND : y < pageHeight * (1 - FOOT_BAND)) {
+    return undefined;
+  }
+  const text = edge
     .map((r) => r.text)
     .join('')
     .trim();
-  return text.length > 0 && text.length <= FOOT_CHARS ? { y, runs: last } : undefined;
+  return text.length > 0 && text.length <= FOOT_CHARS ? { y, runs: edge } : undefined;
 }
 
 /** How much white, in ems, stands between the text block and a running foot. */
