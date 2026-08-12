@@ -33,8 +33,23 @@ function table(start: number, ...rows: ReadonlyArray<string>): Map<number, strin
   return out;
 }
 
+// Annex D.2 — the low half, which all three share. It says nothing Latin-1 does
+// not, and it is here for the other thing a base encoding answers: which GLYPH
+// a code selects in a program addressed by name (§9.6.6). A legacy eight-bit
+// face is reached that way and no other.
+const ASCII = table(
+  0x20,
+  'space exclam quotedbl numbersign dollar percent ampersand quotesingle parenleft parenright asterisk plus comma hyphen period slash',
+  'zero one two three four five six seven eight nine colon semicolon less equal greater question',
+  'at A B C D E F G H I J K L M N O',
+  'P Q R S T U V W X Y Z bracketleft backslash bracketright asciicircum underscore',
+  'grave a b c d e f g h i j k l m n o',
+  'p q r s t u v w x y z braceleft bar braceright asciitilde .',
+);
+
 /** Annex D.2 STD — the built-in encoding of the standard Latin text faces. */
 const STANDARD: ReadonlyMap<number, string> = new Map([
+  ...ASCII,
   // The typewriter apostrophe and grave are the typographic quotes here, which
   // is how a TeX page writes `don't` and `‘this’`.
   ...table(0x27, 'quoteright'),
@@ -52,6 +67,7 @@ const STANDARD: ReadonlyMap<number, string> = new Map([
 
 /** Annex D.2 WIN — CP-1252. Only its punctuation block departs from Latin-1. */
 const WIN_ANSI: ReadonlyMap<number, string> = new Map([
+  ...ASCII,
   ...table(
     0x80,
     'Euro . quotesinglbase florin quotedblbase ellipsis dagger daggerdbl circumflex perthousand Scaron guilsinglleft OE . Zcaron .',
@@ -65,8 +81,9 @@ const WIN_ANSI: ReadonlyMap<number, string> = new Map([
 ]);
 
 /** Annex D.2 MAC — Mac OS Roman, as the PDF variant states it. */
-const MAC_ROMAN: ReadonlyMap<number, string> = new Map(
-  table(
+const MAC_ROMAN: ReadonlyMap<number, string> = new Map([
+  ...ASCII,
+  ...table(
     0x80,
     'Adieresis Aring Ccedilla Eacute Ntilde Odieresis Udieresis aacute agrave acircumflex adieresis atilde aring ccedilla eacute egrave',
     'ecircumflex edieresis iacute igrave icircumflex idieresis ntilde oacute ograve ocircumflex odieresis otilde uacute ugrave ucircumflex udieresis',
@@ -77,7 +94,7 @@ const MAC_ROMAN: ReadonlyMap<number, string> = new Map(
     'daggerdbl periodcentered quotesinglbase quotedblbase perthousand Acircumflex Ecircumflex Aacute Edieresis Egrave Iacute Icircumflex Idieresis Igrave Oacute Ocircumflex',
     '. Ograve Uacute Ucircumflex Ugrave dotlessi circumflex tilde macron breve dotaccent ring cedilla hungarumlaut ogonek caron',
   ),
-);
+]);
 
 const TABLES: Readonly<Record<BaseEncodingName, ReadonlyMap<number, string>>> = {
   StandardEncoding: STANDARD,
@@ -120,6 +137,60 @@ const STANDARD_LATIN_FACES = new Set([
   'times-italic',
   'times-bolditalic',
 ]);
+
+// The Macintosh standard glyph ORDER — the names a `post` table means by an
+// index below 258 (§post, format 2.0). Three names of its own, then the
+// MacRoman repertory in code order, then a tail Apple appended later. A legacy
+// eight-bit font is reached through this and nothing else: its program carries
+// no `cmap`, and the shapes it draws are whatever the foundry put under those
+// names — Masis, an Armenian face, draws ի under `i`.
+const MAC_ORDER = `
+.notdef .null nonmarkingreturn space exclam quotedbl numbersign dollar
+percent ampersand quotesingle parenleft parenright asterisk plus comma
+hyphen period slash zero one two three four
+five six seven eight nine colon semicolon less
+equal greater question at A B C D
+E F G H I J K L
+M N O P Q R S T
+U V W X Y Z bracketleft backslash
+bracketright asciicircum underscore grave a b c d
+e f g h i j k l
+m n o p q r s t
+u v w x y z braceleft bar
+braceright asciitilde Adieresis Aring Ccedilla Eacute Ntilde Odieresis
+Udieresis aacute agrave acircumflex adieresis atilde aring ccedilla
+eacute egrave ecircumflex edieresis iacute igrave icircumflex idieresis
+ntilde oacute ograve ocircumflex odieresis otilde uacute ugrave
+ucircumflex udieresis dagger degree cent sterling section bullet
+paragraph germandbls registered copyright trademark acute dieresis notequal
+AE Oslash infinity plusminus lessequal greaterequal yen mu
+partialdiff summation product pi integral ordfeminine ordmasculine Omega
+ae oslash questiondown exclamdown logicalnot radical florin approxequal
+Delta guillemotleft guillemotright ellipsis nonbreakingspace Agrave Atilde Otilde
+OE oe endash emdash quotedblleft quotedblright quoteleft quoteright
+divide lozenge ydieresis Ydieresis fraction currency guilsinglleft guilsinglright
+fi fl daggerdbl periodcentered quotesinglbase quotedblbase perthousand Acircumflex
+Ecircumflex Aacute Edieresis Egrave Iacute Icircumflex Idieresis Igrave
+Oacute Ocircumflex apple Ograve Uacute Ucircumflex Ugrave dotlessi
+circumflex tilde macron breve dotaccent ring cedilla hungarumlaut
+ogonek caron Lslash lslash Scaron scaron Zcaron zcaron
+brokenbar Eth eth Yacute yacute Thorn thorn minus
+multiply onesuperior twosuperior threesuperior onehalf onequarter threequarters franc
+Gbreve gbreve Idotaccent Scedilla scedilla Cacute cacute Ccaron
+ccaron dcroat
+`
+  .split(/\s+/u)
+  .filter(Boolean);
+
+/**
+ * The name a `post` table's glyph-name index below 258 stands for.
+ *
+ * @param index The index as the table states it.
+ * @returns The name, or `undefined` for an index outside the standard order.
+ */
+export function macGlyphName(index: number): string | undefined {
+  return MAC_ORDER[index];
+}
 
 /**
  * Whether a `/BaseFont` names one of the standard Latin faces, whose built-in

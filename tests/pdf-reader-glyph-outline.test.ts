@@ -16,7 +16,8 @@ import { PdfFile } from '@/pdf-reader/document';
 import { buildContentFont } from '@/pdf-reader/font';
 import { cffOutlineSource } from '@/pdf-reader/cff-outline';
 import { type1Font } from '@/pdf-reader/type1-outline';
-import { outlineSource } from '@/pdf-reader/glyf-outline';
+import { outlineSource, postGlyphNames } from '@/pdf-reader/glyf-outline';
+import { macGlyphName } from '@/pdf-reader/encodings';
 import { parseTtf } from '@/core/font';
 
 const ROBOTO = new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Regular.ttf'));
@@ -157,6 +158,33 @@ describe('glyph outlines (§9.6.6)', () => {
     }
   });
 
+  it('reaches a legacy eight-bit face by the NAME its program gives the glyph', () => {
+    // §9.6.6.4 — a TrueType with no `cmap` cannot be reached by character at
+    // all. What is left is the encoding's glyph NAME and the program's `post`
+    // table: TrueType_without_cmap.pdf is Masis, an Armenian face whose `i`
+    // draws ի. Read as text its line came back "'>in"; drawn by name it is the
+    // four letters the page shows.
+    const file = PdfFile.parse(legacyTruetypePdf());
+    const fonts = file.get(file.pages()[0]!.resources!, 'Font');
+    if (!(fonts instanceof Map)) throw new Error('the page has a font');
+    const font = buildContentFont(file, file.resolve(fonts.get('F0')!) as PdfDict);
+    // The name says `A` and the shape is whatever the foundry put there, so
+    // there is no text to recover…
+    expect(font.decode([65])).toBe('�');
+    // …and the shape is the one the program holds under that name.
+    expect(font.outline?.path(65)).toEqual(outlineSource(withoutCmap())?.path(glyphFor('A')));
+  });
+
+  it('knows the standard order a post index below 258 stands for', () => {
+    expect(macGlyphName(0)).toBe('.notdef');
+    expect(macGlyphName(36)).toBe('A');
+    expect(macGlyphName(76)).toBe('i');
+    expect(macGlyphName(257)).toBe('dcroat');
+    expect(macGlyphName(258)).toBeUndefined();
+    // …and the table itself, read out of a program that states names.
+    expect(postGlyphNames(ROBOTO)?.get('A')).toBe(glyphFor('A'));
+  });
+
   it('reads a blank glyph as the space it is', () => {
     // A subsetter names the space glyph after its index like every other, so
     // its name says nothing and the glyph draws nothing — and dropped as
@@ -203,6 +231,27 @@ function simpleTruetypePdf(name: string): Uint8Array {
     '<< /Type /Font /Subtype /TrueType /BaseFont /Roboto /FirstChar 65 /LastChar 65 ' +
       `/Widths [600] /FontDescriptor 6 0 R /Encoding << /Type /Encoding /Differences [65 /${name}] >> >>`,
     '<< /Type /FontDescriptor /FontName /Roboto /Flags 4 /ItalicAngle 0 /StemV 80 ' +
+      '/Ascent 900 /Descent -200 /CapHeight 700 /FontBBox [-500 -300 1500 1000] /FontFile2 7 0 R >>',
+    fontStreamObject(withoutCmap()),
+  ]);
+}
+
+/**
+ * A one-page PDF setting code 65 in a SIMPLE TrueType whose program carries no
+ * `cmap` and which names nothing of its own — the shape of a legacy eight-bit
+ * face, reachable only through its encoding's glyph names.
+ */
+function legacyTruetypePdf(): Uint8Array {
+  const content = 'BT /F0 40 Tf 20 40 Td (A) Tj ET';
+  return assemble([
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Contents 4 0 R ' +
+      '/Resources << /Font << /F0 5 0 R >> >> >>',
+    `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+    '<< /Type /Font /Subtype /TrueType /BaseFont /Masis /FirstChar 65 /LastChar 65 ' +
+      '/Widths [600] /FontDescriptor 6 0 R /Encoding /WinAnsiEncoding >>',
+    '<< /Type /FontDescriptor /FontName /Masis /Flags 32 /ItalicAngle 0 /StemV 80 ' +
       '/Ascent 900 /Descent -200 /CapHeight 700 /FontBBox [-500 -300 1500 1000] /FontFile2 7 0 R >>',
     fontStreamObject(withoutCmap()),
   ]);

@@ -7,7 +7,7 @@ import { decodePredefined, predefinedCMap, splitPredefined } from './predefined-
 import { textForGlyphName } from './glyph-names';
 import { cffCidToGid, cffNameToGid, cffOutlineSource, openTypeCff } from './cff-outline';
 import { type1Font } from './type1-outline';
-import { outlineSource } from './glyf-outline';
+import { outlineSource, postGlyphNames } from './glyf-outline';
 import { standardFace, standardWidth } from './standard-widths';
 import { embeddedFontName, hasLiftableProgram } from './embedded-fonts';
 import { isZapfDingbats, zapfDingbatsChar } from './dingbats';
@@ -113,11 +113,34 @@ export function buildContentFont(file: PdfFile, fontDict: PdfDict): ContentFont 
   const unicode = fromProgram ?? (toUnicode.size > 0 ? toUnicode : (fromNames ?? toUnicode));
 
   const bytesPerCode = codeBytes;
+  // §9.6.6.4 — a simple TrueType whose program has NO `cmap`, and which names
+  // nothing: `/Differences` absent, `/ToUnicode` absent. Nothing in the file
+  // maps a code to a character, and nothing in the program can be reached by
+  // one — so the codes are glyph INDICES, and every reading of them as text is
+  // invention. TrueType_without_cmap.pdf draws four Armenian letters and came
+  // back "'>in", which is what its indices happen to spell in Latin-1.
+  const indices =
+    !isType0 &&
+    glyphs?.indexed === true &&
+    fromNames === undefined &&
+    toUnicode.size === 0 &&
+    glyphNames.size === 0;
   // §9.6.2.2 — a standard face whose own encoding is not the Latin one.
   const dingbats =
     !isType0 && isZapfDingbats(asName(file.resolve(fontDict.get('BaseFont') ?? PDF_NULL)));
   // Annex D.2 — the encoding the codes are read through under /Differences.
-  const fromBase = isType0 ? undefined : baseEncoding(file, fontDict);
+  // Annex D.2 — the base encoding as glyph NAMES, which serve twice: the text a
+  // code stands for, and the glyph it selects in a program addressed by name.
+  const baseNames = isType0 ? undefined : baseEncoding(file, fontDict);
+  const fromBase = new Map<number, string>();
+  for (const [code, glyph] of baseNames ?? []) {
+    const text = textForGlyphName(glyph);
+    if (text !== undefined) fromBase.set(code, text);
+  }
+  // §9.6.6 — the name a code selects, `/Differences` first and the base
+  // encoding under it. A legacy eight-bit face states nothing but the base one,
+  // and its glyphs are reached through the program's `post` table.
+  const namesOf = new Map<number, string>([...(baseNames ?? []), ...glyphNames]);
   const style = faceStyle(file, fontDict, isType0);
   const name = runFontName(file, fontDict, isType0);
   const type3 =
@@ -137,6 +160,7 @@ export function buildContentFont(file: PdfFile, fontDict: PdfDict): ContentFont 
   // Marked unreadable it is stripped from the output just the same, and the
   // reconstruction reports it (see `./layout`).
   const decodeOne = (code: number): string =>
+    (indices ? UNANSWERABLE : undefined) ??
     unicode.get(code) ??
     fromProgramFor(code) ??
     (named ? decodePredefined(named, code) : undefined) ??
@@ -156,7 +180,7 @@ export function buildContentFont(file: PdfFile, fontDict: PdfDict): ContentFont 
     // text font and it is only a guess: 0xD0 is Eth there and an em dash in
     // StandardEncoding, and ZapfDingbats.pdf's title — Times, no /Encoding at
     // all — came back as "Character Sets Ð Zapf Dingbats".
-    fromBase?.get(code) ??
+    fromBase.get(code) ??
     // A composite code nothing could answer for is unrecoverable text, whether
     // the font stated NO map or a map that does not reach this code.
     // bug911034.pdf ships a `/ToUnicode` describing 95 codes and then draws
@@ -183,7 +207,7 @@ export function buildContentFont(file: PdfFile, fontDict: PdfDict): ContentFont 
     // as type, not traced.
     ...(isType0
       ? outlineOf(file, fontDict, decodeOne)
-      : simpleOutlineOf(decodeOne, glyphNames, glyphs)),
+      : simpleOutlineOf(decodeOne, namesOf, glyphs)),
     ...(named?.vertical ? { verticalAdvance: cidVerticalAdvance(file, fontDict) } : {}),
     ...(type3 ? { type3 } : {}),
     ...(name !== undefined ? { name } : {}),
@@ -391,7 +415,10 @@ function simpleOutlineOf(
       path: (code: number): Array<PathSeg> | undefined => {
         if (readable(decodeOne(code)) !== UNANSWERABLE) return undefined;
         const name = nameOf.get(code) ?? source.builtIn?.get(code);
-        return name === undefined ? undefined : source.byName(name);
+        // A program that names nothing and maps nothing is addressed the only
+        // way that is left: by index, which is what the code is.
+        if (name === undefined) return source.byIndex?.(code);
+        return source.byName(name);
       },
     },
   };
@@ -409,6 +436,14 @@ interface SimpleGlyphs {
   readonly blank: (name: string) => boolean;
   /** §5 — a Type 1 program's own `/Encoding`, where the file states none. */
   readonly builtIn?: ReadonlyMap<number, string>;
+  /** The glyph at an INDEX, for a program whose codes are indices. */
+  readonly byIndex?: (gid: number) => Array<PathSeg> | undefined;
+  /**
+   * Whether the program can be reached by character at all. A TrueType with no
+   * `cmap` cannot (§9.6.6.4): its codes are glyph indices, and every reading of
+   * them as text is invention.
+   */
+  readonly indexed?: boolean;
 }
 
 /**
@@ -447,8 +482,12 @@ function simpleGlyphs(file: PdfFile, fontDict: PdfDict): SimpleGlyphs | undefine
     // A TrueType program, or the TrueType half of an OpenType shell.
     const glyf = outlineSource(bytes);
     if (glyf) {
+      // §post — the names the program itself gives its glyphs, which is how a
+      // legacy eight-bit face is reached: it has no `cmap`, and its shapes sit
+      // under Latin names.
+      const named = postGlyphNames(bytes);
       const gidOf = (name: string): number | undefined => {
-        const gid = numberedGlyph(name);
+        const gid = named?.get(name) ?? numberedGlyph(name);
         return gid !== undefined && gid < glyf.count ? gid : undefined;
       };
       return {
@@ -460,6 +499,11 @@ function simpleGlyphs(file: PdfFile, fontDict: PdfDict): SimpleGlyphs | undefine
           const gid = gidOf(name);
           return gid !== undefined && glyf.path(gid) === undefined;
         },
+        byIndex: (gid: number): Array<PathSeg> | undefined =>
+          gid < glyf.count ? glyf.path(gid) : undefined,
+        // §9.6.6.4 — with no `cmap` the program cannot be reached by character
+        // at all, which is the file saying what its codes are.
+        indexed: !glyf.cmap,
       };
     }
     const cff = openTypeCff(bytes) ?? bytes;
@@ -668,7 +712,8 @@ const MAX_W2_RANGE = 65_536;
  * substituted face has none worth guessing at, so both keep the Latin-1
  * reading, which is what the codes of such a file nearly always are.
  *
- * @returns The map, or `undefined` where nothing better than Latin-1 is known.
+ * @returns Code → glyph NAME, or `undefined` where nothing better than Latin-1
+ *          is known.
  */
 function baseEncoding(file: PdfFile, fontDict: PdfDict): ReadonlyMap<number, string> | undefined {
   const encoding = file.resolve(fontDict.get('Encoding') ?? PDF_NULL);
@@ -684,13 +729,7 @@ function baseEncoding(file: PdfFile, fontDict: PdfDict): ReadonlyMap<number, str
       : isStandardLatinFace(asName(file.resolve(fontDict.get('BaseFont') ?? PDF_NULL)))
         ? standardEncodingTable()
         : undefined;
-  if (table === undefined) return undefined;
-  const out = new Map<number, string>();
-  for (const [code, glyph] of table) {
-    const text = textForGlyphName(glyph);
-    if (text !== undefined) out.set(code, text);
-  }
-  return out;
+  return table;
 }
 
 /** §9.6.6.1 `/Encoding` `/Differences` — code → glyph name, as the array runs. */

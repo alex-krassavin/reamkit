@@ -17,6 +17,7 @@
 // `unitsPerEm`), so the caller places it with the same matrix it would use for
 // a Type 3 font whose `/FontMatrix` is `[1/upem 0 0 1/upem 0 0]`.
 
+import { macGlyphName } from './encodings';
 import type { PathSeg } from './content';
 
 /** A reader for one font program's outlines, with its tables located once. */
@@ -28,6 +29,13 @@ export interface OutlineSource {
    * nothing is a blank one — a space — and not a glyph the program lacks.
    */
   readonly count: number;
+  /**
+   * Whether an sfnt program carries a `cmap` at all. Without one there is no
+   * way to reach a glyph by character (§9.6.6.4), which says what the file
+   * means by its codes: they are glyph INDICES. Absent for a bare CFF, which
+   * has no such table and is addressed by NAME through its charset.
+   */
+  readonly cmap?: boolean;
 }
 
 /**
@@ -78,6 +86,7 @@ export function outlineSource(program: Uint8Array): OutlineSource | undefined {
 
   return {
     count: Math.max(0, Math.floor(loca.length / (longLoca ? 4 : 2)) - 1),
+    cmap: (tables.get('cmap')?.length ?? 0) > 0,
     path: (gid: number): Array<PathSeg> | undefined => {
       const had = cache.get(gid);
       if (had !== undefined || cache.has(gid)) return had;
@@ -96,6 +105,61 @@ export function outlineSource(program: Uint8Array): OutlineSource | undefined {
 
 /** A composite glyph may name another composite; this is where that stops. */
 const MAX_COMPONENT_DEPTH = 5;
+
+/**
+ * §post format 2.0 — the NAME each glyph of a TrueType program goes by.
+ *
+ * A legacy eight-bit font is reached through this table and nothing else. Its
+ * program carries no `cmap`, so a code cannot be turned into a character and
+ * then into a glyph; what it can be turned into is a glyph NAME, through the
+ * encoding the font dictionary states (Annex D.2) — and the name is looked up
+ * here. TrueType_without_cmap.pdf is an Armenian face, Masis, whose `i` draws
+ * ի: read as text its line came back "'>in", and drawn by name it is the line
+ * the page shows.
+ *
+ * @param program The raw `/FontFile2` bytes.
+ * @returns Glyph name → index, or `undefined` where the table is missing or
+ *          states no names of its own (formats 1.0 and 3.0).
+ */
+export function postGlyphNames(program: Uint8Array): Map<string, number> | undefined {
+  let tables: Map<string, { offset: number; length: number }>;
+  try {
+    tables = sfntTables(program);
+  } catch {
+    return undefined;
+  }
+  const post = tables.get('post');
+  if (!post || post.length < 34) return undefined;
+  const view = new DataView(program.buffer, program.byteOffset, program.byteLength);
+  if (safeUint32(view, post.offset) !== POST_NAMED) return undefined;
+  const count = safeUint16(view, post.offset + 32);
+  const end = post.offset + post.length;
+  if (post.offset + 34 + count * 2 > end) return undefined;
+  // The Pascal strings after the index array, in the order they are written:
+  // index 258 is the first of them, 259 the second, and so on.
+  const own: Array<string> = [];
+  for (let at = post.offset + 34 + count * 2; at < end; ) {
+    const length = program[at] ?? 0;
+    if (at + 1 + length > end) break;
+    own.push(String.fromCharCode(...program.subarray(at + 1, at + 1 + length)));
+    at += 1 + length;
+  }
+  const out = new Map<string, number>();
+  for (let gid = 0; gid < count; gid++) {
+    const index = safeUint16(view, post.offset + 34 + gid * 2);
+    const name = index < MAC_ORDER_SIZE ? macGlyphName(index) : own[index - MAC_ORDER_SIZE];
+    // The first glyph to claim a name keeps it: a subset that leaves several
+    // glyphs `.notdef` would otherwise hand the name to the last of them.
+    if (name !== undefined && name.length > 0 && !out.has(name)) out.set(name, gid);
+  }
+  return out.size > 0 ? out : undefined;
+}
+
+/** `post` version 2.0 — the only one that states names of its own. */
+const POST_NAMED = 0x0002_0000;
+
+/** How many names the Macintosh standard order holds (§post). */
+const MAC_ORDER_SIZE = 258;
 
 /** The sfnt table directory: tag → where that table is. */
 function sfntTables(program: Uint8Array): Map<string, { offset: number; length: number }> {
