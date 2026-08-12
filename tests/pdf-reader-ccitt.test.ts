@@ -138,6 +138,56 @@ function encode1D(bitmap: Uint8Array, width: number, height: number): Uint8Array
   return bw.bytes();
 }
 
+// Group 3 mixed: every other line one-dimensional, the rest two-dimensional,
+// each preceded by its tag bit — and, where `eol` says so, by an end-of-line.
+function encodeMixed(bitmap: Uint8Array, width: number, height: number, eol: boolean): Uint8Array {
+  const bw = new BitWriter();
+  let ref: Array<number> = [width, width];
+  for (let y = 0; y < height; y++) {
+    const oneDimensional = y % 2 === 0;
+    if (eol) bw.str('000000000001');
+    bw.str(oneDimensional ? '1' : '0');
+    const cur = changesOf(bitmap, y, width);
+    if (oneDimensional) {
+      let x = 0;
+      let color = 0;
+      while (x < width) {
+        let run = 0;
+        while (x < width && bitmap[y * width + x] === color) {
+          run++;
+          x++;
+        }
+        writeRun(bw, color === 0 ? WHITE : BLACK, run);
+        color ^= 1;
+      }
+    } else {
+      let a0 = -1;
+      let color = 0;
+      while (a0 < width) {
+        const a1 = firstGreater(cur, a0);
+        const [b1, b2] = findB(ref, a0, color, width);
+        if (b2 < a1) {
+          bw.str(modeBits('pass', 0));
+          a0 = b2;
+        } else if (a1 - b1 >= -3 && a1 - b1 <= 3) {
+          bw.str(modeBits('vertical', a1 - b1));
+          a0 = a1;
+          color ^= 1;
+        } else {
+          const a2 = firstGreater(cur, a1);
+          const start = a0 < 0 ? 0 : a0;
+          bw.str(modeBits('horizontal', 0));
+          writeRun(bw, color === 0 ? WHITE : BLACK, a1 - start);
+          writeRun(bw, color === 0 ? BLACK : WHITE, a2 - a1);
+          a0 = a2;
+        }
+      }
+    }
+    ref = cur;
+  }
+  return bw.bytes();
+}
+
 // Unpack the decoder's packed bitmap (bit 1 = black) to a 0/1 array.
 function unpackBitmap(packed: Uint8Array, width: number, height: number): Uint8Array {
   const rowBytes = (width + 7) >> 3;
@@ -230,10 +280,24 @@ describe('CCITT fax decode (E-PDF EP15)', () => {
     expect([...unpackBitmap(packed!, w, h)]).toEqual([...bitmap]);
   });
 
-  it('declines Group 3 two-dimensional (K > 0)', () => {
-    expect(decodeCcitt(Uint8Array.of(0xff), { k: 1, columns: 8, rows: 1, byteAlign: false })).toBe(
-      undefined,
-    );
+  it('round-trips a bitmap through Group 3 MIXED coding (K > 0)', () => {
+    // T.4 §4.2.1 — under mixed coding every line says which of the two it is:
+    // an end-of-line, then one bit, 1 for one-dimensional and 0 for two.
+    // ccitt_EndOfBlock_false.pdf draws the same word six times — `/K -1`,
+    // `/K 0`, `/K 1`, each twice — and the two `/K 1` panels were the only
+    // ones missing from the page.
+    const [w, h] = [48, 9];
+    const bitmap = pattern(w, h);
+    for (const eol of [true, false]) {
+      const packed = decodeCcitt(encodeMixed(bitmap, w, h, eol), {
+        k: 1,
+        columns: w,
+        rows: h,
+        byteAlign: false,
+      });
+      expect(packed).toBeDefined();
+      expect([...unpackBitmap(packed!, w, h)]).toEqual([...bitmap]);
+    }
   });
 });
 
