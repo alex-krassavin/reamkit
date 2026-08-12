@@ -161,6 +161,77 @@ describe('a page of turned words is a page, not prose (§9.4.2)', () => {
   });
 });
 
+describe('a paragraph keeps the indent the page set it with (§17.3.1.12)', () => {
+  const parasOf = (content: string) => {
+    const doc = reconstructByLayout(
+      PdfFile.parse(
+        onePagePdf('/MediaBox [0 0 400 400] /Resources << /Font << /F0 5 0 R >> >>', content, [
+          '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+        ]),
+      ),
+    ).doc;
+    return doc.body.flatMap((b) => (b.kind === 'paragraph' ? [b.paragraph] : []));
+  };
+  const line = (x: number, y: number, text: string): string =>
+    `BT /F0 10 Tf 1 0 0 1 ${String(x)} ${String(y)} Tm (${text}) Tj ET`;
+
+  it('reads a list item’s indent and its hanging marker', () => {
+    // bug1997343.pdf sets "• They may be unordered bullet lists" ten points in
+    // and its nested "1. lists may also be nested" twenty more, and every one
+    // of them came back flush left against the column.
+    const paras = parasOf(
+      [
+        line(40, 360, 'A line of body text right across the measure'),
+        line(40, 346, 'and it ends here.'),
+        line(55, 332, '- an item whose marker hangs to the left'),
+        line(65, 318, 'and the item runs on under its own text'),
+      ].join('\n'),
+    );
+    const item = paras.find((p) =>
+      p.runs
+        .map((r) => r.text)
+        .join('')
+        .startsWith('-'),
+    );
+    expect(item).toBeDefined();
+    // The BODY of the item is 25pt in; its marker hangs 10pt out of that.
+    expect(item?.properties.indentLeft).toBeCloseTo(25, 0);
+    expect(item?.properties.indentFirstLine).toBeCloseTo(-10, 0);
+    // …and the body it follows is not indented at all.
+    expect(paras[0]?.properties.indentLeft ?? 0).toBe(0);
+  });
+
+  it('starts a paragraph where a short line is followed by an indented one', () => {
+    // The oldest mark in typography. It used to CANCEL the test that ends a
+    // paragraph — the two lines "start at different edges" — so bug1997343.pdf
+    // read "…figures and mathematics. Apart from two commands at the start…"
+    // as one paragraph where the file sets two.
+    const paras = parasOf(
+      [
+        line(40, 360, 'A line of body text right across the measure'),
+        line(40, 346, 'and it ends.'),
+        line(55, 332, 'Apart from that, a new paragraph opens set in'),
+        line(40, 318, 'and runs on to its second line at the measure'),
+      ].join('\n'),
+    );
+    expect(paras).toHaveLength(2);
+    expect(paras[1]?.runs.map((r) => r.text).join('')).toContain('Apart from that');
+    expect(paras[1]?.properties.indentFirstLine).toBeCloseTo(15, 0);
+  });
+
+  it('keeps a list item whose marker line runs the full measure', () => {
+    // A FULL line followed by an indented one is an item and its continuation,
+    // not two paragraphs.
+    const paras = parasOf(
+      [
+        line(40, 360, 'A line of body text right across the measure'),
+        line(55, 346, 'and its own second line, set in under it'),
+      ].join('\n'),
+    );
+    expect(paras).toHaveLength(1);
+  });
+});
+
 describe('mathematics is set the way the page sets it', () => {
   const spansOf = (content: string) => {
     const doc = reconstructByLayout(

@@ -99,7 +99,10 @@ export interface TextSpan {
 export function paragraphFromRuns(
   spans: ReadonlyArray<TextSpan>,
   outlineLevel?: number,
-  placement?: Pick<ParagraphProperties, 'alignment' | 'spacingBefore'>,
+  placement?: Pick<
+    ParagraphProperties,
+    'alignment' | 'spacingBefore' | 'indentLeft' | 'indentFirstLine'
+  >,
 ): BodyElement {
   const merged: Array<{
     text: string;

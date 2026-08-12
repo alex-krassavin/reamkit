@@ -234,6 +234,10 @@ export function reconstructByLayout(
           el: paragraphFromRuns(para.spans, headingLevel(para.fontSize, medianFont), {
             ...(para.alignment !== undefined ? { alignment: para.alignment } : {}),
             ...(para.spacingBefore !== undefined ? { spacingBefore: pt(para.spacingBefore) } : {}),
+            ...(para.indentLeft !== undefined ? { indentLeft: pt(para.indentLeft) } : {}),
+            ...(para.indentFirstLine !== undefined
+              ? { indentFirstLine: pt(para.indentFirstLine) }
+              : {}),
           }),
         });
       }
@@ -1331,6 +1335,8 @@ function groupIntoParagraphs(
   fontSize: number;
   top: number;
   alignment?: 'center' | 'right';
+  indentLeft?: number;
+  indentFirstLine?: number;
   spacingBefore?: number;
 }> {
   const groups: Array<Array<Line>> = [];
@@ -1351,6 +1357,14 @@ function groupIntoParagraphs(
     groups[groups.length - 1]!.push(line);
     prev = line;
   }
+  // §17.3.1.12 — where the COLUMN's own text begins, which is what an indented
+  // paragraph is indented from. Not the leftmost line: a marginal note set
+  // outside the measure is not the measure, and bug1997343.pdf puts one forty-
+  // five points left of its body. Not the median either — a page can be half
+  // list — but the low end of the run of line starts, which the body holds
+  // whatever else is on the page.
+  const starts = lines.map((l) => l.x).sort((a, b) => a - b);
+  const columnLeft = starts[Math.floor(starts.length * COLUMN_LEFT_QUANTILE)] ?? 0;
   return groups.map((g, i) => {
     const first = g[0]!;
     const fontSize = Math.max(...g.map((l) => l.fontSize));
@@ -1372,9 +1386,63 @@ function groupIntoParagraphs(
       top: first.y,
       ...(spacingBefore !== undefined ? { spacingBefore } : {}),
       ...alignmentOf(g, column),
+      ...indentOf(g, columnLeft, alignmentOf(g, column).alignment),
     };
   });
 }
+
+/** How many lines' worth of indent still reads as a first line, not a placement. */
+const INDENT_LINES = 3;
+
+/** Where in the run of line starts the column's own left edge is looked for. */
+const COLUMN_LEFT_QUANTILE = 0.15;
+
+/**
+ * §17.3.1.12 `w:ind` — how far a paragraph is set in from its column, and where
+ * its first line begins.
+ *
+ * A PDF states neither: every line is placed absolutely, and read flat every
+ * paragraph came back against the left edge. That is most of what a list looks
+ * like — bug1997343.pdf sets "• They may be unordered bullet lists" ten points
+ * in and its nested "1. lists may also be nested" twenty more, and we set all
+ * of them flush left — and it is the whole of a first-line indent, which is how
+ * most of the world's prose marks a new paragraph.
+ *
+ * The first line is measured against the REST of the paragraph, which is what
+ * `indentFirstLine` means: positive is a first line set in (a new paragraph),
+ * negative a hanging one (a list, its marker standing out to the left).
+ *
+ * A paragraph that is centred or set to the right is placed, not indented, and
+ * keeps neither.
+ *
+ * @param lines      The paragraph's lines.
+ * @param columnLeft Where the column's own text begins.
+ * @param alignment  What {@link alignmentOf} made of it.
+ */
+function indentOf(
+  lines: ReadonlyArray<Line>,
+  columnLeft: number,
+  alignment: 'center' | 'right' | undefined,
+): { indentLeft?: number; indentFirstLine?: number } {
+  if (alignment !== undefined || lines.length === 0) return {};
+  const size = Math.max(...lines.map((l) => l.fontSize)) || 10;
+  const rest = lines.slice(1);
+  const body = rest.length > 0 ? Math.min(...rest.map((l) => l.x)) : lines[0]!.x;
+  const left = body - columnLeft;
+  const first = lines[0]!.x - body;
+  const enough = size * INDENT_EM;
+  return {
+    ...(Math.abs(left) >= enough ? { indentLeft: left } : {}),
+    ...(Math.abs(first) >= enough ? { indentFirstLine: first } : {}),
+  };
+}
+
+/**
+ * How far, in ems, a paragraph has to be set in before it is indented rather
+ * than merely started. Half an em clears the rounding a producer leaves at the
+ * head of a line and is well under the smallest indent anybody sets.
+ */
+const INDENT_EM = 0.5;
 
 /**
  * Whether a line ENDED a paragraph, rather than wrapping into the next.
@@ -1404,9 +1472,17 @@ export function endedParagraph(
   if (!column) return false;
   const width = column.right - column.left;
   if (!(width > 0)) return false;
-  // A first-line indent is a quarter-inch or so; beyond that the two lines are
-  // not part of one setting.
-  if (Math.abs(prev.x - next.x) > Math.max(prev.fontSize, 4)) return false;
+  const step = Math.max(prev.fontSize, 4);
+  const shift = next.x - prev.x;
+  // A line that begins LEFT of the one before it, or a whole measure to the
+  // right of it, is not part of the same setting — the block is placed.
+  if (shift < -step || shift > step * INDENT_LINES) return false;
+  // A modest indent to the right is the oldest mark in typography for a new
+  // paragraph, and it used to CANCEL the test below: bug1997343.pdf sets
+  // "…figures and mathematics." and then indents "Apart from two commands at
+  // the start…", and the two came back as one paragraph. It is read together
+  // with the short line that precedes it — a full line followed by an indented
+  // one is a list item and its own continuation, not two paragraphs.
   // A quarter of the measure: less than that is the ragged edge every
   // unjustified paragraph has, and breaking on it would cut prose into lines.
   return column.right - (prev.x + prev.width) > width * 0.25;
@@ -1447,12 +1523,16 @@ function alignmentOf(
   ) {
     return { alignment: 'center' };
   }
-  // Flush right: every line ends at the measure and at least one starts well
-  // inside it. A justified paragraph fails this on its last line, which is the
-  // only place the two differ at all.
+  // Flush right: every line ends at the measure, at least one starts well
+  // inside it, and they start at DIFFERENT places — a block set to the right is
+  // ragged on its left, and one that is merely indented is not. A justified
+  // paragraph fails the first test on its last line, which is the only place
+  // the two differ at all.
+  const leads = insets.map((i) => i.lead);
   if (
     insets.every((i) => i.trail <= even) &&
-    Math.max(...insets.map((i) => i.lead)) >= meaningful
+    Math.max(...leads) >= meaningful &&
+    Math.max(...leads) - Math.min(...leads) > even
   ) {
     return { alignment: 'right' };
   }
