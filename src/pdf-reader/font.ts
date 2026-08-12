@@ -9,10 +9,11 @@ import { cffCidToGid, cffNameToGid, cffOutlineSource, openTypeCff } from './cff-
 import { type1Font } from './type1-outline';
 import { outlineSource } from './glyf-outline';
 import { standardFace, standardWidth } from './standard-widths';
-import { embeddedFontName } from './embedded-fonts';
+import { embeddedFontName, hasLiftableProgram } from './embedded-fonts';
 import type { PdfDict, PdfValue } from '@/pdf/objects';
 import type { ContentFont, GlyphOutline, Matrix, PathSeg, Type3Face } from './content';
 import type { PdfFile } from './document';
+import { resolveFamilyStyle } from '@/core/fonts';
 import { PDF_NULL, PdfName, PdfStream } from '@/pdf/objects';
 import { parseTtf } from '@/core/font/ttf-parser';
 
@@ -111,7 +112,7 @@ export function buildContentFont(file: PdfFile, fontDict: PdfDict): ContentFont 
 
   const bytesPerCode = codeBytes;
   const style = faceStyle(file, fontDict, isType0);
-  const name = embeddedFontName(file, fontDict);
+  const name = runFontName(file, fontDict, isType0);
   const type3 =
     asName(file.resolve(fontDict.get('Subtype') ?? PDF_NULL)) === 'Type3'
       ? type3Face(file, fontDict)
@@ -651,6 +652,45 @@ function differences(file: PdfFile, fontDict: PdfDict): Map<number, string> {
   }
   return out;
 }
+
+/**
+ * §9.8.2 — the family a run states: the file's own name for the face, plus what
+ * the file says the face IS.
+ *
+ * The name is a hint for the substitution and nothing more, unless the reader
+ * can lift the program itself (§9.9 `/FontFile2`) — then it is the key the face
+ * is filed under and must be left exactly as it is. Everything else is
+ * substituted by name, and TeX and PostScript producers embed Type 1 and CFF
+ * programs under names no table knows: `NimbusRomNo9L-Regu`, `LMRoman10`,
+ * `CMR10`, `stonesans`. Every one of those pages came back set in a grotesque
+ * — the loudest single difference between our page and a serif document's.
+ *
+ * The descriptor states the class outright, so where the name says nothing the
+ * flags do: bit 1 is FixedPitch and bit 2 Serif.
+ *
+ * @param file     The document.
+ * @param fontDict The font dictionary.
+ * @param isType0  Whether it is a composite font, whose descendant owns the
+ *                 descriptor.
+ * @returns The family name for the run, or `undefined` where the font has none.
+ */
+function runFontName(file: PdfFile, fontDict: PdfDict, isType0: boolean): string | undefined {
+  const name = embeddedFontName(file, fontDict);
+  if (name === undefined || hasLiftableProgram(file, fontDict)) return name;
+  // A name the substitution knows already says what it is.
+  if (resolveFamilyStyle(name).key !== 'arimo') return name;
+  const owner = isType0 ? descendantFont(file, fontDict) : fontDict;
+  const descriptor = file.resolve(owner.get('FontDescriptor') ?? PDF_NULL);
+  if (!(descriptor instanceof Map)) return name;
+  const flags = asNumber(file.resolve(descriptor.get('Flags') ?? PDF_NULL), 0);
+  if ((flags & FLAG_FIXED_PITCH) !== 0) return `${name} monospace`;
+  if ((flags & FLAG_SERIF) !== 0) return `${name} serif`;
+  return name;
+}
+
+/** §9.8.2 `/Flags` — bit 1 is FixedPitch, bit 2 Serif (bits numbered from 1). */
+const FLAG_FIXED_PITCH = 1 << 0;
+const FLAG_SERIF = 1 << 1;
 
 /** §9.8.2 `/Flags` — bit 7 is Italic, bit 19 ForceBold (bits numbered from 1). */
 const FLAG_ITALIC = 1 << 6;

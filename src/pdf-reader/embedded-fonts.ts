@@ -125,6 +125,20 @@ export function embeddedFontName(file: PdfFile, fontDict: PdfDict): string | und
   return name.length > 0 ? name.toLowerCase() : undefined;
 }
 
+/**
+ * Whether this font carries a program this pipeline can set the page in.
+ *
+ * Only `/FontFile2` is liftable, and a run in such a face is filed under the
+ * face's own name — so that name must be left exactly as it is. Every other
+ * face is SUBSTITUTED, and its name is free to say what it is.
+ *
+ * @param file     The document.
+ * @param fontDict The font dictionary.
+ */
+export function hasLiftableProgram(file: PdfFile, fontDict: PdfDict): boolean {
+  return fontProgram(file, fontDict) !== undefined;
+}
+
 /** §9.9 `/FontFile2` — the TrueType program, off the font or its descendant. */
 function fontProgram(file: PdfFile, fontDict: PdfDict): Uint8Array | undefined {
   const owner = descendant(file, fontDict) ?? fontDict;

@@ -68,6 +68,27 @@ describe('a family name that also names the face (E-FONT F3)', () => {
   });
 });
 
+describe('the families a PDF names (E-FONT F3)', () => {
+  it('reads the families that are a stem and a size', () => {
+    // A word processor asks for "Times New Roman"; a PDF carries the face it
+    // was SET in, and TeX and PostScript producers name theirs by stem and
+    // size. Matched against the tables whole, every one of them fell through
+    // to the generic sans — so every paper, every preprint, every LaTeX
+    // document came back set in a grotesque. bug1997343.pdf is LMRoman,
+    // comments.pdf and TAMReview.pdf NimbusRomNo9L.
+    expect(resolveFamilyStyle('LMRoman10-Regular').key).toBe('tinos');
+    expect(resolveFamilyStyle('CMR10').key).toBe('tinos');
+    expect(resolveFamilyStyle('NimbusRomNo9L-Regu').key).toBe('tinos');
+    expect(resolveFamilyStyle('LatinModernMath-Regular').key).toBe('tinos');
+    // …and the same families' typewriter and sans cuts are not serif.
+    expect(resolveFamilyStyle('CMTT10').key).toBe('cousine');
+    expect(resolveFamilyStyle('LMSans10-Regular').key).toBe('arimo');
+    expect(resolveFamilyStyle('NimbusSanL-Regu').key).toBe('arimo');
+    // A name that says nothing still says nothing.
+    expect(resolveFamilyStyle('SomeFoundryFace').key).toBe('arimo');
+  });
+});
+
 describe('a face the font set does not carry (E-FONT F3)', () => {
   it('draws the weight and the slant the file has no cut for', async () => {
     // `FontBytesByVariant` requires only `regular`: a caller who supplies one
