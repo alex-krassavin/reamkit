@@ -161,6 +161,52 @@ describe('a page of turned words is a page, not prose (§9.4.2)', () => {
   });
 });
 
+describe('a crop box cuts the line it crosses (§14.11.2)', () => {
+  it('keeps the letters the page shows and drops the rest', () => {
+    // endchar.pdf is one line of a poster — "LE HOLD-UP PLANÉTAIRE" — cropped
+    // to the fourteen points that hold its É, which is all any viewer shows.
+    // A run that reached into the shown page was kept whole, so the line was
+    // re-set into a column fourteen points wide: four pages of one letter.
+    const doc = reconstructByLayout(
+      PdfFile.parse(
+        onePagePdf(
+          '/MediaBox [0 0 300 300] /CropBox [200 90 260 120] ' +
+            '/Resources << /Font << /F0 5 0 R >> >>',
+          'BT /F0 12 Tf 1 0 0 1 20 100 Tm (ABCDEFGHIJKLMNOPQRSTUVWXYZ) Tj ET',
+          ['<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'],
+        ),
+      ),
+    ).doc;
+    const text = doc.body
+      .flatMap((b) => (b.kind === 'paragraph' ? b.paragraph.runs.map((r) => r.text) : []))
+      .join('');
+    // Helvetica sets those capitals about 8.4pt apart from x=20, so the line
+    // ends around 240 and the crop's 200..260 holds its last few letters. Which
+    // few is an estimate — the run states its width, not its every letter — and
+    // the answer is a letter either way.
+    expect(text.length).toBeGreaterThan(2);
+    expect(text.length).toBeLessThan(12);
+    expect('ABCDEFGHIJKLMNOPQRSTUVWXYZ'.endsWith(text)).toBe(true);
+  });
+
+  it('leaves a line the crop does not reach', () => {
+    const doc = reconstructByLayout(
+      PdfFile.parse(
+        onePagePdf(
+          '/MediaBox [0 0 300 300] /CropBox [0 0 300 300] ' +
+            '/Resources << /Font << /F0 5 0 R >> >>',
+          'BT /F0 12 Tf 1 0 0 1 20 100 Tm (ABCDEFGHIJ) Tj ET',
+          ['<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'],
+        ),
+      ),
+    ).doc;
+    const text = doc.body
+      .flatMap((b) => (b.kind === 'paragraph' ? b.paragraph.runs.map((r) => r.text) : []))
+      .join('');
+    expect(text).toBe('ABCDEFGHIJ');
+  });
+});
+
 describe('a leader is not a row of spaced dots (§17.3.1.25)', () => {
   it('joins the dots and ends the entry at the line', () => {
     // A leader is drawn one character at a time with a step about as wide as a

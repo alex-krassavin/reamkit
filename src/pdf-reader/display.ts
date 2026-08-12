@@ -99,7 +99,51 @@ export function placeRuns(runs: ReadonlyArray<TextRun>, d: Display): Array<TextR
         Math.max(r.x, r.endX),
         Math.max(r.y, r.endY) + r.fontSizePt * 0.85,
       ),
-    );
+    )
+    .map((r) => cropped(r, d));
+}
+
+/**
+ * §14.11.2 — a run the crop's edge cuts through, as the letters it shows.
+ *
+ * A run that reaches into the shown page was kept whole, which is right where
+ * the crop trims a hair and wrong where it trims a line: endchar.pdf is one
+ * line of a poster, "LE HOLD-UP PLANÉTAIRE", cropped to the fourteen points
+ * that hold its É. Every viewer shows that one letter. Reflowed, the whole
+ * line was re-set into a column fourteen points wide and came back as four
+ * pages of one letter each.
+ *
+ * A letter is kept where any part of it is inside, so a crop that shaves an
+ * edge takes nothing. Where in the run each letter falls is estimated from the
+ * run's own width, which is exact for a face set solid and near enough for one
+ * that is not — the answer is a letter either way.
+ *
+ * @param run The run, already placed on the shown page.
+ * @param d   The page's shown geometry.
+ * @returns The run, or the part of it the page shows.
+ */
+function cropped(run: TextRun, d: Display): TextRun {
+  const from = Math.min(run.x, run.endX);
+  const to = Math.max(run.x, run.endX);
+  const chars = [...run.text];
+  // Nothing to cut: the run sits inside, or is turned (where the estimate
+  // below does not hold), or is a single letter that has nowhere to go.
+  if (from >= 0 && to <= d.width) return run;
+  if (run.angleDeg !== undefined || chars.length < 2 || !(to > from)) return run;
+  const step = (to - from) / chars.length;
+  const first = Math.max(0, Math.floor((0 - from) / step));
+  const last = Math.min(chars.length - 1, Math.ceil((d.width - from) / step) - 1);
+  if (first > last) return run;
+  if (first === 0 && last === chars.length - 1) return run;
+  const backwards = run.endX < run.x;
+  const startX = from + first * step;
+  const endX = from + (last + 1) * step;
+  return {
+    ...run,
+    text: chars.slice(first, last + 1).join(''),
+    x: backwards ? endX : startX,
+    endX: backwards ? startX : endX,
+  };
 }
 
 /**
