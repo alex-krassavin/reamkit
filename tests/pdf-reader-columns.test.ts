@@ -111,13 +111,15 @@ describe('two-column reconstruction (E-PDF EP17)', () => {
     // columns of comment and a sidebar of figures down the right — and asked
     // for the ONE best gutter it took the body's and read the sidebar as part
     // of the text, opening the page with the guidance box from the margin.
+    // The lines FILL their columns, which is what tells a page set in columns
+    // from a page ruled into them (see the ruled test below).
     const ops = ['BT /F1 10 Tf'];
     for (let i = 0; i < ROWS; i++) {
       const y = 720 - i * 24;
       const n = String(i + 1).padStart(2, '0');
-      ops.push(`1 0 0 1 72 ${String(y)} Tm (L${n}) Tj`);
-      ops.push(`1 0 0 1 280 ${String(y)} Tm (M${n}) Tj`);
-      ops.push(`1 0 0 1 480 ${String(y)} Tm (R${n}) Tj`);
+      ops.push(`1 0 0 1 72 ${String(y)} Tm (L${n} and a line of prose that fills) Tj`);
+      ops.push(`1 0 0 1 280 ${String(y)} Tm (M${n} and a line of prose to fill) Tj`);
+      ops.push(`1 0 0 1 480 ${String(y)} Tm (R${n} and prose filling it) Tj`);
     }
     ops.push('ET');
     const text = Ream.parse(onePage(ops))
@@ -131,6 +133,32 @@ describe('two-column reconstruction (E-PDF EP17)', () => {
     expect(tokens.slice(0, ROWS)).toEqual(column('L'));
     expect(tokens.slice(ROWS, ROWS * 2)).toEqual(column('M'));
     expect(tokens.slice(ROWS * 2)).toEqual(column('R'));
+  });
+
+  it('reads a page RULED into columns by its rows, not by its columns', () => {
+    // A page of columns and a page of a table look alike from here: both have
+    // gutters, and both put their lines on one baseline grid. What separates
+    // them is the CELL — a line of prose fills its measure and a cell does not.
+    // ZapfDingbats.pdf is five hundred entries in a table of three groups, and
+    // read by column every row of it was torn into three.
+    const ops = ['BT /F1 9 Tf'];
+    for (let i = 0; i < ROWS; i++) {
+      const y = 720 - i * 14;
+      const n = String(i + 1).padStart(2, '0');
+      ops.push(`1 0 0 1 72 ${String(y)} Tm (A${n}) Tj`);
+      ops.push(`1 0 0 1 180 ${String(y)} Tm (B${n}) Tj`);
+      ops.push(`1 0 0 1 300 ${String(y)} Tm (C${n}) Tj`);
+      ops.push(`1 0 0 1 420 ${String(y)} Tm (D${n}) Tj`);
+    }
+    ops.push('ET');
+    const text = Ream.parse(onePage(ops))
+      .flow.body.map((el) =>
+        el.kind === 'paragraph' ? el.paragraph.runs.map((r) => r.text).join('') : '',
+      )
+      .join(' ');
+    const tokens = text.match(/[A-D]\d\d/gu) ?? [];
+    // Row by row: A01 B01 C01 D01, A02 B02 …
+    expect(tokens.slice(0, 8)).toEqual(['A01', 'B01', 'C01', 'D01', 'A02', 'B02', 'C02', 'D02']);
   });
 
   it('reads a full-width FOOTER after the columns it stands under', () => {

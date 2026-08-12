@@ -27,7 +27,7 @@ import { extractPageText } from './text';
 import { collectPageVectors } from './vector';
 import { markDrawnRules } from './text-rules';
 import { isRightToLeft } from './content';
-import type { BodyElement, Run, SectionProperties } from '@/core/document-model';
+import type { BodyElement, Run, SectionProperties, Table } from '@/core/document-model';
 import type { Loss, Pt } from '@/core/ir';
 
 import type { TextRun } from './content';
@@ -276,7 +276,11 @@ export function reconstructByLayout(
     const placedVectors = placeVectors(lifted.vectors, display);
     const ruled = markDrawnRules(runs, placedVectors);
     const vectors = placedVectors.filter((v) => !ruled.consumed.has(v));
-    if (split) {
+    // A page RULED into columns is a table, and its ROWS are what it says; a
+    // page SET in columns is prose, and its columns are. Read by column, a
+    // table comes back one column at a time with every row torn up.
+    const ruledIntoColumns = mode !== 'positional' && looksRuled(ruled.runs, gutters, textEdges);
+    if (split && !ruledIntoColumns) {
       // A run the rules pass rebuilt is not the one the split was measured on,
       // so its column is looked up by where it stands.
       const columnFor = (r: TextRun): number => split.columnOf.get(r) ?? colOf(r.x);
@@ -360,9 +364,12 @@ export function reconstructByLayout(
     // page the file draws. The count changes at a band that spans — the title
     // over the columns, the footer under them — and each change is a section of
     // its own, continuous, so no page is opened for it.
-    const spacePt = gutters.length > 0 ? median(gutters.map((g) => g.to - g.from)) : 0;
+    // The columns the page was READ in, which a ruled page has none of: its
+    // gutters are a table's, and the rows were taken whole.
+    const columnsHere = ruledIntoColumns ? 1 : gutters.length + 1;
+    const spacePt = columnsHere > 1 ? median(gutters.map((g) => g.to - g.from)) : 0;
     for (const block of blocks) {
-      const count = block.col === SPANNING_COLUMN ? 1 : gutters.length + 1;
+      const count = block.col === SPANNING_COLUMN ? 1 : columnsHere;
       if (count !== curColumns) {
         sectionEnds.push({
           at: body.length,
@@ -1746,3 +1753,74 @@ function footerBand(
     },
   ];
 }
+
+/**
+ * Whether the page is RULED into columns rather than SET in them.
+ *
+ * A page of two columns and a page of two columns of a table look alike from
+ * here: both have gutters, and both put their lines on one baseline grid — a
+ * paper's columns are set on the same grid as a matter of course, so "the rows
+ * line up" says nothing. What separates them is the CELL: a line of prose fills
+ * its measure and a cell does not. Across this corpus a paper's lines cover 84
+ * to 95 per cent of their column, and ZapfDingbats.pdf's cells cover 45.
+ *
+ * Read by column, its five hundred entries came back one column at a time with
+ * every row torn into three — "1 a17", "[x2711]", "2 a18" — over five pages.
+ * Read by ROW, which is what a ruled page says, each entry is a line of its own.
+ *
+ * @param runs    The page's runs.
+ * @param gutters The page's gutters.
+ * @param edges   Where the page's text starts and ends.
+ */
+function looksRuled(
+  runs: ReadonlyArray<TextRun>,
+  gutters: ReadonlyArray<Gutter>,
+  edges: { left: number; right: number } | undefined,
+): boolean {
+  // One gutter says nothing: a two-column index is short entries in two
+  // columns, exactly like a table of two, and read across it interleaves two
+  // lists that have nothing to do with each other — freeculture.pdf's index is
+  // that page. Two gutters and more is a ruling.
+  if (gutters.length < MIN_RULED_GUTTERS || !edges) return false;
+  const fontSize = median(runs.map((r) => r.fontSizePt).filter((s) => s > 0)) || 10;
+  const rows = rowsOf(runs, fontSize).filter((row) => row.length > 0);
+  if (rows.length < MIN_TABLE_ROWS) return false;
+  const bounds = [edges.left, ...gutters.map((g) => g.mid), edges.right];
+  const regions = bounds.slice(0, -1).map((lo, i) => [lo, bounds[i + 1]!] as const);
+  const regionOf = (x: number): number => {
+    for (let i = regions.length - 1; i >= 0; i--) if (x >= regions[i]![0]) return i;
+    return 0;
+  };
+  const fills: Array<number> = [];
+  let aligned = 0;
+  for (const row of rows) {
+    const byRegion = regions.map((): Array<TextRun> => []);
+    for (const run of row) byRegion[regionOf(run.x)]!.push(run);
+    byRegion.forEach((inRegion, i) => {
+      if (inRegion.length === 0) return;
+      const from = Math.min(...inRegion.map((r) => r.x));
+      const to = Math.max(...inRegion.map((r) => r.endX));
+      const width = regions[i]![1] - regions[i]![0];
+      if (width > 0) fills.push((to - from) / width);
+    });
+    if (byRegion.every((inRegion) => inRegion.length > 0)) aligned++;
+  }
+  if (aligned < rows.length * TABLE_ALIGNED_SHARE) return false;
+  fills.sort((a, b) => a - b);
+  return (fills[Math.floor(fills.length / 2)] ?? 1) <= TABLE_CELL_FILL;
+}
+
+/** Below this many gutters a page in columns is read as columns. */
+const MIN_RULED_GUTTERS = 2;
+
+/** Below this many rows a page is not ruled into anything. */
+const MIN_TABLE_ROWS = 6;
+
+/** How many of a table's rows must carry a cell in every one of its columns. */
+const TABLE_ALIGNED_SHARE = 0.6;
+
+/**
+ * How much of its column a CELL covers, at the median. A line of prose fills
+ * its measure — 84 to 95 per cent across this corpus — and a cell does not.
+ */
+const TABLE_CELL_FILL = 0.65;
