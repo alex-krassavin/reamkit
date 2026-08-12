@@ -96,10 +96,19 @@ function utf16be(bytes: Uint8Array): string {
   return s;
 }
 
-// Increment a single-unit destination by `i` for a bfrange (the dominant case);
-// a multi-unit destination is left as the base (rare ligature mappings).
+// §9.10.3 — a bfrange counts its destination up along with the code.
+//
+// What counts is the CHARACTER, and UTF-16 writes an astral one as two units:
+// `<043B> <0441> <D835DC4E>` maps seven codes to the italic letters a..g, and
+// measuring the destination in units left all seven at "𝑎" — bug1529502.pdf
+// says "HKDF(s, version, e, 32)" and we read "version, a".
 function incString(base: string, i: number): string {
   if (i === 0) return base;
-  if (base.length === 1) return String.fromCharCode(base.charCodeAt(0) + i);
-  return base;
+  const chars = [...base];
+  if (chars.length === 0) return base;
+  // A destination of several characters is a sequence — a ligature, or a letter
+  // with its mark — and it is the last of them the range counts up.
+  const last = chars[chars.length - 1]!.codePointAt(0)! + i;
+  if (last > 0x10ffff || (last >= 0xd800 && last <= 0xdfff)) return base;
+  return chars.slice(0, -1).join('') + String.fromCodePoint(last);
 }

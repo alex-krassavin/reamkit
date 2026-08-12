@@ -45,4 +45,22 @@ describe('typographic ligatures (§9.10.3)', () => {
   it('leaves the letters of a word that carries no ligature', async () => {
     expect(await textOf(buildDocx(['fluffier stuff']))).toContain('fluffier stuff');
   });
+
+  it('sets a mathematical letter as the letter it is', async () => {
+    // U+1D45D is a lower case p set in italic, and no ordinary face carries it:
+    // bug1529502.pdf reads "p ← trim(p)" and every one of them came out a box.
+    // The slant is lost with the code point; the letter is not.
+    expect(await textOf(buildDocx(['\u{1d45d} ← trim(\u{1d45d})']))).toContain('p ← trim(p)');
+    // Its digits too: U+1D7D9 is a double-struck 1.
+    expect(await textOf(buildDocx(['\u{1d7d9}\u{1d7da}']))).toContain('12');
+    // `ℎ` is the same story in the letterlike block — but a face on hand has
+    // that one, so it is drawn as written and stays the character it is.
+    expect(await textOf(buildDocx(['ℎ']))).toContain('ℎ');
+  });
+
+  it('leaves alone a letterlike character that abbreviates rather than styles', async () => {
+    // `№` stands for "No" and `℅` for "c/o": those are abbreviations, not one
+    // letter in a style, and a face that lacks them draws what it always drew.
+    expect(await textOf(buildDocx(['№ ℅']))).not.toContain('No c/o');
+  });
 });

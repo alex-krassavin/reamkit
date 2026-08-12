@@ -94,7 +94,7 @@ import type { StructNode, StructType } from '@/pdf/struct-tree';
 import type { MetaPicture } from '@/core/metafile/picture';
 import { ResourceStore, halfPtToPt, pt } from '@/core/ir';
 import { headingLevelOf } from '@/core/outline';
-import { createFontMeasure, hasLigature, lettersForLigature, shapeText } from '@/core/font';
+import { createFontMeasure, hasSubstitutable, shapeText, substituteLetters } from '@/core/font';
 import { resolveFamilyStyle } from '@/core/fonts';
 import { scriptForCodepoint } from '@/core/fonts/scripts';
 import { prepareImage } from '@/core/images';
@@ -4634,18 +4634,21 @@ function fallbackFaceKey(
 }
 
 /**
- * A typographic ligature no face on hand can draw, set as its letters instead.
+ * A character no face on hand can draw, set as the letters it stands for.
  *
  * `ﬀ` (U+FB00) is one glyph for two f's — a shape of the FACE, not a letter of
  * the alphabet, and most faces carry no such code point at all: they form the
- * ligature from `ff` through their own `liga` table. So the run's own face drew
- * nothing for it, no other loaded face answered either, and the character went
- * out silently: bug1873345.pdf reads "different" and we set "di erent". Its
- * letters are the same text, and the face that has them is free to join them
- * back up.
+ * ligature from `ff` through their own `liga` table. `𝑝` (U+1D45D) is a lower
+ * case p set in italic, given a code point of its own so that mathematics can
+ * name a variable in plain text; no ordinary face carries that either. So the
+ * run's own face drew nothing, no other loaded face answered, and the character
+ * went out as a box or as nothing at all: bug1873345.pdf reads "different" and
+ * we set "di erent", bug1529502.pdf reads "p ← trim(p)" and we set "□ ← □".
+ * The letters are the same text — the ligature the face is free to form again,
+ * the slant is lost, and both beat a box.
  *
- * Only these seven, and only where nobody can draw the ligature itself: a
- * character a face DOES carry is drawn as written.
+ * Only where nobody can draw the character itself: one a face DOES carry is
+ * drawn as written.
  *
  * @param options  The render options (the loaded registries).
  * @param primary  The run's own face.
@@ -4659,11 +4662,11 @@ function drawableText(
   resolved: ResolvedRunProperties,
   text: string,
 ): string {
-  if (!hasLigature(text)) return text;
+  if (!hasSubstitutable(text)) return text;
   let out = '';
   for (const ch of text) {
     const cp = ch.codePointAt(0)!;
-    const letters = lettersForLigature(cp);
+    const letters = substituteLetters(cp);
     const drawable =
       letters === undefined ||
       primary.glyphForCodepoint(cp) !== 0 ||

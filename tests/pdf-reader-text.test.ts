@@ -47,6 +47,23 @@ describe('/ToUnicode CMap parser (E-PDF EP2)', () => {
     expect(map.get(0x0043)).toBe('c'); // +2
   });
 
+  it('counts an astral destination up as a CHARACTER, not as UTF-16 units', () => {
+    // bug1529502.pdf maps seven codes to the mathematical italic letters a..g
+    // with one range, and UTF-16 writes each of them as a surrogate pair.
+    // Measuring the destination in units made all seven "𝑎": the page reads
+    // "HKDF(s, version, e, 32)" and we read "version, a".
+    const cmap = [
+      'begincmap',
+      '1 begincodespacerange <0000> <FFFF> endcodespacerange',
+      '1 beginbfrange <043B> <0441> <D835DC4E> endbfrange',
+      'endcmap',
+    ].join('\n');
+    const { map } = parseToUnicodeCMap(new TextEncoder().encode(cmap));
+    expect(map.get(0x043b)).toBe('\u{1d44e}'); // 𝑎
+    expect(map.get(0x043f)).toBe('\u{1d452}'); // 𝑒, four along
+    expect(map.get(0x0441)).toBe('\u{1d454}'); // 𝑔, at the end of the range
+  });
+
   it('parses an array-form bfrange', () => {
     const cmap = '1 beginbfrange <0001> <0002> [<0058> <0059>] endbfrange';
     const { map } = parseToUnicodeCMap(new TextEncoder().encode(cmap));
