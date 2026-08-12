@@ -1207,14 +1207,42 @@ function splitCodes(bytes: Uint8Array, bytesPerCode: 1 | 2): Array<number> {
 }
 
 // Read a content-stream array operand (TJ): numbers and strings up to `]`.
+// An array operand, of whatever an array may hold. Numbers and strings were the
+// only members kept, which is all a `TJ` is made of — and an inline image names
+// its colour space with one: TAMReview.pdf rules its header with a picture one
+// pixel across in `[/I /RGB 3 <ECEBEB…FF9933>]`, and dropping the two names
+// left `[3, <bytes>]`, a space that answers to nothing. The rule was not drawn
+// on any of its 23 pages.
 function readArray(lexer: Lexer): Array<PdfValue> {
   const out: Array<PdfValue> = [];
   for (;;) {
     const tok = lexer.nextToken();
     if (tok.kind === 'arrayClose' || tok.kind === 'eof') break;
-    if (tok.kind === 'num') out.push(tok.value);
-    else if (tok.kind === 'str') out.push(tok.value);
-    else if (tok.kind === 'hexstr') out.push(new PdfHexString(tok.bytes));
+    switch (tok.kind) {
+      case 'num':
+        out.push(tok.value);
+        break;
+      case 'str':
+        out.push(tok.value);
+        break;
+      case 'hexstr':
+        out.push(new PdfHexString(tok.bytes));
+        break;
+      case 'name':
+        out.push(new PdfName(tok.value));
+        break;
+      case 'arrayOpen':
+        out.push(readArray(lexer));
+        break;
+      case 'dictOpen':
+        out.push(readDict(lexer));
+        break;
+      case 'keyword':
+        if (tok.value === 'true' || tok.value === 'false') out.push(tok.value === 'true');
+        break;
+      default:
+        break;
+    }
   }
   return out;
 }

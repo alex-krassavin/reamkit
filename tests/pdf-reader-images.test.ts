@@ -713,6 +713,25 @@ describe('§8.9.6.2 — a stencil mask, and §8.9.7 — an image written into th
     const { rgba } = pixels(real);
     expect([rgba[0], rgba[4], rgba[8]]).toEqual([0x00, 0x80, 0xff]);
   });
+
+  it('reads an inline image’s colour space when it is an ARRAY', () => {
+    // §8.9.7 Table 93 — an inline image abbreviates the space's name as well as
+    // the key: `/I` is Indexed and `/RGB` DeviceRGB. TAMReview.pdf rules its
+    // header with a picture one pixel across in exactly this space, and the
+    // content parser kept only the numbers and strings of an array operand —
+    // enough for a `TJ`, not for this. Both names were dropped, `[3, <bytes>]`
+    // answered to no space at all, and the rule was drawn on none of its 23
+    // pages.
+    const pdf = page(
+      '0 0 100 100 cm BI /CS [/I /RGB 1 <FF993300FF00>] /W 2 /H 1 /BPC 8 ID \u0000\u0001EI',
+      [],
+      new Map(),
+    );
+    const { width, rgba } = pixels(pdf);
+    expect(width).toBe(2);
+    expect([...rgba.slice(0, 3)]).toEqual([0xff, 0x99, 0x33]);
+    expect([...rgba.slice(4, 7)]).toEqual([0x00, 0xff, 0x00]);
+  });
   it('reads /BlackIs1, which says which bit the fax filter hands on', () => {
     // §7.4.6 — the decoder codes black as 1; false (the default) means the
     // black pixel LEAVES as a 0, and true means it leaves as a 1, which
