@@ -151,14 +151,17 @@ describe('two-column reconstruction (E-PDF EP17)', () => {
       ops.push(`1 0 0 1 420 ${String(y)} Tm (D${n}) Tj`);
     }
     ops.push('ET');
-    const text = Ream.parse(onePage(ops))
-      .flow.body.map((el) =>
-        el.kind === 'paragraph' ? el.paragraph.runs.map((r) => r.text).join('') : '',
-      )
-      .join(' ');
-    const tokens = text.match(/[A-D]\d\d/gu) ?? [];
-    // Row by row: A01 B01 C01 D01, A02 B02 …
-    expect(tokens.slice(0, 8)).toEqual(['A01', 'B01', 'C01', 'D01', 'A02', 'B02', 'C02', 'D02']);
+    const table = Ream.parse(onePage(ops)).flow.body.find((el) => el.kind === 'table');
+    expect(table?.kind).toBe('table');
+    if (table?.kind !== 'table') return;
+    expect(table.table.rows).toHaveLength(ROWS);
+    expect(table.table.grid).toHaveLength(4);
+    const first = table.table.rows[0]!.cells.map((c) =>
+      c.content
+        .flatMap((el) => (el.kind === 'paragraph' ? el.paragraph.runs.map((r) => r.text) : []))
+        .join(''),
+    );
+    expect(first).toEqual(['A01', 'B01', 'C01', 'D01']);
   });
 
   it('reads a full-width FOOTER after the columns it stands under', () => {

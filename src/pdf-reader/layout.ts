@@ -280,7 +280,13 @@ export function reconstructByLayout(
     // page SET in columns is prose, and its columns are. Read by column, a
     // table comes back one column at a time with every row torn up.
     const ruledIntoColumns = mode !== 'positional' && looksRuled(ruled.runs, gutters, textEdges);
-    if (split && !ruledIntoColumns) {
+    const asTable =
+      ruledIntoColumns && textEdges
+        ? tableFrom(ruled.runs, gutters, textEdges, stepped)
+        : undefined;
+    if (asTable) {
+      blocks.push({ band: bandAt(asTable.top), col: 0, top: asTable.top, el: asTable.el });
+    } else if (split && !ruledIntoColumns) {
       // A run the rules pass rebuilt is not the one the split was measured on,
       // so its column is looked up by where it stands.
       const columnFor = (r: TextRun): number => split.columnOf.get(r) ?? colOf(r.x);
@@ -1808,6 +1814,65 @@ function looksRuled(
   if (aligned < rows.length * TABLE_ALIGNED_SHARE) return false;
   fills.sort((a, b) => a - b);
   return (fills[Math.floor(fills.length / 2)] ?? 1) <= TABLE_CELL_FILL;
+}
+
+/**
+ * §17.4.38 — the page's rows as the TABLE they are.
+ *
+ * The regions between the gutters are the columns and the rows are the rows;
+ * a cell is what one row leaves in one region, and an empty cell is empty. The
+ * grid is measured, so the columns come out where the page put them.
+ *
+ * @param runs    The page's runs.
+ * @param gutters The page's gutters.
+ * @param edges   Where the page's text starts and ends.
+ * @param stepped Whether the page steps between its words.
+ * @returns The table and where it stands.
+ */
+function tableFrom(
+  runs: ReadonlyArray<TextRun>,
+  gutters: ReadonlyArray<Gutter>,
+  edges: { left: number; right: number },
+  stepped: boolean,
+): { el: BodyElement; top: number } | undefined {
+  const fontSize = median(runs.map((r) => r.fontSizePt).filter((s) => s > 0)) || 10;
+  const rows = rowsOf(runs, fontSize).filter((row) => row.length > 0);
+  if (rows.length === 0) return undefined;
+  const bounds = [edges.left, ...gutters.map((g) => g.mid), edges.right];
+  const regions = bounds.slice(0, -1).map((lo, i) => [lo, bounds[i + 1]!] as const);
+  const regionOf = (x: number): number => {
+    for (let i = regions.length - 1; i >= 0; i--) if (x >= regions[i]![0]) return i;
+    return 0;
+  };
+  const table: Table = {
+    properties: {},
+    grid: regions.map((r) => pt(Math.max(r[1] - r[0], 1))),
+    rows: rows.map((row) => {
+      const byRegion = regions.map((): Array<TextRun> => []);
+      for (const run of row) byRegion[regionOf(run.x)]!.push(run);
+      const y = Math.max(...row.map((r) => r.y));
+      return {
+        properties: {},
+        cells: byRegion.map((inRegion) => ({
+          properties: {},
+          content:
+            inRegion.length === 0
+              ? [{ kind: 'paragraph' as const, paragraph: { properties: {}, runs: [] } }]
+              : [
+                  paragraphFromRuns(
+                    lineOf(
+                      inRegion,
+                      y,
+                      Math.max(...inRegion.map((r) => r.fontSizePt || fontSize)),
+                      stepped,
+                    ).spans,
+                  ),
+                ],
+        })),
+      };
+    }),
+  };
+  return { el: { kind: 'table', table }, top: Math.max(...rows[0]!.map((r) => r.y)) };
 }
 
 /** Below this many gutters a page in columns is read as columns. */
