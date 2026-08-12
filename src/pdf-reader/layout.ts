@@ -107,6 +107,11 @@ export function reconstructByLayout(
     });
   }
   const body: Array<BodyElement> = [];
+  // §17.6 — where the pages differ in size the document is several sections,
+  // each ending at the body index its last page's blocks end at.
+  const sectionEnds: Array<{ at: number; from: number; to: number }> = [];
+  let sectionFrom = 0;
+  let lastSize = '';
   pages.forEach((page, i) => {
     const runs = pageRuns[i]!;
     const display = shown[i]!;
@@ -267,11 +272,24 @@ export function reconstructByLayout(
       blocks.push({ band: bandAt(mark.top), col: mark.col, top: mark.top, el: mark.make(z) });
     });
     blocks.sort((a, b) => a.band - b.band || a.col - b.col || b.top - a.top);
+    // §14.11.2 — a page whose SIZE differs from the one before it opens a
+    // section of its own, because a section is what carries a page size.
+    // function_based_shading_cmyk.pdf is 290×290 and then 1880×1260, and read
+    // as one size the second sheet's six squares were cut down to the one that
+    // fitted. A section break already forces a page, so the break paragraph
+    // below is for the pages that stay inside one.
+    const size = `${shown[i]!.width.toFixed(2)}x${shown[i]!.height.toFixed(2)}`;
+    const opensSection = i > 0 && size !== lastSize;
+    if (opensSection) {
+      sectionEnds.push({ at: body.length, from: sectionFrom, to: i });
+      sectionFrom = i;
+    }
+    lastSize = size;
     // Each source page after the first opens an output page of its own. Flowed,
     // the layout repaginates and this hardly shows; PLACED, every mark is
     // anchored to "the page", so without it all twenty-five pages of
     // Brotli-Prototype-FileA.pdf stack onto one.
-    if (i > 0 && blocks.length > 0) {
+    if (i > 0 && !opensSection && blocks.length > 0) {
       body.push({
         kind: 'paragraph',
         paragraph: {
@@ -282,17 +300,31 @@ export function reconstructByLayout(
     }
     for (const block of blocks) body.push(block.el);
   });
-  const section = sectionFromPdfPages(pages);
+  // A placed reading anchors everything to the page, so its margins must stay
+  // at zero or the anchors move. A FLOWING one is a document being re-set, and
+  // a document with no margins prints its words against the edge of the paper
+  // — which is what every converted PDF looked like.
+  const setUp = (from: number, to: number): SectionProperties | undefined => {
+    const own = sectionFromPdfPages(pages.slice(from, to));
+    return mode === 'positional'
+      ? own
+      : withMeasuredMargins(own, shown.slice(from, to), pageRuns.slice(from, to));
+  };
+  sectionEnds.push({ at: body.length, from: sectionFrom, to: pages.length });
+  const sections =
+    sectionEnds.length > 1
+      ? sectionEnds.flatMap((end) => {
+          const properties = setUp(end.from, end.to);
+          return properties ? [{ properties, endIndex: end.at }] : [];
+        })
+      : [];
   return {
     doc: buildFlowDoc(
       body,
       resources,
-      // A placed reading anchors everything to the page, so its margins must
-      // stay at zero or the anchors move. A FLOWING one is a document being
-      // re-set, and a document with no margins prints its words against the
-      // edge of the paper — which is what every converted PDF looked like.
-      mode === 'positional' ? section : withMeasuredMargins(section, shown, pageRuns),
+      setUp(0, pages.length),
       collectEmbeddedFonts(file, pages, losses),
+      sections,
     ),
     losses: dedupeLosses(losses),
   };

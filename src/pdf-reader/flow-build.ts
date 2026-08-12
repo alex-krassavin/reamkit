@@ -9,6 +9,7 @@ import type {
   CustomPathCmd,
   FloatAnchor,
   ParagraphProperties,
+  Section,
   SectionProperties,
   ShapeFill,
   ShapeLine,
@@ -582,11 +583,14 @@ export function buildFlowDoc(
   resources: ResourceStore = new ResourceStore(),
   section?: SectionProperties,
   embeddedFonts?: ReadonlyMap<string, FontRegistry>,
+  sections: ReadonlyArray<Section> = [],
 ): FlowDoc {
   return {
     kind: 'flow',
     body: resolveBodyStyles([...body], EMPTY_STYLE_SHEET),
-    sections: [],
+    // §17.6 — a document whose pages differ in size is several sections; one
+    // page size for all of them is the ordinary case and states none.
+    sections,
     ...(section ? { section } : {}),
     ...(embeddedFonts && embeddedFonts.size > 0 ? { embeddedFonts } : {}),
     styles: EMPTY_STYLE_SHEET,

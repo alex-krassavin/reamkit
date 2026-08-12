@@ -74,7 +74,58 @@ describe('a multi-page PDF keeps its pages (E-PDF EP4)', () => {
     );
     expect(breaks).toHaveLength(file.pages().length - 1);
   });
+
+  it('opens a SECTION where the page size changes', () => {
+    // §17.6 — a section is what carries a page size, so a document whose pages
+    // differ in size is several of them. function_based_shading_cmyk.pdf is
+    // 290×290 and then 1880×1260, and read as one size the second sheet's six
+    // squares were cut down to the one that fitted.
+    const file = PdfFile.parse(twoSizePdf());
+    const doc = reconstructByLayout(file, 'positional').doc;
+    expect(doc.sections).toHaveLength(2);
+    expect(doc.sections[0]?.properties.pageSize?.width).toBeCloseTo(200, 1);
+    expect(doc.sections[1]?.properties.pageSize?.width).toBeCloseTo(600, 1);
+    // The break the pages would otherwise carry is the section's own: two
+    // sections, and no page-break paragraph between them.
+    const breaks = doc.body.filter(
+      (b) => b.kind === 'paragraph' && b.paragraph.properties.pageBreakBefore === true,
+    );
+    expect(breaks).toHaveLength(0);
+    // And a document of ONE size states no sections at all.
+    expect(
+      reconstructByLayout(
+        PdfFile.parse(onePagePdf('/MediaBox [0 0 200 100]', 'BT ET')),
+        'positional',
+      ).doc.sections,
+    ).toHaveLength(0);
+  });
 });
+
+/** Two pages, 200×100 then 600×400, each with one word on it. */
+function twoSizePdf(): Uint8Array {
+  const content = 'BT /F0 12 Tf 20 40 Td (Word) Tj ET';
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R 5 0 R] /Count 2 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Contents 4 0 R ' +
+      '/Resources << /Font << /F0 6 0 R >> >> >>',
+    `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 400] /Contents 4 0 R ' +
+      '/Resources << /Font << /F0 6 0 R >> >> >>',
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+  ];
+  let pdf = '%PDF-1.7\n';
+  const offsets: Array<number> = [];
+  objects.forEach((body, i) => {
+    offsets.push(pdf.length);
+    pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+  });
+  const xref = pdf.length;
+  pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+  for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+  pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`;
+  return new TextEncoder().encode(pdf);
+}
 
 /** A one-page PDF of hand-written objects; `page` is the page dict's body. */
 function onePagePdf(page: string, content: string): Uint8Array {
