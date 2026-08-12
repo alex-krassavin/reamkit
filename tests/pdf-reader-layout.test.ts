@@ -161,6 +161,63 @@ describe('a page of turned words is a page, not prose (§9.4.2)', () => {
   });
 });
 
+describe('mathematics is set the way the page sets it', () => {
+  const spansOf = (content: string) => {
+    const doc = reconstructByLayout(
+      PdfFile.parse(
+        onePagePdf('/MediaBox [0 0 300 200] /Resources << /Font << /F0 5 0 R >> >>', content, [
+          '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+        ]),
+      ),
+    ).doc;
+    return doc.body.flatMap((b) => (b.kind === 'paragraph' ? b.paragraph.runs : []));
+  };
+
+  it('reads a raised smaller run as a superscript (§17.3.2.42)', () => {
+    // A PDF states no such property: an exponent is a smaller face set a little
+    // higher. Read flat, bug1997343.pdf's "n^p = n mod p" came back "np", and
+    // every prime on the page landed beside its letter instead of over it.
+    const runs = spansOf(
+      'BT /F0 10 Tf 1 0 0 1 40 100 Tm (n) Tj ET\n' +
+        'BT /F0 7 Tf 1 0 0 1 46 103.6 Tm (p) Tj ET\n' +
+        'BT /F0 10 Tf 1 0 0 1 52 100 Tm ( = n mod p) Tj ET',
+    );
+    const raised = runs.find((r) => r.text.trim() === 'p');
+    expect(raised?.properties.verticalAlign).toBe('superscript');
+    // …at the LINE's size: a document states the nominal size and the layout
+    // shrinks a script, so the drawn seven points would come out at five.
+    expect(raised?.properties.fontSizePt).toBeCloseTo(10, 1);
+    // A run ON the baseline is not a script however small it is.
+    expect(runs.find((r) => r.text.includes('mod'))?.properties.verticalAlign).toBe('baseline');
+  });
+
+  it('steps between the words of a line that holds no space', () => {
+    // TeX's thin space is a sixth of an em and its medium one two ninths, both
+    // under the quarter a page that draws its own spaces needs — and a LaTeX
+    // document does both: prose with spaces in it, mathematics by stepping.
+    // bug1997343.pdf sets "f(x) = sin x + cos x" and we read "sinx+cosx".
+    const runs = spansOf(
+      'BT /F0 10 Tf 1 0 0 1 40 100 Tm (sin) Tj ET\n' +
+        'BT /F0 10 Tf 1 0 0 1 54.7 100 Tm (x) Tj ET\n' +
+        'BT /F0 10 Tf 1 0 0 1 62 100 Tm (+) Tj ET\n' +
+        'BT /F0 10 Tf 1 0 0 1 71 100 Tm (cos) Tj ET',
+    );
+    expect(runs.map((r) => r.text).join('')).toBe('sin x + cos');
+  });
+
+  it('leaves a page that writes its own spaces alone', () => {
+    // The same gaps inside a line that HAS a space in it are kerning, not
+    // words: a producer that splits a word for kerning leaves eight hundredths
+    // of an em between the halves.
+    const runs = spansOf(
+      'BT /F0 10 Tf 1 0 0 1 40 100 Tm (Con) Tj ET\n' +
+        'BT /F0 10 Tf 1 0 0 1 56.5 100 Tm (tents ) Tj ET\n' +
+        'BT /F0 10 Tf 1 0 0 1 81.5 100 Tm (here) Tj ET',
+    );
+    expect(runs.map((r) => r.text).join('')).toBe('Contents here');
+  });
+});
+
 describe('a running foot is a foot, not a paragraph (§17.6.13)', () => {
   /** Three pages of body with the same line standing alone at the bottom. */
   const paper = (): Uint8Array => {

@@ -80,6 +80,12 @@ export interface TextSpan {
   readonly bold?: boolean;
   /** §9.8.1 — the face was a slanted one. */
   readonly italic?: boolean;
+  /**
+   * §17.3.2.42 — the glyphs stood OFF the baseline the line is set on, and
+   * smaller: a footnote mark, an exponent, an index. The page states it by
+   * placement, and a document by the property.
+   */
+  readonly script?: 'superscript' | 'subscript';
   /** §12.5.6.10 — a text-markup annotation marks these words. */
   readonly markup?: TextMarkup;
 }
@@ -104,6 +110,7 @@ export function paragraphFromRuns(
     outline?: TextOutline;
     bold?: boolean;
     italic?: boolean;
+    script?: 'superscript' | 'subscript';
     markup?: TextMarkup;
   }> = [];
   for (const s of spans) {
@@ -118,6 +125,7 @@ export function paragraphFromRuns(
       last.outline?.widthPt === s.outline?.widthPt &&
       last.bold === s.bold &&
       last.italic === s.italic &&
+      last.script === s.script &&
       sameMarkup(last.markup, s.markup)
     ) {
       last.text += s.text;
@@ -131,6 +139,7 @@ export function paragraphFromRuns(
         ...(s.outline !== undefined ? { outline: s.outline } : {}),
         ...(s.bold !== undefined ? { bold: s.bold } : {}),
         ...(s.italic !== undefined ? { italic: s.italic } : {}),
+        ...(s.script !== undefined ? { script: s.script } : {}),
         ...(s.markup !== undefined ? { markup: s.markup } : {}),
       });
   }
@@ -172,6 +181,12 @@ export function paragraphFromRuns(
             ...(r.outline !== undefined ? { textOutline: r.outline } : {}),
             ...(r.bold ? { bold: true } : {}),
             ...(r.italic ? { italic: true } : {}),
+            // §17.3.2.42 `w:vertAlign` — the page set these glyphs off the
+            // line's own baseline and smaller. The SIZE that carries is the
+            // line's, not the mark's: a document states the nominal size and
+            // the layout shrinks a script, so keeping the drawn 7pt under a
+            // superscript would draw it at five.
+            ...(r.script !== undefined ? { verticalAlign: r.script } : {}),
             // §12.5.6.10 — a highlight, an underline or a strikeout stated
             // ABOUT these words rather than painted among them, so it re-sets
             // with them: §17.3.2.32 `w:shd`, §17.3.2.40 `w:u`, §17.3.2.37

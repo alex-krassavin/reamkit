@@ -1094,7 +1094,14 @@ function inkSpan(runs: ReadonlyArray<TextRun>): { x: number; width: number } {
 
 /** One run of runs, left to right on a shared baseline, as a {@link Line}. */
 function lineOf(runs: ReadonlyArray<TextRun>, y: number, fontSize: number, stepped: boolean): Line {
-  const ordered = lineSpans(runs, fontSize, stepped);
+  // A page may do both. A LaTeX document writes its prose with spaces in it and
+  // sets its mathematics by stepping — TeX's thin space is a sixth of an em and
+  // its medium one two ninths, both under the quarter a drawn-space page needs
+  // — so bug1997343.pdf came back with "f(x) = sinx+cosx" where the file sets
+  // "f(x) = sin x + cos x". A line with no space in it anywhere was stepped
+  // across, whatever the rest of the page does.
+  const steppedLine = stepped || (runs.length > 1 && !runs.some((r) => SPACE.test(r.text)));
+  const ordered = lineSpans(runs, fontSize, steppedLine);
   // §9.4 — the runs came off the page in the order they were PAINTED, which is
   // left to right whatever the script. `logicalOrder` turned each run's own
   // letters back the right way round; the runs themselves are still in visual
@@ -1222,6 +1229,10 @@ function lineSpans(
   stepped: boolean,
 ): Array<TextSpan> {
   const spans: Array<TextSpan> = [];
+  // §17.3.2.42 — the line's OWN baseline, which a script stands off. Taken from
+  // the runs set at the line's size: the marks are the ones that moved.
+  const body = runs.filter((r) => (r.fontSizePt || fontSize) > fontSize * SCRIPT_SIZE);
+  const baseline = median((body.length > 0 ? body : runs).map((r) => r.y));
   let prev: TextRun | undefined;
   for (const run of runs) {
     if (
@@ -1247,6 +1258,7 @@ function lineSpans(
         : {}),
       ...(run.bold ? { bold: true } : {}),
       ...(run.italic ? { italic: true } : {}),
+      ...script(run, baseline, fontSize),
       ...(run.markup !== undefined ? { markup: run.markup } : {}),
       ...(run.href !== undefined ? { href: run.href } : {}),
     });
@@ -1254,6 +1266,44 @@ function lineSpans(
   }
   return spans;
 }
+
+/**
+ * §17.3.2.42 — a run set off the line's baseline, and smaller, as the script it
+ * is.
+ *
+ * A PDF states no such property: an exponent is a smaller face set a little
+ * higher, and an index a smaller face set a little lower. Read flat, the whole
+ * of mathematics comes back on one line — bug1997343.pdf sets `n^p = n mod p`
+ * and we read "np", and every prime on the page landed beside its letter
+ * instead of over it.
+ *
+ * The size the span keeps is the LINE's, not the mark's: a document states the
+ * nominal size and the layout shrinks a script, so the drawn seven points under
+ * a superscript would come out at five.
+ *
+ * @param run      The run.
+ * @param baseline The line's own baseline.
+ * @param fontSize The line's size.
+ */
+function script(
+  run: TextRun,
+  baseline: number,
+  fontSize: number,
+): { script?: 'superscript' | 'subscript'; sizePt?: number } {
+  const size = run.fontSizePt || fontSize;
+  if (size > fontSize * SCRIPT_SIZE) return {};
+  const rise = run.y - baseline;
+  if (rise > fontSize * SCRIPT_RISE) return { script: 'superscript', sizePt: fontSize };
+  if (rise < -fontSize * SCRIPT_DROP) return { script: 'subscript', sizePt: fontSize };
+  return {};
+}
+
+/** How much smaller than its line a run must be set to be a script of it. */
+const SCRIPT_SIZE = 0.85;
+
+/** How far above the baseline a superscript stands, and below it a subscript. */
+const SCRIPT_RISE = 0.15;
+const SCRIPT_DROP = 0.08;
 
 /**
  * §17.3.1.25 — whether a line carries a LEADER, which makes it an entry in a
