@@ -164,6 +164,66 @@ describe('two-column reconstruction (E-PDF EP17)', () => {
     expect(first).toEqual(['A01', 'B01', 'C01', 'D01']);
   });
 
+  it('keeps a line that overhangs its column in ONE cell, beside its neighbour', () => {
+    // A gutter is a BAND, and the middle of it is only a guess at where the
+    // columns divide: a gutter is where the FEWEST lines cross, not where none
+    // do. ZapfDingbats.pdf's lead paragraph runs a few points past the middle
+    // of the first gutter, and cut there it either wrapped inside a cell too
+    // narrow for it — every wrapped line costing the groups beside it an
+    // entry, two pages coming out as four — or swallowed the glyph standing in
+    // the next column.
+    const ops = ['BT /F1 9 Tf'];
+    for (let i = 0; i < ROWS; i++) {
+      const y = 720 - i * 14;
+      const n = String(i + 1).padStart(2, '0');
+      // The first four rows carry prose that overruns the first column — past
+      // the middle of the gutter, and short of the column beyond it.
+      if (i < 4) ops.push(`1 0 0 1 72 ${String(y)} Tm (Prose overhanging ${n}) Tj`);
+      else ops.push(`1 0 0 1 72 ${String(y)} Tm (A${n}) Tj`);
+      ops.push(`1 0 0 1 200 ${String(y)} Tm (B${n}) Tj`);
+      ops.push(`1 0 0 1 300 ${String(y)} Tm (C${n}) Tj`);
+      ops.push(`1 0 0 1 420 ${String(y)} Tm (D${n}) Tj`);
+    }
+    ops.push('ET');
+    const table = Ream.parse(onePage(ops)).flow.body.find((el) => el.kind === 'table');
+    expect(table?.kind).toBe('table');
+    if (table?.kind !== 'table') return;
+    const cells = (row: number): Array<string> =>
+      table.table.rows[row]!.cells.map((c) =>
+        c.content
+          .flatMap((el) => (el.kind === 'paragraph' ? el.paragraph.runs.map((r) => r.text) : []))
+          .join(''),
+      );
+    // The prose is one cell, and B01 is still its own.
+    expect(cells(0)[0]).toBe('Prose overhanging 01');
+    expect(cells(0)[1]).toBe('B01');
+    // …and the rows below are untouched.
+    expect(cells(5)).toEqual(['A06', 'B06', 'C06', 'D06']);
+  });
+
+  it('gives each row the height the PAGE gave it', () => {
+    // A row laid out by the height of its own text closes up wherever the page
+    // left air, and everything anchored to the sheet — ZapfDingbats.pdf's grey
+    // title panel, the frame around its table — then stands somewhere else.
+    const ops = ['BT /F1 9 Tf'];
+    for (let i = 0; i < ROWS; i++) {
+      // A double step after the third row: the page left air there.
+      const y = 720 - i * 14 - (i > 2 ? 20 : 0);
+      const n = String(i + 1).padStart(2, '0');
+      ops.push(`1 0 0 1 72 ${String(y)} Tm (A${n}) Tj`);
+      ops.push(`1 0 0 1 180 ${String(y)} Tm (B${n}) Tj`);
+      ops.push(`1 0 0 1 300 ${String(y)} Tm (C${n}) Tj`);
+      ops.push(`1 0 0 1 420 ${String(y)} Tm (D${n}) Tj`);
+    }
+    ops.push('ET');
+    const table = Ream.parse(onePage(ops)).flow.body.find((el) => el.kind === 'table');
+    if (table?.kind !== 'table') throw new Error('the page is a table');
+    const heights = table.table.rows.map((r) => r.properties.height as number | undefined);
+    expect(heights[0]).toBeCloseTo(14, 1);
+    expect(heights[2]).toBeCloseTo(34, 1); // the row the page left air under
+    expect(table.table.rows[0]!.properties.heightRule).toBe('atLeast');
+  });
+
   it('reads a full-width FOOTER after the columns it stands under', () => {
     // A spanning line is what breaks a band, so it always stands at the foot of
     // its own — the columns of that band are the ones above it. Read ahead of

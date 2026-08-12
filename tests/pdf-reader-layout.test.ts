@@ -325,8 +325,11 @@ describe('mathematics is set the way the page sets it', () => {
 });
 
 describe('a running foot is a foot, not a paragraph (§17.6.13)', () => {
-  /** Three pages of body with the same line standing alone at the bottom. */
-  const paper = (): Uint8Array => {
+  /**
+   * Three pages of body with the same line standing alone at the bottom, and —
+   * with `signed` — a publisher's line between it and the text.
+   */
+  const paper = (signed = false): Uint8Array => {
     const page = (n: number): string => {
       const ops: Array<string> = [];
       for (let i = 0; i < 8; i++)
@@ -334,6 +337,7 @@ describe('a running foot is a foot, not a paragraph (§17.6.13)', () => {
           `BT /F0 10 Tf 1 0 0 1 40 ${String(360 - i * 14)} Tm (body line ${String(i)}) Tj ET`,
         );
       // Alone at the foot, a long way below the text block.
+      if (signed) ops.push('BT /F0 8 Tf 1 0 0 1 40 40 Tm (Thing Press) Tj ET');
       ops.push(`BT /F0 8 Tf 1 0 0 1 40 20 Tm (The Journal of Things ${String(n)}) Tj ET`);
       return ops.join('\n');
     };
@@ -380,6 +384,28 @@ describe('a running foot is a foot, not a paragraph (§17.6.13)', () => {
     const runs = band?.flatMap((b) => (b.kind === 'paragraph' ? b.paragraph.runs : [])) ?? [];
     expect(runs.map((r) => r.text).join('')).toContain('The Journal of Things');
     expect(runs.some((r) => r.field === 'PAGE')).toBe(true);
+  });
+
+  it('lifts a foot of TWO lines, in the order the page shows them', () => {
+    // A foot need not be one line. ZapfDingbats.pdf signs each sheet twice —
+    // the publisher's line, and the build stamp thirty points under it — and
+    // taking only the bottom line left the other in the body, where, after a
+    // table that fills the sheet, it had nowhere to go but a page of its own:
+    // a two-page document came out as four.
+    const doc = reconstructByLayout(PdfFile.parse(paper(true))).doc;
+    const body = doc.body
+      .flatMap((b) => (b.kind === 'paragraph' ? b.paragraph.runs.map((r) => r.text) : []))
+      .join(' ');
+    expect(body).not.toContain('Thing Press');
+    const part = doc.section?.footers[0]?.relationshipId;
+    const band = part !== undefined ? doc.headersFooters?.get(part) : undefined;
+    const lines =
+      band?.map((b) =>
+        b.kind === 'paragraph' ? b.paragraph.runs.map((r) => r.text).join('') : '',
+      ) ?? [];
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toContain('Thing Press');
+    expect(lines[1]).toContain('The Journal of Things');
   });
 
   it('leaves a last paragraph where the page put it', () => {

@@ -27,7 +27,7 @@ import { extractPageText } from './text';
 import { collectPageVectors } from './vector';
 import { markDrawnRules } from './text-rules';
 import { isRightToLeft } from './content';
-import type { BodyElement, Run, SectionProperties, Table } from '@/core/document-model';
+import type { BodyElement, Run, SectionProperties, Table, TableCell } from '@/core/document-model';
 import type { Loss, Pt } from '@/core/ir';
 
 import type { TextRun } from './content';
@@ -1658,10 +1658,17 @@ const FOOT_SHARE = 0.6;
 const FOOT_DRIFT = 4;
 
 /**
- * The bottom line of a page, where it stands ALONE below the text block.
+ * The lines at the very bottom of a page, where they stand ALONE below the text
+ * block.
  *
- * Alone means the white above it is more than the page's own leading — a last
+ * Alone means the white above them is more than the page's own leading — a last
  * paragraph is a line's gap from the one before it, a running foot is several.
+ *
+ * A foot need not be ONE line. ZapfDingbats.pdf signs each page twice, the
+ * publisher's line and the suite's title on one baseline and the build stamp
+ * thirty points below it, and taking only the bottom line left the other in the
+ * body: after a table that fills the sheet it had nowhere to go but a page of
+ * its own, and a two-page document came out as four.
  */
 function edgeLine(
   runs: ReadonlyArray<TextRun>,
@@ -1672,31 +1679,48 @@ function edgeLine(
   const fontSize = median(runs.map((r) => r.fontSizePt).filter((s) => s > 0)) || 10;
   const rows = rowsOf(runs, fontSize);
   if (rows.length < 4) return undefined;
-  // `rowsOf` runs down the page, so the foot is its last row and the head its
-  // first; the gap is to the row on the text's side of it either way.
-  const edge = where === 'foot' ? rows[rows.length - 1]! : rows[0]!;
-  const inside = where === 'foot' ? rows[rows.length - 2]! : rows[1]!;
-  const y =
-    where === 'foot' ? Math.max(...edge.map((r) => r.y)) : Math.min(...edge.map((r) => r.y));
-  const gap =
-    where === 'foot'
-      ? Math.min(...inside.map((r) => r.y)) - y
-      : y - Math.max(...inside.map((r) => r.y));
-  if (gap < fontSize * FOOT_GAP_EM) return undefined;
-  // In the margin, not in the text: an eighth of the sheet at its own end, and
-  // a short line at that.
-  if (where === 'foot' ? y > pageHeight * FOOT_BAND : y < pageHeight * (1 - FOOT_BAND)) {
-    return undefined;
+  // `rowsOf` runs down the page, so the foot grows upward from its last row and
+  // the head downward from its first; the gap is to the row on the text's side
+  // of the group either way.
+  const at = (i: number): ReadonlyArray<TextRun> =>
+    where === 'foot' ? rows[rows.length - 1 - i]! : rows[i]!;
+  const edgeY = (row: ReadonlyArray<TextRun>): number =>
+    where === 'foot' ? Math.max(...row.map((r) => r.y)) : Math.min(...row.map((r) => r.y));
+  const inside = (row: ReadonlyArray<TextRun>): number =>
+    where === 'foot' ? Math.min(...row.map((r) => r.y)) : Math.max(...row.map((r) => r.y));
+  const y = edgeY(at(0));
+  let found: ReadonlyArray<TextRun> | undefined;
+  let group: Array<TextRun> = [];
+  // Only the foot grows: the lines that OPEN a page are far more often the
+  // text itself, and asked for a head of up to three ZapfDingbats.pdf gave up
+  // its red note, its running head and the first line of its title.
+  const most = where === 'foot' ? FOOT_ROWS : 1;
+  for (let i = 0; i < Math.min(most, rows.length - 2); i++) {
+    const row = at(i);
+    // In the margin, not in the text: an eighth of the sheet at its own end.
+    const edge = edgeY(row);
+    if (where === 'foot' ? edge > pageHeight * FOOT_BAND : edge < pageHeight * (1 - FOOT_BAND)) {
+      break;
+    }
+    group = [...group, ...row];
+    const next = at(i + 1);
+    const gap = where === 'foot' ? inside(next) - edgeY(row) : edgeY(row) - inside(next);
+    if (gap < fontSize * FOOT_GAP_EM) continue;
+    const text = group
+      .map((r) => r.text)
+      .join('')
+      .trim();
+    // …and short lines at that.
+    if (text.length > 0 && text.length <= FOOT_CHARS * (i + 1)) found = group;
   }
-  const text = edge
-    .map((r) => r.text)
-    .join('')
-    .trim();
-  return text.length > 0 && text.length <= FOOT_CHARS ? { y, runs: edge } : undefined;
+  return found ? { y, runs: found } : undefined;
 }
 
 /** How much white, in ems, stands between the text block and a running foot. */
 const FOOT_GAP_EM = 2;
+
+/** How many lines a running foot may hold before it is a paragraph. */
+const FOOT_ROWS = 3;
 
 /** How far up the sheet a running foot may sit. */
 const FOOT_BAND = 0.12;
@@ -1744,20 +1768,20 @@ function footerBand(
   measure: { left: number; right: number } | undefined,
 ): Array<BodyElement> {
   const lines = groupIntoLines(runs, false, stepped).filter((l) => l.text.length > 0);
-  const line = lines[0];
-  if (!line) return [];
-  const { alignment } = alignmentOf([line], measure);
-  const el = paragraphFromRuns(line.spans, undefined, alignment ? { alignment } : {});
-  if (el.kind !== 'paragraph') return [el];
-  return [
-    {
+  // A line apiece, in the order the page shows them: ZapfDingbats.pdf signs
+  // each sheet with the publisher's line and the build stamp under it.
+  return lines.map((line) => {
+    const { alignment } = alignmentOf([line], measure);
+    const el = paragraphFromRuns(line.spans, undefined, alignment ? { alignment } : {});
+    if (el.kind !== 'paragraph') return el;
+    return {
       kind: 'paragraph',
       paragraph: {
         ...el.paragraph,
         runs: el.paragraph.runs.flatMap((run) => pageNumbered(run)),
       },
-    },
-  ];
+    };
+  });
 }
 
 /**
@@ -1791,7 +1815,7 @@ function looksRuled(
   const fontSize = median(runs.map((r) => r.fontSizePt).filter((s) => s > 0)) || 10;
   const rows = rowsOf(runs, fontSize).filter((row) => row.length > 0);
   if (rows.length < MIN_TABLE_ROWS) return false;
-  const bounds = [edges.left, ...gutters.map((g) => g.mid), edges.right];
+  const bounds = columnBounds(runs, gutters, edges);
   const regions = bounds.slice(0, -1).map((lo, i) => [lo, bounds[i + 1]!] as const);
   const regionOf = (x: number): number => {
     for (let i = regions.length - 1; i >= 0; i--) if (x >= regions[i]![0]) return i;
@@ -1838,41 +1862,147 @@ function tableFrom(
   const fontSize = median(runs.map((r) => r.fontSizePt).filter((s) => s > 0)) || 10;
   const rows = rowsOf(runs, fontSize).filter((row) => row.length > 0);
   if (rows.length === 0) return undefined;
-  const bounds = [edges.left, ...gutters.map((g) => g.mid), edges.right];
+  const bounds = columnBounds(runs, gutters, edges);
   const regions = bounds.slice(0, -1).map((lo, i) => [lo, bounds[i + 1]!] as const);
   const regionOf = (x: number): number => {
     for (let i = regions.length - 1; i >= 0; i--) if (x >= regions[i]![0]) return i;
     return 0;
   };
   const table: Table = {
-    properties: {},
+    // The grid is MEASURED — each column is as wide as the band the page drew
+    // it in — so a cell's padding would be width the page never spent. Left at
+    // the usual eighth of an inch a side, the five columns of ZapfDingbats.pdf
+    // came to fifty points more than the sheet holds, and the whole table slid
+    // out of the frame drawn around it.
+    properties: { defaultCellMargins: { left: pt(0), right: pt(0) }, layout: 'fixed' },
     grid: regions.map((r) => pt(Math.max(r[1] - r[0], 1))),
-    rows: rows.map((row) => {
+    rows: rows.map((row, r) => {
       const byRegion = regions.map((): Array<TextRun> => []);
       for (const run of row) byRegion[regionOf(run.x)]!.push(run);
-      const y = Math.max(...row.map((r) => r.y));
-      return {
-        properties: {},
-        cells: byRegion.map((inRegion) => ({
-          properties: {},
+      const y = Math.max(...row.map((r2) => r2.y));
+      const cells: Array<TableCell> = [];
+      // A line that RUNS ACROSS the columns is one cell as wide as it is.
+      // ZapfDingbats.pdf is five hundred entries in three groups, each group a
+      // pair of narrow bands — and the prose above them runs across all six.
+      // Cut at the band edges it wrapped where the page never did, and every
+      // wrapped line cost the groups beside it an entry: two pages came out as
+      // four, and the frame and the title's grey panel went with them.
+      for (let i = 0; i < regions.length; ) {
+        const to = spanEnd(row, i, regions.length, regionOf);
+        const inSpan = byRegion.slice(i, to + 1).flat();
+        const width = to - i + 1;
+        cells.push({
+          properties: width > 1 ? { colSpan: width } : {},
           content:
-            inRegion.length === 0
+            inSpan.length === 0
               ? [{ kind: 'paragraph' as const, paragraph: { properties: {}, runs: [] } }]
               : [
                   paragraphFromRuns(
                     lineOf(
-                      inRegion,
+                      inSpan,
                       y,
-                      Math.max(...inRegion.map((r) => r.fontSizePt || fontSize)),
+                      Math.max(...inSpan.map((r) => r.fontSizePt || fontSize)),
                       stepped,
                     ).spans,
                   ),
                 ],
-        })),
+        });
+        i = to + 1;
+      }
+      // The row stands as far from the next as the page put it. A row laid out
+      // by the height of its own text closes up wherever the page left air —
+      // ZapfDingbats.pdf keeps thirty points around its title, and set solid
+      // the title rose out of the grey panel drawn behind it. `atLeast`, so a
+      // cell that needs more than the page gave it still gets it.
+      const next = rows[r + 1];
+      const pitch = next ? y - Math.max(...next.map((r2) => r2.y)) : 0;
+      return {
+        properties: pitch > 0 ? { height: pt(pitch), heightRule: 'atLeast' as const } : {},
+        cells,
       };
     }),
   };
   return { el: { kind: 'table', table }, top: Math.max(...rows[0]!.map((r) => r.y)) };
+}
+
+/**
+ * Where one column of a ruled page ends and the next begins.
+ *
+ * The gutter is a BAND, and its middle is only a guess at the line inside it: a
+ * gutter is where the fewest lines cross, not where none do (see
+ * `detectGutters`), so a page whose prose overhangs the first column by a few
+ * points has that prose crossing the middle. Cut there, ZapfDingbats.pdf's
+ * heading and its lead paragraph either wrapped inside a cell too narrow for
+ * them or swallowed the glyph standing beside them. The boundary is put past
+ * the crossing ink instead, as far as the band allows — where the columns
+ * really do divide.
+ *
+ * @param runs    The page's runs.
+ * @param gutters The page's gutters.
+ * @param edges   Where the page's text starts and ends.
+ * @returns The column boundaries, left edge first and right edge last.
+ */
+function columnBounds(
+  runs: ReadonlyArray<TextRun>,
+  gutters: ReadonlyArray<Gutter>,
+  edges: { left: number; right: number },
+): Array<number> {
+  const inks = runs
+    .map((r) => runInk(r))
+    .filter((ink): ink is [number, number] => ink !== undefined);
+  return [
+    edges.left,
+    ...gutters.map((g) => {
+      let at = g.mid;
+      // Only ink that ENDS inside the band overhangs it. Ink that runs out the
+      // far side is a line spanning the whole page — a heading, a rule of
+      // asterisks — and it crosses every gutter there is.
+      for (const [from, to] of inks) {
+        if (from < g.mid && to > at && to <= g.to) at = to;
+      }
+      return at;
+    }),
+    edges.right,
+  ];
+}
+
+/**
+ * The last column a cell starting at `from` covers — the one where no run
+ * reaches any further right.
+ *
+ * A run whose INK ends past a column boundary was drawn as one line across
+ * both, so both belong to one cell; and a cell widened that way may pick up a
+ * run that crosses the next boundary in turn.
+ *
+ * @param row       The row's runs.
+ * @param from      The column the cell starts in.
+ * @param count     How many columns the table has.
+ * @param regionOf  Which column an x falls in.
+ */
+function spanEnd(
+  row: ReadonlyArray<TextRun>,
+  from: number,
+  count: number,
+  regionOf: (x: number) => number,
+): number {
+  let to = from;
+  for (let grew = true; grew && to < count - 1; ) {
+    grew = false;
+    for (const run of row) {
+      const ink = runInk(run);
+      if (ink === undefined) continue;
+      const start = regionOf(ink[0]);
+      if (start < from || start > to) continue;
+      // The ink must reach INTO the next column, not merely touch its edge:
+      // a boundary sits in the middle of the gap between them.
+      const end = regionOf(ink[1] - 1);
+      if (end > to) {
+        to = Math.min(end, count - 1);
+        grew = true;
+      }
+    }
+  }
+  return to;
 }
 
 /** Below this many gutters a page in columns is read as columns. */

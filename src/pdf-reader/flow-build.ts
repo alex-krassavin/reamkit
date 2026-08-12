@@ -583,8 +583,18 @@ export function withMeasuredMargins(
       // basicapi.pdf's contents line runs 504.5pt across a 504.5pt measure, and
       // its page number came back at the head of the line below.
       right: clamp(median(rights) - width * SLACK, width),
-      top: clamp(median(tops), height),
-      bottom: clamp(median(bottoms), height),
+      // Down the page the TIGHTEST page decides, not the middle one. A margin
+      // is a wall the text may not cross, and the pages differ: the last one
+      // ends early, and taking the middle of two puts the wall above the line
+      // the first page ends on. ZapfDingbats.pdf's second sheet stops five rows
+      // short of its first, and its first sheet lost a row to a page of its own.
+      top: clamp(Math.min(...tops), height),
+      // …and it gives back a little of what it measured, for the same reason
+      // the right margin does: the page was set in faces this reader does not
+      // have, and re-set in substitutes it cannot come out shorter everywhere.
+      // A measure exactly as deep as the text block drops its last line onto a
+      // sheet of its own.
+      bottom: clamp(Math.min(...bottoms) - height * SLACK, height),
     },
   };
 }
