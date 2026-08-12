@@ -154,18 +154,35 @@ function readingOf(file: PdfFile): 'flow' | 'positional' {
   const ENOUGH_MARKS = 20;
   /** Twice as many marks as lines is a page that is drawn rather than written. */
   const DRAWN = 2;
+  /** Below this many runs, an angle is a stamp or a watermark and not the page. */
+  const ENOUGH_TURNED = 8;
   const ratios: Array<number> = [];
   for (const page of file.pages()) {
     let marks = 0;
     let lines = 0;
+    let turned = 0;
+    let runs = 0;
     try {
       marks = collectPageVectors(file, page, []).vectors.length;
       // Baselines, not runs: a line broken into twenty runs is still one line,
       // and counting runs would make ordinary justified prose look drawn.
       const ys = new Set<number>();
-      for (const run of extractPageText(file, page)) ys.add(Math.round(run.y));
+      for (const run of extractPageText(file, page)) {
+        ys.add(Math.round(run.y));
+        runs++;
+        if (run.angleDeg !== undefined) turned++;
+      }
       lines = ys.size;
     } catch {
+      continue;
+    }
+    // §9.4.2 — a page whose words are set at an ANGLE is a page being drawn,
+    // whatever else is on it: the placement IS the content, and re-set flat the
+    // words come back in an order the page never had. bug946506.pdf runs every
+    // line of its lorem ipsum down the sheet at twenty degrees, and read as
+    // prose its columns interleaved — "adipiscinnon luctus eleipsum dolor sit".
+    if (runs >= ENOUGH_TURNED && turned > runs * 0.5) {
+      ratios.push(DRAWN);
       continue;
     }
     if (marks < ENOUGH_MARKS) {

@@ -101,6 +101,38 @@ describe('a multi-page PDF keeps its pages (E-PDF EP4)', () => {
   });
 });
 
+describe('a page of turned words is a page, not prose (§9.4.2)', () => {
+  it('reads it placed, whatever else is on the sheet', () => {
+    // The placement IS the content: re-set flat, the words come back in an
+    // order the page never had. bug946506.pdf runs every line of its lorem
+    // ipsum down the sheet at twenty degrees, and read as prose its lines
+    // interleaved — "adipiscinnon luctus eleipsum dolor sit".
+    const turned = Array.from(
+      { length: 10 },
+      (_, i) =>
+        `BT /F0 12 Tf 0.94 0.34 -0.34 0.94 ${String(30 + i * 8)} ${String(40 + i * 18)} Tm (word${String(i)}) Tj ET`,
+    ).join('\n');
+    const doc = Ream.parse(
+      onePagePdf('/MediaBox [0 0 300 300] /Resources << /Font << /F0 5 0 R >> >>', turned, [
+        '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+      ]),
+    );
+    expect(doc.losses.some((l) => /read as a PAGE/u.test(l.detail))).toBe(true);
+
+    // An upright page of the same size is prose and keeps the flowing reading.
+    const upright = Array.from(
+      { length: 10 },
+      (_, i) => `BT /F0 12 Tf 1 0 0 1 30 ${String(40 + i * 18)} Tm (word${String(i)}) Tj ET`,
+    ).join('\n');
+    const flowed = Ream.parse(
+      onePagePdf('/MediaBox [0 0 300 300] /Resources << /Font << /F0 5 0 R >> >>', upright, [
+        '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+      ]),
+    );
+    expect(flowed.losses.some((l) => /read as a PAGE/u.test(l.detail))).toBe(false);
+  });
+});
+
 describe('a leader is not a row of spaced dots (§17.3.1.25)', () => {
   it('joins the dots and ends the entry at the line', () => {
     // A leader is drawn one character at a time with a step about as wide as a
