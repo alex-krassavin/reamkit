@@ -115,11 +115,10 @@ export function reconstructByLayout(
   pages.forEach((page, i) => {
     const runs = pageRuns[i]!;
     const display = shown[i]!;
-    // EP17 — detect a clean two-column split (a central vertical gutter no run
-    // crosses); fall back to a single column. Each column is grouped and read
-    // independently, then the left column's blocks precede the right's.
+    // EP17 — the page's gutters, and so its columns. Each column is grouped and
+    // read independently, and its blocks precede the next column's.
     const pageWidth = display.width;
-    const gutter = detectGutter(runs, pageWidth);
+    const gutters = detectGutters(runs, pageWidth);
     // Whether this page steps between its words or writes spaces of its own,
     // which decides how wide a gap has to be to mean one.
     const stepped = stepsBetweenWords(runs);
@@ -129,7 +128,7 @@ export function reconstructByLayout(
     // EP17 — a full-width line cuts the page in two: what is above it is read
     // before it and what is below after, so a paper's columns do not start at
     // the top of the sheet.
-    const split = gutter !== undefined ? assignColumns(runs, gutter) : undefined;
+    const split = gutters.length > 0 ? assignColumns(runs, gutters) : undefined;
     const bandEpsilon = (median(runs.map((r) => r.fontSizePt).filter((s) => s > 0)) || 10) / 2;
     const bandAt = (top: number): number => bandOf(split?.breaks ?? [], top, bandEpsilon);
     const addColumn = (allRuns: ReadonlyArray<TextRun>, col: number): void => {
@@ -201,8 +200,7 @@ export function reconstructByLayout(
       make: (z: number) => BodyElement;
     }> = [];
 
-    const colOf = (centerX: number): number =>
-      gutter !== undefined && centerX >= gutter.mid ? 1 : 0;
+    const colOf = (centerX: number): number => gutters.filter((g) => centerX >= g.mid).length;
     // The shown page has its own corner: the turn has already been applied, so
     // what is left is a box that starts at the origin.
     const frame = { left: 0, top: display.height };
@@ -232,9 +230,9 @@ export function reconstructByLayout(
     if (split) {
       // A run the rules pass rebuilt is not the one the split was measured on,
       // so its column is looked up by where it stands.
-      const columnFor = (r: TextRun): number =>
-        split.columnOf.get(r) ?? (r.x < gutter!.mid ? 0 : 1);
-      for (const col of [SPANNING_COLUMN, 0, 1]) {
+      const columnFor = (r: TextRun): number => split.columnOf.get(r) ?? colOf(r.x);
+      const columns = Array.from({ length: gutters.length + 1 }, (_, n) => n);
+      for (const col of [SPANNING_COLUMN, ...columns]) {
         addColumn(
           ruled.runs.filter((r) => columnFor(r) === col),
           col,
@@ -271,7 +269,9 @@ export function reconstructByLayout(
     marks.forEach((mark, z) => {
       blocks.push({ band: bandAt(mark.top), col: mark.col, top: mark.top, el: mark.make(z) });
     });
-    blocks.sort((a, b) => a.band - b.band || a.col - b.col || b.top - a.top);
+    blocks.sort(
+      (a, b) => a.band - b.band || columnOrder(a.col) - columnOrder(b.col) || b.top - a.top,
+    );
     // §14.11.2 — a page whose SIZE differs from the one before it opens a
     // section of its own, because a section is what carries a page size.
     // function_based_shading_cmyk.pdf is 290×290 and then 1880×1260, and read
@@ -330,8 +330,8 @@ export function reconstructByLayout(
   };
 }
 
-// EP17 — the gutter of a two-column page: the vertical band the fewest lines
-// cross.
+// EP17 — the gutters of a page set in columns: the vertical bands the fewest
+// lines cross.
 //
 // It used to be the widest band NO run crossed, which asked a page to be two
 // columns and nothing else. Almost none are: comments.pdf is a conference paper
@@ -345,6 +345,12 @@ export function reconstructByLayout(
 // line of it; in the gutter it is only the handful of full-width lines, and the
 // two counts are far enough apart to tell one from the other. Those full-width
 // lines are then what cuts the page into BANDS (see `assignColumns`).
+//
+// There may be more than one. A page is not always two columns and a middle:
+// chrome-text-selection-markedContent.pdf is an analyst's report — two columns
+// of comment and a sidebar of figures down the right — and asked for the ONE
+// best band it took the body's gutter and read the sidebar as part of the
+// text, so the page opened with the guidance box from the foot of the margin.
 interface Gutter {
   /** The middle of the band, which is what a run is placed left or right of. */
   readonly mid: number;
@@ -353,51 +359,43 @@ interface Gutter {
   readonly to: number;
 }
 
-function detectGutter(runs: ReadonlyArray<TextRun>, pageWidth: number): Gutter | undefined {
-  if (runs.length < 30 || pageWidth <= 0) return undefined;
+function detectGutters(runs: ReadonlyArray<TextRun>, pageWidth: number): Array<Gutter> {
+  if (runs.length < 30 || pageWidth <= 0) return [];
   const fontSize = median(runs.map((r) => r.fontSizePt).filter((s) => s > 0)) || 10;
-  const spans = runs.map((r): [number, number] => [r.x, Math.max(r.endX, r.x + 1)]);
+  const spans = runs.flatMap((r) => {
+    const ink = runInk(r);
+    return ink ? [ink] : [];
+  });
+  if (spans.length === 0) return [];
   const minX = Math.min(...spans.map((iv) => iv[0]));
   const maxX = Math.max(...spans.map((iv) => iv[1]));
   const span = maxX - minX;
-  if (span < pageWidth * 0.5) return undefined; // text doesn't span enough of the page
-  // First the strict reading: the widest band NO run crosses. It is exactly
-  // right where it fires, and it fires on a page set in columns and nothing
-  // else — including a sparse one, where the crossing count below is zero
-  // nearly everywhere and says nothing.
+  if (span < pageWidth * 0.5) return []; // text doesn't span enough of the page
+  // First the strict reading: every band NO run crosses. It is exactly right
+  // where it fires, and it fires on a page set in columns and nothing else —
+  // including a sparse one, where the crossing count below is zero nearly
+  // everywhere and says nothing.
   const sorted = [...spans].sort((a, b) => a[0] - b[0]);
   let curEnd = sorted[0]![1];
-  let emptyMid = 0;
-  let emptyFrom = 0;
-  let emptyTo = 0;
+  const empty: Array<Gutter> = [];
   for (const [l, r] of sorted) {
-    if (l - curEnd > emptyTo - emptyFrom) {
-      emptyFrom = curEnd;
-      emptyTo = l;
-      emptyMid = (curEnd + l) / 2;
-    }
+    if (l - curEnd >= fontSize * 3) empty.push({ mid: (curEnd + l) / 2, from: curEnd, to: l });
     if (r > curEnd) curEnd = r;
   }
-  const emptyFrac = (emptyMid - minX) / span;
-  if (emptyTo - emptyFrom >= fontSize * 3 && emptyFrac >= 0.35 && emptyFrac <= 0.65) {
-    const onLeft = spans.filter(([l]) => l < emptyMid).length;
-    if (onLeft >= runs.length * 0.25 && onLeft <= runs.length * 0.75) {
-      return { mid: emptyMid, from: emptyFrom, to: emptyTo };
-    }
-  }
-  // Otherwise the question is asked a LINE at a time: at the gutter, most lines
+  // And then the question is asked a LINE at a time: at the gutter, most lines
   // have ink on both sides of it and cross none of it, while the few that do
   // cross are the full-width ones. A page set in one column has no such place —
   // every line crosses its middle.
   const rows = rowsOf(runs, fontSize).map((row) =>
-    [...row]
-      .map((r): [number, number] => [r.x, Math.max(r.endX, r.x + 1)])
+    row
+      .flatMap((r) => {
+        const ink = runInk(r);
+        return ink ? [ink] : [];
+      })
       .sort((a, b) => a[0] - b[0]),
   );
-  let best: { x: number; score: number } | undefined;
-  let bestFrom = 0;
-  let bestTo = 0;
-  for (const x of sample(minX + span * 0.3, minX + span * 0.7, 1)) {
+  const voted: Array<Gutter> = [];
+  for (const x of sample(minX + span * 0.1, minX + span * 0.9, 1)) {
     let columned = 0;
     let crossing = 0;
     for (const row of rows) {
@@ -419,17 +417,64 @@ function detectGutter(runs: ReadonlyArray<TextRun>, pageWidth: number): Gutter |
     // lines must be split here than reach across it — on a page set in one
     // column every line reaches across the middle.
     if (columned < MIN_COLUMNED_ROWS || crossing >= columned) continue;
-    if (!best || columned > best.score) {
-      best = { x, score: columned };
-      bestFrom = x;
-      bestTo = x;
-    } else if (columned === best.score && x - bestTo <= 1) {
-      bestTo = x;
-    }
+    const last = voted[voted.length - 1];
+    // Every x that answers is part of a band, and the band is the gutter.
+    if (last && x - last.to <= 1.5)
+      voted[voted.length - 1] = { ...last, to: x, mid: (last.from + x) / 2 };
+    else voted.push({ mid: x, from: x, to: x });
   }
-  if (!best) return undefined;
-  return { mid: (bestFrom + bestTo) / 2, from: bestFrom, to: bestTo };
+  // Both answers, together. Neither alone is the page: the empty band is exact
+  // where it fires and silent where a title crosses it, and the vote needs a
+  // dozen lines split at the same place, which the sidebar of a sparse page
+  // never has. chrome-text-selection-markedContent.pdf is two columns of
+  // comment and a margin of figures — the empty band separates the margin, the
+  // vote separates the columns, and one without the other reads the sidebar as
+  // part of the text.
+  // The empty band is exact — its middle is a place no ink is — so the vote
+  // only ADDS gutters, and never moves one the strict reading already found:
+  // a band as wide as both answers has its middle wherever that falls, which
+  // on this page was inside a word, and the line was then read straight across.
+  const near = (band: Gutter): boolean =>
+    empty.some((e) => band.mid > e.from - fontSize && band.mid < e.to + fontSize);
+  return separating(
+    [...empty, ...voted.filter((v) => !near(v))].sort((a, b) => a.mid - b.mid),
+    spans,
+  );
 }
+
+/**
+ * The candidate gutters that actually separate something, left to right.
+ *
+ * A gutter with nothing on one side of it is a margin, and two of them with a
+ * word between are one column and a stray. Each band is kept only where the
+ * region since the last kept one holds a real share of the page's runs — and
+ * the last one only if something follows it.
+ *
+ * @param bands The candidates, in order.
+ * @param spans Every run's horizontal extent.
+ * @returns The gutters worth splitting on.
+ */
+function separating(
+  bands: ReadonlyArray<Gutter>,
+  spans: ReadonlyArray<readonly [number, number]>,
+): Array<Gutter> {
+  const need = spans.length * MIN_COLUMN_SHARE;
+  const out: Array<Gutter> = [];
+  let from = -Infinity;
+  for (const band of bands) {
+    const inside = spans.filter(([l, r]) => (l + r) / 2 > from && (l + r) / 2 < band.mid).length;
+    if (inside < need) continue;
+    out.push(band);
+    from = band.mid;
+  }
+  // The rightmost column has to hold something too.
+  const tail = spans.filter(([l, r]) => (l + r) / 2 > from).length;
+  if (out.length > 0 && tail < need) out.pop();
+  return out;
+}
+
+/** How much of a page's text the narrowest column holds before it is a column. */
+const MIN_COLUMN_SHARE = 0.08;
 
 /** How many lines have to be split at the same place before the page is in columns. */
 const MIN_COLUMNED_ROWS = 12;
@@ -459,6 +504,35 @@ function rowsOf(runs: ReadonlyArray<TextRun>, fontSize: number): Array<Array<Tex
   return rows;
 }
 
+/**
+ * A run's INK — where its letters are, which a trailing space is not.
+ *
+ * A run carries the advance it stepped, and the space that ends a line of a
+ * column is part of it: chrome-text-selection-markedContent.pdf sets two
+ * columns 21 points apart and its left column's lines end ", " — five of those
+ * points — so every measurement of the gutter came back a third short and the
+ * page was read straight across.
+ *
+ * @param run The run.
+ * @returns Its ink, or `undefined` for a run that is nothing but space.
+ */
+function runInk(run: TextRun): [number, number] | undefined {
+  const from = Math.min(run.x, run.endX);
+  const to = Math.max(run.endX, run.x + 1);
+  const chars = [...run.text];
+  if (chars.length === 0) return [from, to];
+  let head = 0;
+  while (head < chars.length && SPACE.test(chars[head]!)) head++;
+  if (head === chars.length) return undefined;
+  let tail = 0;
+  while (tail < chars.length - head && SPACE.test(chars[chars.length - 1 - tail]!)) tail++;
+  if (head === 0 && tail === 0) return [from, to];
+  const step = (to - from) / chars.length;
+  return [from + head * step, to - tail * step];
+}
+
+const SPACE = /\s/u;
+
 /** The x's to measure at, from `a` to `b` inclusive. */
 function sample(a: number, b: number, step: number): Array<number> {
   const out: Array<number> = [];
@@ -480,34 +554,49 @@ function sample(a: number, b: number, step: number): Array<number> {
  */
 function assignColumns(
   runs: ReadonlyArray<TextRun>,
-  gutter: Gutter,
+  gutters: ReadonlyArray<Gutter>,
 ): { columnOf: Map<TextRun, number>; breaks: Array<number> } {
   const fontSize = median(runs.map((r) => r.fontSizePt).filter((s) => s > 0)) || 10;
   const rows = rowsOf(runs, fontSize);
   const columnOf = new Map<TextRun, number>();
   const breaks: Array<number> = [];
+  const columnAt = (x: number): number => gutters.filter((g) => x >= g.mid).length;
   for (const row of rows) {
-    const sorted = [...row].sort((a, b) => a.x - b.x);
-    const leftmost = sorted[0]!.x;
-    const rightmost = Math.max(...sorted.map((r) => Math.max(r.endX, r.x)));
-    if (rightmost <= gutter.mid || leftmost >= gutter.mid) {
-      const col = rightmost <= gutter.mid ? 0 : 1;
+    // A space is not ink, and the space that ends a column's line stands in
+    // the gutter (see {@link runInk}).
+    const inked = row
+      .flatMap((run) => {
+        const ink = runInk(run);
+        return ink ? [{ run, from: ink[0], to: ink[1] }] : [];
+      })
+      .sort((a, b) => a.from - b.from);
+    if (inked.length === 0) continue;
+    const leftmost = inked[0]!.from;
+    const rightmost = Math.max(...inked.map((r) => r.to));
+    // The gutters this row's ink lies across; the others it is on one side of.
+    const straddled = gutters.filter((g) => leftmost < g.mid && rightmost > g.mid);
+    if (straddled.length === 0) {
+      const col = columnAt(leftmost);
       for (const run of row) columnOf.set(run, col);
       continue;
     }
-    // Ink on both sides. Two columns, or one line reaching across? The gutter
-    // is what tells them apart: a line set across the page may have a WORD
-    // space over the middle, and a word space is nothing like a column gap.
-    // comments.pdf centres its author block, and split on the word gaps that
-    // happened to fall in the middle the names came apart into both columns.
-    let cur = Math.max(sorted[0]!.endX, sorted[0]!.x);
-    let gap = 0;
-    for (const run of sorted.slice(1)) {
-      if (run.x > cur && cur <= gutter.mid && run.x >= gutter.mid) gap = run.x - cur;
-      cur = Math.max(cur, run.endX, run.x);
-    }
-    if (gap >= fontSize * MIN_GUTTER_EM) {
-      for (const run of row) columnOf.set(run, run.x < gutter.mid ? 0 : 1);
+    // Ink on both sides. Several columns, or one line reaching across? The
+    // gutter is what tells them apart: a line set across the page may have a
+    // WORD space over the middle, and a word space is nothing like a column
+    // gap. comments.pdf centres its author block, and split on the word gaps
+    // that happened to fall in the middle the names came apart into both
+    // columns.
+    const gapAt = (mid: number): number => {
+      let cur = inked[0]!.to;
+      let gap = 0;
+      for (const { from, to } of inked.slice(1)) {
+        if (from > cur && cur <= mid && from >= mid) gap = from - cur;
+        cur = Math.max(cur, to);
+      }
+      return gap;
+    };
+    if (straddled.every((g) => gapAt(g.mid) >= fontSize * MIN_GUTTER_EM)) {
+      for (const { run, from } of inked) columnOf.set(run, columnAt(from));
       continue;
     }
     for (const run of row) columnOf.set(run, SPANNING_COLUMN);
@@ -518,15 +607,32 @@ function assignColumns(
 
 /**
  * A line that spans the page belongs to no column: it stands between the bands
- * it separates, ahead of either column's blocks in its own band.
+ * it separates.
+ *
+ * Which side of them? A spanning line is what BREAKS a band, and a band runs
+ * from one break to the next, so the line is always at the FOOT of its own —
+ * the columns of that band are the ones above it. Read ahead of them,
+ * bug1997343.pdf's page number came out between the date and the abstract.
  */
 const SPANNING_COLUMN = -1;
 
+/** Where a column reads in its band: the spanning line at the foot of it. */
+function columnOrder(col: number): number {
+  return col === SPANNING_COLUMN ? Number.MAX_SAFE_INTEGER : col;
+}
+
 /**
  * How wide, in ems, the gap over the middle has to be for a line to be two
- * lines. Word spaces run well under one em; a column gutter runs to several.
+ * lines. A word space is a quarter of an em (see `SPACE_GAP_EM`) and a
+ * justified one no more than half; a gutter is an em and more.
+ *
+ * It stood at one and a half, which is wider than some magazines set:
+ * chrome-text-selection-markedContent.pdf puts fourteen and a half points
+ * between columns of eleven-point type — 1.31 em — and every line of it was
+ * read straight across, the left column's sentence running into the right
+ * column's.
  */
-const MIN_GUTTER_EM = 1.5;
+const MIN_GUTTER_EM = 1;
 
 /** Which band a mark at this height belongs to — how many breaks stand above it. */
 function bandOf(breaks: ReadonlyArray<number>, top: number, epsilon: number): number {

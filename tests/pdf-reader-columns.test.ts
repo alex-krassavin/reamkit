@@ -12,6 +12,29 @@ import { PdfDocument } from '@/pdf/writer';
 
 const ROWS = 18;
 
+/** A one-page PDF of `ops`, drawn in Helvetica on a letter sheet. */
+function onePage(ops: ReadonlyArray<string>): Uint8Array {
+  const doc = new PdfDocument();
+  const font = doc.add(
+    dict({ Type: name('Font'), Subtype: name('Type1'), BaseFont: name('Helvetica') }),
+  );
+  const content = doc.add(stream({}, new TextEncoder().encode(ops.join('\n'))));
+  const pagesMap = dict({ Type: name('Pages'), Kids: [], Count: 1 });
+  const pagesRef = doc.add(pagesMap);
+  const page = doc.add(
+    dict({
+      Type: name('Page'),
+      Parent: pagesRef,
+      MediaBox: [0, 0, 612, 792],
+      Resources: dict({ Font: dict({ F1: font }) }),
+      Contents: content,
+    }),
+  );
+  (pagesMap.get('Kids') as Array<PdfValue>).push(page);
+  const catalog = doc.add(dict({ Type: name('Catalog'), Pages: pagesRef }));
+  return doc.build(catalog);
+}
+
 // A page with two columns of short runs (left x=72, right x=380) sharing each
 // baseline. 36 runs clears the heuristic's confidence threshold.
 // `heading` prepends a line reaching right across the page, the way a paper's
@@ -56,7 +79,7 @@ const bodyTokens = (pdf: Uint8Array): Array<string> => {
       el.kind === 'paragraph' ? el.paragraph.runs.map((r) => r.text).join('') : '',
     )
     .join(' ');
-  return text.match(/[LR]\d\d|TITLE|AUTHORS/g) ?? [];
+  return text.match(/[LR]\d\d|TITLE|AUTHORS|FOOTER/g) ?? [];
 };
 
 describe('two-column reconstruction (E-PDF EP17)', () => {
@@ -80,5 +103,51 @@ describe('two-column reconstruction (E-PDF EP17)', () => {
     const right = Array.from({ length: ROWS }, (_, i) => `R${String(i + 1).padStart(2, '0')}`);
     expect(tokens.slice(2, 2 + ROWS)).toEqual(left);
     expect(tokens.slice(2 + ROWS)).toEqual(right);
+  });
+
+  it('reads a page of THREE columns one at a time', () => {
+    // A page is not always two columns and a middle.
+    // chrome-text-selection-markedContent.pdf is an analyst's report — two
+    // columns of comment and a sidebar of figures down the right — and asked
+    // for the ONE best gutter it took the body's and read the sidebar as part
+    // of the text, opening the page with the guidance box from the margin.
+    const ops = ['BT /F1 10 Tf'];
+    for (let i = 0; i < ROWS; i++) {
+      const y = 720 - i * 24;
+      const n = String(i + 1).padStart(2, '0');
+      ops.push(`1 0 0 1 72 ${String(y)} Tm (L${n}) Tj`);
+      ops.push(`1 0 0 1 280 ${String(y)} Tm (M${n}) Tj`);
+      ops.push(`1 0 0 1 480 ${String(y)} Tm (R${n}) Tj`);
+    }
+    ops.push('ET');
+    const text = Ream.parse(onePage(ops))
+      .flow.body.map((el) =>
+        el.kind === 'paragraph' ? el.paragraph.runs.map((r) => r.text).join('') : '',
+      )
+      .join(' ');
+    const tokens = text.match(/[LMR]\d\d/gu) ?? [];
+    const column = (letter: string): Array<string> =>
+      Array.from({ length: ROWS }, (_, i) => `${letter}${String(i + 1).padStart(2, '0')}`);
+    expect(tokens.slice(0, ROWS)).toEqual(column('L'));
+    expect(tokens.slice(ROWS, ROWS * 2)).toEqual(column('M'));
+    expect(tokens.slice(ROWS * 2)).toEqual(column('R'));
+  });
+
+  it('reads a full-width FOOTER after the columns it stands under', () => {
+    // A spanning line is what breaks a band, so it always stands at the foot of
+    // its own — the columns of that band are the ones above it. Read ahead of
+    // them, bug1997343.pdf's page number came out between the date and the
+    // abstract.
+    const ops = ['BT /F1 10 Tf'];
+    for (let i = 0; i < ROWS; i++) {
+      const y = 720 - i * 24;
+      const n = String(i + 1).padStart(2, '0');
+      ops.push(`1 0 0 1 72 ${String(y)} Tm (L${n}) Tj`);
+      ops.push(`1 0 0 1 380 ${String(y)} Tm (R${n}) Tj`);
+    }
+    ops.push('1 0 0 1 72 200 Tm (FOOTER ACROSS THE WHOLE PAGE WIDTH HERE) Tj');
+    ops.push('ET');
+    const tokens = bodyTokens(onePage(ops));
+    expect(tokens[tokens.length - 1]).toBe('FOOTER');
   });
 });
