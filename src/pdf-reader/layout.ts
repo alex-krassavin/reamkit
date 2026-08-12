@@ -46,6 +46,8 @@ interface Line {
   /** Leftmost glyph origin, and how far the line reaches — placed reconstruction. */
   readonly x: number;
   readonly width: number;
+  /** Whether a TAB stands inside it — a gap no word space could be. */
+  readonly tabbed?: boolean;
 }
 
 /**
@@ -974,6 +976,7 @@ function lineOf(runs: ReadonlyArray<TextRun>, y: number, fontSize: number, stepp
     width: ink.width,
     y,
     fontSize,
+    ...(tabbed(runs, fontSize) ? { tabbed: true as const } : {}),
     text: spans
       .map((s) => s.text)
       .join('')
@@ -982,6 +985,44 @@ function lineOf(runs: ReadonlyArray<TextRun>, y: number, fontSize: number, stepp
     spans,
   };
 }
+
+/**
+ * Whether a TAB stands inside the line — a gap no word space could be.
+ *
+ * A line with one is a line the page SET OUT, not a line of prose: a contents
+ * entry with its page number at the measure, a two-column list, a label and its
+ * value. It does not run on into the line below it, and read as prose it does:
+ * bug1997343.pdf's contents came back as "2 Document structures 1 2.1
+ * Mathematics ............. 1", two entries in one line, where the file sets
+ * one to a line.
+ *
+ * A leader says the same thing (see {@link carriesLeader}) but only where the
+ * entry is dotted; a top-level entry is spaced, and nothing else marks it.
+ *
+ * @param runs     The line's runs.
+ * @param fontSize The line's size.
+ */
+function tabbed(runs: ReadonlyArray<TextRun>, fontSize: number): boolean {
+  const inked = runs
+    .flatMap((r) => {
+      const ink = runInk(r);
+      return ink ? [ink] : [];
+    })
+    .sort((a, b) => a[0] - b[0]);
+  let cur = Number.NEGATIVE_INFINITY;
+  for (const [from, to] of inked) {
+    if (cur > Number.NEGATIVE_INFINITY && from - cur >= fontSize * TAB_GAP_EM) return true;
+    cur = Math.max(cur, to);
+  }
+  return false;
+}
+
+/**
+ * How wide a gap has to be, in ems, before a word space could not have stood
+ * there. Justification stretches a space to about half an em; two and a half is
+ * a jump nothing but a tab makes.
+ */
+const TAB_GAP_EM = 2.5;
 
 /**
  * The gap between two runs that means a WORD SPACE stood there.
@@ -1118,7 +1159,8 @@ function groupIntoParagraphs(
     if (
       groups.length === 0 ||
       opened ||
-      (prev !== undefined && (endedParagraph(prev, line, column) || carriesLeader(prev)))
+      (prev !== undefined &&
+        (endedParagraph(prev, line, column) || carriesLeader(prev) || prev.tabbed === true))
     ) {
       groups.push([]);
       gaps.push(prev === undefined ? 0 : gap);
