@@ -109,9 +109,22 @@ export function reconstructByLayout(
   const body: Array<BodyElement> = [];
   // §17.6 — where the pages differ in size the document is several sections,
   // each ending at the body index its last page's blocks end at.
-  const sectionEnds: Array<{ at: number; from: number; to: number }> = [];
+  const sectionEnds: Array<{
+    at: number;
+    from: number;
+    to: number;
+    columns: number;
+    spacePt: number;
+    continuous: boolean;
+  }> = [];
   let sectionFrom = 0;
   let lastSize = '';
+  // §17.6.4 — the columns the pages are SET in, which change where a page's
+  // gutters do: a paper's title stands over the two columns of its body, and a
+  // section is what carries a column setup.
+  let curColumns = 1;
+  let curSpace = 0;
+  let pendingContinuous = false;
   pages.forEach((page, i) => {
     const runs = pageRuns[i]!;
     const display = shown[i]!;
@@ -281,8 +294,16 @@ export function reconstructByLayout(
     const size = `${shown[i]!.width.toFixed(2)}x${shown[i]!.height.toFixed(2)}`;
     const opensSection = i > 0 && size !== lastSize;
     if (opensSection) {
-      sectionEnds.push({ at: body.length, from: sectionFrom, to: i });
+      sectionEnds.push({
+        at: body.length,
+        from: sectionFrom,
+        to: i,
+        columns: curColumns,
+        spacePt: curSpace,
+        continuous: pendingContinuous,
+      });
       sectionFrom = i;
+      pendingContinuous = false;
     }
     lastSize = size;
     // Each source page after the first opens an output page of its own. Flowed,
@@ -298,7 +319,30 @@ export function reconstructByLayout(
         },
       });
     }
-    for (const block of blocks) body.push(block.el);
+    // A page set in columns is REPRODUCED in them: the reading order alone
+    // leaves a two-column paper re-set as one long column, which is not the
+    // page the file draws. The count changes at a band that spans — the title
+    // over the columns, the footer under them — and each change is a section of
+    // its own, continuous, so no page is opened for it.
+    const spacePt = gutters.length > 0 ? median(gutters.map((g) => g.to - g.from)) : 0;
+    for (const block of blocks) {
+      const count = block.col === SPANNING_COLUMN ? 1 : gutters.length + 1;
+      if (count !== curColumns) {
+        sectionEnds.push({
+          at: body.length,
+          from: sectionFrom,
+          to: i + 1,
+          columns: curColumns,
+          spacePt: curSpace,
+          continuous: pendingContinuous,
+        });
+        sectionFrom = i;
+        pendingContinuous = true;
+        curColumns = count;
+        curSpace = spacePt;
+      }
+      body.push(block.el);
+    }
   });
   // A placed reading anchors everything to the page, so its margins must stay
   // at zero or the anchors move. A FLOWING one is a document being re-set, and
@@ -310,12 +354,27 @@ export function reconstructByLayout(
       ? own
       : withMeasuredMargins(own, shown.slice(from, to), pageRuns.slice(from, to));
   };
-  sectionEnds.push({ at: body.length, from: sectionFrom, to: pages.length });
+  sectionEnds.push({
+    at: body.length,
+    from: sectionFrom,
+    to: pages.length,
+    columns: curColumns,
+    spacePt: curSpace,
+    continuous: pendingContinuous,
+  });
   const sections =
     sectionEnds.length > 1
       ? sectionEnds.flatMap((end) => {
-          const properties = setUp(end.from, end.to);
-          return properties ? [{ properties, endIndex: end.at }] : [];
+          const base = setUp(end.from, end.to);
+          if (!base) return [];
+          const properties: SectionProperties = {
+            ...base,
+            ...(end.columns > 1 && mode !== 'positional'
+              ? { columns: { count: end.columns, spacePt: end.spacePt } }
+              : {}),
+            ...(end.continuous ? { sectionStart: 'continuous' as const } : {}),
+          };
+          return [{ properties, endIndex: end.at }];
         })
       : [];
   return {
