@@ -27,13 +27,16 @@ import { extractPageText } from './text';
 import { collectPageVectors } from './vector';
 import { markDrawnRules } from './text-rules';
 import { isRightToLeft } from './content';
-import type { BodyElement, SectionProperties } from '@/core/document-model';
+import type { BodyElement, Run, SectionProperties } from '@/core/document-model';
 import type { Loss, Pt } from '@/core/ir';
 
 import type { TextRun } from './content';
 import type { PdfFile, PdfPage } from './document';
 import type { Reconstruction, TextSpan } from './flow-build';
 import { FEATURES, ResourceStore, pt } from '@/core/ir';
+
+/** The relationship the reconstruction files its running foot under. */
+const FOOTER_PART = 'pdf-running-foot';
 
 /** §9.10.2 — a glyph the face maps to no character (see `./font`). */
 export const UNMAPPED = '\uFFFD';
@@ -73,7 +76,15 @@ export function reconstructByLayout(
   // §14.11.1 — every mark is lifted into the page's SHOWN frame, so nothing
   // downstream has to know the page was ever turned.
   const shown = pages.map((page) => displayOf(page));
-  const pageRuns = pages.map((page, i) => placeRuns(extractPageText(file, page), shown[i]!));
+  const allRuns = pages.map((page, i) => placeRuns(extractPageText(file, page), shown[i]!));
+  // §17.6.13 — what the document repeats at the foot of its pages is a running
+  // foot, not a paragraph of the body. Lifted off before anything else reads
+  // the page: it must not measure the margins either, and a page number in the
+  // text block is a page number in the wrong place.
+  const foot = mode === 'positional' ? undefined : runningFoot(allRuns, shown);
+  const pageRuns = foot
+    ? allRuns.map((runs, i) => runs.filter((r) => foot.lift[i]?.has(r) !== true))
+    : allRuns;
   const medianFont =
     median(
       pageRuns
@@ -393,13 +404,23 @@ export function reconstructByLayout(
           return [{ properties, endIndex: end.at }];
         })
       : [];
+  // The band is built from the page that showed it first, and referenced by
+  // every section: the foot runs through the document, not through a section.
+  const band = foot
+    ? footerBand(foot.band, stepsBetweenWords(allRuns[0] ?? []), pageTextEdges(allRuns[0] ?? []))
+    : [];
+  const withFooter = (properties: SectionProperties | undefined): SectionProperties | undefined =>
+    properties && band.length > 0
+      ? { ...properties, footers: [{ type: 'default', relationshipId: FOOTER_PART }] }
+      : properties;
   return {
     doc: buildFlowDoc(
       body,
       resources,
-      setUp(0, pages.length),
+      withFooter(setUp(0, pages.length)),
       collectEmbeddedFonts(file, pages, losses),
-      sections,
+      sections.map((s) => ({ ...s, properties: withFooter(s.properties) ?? s.properties })),
+      band.length > 0 ? new Map([[FOOTER_PART, band]]) : undefined,
     ),
     losses: dedupeLosses(losses),
   };
@@ -1393,4 +1414,139 @@ function compareOrder(a: ReadonlyArray<number>, b: ReadonlyArray<number>): numbe
     if (a[i] !== b[i]) return a[i]! - b[i]!;
   }
   return a.length - b.length;
+}
+
+/**
+ * §17.6.13 — the running foot a document repeats at the bottom of its pages.
+ *
+ * A page number, a title, a URL: it stands below the text block, in the margin,
+ * and it is not part of what the page SAYS. Read as body it goes wherever the
+ * reflow puts it — bug1997343.pdf's "1" came out on a sheet of its own between
+ * the two the paper has, and TAMReview.pdf's "Sprouts — http://…" landed in the
+ * middle of the abstract.
+ *
+ * What makes it a running foot is that it RUNS: the same place, page after
+ * page, cut off from the text above it by more than a line of white. One page
+ * proves nothing, so two are asked for.
+ *
+ * @param pageRuns Each page's runs, placed.
+ * @param shown    Each page's shown geometry.
+ * @returns The runs to lift off each page and the band to put them in, or
+ *          `undefined` where the document repeats nothing.
+ */
+function runningFoot(
+  pageRuns: ReadonlyArray<ReadonlyArray<TextRun>>,
+  shown: ReadonlyArray<{ height: number }>,
+): { lift: ReadonlyArray<ReadonlySet<TextRun>>; band: ReadonlyArray<TextRun> } | undefined {
+  const feet = pageRuns.map((runs, i) => footLine(runs, shown[i]?.height ?? 0));
+  const found = feet.filter((f) => f !== undefined);
+  if (found.length < 2 || found.length < pageRuns.length * FOOT_SHARE) return undefined;
+  // The same place on every page: a foot that wanders is a last paragraph.
+  const ys = found.map((f) => f.y);
+  const mid = median(ys);
+  if (ys.some((y) => Math.abs(y - mid) > FOOT_DRIFT)) return undefined;
+  return {
+    lift: feet.map((f) => new Set(f?.runs ?? [])),
+    band: found[0]!.runs,
+  };
+}
+
+/** How many of a document's pages must carry the foot before it is running. */
+const FOOT_SHARE = 0.6;
+
+/** How far, in points, a running foot may drift from page to page. */
+const FOOT_DRIFT = 4;
+
+/**
+ * The bottom line of a page, where it stands ALONE below the text block.
+ *
+ * Alone means the white above it is more than the page's own leading — a last
+ * paragraph is a line's gap from the one before it, a running foot is several.
+ */
+function footLine(
+  runs: ReadonlyArray<TextRun>,
+  pageHeight: number,
+): { y: number; runs: ReadonlyArray<TextRun> } | undefined {
+  if (runs.length < 4 || pageHeight <= 0) return undefined;
+  const fontSize = median(runs.map((r) => r.fontSizePt).filter((s) => s > 0)) || 10;
+  const rows = rowsOf(runs, fontSize);
+  if (rows.length < 4) return undefined;
+  const last = rows[rows.length - 1]!;
+  const above = rows[rows.length - 2]!;
+  const y = Math.max(...last.map((r) => r.y));
+  const gap = Math.min(...above.map((r) => r.y)) - y;
+  if (gap < fontSize * FOOT_GAP_EM) return undefined;
+  // In the margin, not in the text: a foot sits in the bottom eighth of the
+  // sheet, and a short line at that.
+  if (y > pageHeight * FOOT_BAND) return undefined;
+  const text = last
+    .map((r) => r.text)
+    .join('')
+    .trim();
+  return text.length > 0 && text.length <= FOOT_CHARS ? { y, runs: last } : undefined;
+}
+
+/** How much white, in ems, stands between the text block and a running foot. */
+const FOOT_GAP_EM = 2;
+
+/** How far up the sheet a running foot may sit. */
+const FOOT_BAND = 0.12;
+
+/** A running foot is a line, not a paragraph. */
+const FOOT_CHARS = 90;
+
+/**
+ * §17.16.5.35 — the number in a run, made the field it stands for.
+ *
+ * A foot reads "1" or "Chapter 3 — 47", and the number is not the text: it is
+ * the number of the page it is drawn on, which is what lets ONE band serve
+ * every page. The run is cut around it and the middle becomes the field.
+ *
+ * @param run The footer's run.
+ * @returns The run, or the two or three it is cut into.
+ */
+function pageNumbered(run: Run): Array<Run> {
+  const found = /(^|\s)(\d{1,4})(\s|$)/u.exec(run.text);
+  if (!found || run.field !== undefined) return [run];
+  const at = found.index + found[1]!.length;
+  const number = found[2]!;
+  const before = run.text.slice(0, at);
+  const after = run.text.slice(at + number.length);
+  return [
+    ...(before === '' ? [] : [{ ...run, text: before }]),
+    { ...run, text: number, field: 'PAGE' as const },
+    ...(after === '' ? [] : [{ ...run, text: after }]),
+  ];
+}
+
+/**
+ * The band itself: the foot's own line, with the number in it made a field.
+ *
+ * §17.16.5.35 — a page number is not the text "1"; it is the number of the page
+ * it is drawn on, which is why the same band serves every page.
+ *
+ * @param runs     The foot's runs.
+ * @param stepped  Whether the page steps between its words.
+ * @param measure  The measure it was set across, for its alignment.
+ */
+function footerBand(
+  runs: ReadonlyArray<TextRun>,
+  stepped: boolean,
+  measure: { left: number; right: number } | undefined,
+): Array<BodyElement> {
+  const lines = groupIntoLines(runs, false, stepped).filter((l) => l.text.length > 0);
+  const line = lines[0];
+  if (!line) return [];
+  const { alignment } = alignmentOf([line], measure);
+  const el = paragraphFromRuns(line.spans, undefined, alignment ? { alignment } : {});
+  if (el.kind !== 'paragraph') return [el];
+  return [
+    {
+      kind: 'paragraph',
+      paragraph: {
+        ...el.paragraph,
+        runs: el.paragraph.runs.flatMap((run) => pageNumbered(run)),
+      },
+    },
+  ];
 }

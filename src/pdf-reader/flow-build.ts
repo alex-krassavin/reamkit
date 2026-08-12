@@ -584,6 +584,7 @@ export function buildFlowDoc(
   section?: SectionProperties,
   embeddedFonts?: ReadonlyMap<string, FontRegistry>,
   sections: ReadonlyArray<Section> = [],
+  headersFooters?: ReadonlyMap<string, ReadonlyArray<BodyElement>>,
 ): FlowDoc {
   return {
     kind: 'flow',
@@ -591,6 +592,7 @@ export function buildFlowDoc(
     // §17.6 — a document whose pages differ in size is several sections; one
     // page size for all of them is the ordinary case and states none.
     sections,
+    ...(headersFooters && headersFooters.size > 0 ? { headersFooters } : {}),
     ...(section ? { section } : {}),
     ...(embeddedFonts && embeddedFonts.size > 0 ? { embeddedFonts } : {}),
     styles: EMPTY_STYLE_SHEET,

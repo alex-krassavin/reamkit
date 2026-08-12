@@ -161,6 +161,88 @@ describe('a page of turned words is a page, not prose (§9.4.2)', () => {
   });
 });
 
+describe('a running foot is a foot, not a paragraph (§17.6.13)', () => {
+  /** Three pages of body with the same line standing alone at the bottom. */
+  const paper = (): Uint8Array => {
+    const page = (n: number): string => {
+      const ops: Array<string> = [];
+      for (let i = 0; i < 8; i++)
+        ops.push(
+          `BT /F0 10 Tf 1 0 0 1 40 ${String(360 - i * 14)} Tm (body line ${String(i)}) Tj ET`,
+        );
+      // Alone at the foot, a long way below the text block.
+      ops.push(`BT /F0 8 Tf 1 0 0 1 40 20 Tm (The Journal of Things ${String(n)}) Tj ET`);
+      return ops.join('\n');
+    };
+    const contents = [page(1), page(2), page(3)];
+    const objects: Array<string> = [
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R 5 0 R 7 0 R] /Count 3 >>',
+    ];
+    contents.forEach((content, i) => {
+      objects.push(
+        `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 400] /Contents ${String(4 + i * 2)} 0 R ` +
+          '/Resources << /Font << /F0 9 0 R >> >> >>',
+        `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+      );
+    });
+    objects.push('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
+    let pdf = '%PDF-1.7\n';
+    const offsets: Array<number> = [];
+    objects.forEach((body, i) => {
+      offsets.push(pdf.length);
+      pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+    });
+    const xref = pdf.length;
+    pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+    for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+    pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`;
+    return new TextEncoder().encode(pdf);
+  };
+
+  it('lifts the repeated line into the section’s footer', () => {
+    // Read as body it goes wherever the reflow puts it: bug1997343.pdf's page
+    // number came out on a sheet of its own between the two the paper has, and
+    // TAMReview.pdf's "Sprouts — http://…" in the middle of the abstract.
+    const doc = reconstructByLayout(PdfFile.parse(paper())).doc;
+    const body = doc.body
+      .flatMap((b) => (b.kind === 'paragraph' ? b.paragraph.runs.map((r) => r.text) : []))
+      .join(' ');
+    expect(body).toContain('body line 0');
+    expect(body).not.toContain('The Journal of Things');
+    // …and the band itself, with the number in it made a field.
+    const part = doc.section?.footers[0]?.relationshipId;
+    expect(part).toBeDefined();
+    const band = part !== undefined ? doc.headersFooters?.get(part) : undefined;
+    const runs = band?.flatMap((b) => (b.kind === 'paragraph' ? b.paragraph.runs : [])) ?? [];
+    expect(runs.map((r) => r.text).join('')).toContain('The Journal of Things');
+    expect(runs.some((r) => r.field === 'PAGE')).toBe(true);
+  });
+
+  it('leaves a last paragraph where the page put it', () => {
+    // One page proves nothing, and a page whose last line is a line's gap from
+    // the one above it is a paragraph, not a foot.
+    const doc = reconstructByLayout(
+      PdfFile.parse(
+        onePagePdf(
+          '/MediaBox [0 0 300 400] /Resources << /Font << /F0 5 0 R >> >>',
+          Array.from(
+            { length: 9 },
+            (_, i) =>
+              `BT /F0 10 Tf 1 0 0 1 40 ${String(360 - i * 14)} Tm (line ${String(i)}) Tj ET`,
+          ).join('\n'),
+          ['<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'],
+        ),
+      ),
+    ).doc;
+    expect(doc.section?.footers ?? []).toHaveLength(0);
+    const body = doc.body
+      .flatMap((b) => (b.kind === 'paragraph' ? b.paragraph.runs.map((r) => r.text) : []))
+      .join(' ');
+    expect(body).toContain('line 8');
+  });
+});
+
 describe('a crop box cuts the line it crosses (§14.11.2)', () => {
   it('keeps the letters the page shows and drops the rest', () => {
     // endchar.pdf is one line of a poster — "LE HOLD-UP PLANÉTAIRE" — cropped
