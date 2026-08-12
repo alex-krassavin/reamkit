@@ -21,6 +21,11 @@ import type { PathSeg } from './content';
 export interface Type1Font {
   /** The contours of one glyph, by NAME — a Type 1 font indexes by nothing else. */
   readonly path: (name: string) => Array<PathSeg> | undefined;
+  /**
+   * Whether the program holds a glyph of that name at all. One it holds which
+   * draws nothing is a BLANK glyph — a space — and not one it lacks.
+   */
+  readonly has: (name: string) => boolean;
   /** The program's own `/Encoding`: code → glyph name, where it states one. */
   readonly encoding?: ReadonlyMap<number, string>;
 }
@@ -56,6 +61,7 @@ export function type1Font(program: Uint8Array): Type1Font | undefined {
       cache.set(name, out);
       return out;
     },
+    has: (name: string): boolean => parsed.charstrings.has(name),
     ...(parsed.encoding ? { encoding: parsed.encoding } : {}),
   };
 }

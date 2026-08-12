@@ -99,7 +99,10 @@ export function buildContentFont(file: PdfFile, fontDict: PdfDict): ContentFont 
   // place, which is how bug1151216.pdf's three lines of prices vanished.
   const glyphs = isType0 ? undefined : simpleGlyphs(file, fontDict);
   const fromNames = !isType0
-    ? namedGlyphs(file, fontDict, toUnicode.size > 0, (name) => glyphs?.byName(name) !== undefined)
+    ? namedGlyphs(file, fontDict, toUnicode.size > 0, {
+        draws: (name) => glyphs?.byName(name) !== undefined,
+        blank: (name) => glyphs?.blank(name) === true,
+      })
     : undefined;
   // The names themselves, not what they come to: a name that is no character
   // still selects a glyph, which is what the outline path draws.
@@ -129,6 +132,11 @@ export function buildContentFont(file: PdfFile, fontDict: PdfDict): ContentFont 
     unicode.get(code) ??
     fromProgramFor(code) ??
     (named ? decodePredefined(named, code) : undefined) ??
+    // §9.10.2 — the `/Encoding`'s glyph NAMES, for the codes a `/ToUnicode`
+    // does not reach. A map that covers a font's letters and not its space is
+    // ordinary, and read as Latin-1 the space is a control and is dropped:
+    // TAMReview.pdf's figure labels came back "SystemFeatures".
+    fromNames?.get(code) ??
     // A composite code nothing could answer for is unrecoverable text, whether
     // the font stated NO map or a map that does not reach this code.
     // bug911034.pdf ships a `/ToUnicode` describing 95 codes and then draws
@@ -372,6 +380,13 @@ function simpleOutlineOf(
 /** The outlines a simple font's program holds, addressed the way it addresses them. */
 interface SimpleGlyphs {
   readonly byName: (name: string) => Array<PathSeg> | undefined;
+  /**
+   * Whether the program HOLDS that glyph and it draws nothing. A blank glyph
+   * in a text font is a space, not a character the reader lost: TAMReview.pdf
+   * names its space `g3` and, dropped, its figure labels came back as
+   * "SystemFeatures".
+   */
+  readonly blank: (name: string) => boolean;
   /** §5 — a Type 1 program's own `/Encoding`, where the file states none. */
   readonly builtIn?: ReadonlyMap<number, string>;
 }
@@ -400,7 +415,11 @@ function simpleGlyphs(file: PdfFile, fontDict: PdfDict): SimpleGlyphs | undefine
     if (typeOne instanceof PdfStream) {
       const face = type1Font(file.streamData(typeOne));
       if (!face) return undefined;
-      return { byName: face.path, ...(face.encoding ? { builtIn: face.encoding } : {}) };
+      return {
+        byName: face.path,
+        blank: (name: string): boolean => face.has(name) && face.path(name) === undefined,
+        ...(face.encoding ? { builtIn: face.encoding } : {}),
+      };
     }
     const stream = compact instanceof PdfStream ? compact : truetype;
     if (!(stream instanceof PdfStream)) return undefined;
@@ -408,10 +427,18 @@ function simpleGlyphs(file: PdfFile, fontDict: PdfDict): SimpleGlyphs | undefine
     // A TrueType program, or the TrueType half of an OpenType shell.
     const glyf = outlineSource(bytes);
     if (glyf) {
+      const gidOf = (name: string): number | undefined => {
+        const gid = numberedGlyph(name);
+        return gid !== undefined && gid < glyf.count ? gid : undefined;
+      };
       return {
         byName: (name: string): Array<PathSeg> | undefined => {
-          const gid = numberedGlyph(name);
+          const gid = gidOf(name);
           return gid === undefined ? undefined : glyf.path(gid);
+        },
+        blank: (name: string): boolean => {
+          const gid = gidOf(name);
+          return gid !== undefined && glyf.path(gid) === undefined;
         },
       };
     }
@@ -419,10 +446,18 @@ function simpleGlyphs(file: PdfFile, fontDict: PdfDict): SimpleGlyphs | undefine
     const outlines = cffOutlineSource(cff);
     if (!outlines) return undefined;
     const names = cffNameToGid(cff);
+    const gidOf = (name: string): number | undefined => {
+      const gid = names?.get(name) ?? numberedGlyph(name);
+      return gid !== undefined && gid < outlines.count ? gid : undefined;
+    };
     return {
       byName: (name: string): Array<PathSeg> | undefined => {
-        const gid = names?.get(name) ?? numberedGlyph(name);
+        const gid = gidOf(name);
         return gid === undefined ? undefined : outlines.path(gid);
+      },
+      blank: (name: string): boolean => {
+        const gid = gidOf(name);
+        return gid !== undefined && outlines.path(gid) === undefined;
       },
     };
   } catch {
@@ -506,7 +541,7 @@ function namedGlyphs(
   file: PdfFile,
   fontDict: PdfDict,
   statesUnicode: boolean,
-  canDraw: (name: string) => boolean,
+  glyph: { draws: (name: string) => boolean; blank: (name: string) => boolean },
 ): Map<number, string> | undefined {
   const names = differences(file, fontDict);
   if (names.size === 0) return undefined;
@@ -517,11 +552,19 @@ function namedGlyphs(
       out.set(code, text);
       continue;
     }
+    // A name whose glyph draws NOTHING is a space, whatever it is called. A
+    // subsetter names the space glyph after its index like every other, and
+    // dropped as unreadable it took the gaps between the words with it —
+    // TAMReview.pdf's figure labels came back "SystemFeatures".
+    if (glyph.blank(name)) {
+      out.set(code, ' ');
+      continue;
+    }
     // A name that is no character and a glyph that CAN be drawn: the text is
     // unrecoverable and the shape is not. Only where the program can draw it —
     // marked unreadable with nothing to put in its place, the words would
     // simply be gone.
-    if (!statesUnicode && canDraw(name)) out.set(code, UNANSWERABLE);
+    if (!statesUnicode && glyph.draws(name)) out.set(code, UNANSWERABLE);
   }
   if (out.size > 0) return out;
   // §9.6.5 — a TYPE 3 font's `/Encoding` is the only mapping it has: its codes

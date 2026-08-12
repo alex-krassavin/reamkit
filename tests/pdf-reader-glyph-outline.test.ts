@@ -10,7 +10,10 @@ import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
 
+import type { PdfDict } from '@/pdf/objects';
 import { Ream } from '@/core/converter/ream';
+import { PdfFile } from '@/pdf-reader/document';
+import { buildContentFont } from '@/pdf-reader/font';
 import { cffOutlineSource } from '@/pdf-reader/cff-outline';
 import { type1Font } from '@/pdf-reader/type1-outline';
 import { outlineSource } from '@/pdf-reader/glyf-outline';
@@ -152,6 +155,21 @@ describe('glyph outlines (§9.6.6)', () => {
       expect(shapes[0]?.shape.height).toBeGreaterThan(20);
       expect(shapes[0]?.shape.height).toBeLessThan(40);
     }
+  });
+
+  it('reads a blank glyph as the space it is', () => {
+    // A subsetter names the space glyph after its index like every other, so
+    // its name says nothing and the glyph draws nothing — and dropped as
+    // unreadable it took the gaps between the words with it. TAMReview.pdf's
+    // figure labels came back "SystemFeatures".
+    const file = PdfFile.parse(simpleTruetypePdf(`g${String(glyphFor(' '))}`));
+    const fonts = file.get(file.pages()[0]!.resources!, 'Font');
+    expect(fonts).toBeInstanceOf(Map);
+    if (!(fonts instanceof Map)) return;
+    const font = buildContentFont(file, file.resolve(fonts.get('F0')!) as PdfDict);
+    expect(font.decode([65])).toBe(' ');
+    // A space is not artwork: nothing is drawn for it.
+    expect(font.outline?.path(65)).toBeUndefined();
   });
 
   it('keeps two bytes to a code under Identity-H whatever a /ToUnicode says', () => {

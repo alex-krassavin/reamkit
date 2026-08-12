@@ -36,6 +36,7 @@ export function cffOutlineSource(program: Uint8Array): OutlineSource | undefined
   }
   const cache = new Map<number, Array<PathSeg> | undefined>();
   return {
+    count: font.charStrings.length,
     path: (gid: number): Array<PathSeg> | undefined => {
       const had = cache.get(gid);
       if (had !== undefined || cache.has(gid)) return had;

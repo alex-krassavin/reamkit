@@ -9,6 +9,7 @@ import { collectPageAppearances } from './annots';
 import { textMarkupOf } from './annot-draw';
 import { patternTint } from './pattern-tint';
 import { hiddenProperties, hiddenXObject } from './optional-content';
+import { buildColorSpaceMap } from './shading';
 import type { Quad, TextMarkup, TextMarkupAnnot } from './annot-draw';
 import type { ContentFont, Matrix, TextRun } from './content';
 import type { PdfDict } from '@/pdf/objects';
@@ -125,6 +126,23 @@ function collectTextMarkup(file: PdfFile, page: PdfPage): Array<TextMarkupAnnot>
   return out;
 }
 
+// §8.6 — the colour spaces one resource dictionary names, read once. A page's
+// forms nearly all share one, and reading the same `/Separation`'s tint
+// transform for every stream is work with one answer.
+const spaceCache = new WeakMap<PdfDict, ReturnType<typeof buildColorSpaceMap>>();
+
+function spacesOf(
+  file: PdfFile,
+  resources: PdfDict | undefined,
+): ReturnType<typeof buildColorSpaceMap> {
+  if (!resources) return new Map();
+  const had = spaceCache.get(resources);
+  if (had) return had;
+  const made = buildColorSpaceMap(file, resources);
+  spaceCache.set(resources, made);
+  return made;
+}
+
 // Interpret one content stream (a page or a Form XObject) into runs, then recurse
 // into the Form XObjects it paints — each composing its /Matrix onto the
 // placement CTM and using its own /Resources fonts.
@@ -143,7 +161,12 @@ function collectRuns(
     baseCtm,
     undefined,
     undefined,
-    undefined,
+    // §8.6.8 — the spaces the page NAMES. Without them `1 scn` says nothing
+    // and the colour in force stands: TAMReview.pdf fills its figure boxes
+    // white, then sets their labels in `/Cs8 cs 1 scn` — a `/Separation` whose
+    // full tint is black — and the labels came out white on white, invisible
+    // on a page that shows them plainly.
+    spacesOf(file, resources),
     hiddenProperties(file, resources),
   );
   out.push(...result.texts.map((r) => withPatternColour(file, resources, r, visiting)));

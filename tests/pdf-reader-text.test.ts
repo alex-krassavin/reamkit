@@ -1264,3 +1264,40 @@ describe('a composite font that says nothing about its characters (§9.10.2)', (
     expect(text).not.toContain('�');
   });
 });
+
+describe('text colour through a named space (§8.6.8)', () => {
+  it('takes a `1 scn` in a /Separation as the ink it is, not as white', () => {
+    // The text pass read no `/ColorSpace` resources at all, so `cs` found
+    // nothing and `scn` said nothing — the colour in force simply stood.
+    // TAMReview.pdf fills its figure boxes white and then sets their labels in
+    // `/Cs8 cs 1 scn`, a `/Separation` whose full tint is black: the labels
+    // came out white on white, invisible on a page that shows them plainly.
+    const spot =
+      '[/Separation /Black /DeviceGray << /FunctionType 2 /Domain [0 1] ' +
+      '/C0 [1] /C1 [0] /N 1 >>]';
+    const content = '1 1 1 rg 0 0 200 100 re f BT /F0 12 Tf 20 40 Td /Cs cs 1 scn (Ink) Tj ET';
+    const objects = [
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Contents 4 0 R ' +
+        `/Resources << /Font << /F0 5 0 R >> /ColorSpace << /Cs ${spot} >> >> >>`,
+      `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+      '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+    ];
+    let pdf = '%PDF-1.7\n';
+    const offsets: Array<number> = [];
+    objects.forEach((body, i) => {
+      offsets.push(pdf.length);
+      pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+    });
+    const xref = pdf.length;
+    pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+    for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+    pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`;
+    const file = PdfFile.parse(new TextEncoder().encode(pdf));
+    const run = extractPageText(file, file.pages()[0]!).find((r) => r.text.includes('Ink'));
+    expect(run).toBeDefined();
+    // Tint 1 through this transform is grey 0, which is black.
+    expect(run?.colorHex).toBe('000000');
+  });
+});

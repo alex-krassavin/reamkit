@@ -23,6 +23,11 @@ import type { PathSeg } from './content';
 export interface OutlineSource {
   /** The glyph's contours in a one-unit em, or `undefined` for an empty one. */
   readonly path: (gid: number) => Array<PathSeg> | undefined;
+  /**
+   * How many glyphs the program holds. A glyph INSIDE that count which draws
+   * nothing is a blank one — a space — and not a glyph the program lacks.
+   */
+  readonly count: number;
 }
 
 /**
@@ -72,6 +77,7 @@ export function outlineSource(program: Uint8Array): OutlineSource | undefined {
   };
 
   return {
+    count: Math.max(0, Math.floor(loca.length / (longLoca ? 4 : 2)) - 1),
     path: (gid: number): Array<PathSeg> | undefined => {
       const had = cache.get(gid);
       if (had !== undefined || cache.has(gid)) return had;
