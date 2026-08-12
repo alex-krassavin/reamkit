@@ -94,7 +94,7 @@ import type { StructNode, StructType } from '@/pdf/struct-tree';
 import type { MetaPicture } from '@/core/metafile/picture';
 import { ResourceStore, halfPtToPt, pt } from '@/core/ir';
 import { headingLevelOf } from '@/core/outline';
-import { createFontMeasure, shapeText } from '@/core/font';
+import { createFontMeasure, hasLigature, lettersForLigature, shapeText } from '@/core/font';
 import { resolveFamilyStyle } from '@/core/fonts';
 import { scriptForCodepoint } from '@/core/fonts/scripts';
 import { prepareImage } from '@/core/images';
@@ -4634,6 +4634,46 @@ function fallbackFaceKey(
 }
 
 /**
+ * A typographic ligature no face on hand can draw, set as its letters instead.
+ *
+ * `ﬀ` (U+FB00) is one glyph for two f's — a shape of the FACE, not a letter of
+ * the alphabet, and most faces carry no such code point at all: they form the
+ * ligature from `ff` through their own `liga` table. So the run's own face drew
+ * nothing for it, no other loaded face answered either, and the character went
+ * out silently: bug1873345.pdf reads "different" and we set "di erent". Its
+ * letters are the same text, and the face that has them is free to join them
+ * back up.
+ *
+ * Only these seven, and only where nobody can draw the ligature itself: a
+ * character a face DOES carry is drawn as written.
+ *
+ * @param options  The render options (the loaded registries).
+ * @param primary  The run's own face.
+ * @param resolved Its resolved properties (weight and slant).
+ * @param text     The run's text.
+ * @returns The text to set, which is `text` itself unless something was undrawable.
+ */
+function drawableText(
+  options: StyledRenderOptions,
+  primary: ParsedTtf,
+  resolved: ResolvedRunProperties,
+  text: string,
+): string {
+  if (!hasLigature(text)) return text;
+  let out = '';
+  for (const ch of text) {
+    const cp = ch.codePointAt(0)!;
+    const letters = lettersForLigature(cp);
+    const drawable =
+      letters === undefined ||
+      primary.glyphForCodepoint(cp) !== 0 ||
+      fallbackFaceKey(options, cp, resolved.bold, resolved.italic) !== undefined;
+    out += drawable ? ch : letters;
+  }
+  return out;
+}
+
+/**
  * §9.2.2 — the face a request had to settle for, and what is left to draw.
  *
  * A registry may hold one face and be asked for four: `FontBytesByVariant`
@@ -4830,7 +4870,14 @@ function collectFontResources(
     // /ToUnicode (PDF/A §6.3.5 / §6.3.8).
     // A marker whose glyph the font lacks is drawn as another character
     // (see {@link markerText}), so the subset must reserve THAT one.
-    const text = run.listMarker === true ? markerText(run.text, parsed) : run.text;
+    // A ligature nobody can draw is set as its letters (see
+    // {@link drawableText}), so it is those letters the subset must reserve.
+    const text = drawableText(
+      options,
+      parsed,
+      resolved,
+      run.listMarker === true ? markerText(run.text, parsed) : run.text,
+    );
     // A character this face cannot draw is drawn by ANOTHER one (see
     // {@link fallbackFaceKey}), and its glyphs have to be reserved in THAT
     // face's subset — the walk that measures and the walk that embeds must
@@ -5523,9 +5570,15 @@ function tokenizeParagraph(
     // "Salary⁽²⁾" came out full size, on the line (45540_classic_Header.xlsx).
     const script = SCRIPT_OFFSET[resolvedRun.verticalAlign] ?? 0;
     const own = lookupFont(fontResources, fontKey);
-    const faceFor = facesForRun(options, fontResources, own.parsed, resolvedRun, run.text);
+    // A ligature nobody can draw is set as its letters — before the plans are
+    // built, because everything downstream measures and draws what it is given.
+    const drawn = ((): typeof run => {
+      const text = drawableText(options, own.parsed, resolvedRun, run.text);
+      return text === run.text ? run : { ...run, text };
+    })();
+    const faceFor = facesForRun(options, fontResources, own.parsed, resolvedRun, drawn.text);
     return {
-      run,
+      run: drawn,
       resolvedRun,
       font: own,
       ...(faceFor ? { faceFor } : {}),

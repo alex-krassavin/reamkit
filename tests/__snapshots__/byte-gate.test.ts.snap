@@ -50,7 +50,7 @@ exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: landscape 1`] = `
 
 exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: merges 1`] = `"c49805881ec7274aa65159235157498569c0294a4a5745ac2c759732d3a53ae6"`;
 
-exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: multi-sheet 1`] = `"d74d25e4ac324843af996e8624589ac0df1eeb60839f27964fd7c6d2e9163312"`;
+exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: multi-sheet 1`] = `"35d1d2458c0ed138465862bb32670879bf900f6b2a3bab9b535c2d6c75c85264"`;
 
 exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: print-area 1`] = `"d2887775240a3a6350326699eced569c20f468da6a8aa074336ce2765b5d39bc"`;
 
