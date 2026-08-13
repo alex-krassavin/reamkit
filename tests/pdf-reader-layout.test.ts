@@ -1048,4 +1048,28 @@ describe('heuristic layout reconstruction (E-PDF EP4)', () => {
     expect(text(0, 0)).toBe('Description');
     expect(text(1, 2)).toBe('$100.00');
   });
+
+  it('keeps a rule typed out of hyphens on a line of its own', () => {
+    // A page with no rule to draw types one. Read as prose it joined the
+    // sentence over it: an invoice came back "…NOT to our San Francisco office.
+    // ----------------------------" on one line, and the address the rule
+    // introduces ran on from there.
+    const lines = [
+      'BT /F1 9 Tf 1 0 0 1 45 700 Tm (any checks must be sent to the address below.) Tj ET',
+      'BT /F1 9 Tf 1 0 0 1 45 688 Tm (----------------------------) Tj ET',
+      'BT /F1 9 Tf 1 0 0 1 45 676 Tm (PAYMENT ADDRESS) Tj ET',
+    ].join('\n');
+    const doc = reconstructByLayout(
+      PdfFile.parse(onePagePdf('/MediaBox [0 0 612 792]', lines)),
+    ).doc;
+    const texts = paragraphs(doc).map((p) =>
+      p.paragraph.runs
+        .map((r) => r.text)
+        .join('')
+        .trim(),
+    );
+    expect(texts).toContain('----------------------------');
+    expect(texts.some((t) => t.startsWith('any checks') && t.includes('---'))).toBe(false);
+    expect(texts).toContain('PAYMENT ADDRESS');
+  });
 });

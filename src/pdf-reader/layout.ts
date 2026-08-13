@@ -1523,6 +1523,26 @@ function carriesLeader(line: Line): boolean {
 /** Three of the same leader character in a row is a leader and not punctuation. */
 const LEADER_RUN = /([.\u00b7_])\1{2,}/u;
 
+/**
+ * Whether the line is a RULE drawn out of characters — a row of hyphens, dots
+ * or underscores and nothing else.
+ *
+ * A page with no rule to draw types one. It is not a sentence, it does not run
+ * on into the line under it and the line over it does not run on into it.
+ *
+ * @param line The line.
+ * @returns Whether it is a rule rather than words.
+ */
+function ruleOfCharacters(line: Line): boolean {
+  const text = line.text.trim();
+  if (text.length < RULE_CHARS) return false;
+  for (const ch of text) if (!LEADER_CHARS.has(ch)) return false;
+  return true;
+}
+
+/** How many of them it takes before a row of marks is a rule. */
+const RULE_CHARS = 3;
+
 // Group consecutive lines into paragraphs: a vertical gap well over a single
 // line's leading starts a new paragraph. `top` is the paragraph's first (highest) line.
 function groupIntoParagraphs(
@@ -1548,8 +1568,17 @@ function groupIntoParagraphs(
     if (
       groups.length === 0 ||
       opened ||
+      // A line of nothing but rule characters is a RULE, and a rule is its own
+      // line: an invoice sets one between the address it asks for cheques at
+      // and the sentence above it, and joined to that sentence it came back at
+      // the end of "…NOT to our San Francisco office. ----------------------".
+      // It takes no line with it either, so what follows opens its own.
+      ruleOfCharacters(line) ||
       (prev !== undefined &&
-        (endedParagraph(prev, line, column) || carriesLeader(prev) || prev.tabbed === true))
+        (ruleOfCharacters(prev) ||
+          endedParagraph(prev, line, column) ||
+          carriesLeader(prev) ||
+          prev.tabbed === true))
     ) {
       groups.push([]);
       gaps.push(prev === undefined ? 0 : gap);
