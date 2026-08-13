@@ -305,7 +305,30 @@ export function reconstructByLayout(
           },
         });
       }
-      for (const para of groupIntoParagraphs(lines, measure, display.height)) {
+      const paras = groupIntoParagraphs(lines, measure, display.height);
+      // §17.4.38 — consecutive lines set out on the SAME stops are a table:
+      // "Description / Qty / Unit price / Tax / Amount" and the row under it.
+      // Written as tabbed paragraphs the picture is right and the document is
+      // not — nothing downstream can read a column out of it, and a reader that
+      // re-wraps one cell drags the whole line with it.
+      const asRows = tabbedRows(
+        paras,
+        measure && {
+          left: measure.left,
+          // The table runs to where the PAGE's text ends, not to where this
+          // column's longest line does: the last column of a payment history
+          // begins at its heading and its figures reach past it, and measured
+          // to the line the column came out a point wide.
+          right: Math.max(measure.right, textEdges?.right ?? measure.right),
+        },
+      );
+      for (const [at, para] of paras.entries()) {
+        const table = asRows.get(at);
+        if (table !== undefined) {
+          if (table !== null)
+            blocks.push({ band: bandAt(para.top), col, top: para.top, el: table });
+          continue;
+        }
         blocks.push({
           band: bandAt(para.top),
           col,
@@ -1565,7 +1588,11 @@ function groupIntoParagraphs(
       spans: joinLines(g),
       fontSize,
       top: first.y,
-      ...(stops.length > 0 ? { stops: stops.map((x) => x - columnLeft) } : {}),
+      // §17.3.1.38 — a stop is measured from the text area's own left edge, not
+      // from where this column's lines happen to start. Measured from the
+      // latter, every stop stood a little right of where the page set it, and
+      // the last column of a table came out a point wide.
+      ...(stops.length > 0 ? { stops: stops.map((x) => x - (column?.left ?? columnLeft)) } : {}),
       ...(spacingBefore !== undefined ? { spacingBefore } : {}),
       ...alignmentOf(g, column),
       ...indentOf(g, columnLeft, alignmentOf(g, column).alignment),
@@ -1959,10 +1986,33 @@ function pageNumbered(run: Run): Array<Run> {
   const number = found[2]!;
   const before = run.text.slice(0, at);
   const after = run.text.slice(at + number.length);
+  // §17.16.5.33 — and the number after it is how many sheets there are:
+  // "Page 1 of 2" is two fields with a word between them, not one field and a
+  // literal 2 that stays 2 on every page of a longer document.
+  const total = /(^|\s)(\d{1,4})(\s|$)/u.exec(after);
+  const tail =
+    total === null
+      ? after === ''
+        ? []
+        : [{ ...run, text: after }]
+      : [
+          ...(after.slice(0, total.index + total[1]!.length) === ''
+            ? []
+            : [{ ...run, text: after.slice(0, total.index + total[1]!.length) }]),
+          { ...run, text: total[2]!, field: 'NUMPAGES' as const },
+          ...(after.slice(total.index + total[1]!.length + total[2]!.length) === ''
+            ? []
+            : [
+                {
+                  ...run,
+                  text: after.slice(total.index + total[1]!.length + total[2]!.length),
+                },
+              ]),
+        ];
   return [
     ...(before === '' ? [] : [{ ...run, text: before }]),
     { ...run, text: number, field: 'PAGE' as const },
-    ...(after === '' ? [] : [{ ...run, text: after }]),
+    ...tail,
   ];
 }
 
@@ -2254,6 +2304,120 @@ const MOST_STRAY_MARKS = 2;
 
 /** …and how many readable runs must stand on that line for them to be strays. */
 const LEAST_READABLE_RUNS = 4;
+
+/**
+ * §17.4.38 — the consecutive lines a page set out on the SAME stops, as the
+ * TABLE they are.
+ *
+ * A line broken at a gap no word space explains is a line the page laid out
+ * (see {@link tabbed}); several of them one under another, broken in the same
+ * places, is a table's head and its rows. An invoice's item table is exactly
+ * that, and so is the payment history under it.
+ *
+ * Two stops at least, which is three columns: ONE stop is a contents entry with
+ * its page number at the measure, and a list of those is a list.
+ *
+ * The stops do not have to agree to the point — a heading sits over its column
+ * and a figure is set against the far side of it — so they are matched within
+ * an em, and the column is put where the rows agree it is.
+ *
+ * @param paras   The column's paragraphs, in order.
+ * @param measure The measure they are set across.
+ * @returns For each paragraph that belongs to a table: the table at its first
+ *          row, and `null` at the rows after it (their content is inside it).
+ */
+function tabbedRows(
+  paras: ReadonlyArray<{
+    spans: Array<TextSpan>;
+    stops?: Array<number>;
+    fontSize: number;
+    top: number;
+    spacingBefore?: number;
+  }>,
+  measure: { left: number; right: number } | undefined,
+): Map<number, BodyElement | null> {
+  const out = new Map<number, BodyElement | null>();
+  if (!measure) return out;
+  for (let i = 0; i < paras.length; ) {
+    const stops = paras[i]?.stops ?? [];
+    if (stops.length < LEAST_TABLE_STOPS) {
+      i++;
+      continue;
+    }
+    const near = (a: Array<number>, b: Array<number>): boolean =>
+      a.length === b.length &&
+      a.every((x, k) => Math.abs(x - b[k]!) <= Math.max(paras[i]!.fontSize, TABLE_STOP_SLACK_PT));
+    let to = i + 1;
+    while (to < paras.length && near(stops, paras[to]?.stops ?? [])) to++;
+    if (to - i < 2) {
+      i++;
+      continue;
+    }
+    const rows = paras.slice(i, to);
+    // Where the EARLIEST row begins each column, and the last one runs to the
+    // measure. Not the middle of them: a column is as wide as its widest cell
+    // needs, and a heading set over a column of figures starts further left
+    // than the figures do — measured to the middle, "Receipt number" came back
+    // one letter per line down a thirty-point strip.
+    const bounds = stops.map((_, k) => Math.min(...rows.map((r) => r.stops![k]!)));
+    const width = measure.right - measure.left;
+    const edges = [0, ...bounds, width];
+    out.set(i, {
+      kind: 'table',
+      table: {
+        properties: { defaultCellMargins: { left: pt(0), right: pt(0) }, layout: 'fixed' },
+        grid: edges.slice(0, -1).map((from, k) => pt(Math.max(edges[k + 1]! - from, 1))),
+        rows: rows.map((row, r) => {
+          // The row stands as far from the next as the page stood it, and the
+          // white BEFORE the table is the first row's own: a table has no
+          // spacing of its own to carry it, and glued to the block above it the
+          // invoice's item table came up against the address over it.
+          const next = rows[r + 1];
+          const pitch = next ? row.top - next.top : 0;
+          const opening = r === 0 ? row.spacingBefore : undefined;
+          return {
+            properties: pitch > 0 ? { height: pt(pitch), heightRule: 'atLeast' as const } : {},
+            cells: splitAtTabs(row.spans).map((cell) => ({
+              properties: {},
+              content: [
+                paragraphFromRuns(
+                  cell,
+                  undefined,
+                  opening !== undefined ? { spacingBefore: pt(opening) } : {},
+                ),
+              ],
+            })),
+          };
+        }),
+      },
+    });
+    for (let k = i + 1; k < to; k++) out.set(k, null);
+    i = to;
+  }
+  return out;
+}
+
+/** How many stops a line must stand on before a run of them is a table. */
+const LEAST_TABLE_STOPS = 2;
+
+/**
+ * How far two rows' stops may stand apart and still be one column.
+ *
+ * A heading is set over its column and a figure against the far side of it: an
+ * invoice's "Qty" stands eight points left of the "1" under it, and the heading
+ * is set two sizes smaller, so its own em is not a wide enough tolerance.
+ */
+const TABLE_STOP_SLACK_PT = 10;
+
+/** One line's spans cut into its cells, at the tabs the page set out. */
+function splitAtTabs(spans: ReadonlyArray<TextSpan>): Array<Array<TextSpan>> {
+  const cells: Array<Array<TextSpan>> = [[]];
+  for (const span of spans) {
+    if (span.text === '\t') cells.push([]);
+    else cells[cells.length - 1]!.push(span);
+  }
+  return cells;
+}
 
 /**
  * Give each separator rule to the paragraph it separates, as that paragraph's

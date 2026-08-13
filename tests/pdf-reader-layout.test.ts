@@ -1022,4 +1022,30 @@ describe('heuristic layout reconstruction (E-PDF EP4)', () => {
     // …and the rule is not drawn a second time as a shape over the words.
     expect(doc.body.some((b) => b.kind === 'shape')).toBe(false);
   });
+
+  it('reads lines set out on the same stops as a TABLE, and numbers the foot (§17.4.38)', () => {
+    // An invoice's item table is a head and a row broken in the same places.
+    // Written as tabbed paragraphs the picture is right and the document is
+    // not: nothing downstream can read a column out of it.
+    const rows = [
+      'BT /F1 8 Tf 1 0 0 1 45 700 Tm (Description) Tj ET',
+      'BT /F1 8 Tf 1 0 0 1 300 700 Tm (Qty) Tj ET',
+      'BT /F1 8 Tf 1 0 0 1 420 700 Tm (Amount) Tj ET',
+      'BT /F1 8 Tf 1 0 0 1 45 680 Tm (Max plan) Tj ET',
+      'BT /F1 8 Tf 1 0 0 1 300 680 Tm (1) Tj ET',
+      'BT /F1 8 Tf 1 0 0 1 424 680 Tm ($100.00) Tj ET',
+    ].join('\n');
+    const doc = reconstructByLayout(PdfFile.parse(onePagePdf('/MediaBox [0 0 612 792]', rows))).doc;
+    const table = doc.body.find((b) => b.kind === 'table');
+    expect(table?.kind).toBe('table');
+    if (table?.kind !== 'table') return;
+    expect(table.table.grid).toHaveLength(3);
+    expect(table.table.rows).toHaveLength(2);
+    const text = (r: number, c: number): string =>
+      table.table.rows[r]!.cells[c]!.content.map((el) =>
+        el.kind === 'paragraph' ? el.paragraph.runs.map((x) => x.text).join('') : '',
+      ).join('');
+    expect(text(0, 0)).toBe('Description');
+    expect(text(1, 2)).toBe('$100.00');
+  });
 });

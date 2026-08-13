@@ -1509,6 +1509,13 @@ function runXml(run: Run, state: WriteState, scope: PartScope): string {
   // §17.3.3.1 — a page break is a run-level <w:br w:type="page"/>; emit it so a
   // run that is ONLY a break (no text, no image) survives the round-trip.
   const brk = run.pageBreak ? '<w:br w:type="page"/>' : '';
+  // §17.16.19 `w:fldSimple` — a page number is not the text "1", it is the
+  // number of the sheet it stands on. Written as text, the foot a PDF's every
+  // page shares came back saying "Page 1 of 2" on the second page as well.
+  if (run.field !== undefined && run.text !== '') {
+    const inner = `<w:r>${rPr}<w:t xml:space="preserve">${escapeXml(run.text)}</w:t></w:r>`;
+    return `<w:fldSimple w:instr=" ${run.field} ">${inner}</w:fldSimple>${brk}`;
+  }
   if (run.text === '') return brk ? `<w:r>${rPr}${brk}</w:r>` : '';
   // §17.3.3.30 — a TAB is an ELEMENT, not a character: written inside `w:t` it
   // is whitespace, and Word draws it as nothing at all. The reconstruction of a

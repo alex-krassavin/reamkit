@@ -35,11 +35,6 @@
   "aligned": false
  },
  {
-  "name": "bug_jpx.pdf",
-  "score": 97,
-  "aligned": false
- },
- {
   "name": "encrypted-attachment.pdf",
   "score": 97,
   "aligned": false
@@ -115,18 +110,18 @@
   "aligned": false
  },
  {
+  "name": "blendmode.pdf",
+  "score": 0.1272,
+  "aligned": false
+ },
+ {
   "name": "bug1844576.pdf",
   "score": 0.1264,
   "aligned": false
  },
  {
-  "name": "blendmode.pdf",
-  "score": 0.1257,
-  "aligned": false
- },
- {
   "name": "bug1978317.pdf",
-  "score": 0.1204,
+  "score": 0.1205,
   "aligned": true
  },
  {
@@ -446,7 +441,7 @@
  },
  {
   "name": "bug1868759.pdf",
-  "score": 0.0124,
+  "score": 0.0122,
   "aligned": true
  },
  {
@@ -1165,13 +1160,8 @@
   "aligned": true
  },
  {
-  "name": "bigboundingbox.pdf",
-  "score": 0.0049,
-  "aligned": false
- },
- {
   "name": "issue10640.pdf",
-  "score": 0.0046,
+  "score": 0.0047,
   "aligned": true
  },
  {
@@ -1198,6 +1188,11 @@
   "name": "extgstate.pdf",
   "score": 0.004,
   "aligned": true
+ },
+ {
+  "name": "bigboundingbox.pdf",
+  "score": 0.0038,
+  "aligned": false
  },
  {
   "name": "bug1365930.pdf",
@@ -1350,13 +1345,13 @@
   "aligned": true
  },
  {
-  "name": "asciihexdecode.pdf",
+  "name": "bug900822.pdf",
   "score": 0.0015,
   "aligned": true
  },
  {
-  "name": "bug900822.pdf",
-  "score": 0.0014,
+  "name": "asciihexdecode.pdf",
+  "score": 0.0015,
   "aligned": true
  },
  {
@@ -1931,6 +1926,11 @@
  },
  {
   "name": "bug894572.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bug_jpx.pdf",
   "score": 0,
   "aligned": true
  },
