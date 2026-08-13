@@ -511,6 +511,9 @@ export function sectionFromPdfPages(pages: ReadonlyArray<PdfPage>): SectionPrope
 /** What the measure gives back, so the widest line still fits when re-set. */
 const SLACK = 0.01;
 
+/** How much of the sheet a margin down the page may take. */
+const DEEPEST_MARGIN = 0.5;
+
 /** How far a face's ascender stands above its baseline, as a fraction of the size. */
 const ASCENDER = 0.8;
 
@@ -573,9 +576,13 @@ export function withMeasuredMargins(
     const s = [...xs].sort((a, b) => a - b);
     return s[Math.floor(s.length / 2)] ?? 0;
   };
-  // Never more than a third of the sheet, never negative: a margin that eats
-  // the text area is worse than none.
-  const clamp = (v: number, span: number): Pt => pt(Math.max(0, Math.min(v, span / 3)));
+  // Never negative, and never so wide that it eats the text area: a third of
+  // the sheet across, and half of it DOWN. A page may hold its text well below
+  // the middle and still be a page — ShowText-ShadingPattern.pdf sets four
+  // lines under a gradient panel, and held to a third the whole block was
+  // pulled ninety points up, into the panel it stands below.
+  const clamp = (v: number, span: number, most = 1 / 3): Pt =>
+    pt(Math.max(0, Math.min(v, span * most)));
   return {
     ...section,
     margins: {
@@ -592,13 +599,13 @@ export function withMeasuredMargins(
       // ends early, and taking the middle of two puts the wall above the line
       // the first page ends on. ZapfDingbats.pdf's second sheet stops five rows
       // short of its first, and its first sheet lost a row to a page of its own.
-      top: clamp(Math.min(...tops), height),
+      top: clamp(Math.min(...tops), height, DEEPEST_MARGIN),
       // …and it gives back a little of what it measured, for the same reason
       // the right margin does: the page was set in faces this reader does not
       // have, and re-set in substitutes it cannot come out shorter everywhere.
       // A measure exactly as deep as the text block drops its last line onto a
       // sheet of its own.
-      bottom: clamp(Math.min(...bottoms) - height * SLACK, height),
+      bottom: clamp(Math.min(...bottoms) - height * SLACK, height, DEEPEST_MARGIN),
     },
   };
 }

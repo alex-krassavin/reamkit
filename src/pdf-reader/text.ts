@@ -9,7 +9,7 @@ import { collectPageAppearances } from './annots';
 import { textMarkupOf } from './annot-draw';
 import { patternTint } from './pattern-tint';
 import { hiddenProperties, hiddenXObject } from './optional-content';
-import { buildColorSpaceMap } from './shading';
+import { buildColorSpaceMap, buildShadingMap } from './shading';
 import type { Quad, TextMarkup, TextMarkupAnnot } from './annot-draw';
 import type { ContentFont, Matrix, TextRun } from './content';
 import type { PdfDict } from '@/pdf/objects';
@@ -189,6 +189,21 @@ const RESTRIKE_EM = 0.08;
 // transform for every stream is work with one answer.
 const spaceCache = new WeakMap<PdfDict, ReturnType<typeof buildColorSpaceMap>>();
 
+/** The page's shading patterns, read once per resource dictionary. */
+const shadingCache = new WeakMap<PdfDict, ReturnType<typeof buildShadingMap>>();
+
+function shadingsOf(
+  file: PdfFile,
+  resources: PdfDict | undefined,
+): ReturnType<typeof buildShadingMap> {
+  if (!resources) return new Map();
+  const had = shadingCache.get(resources);
+  if (had) return had;
+  const made = buildShadingMap(file, resources);
+  shadingCache.set(resources, made);
+  return made;
+}
+
 function spacesOf(
   file: PdfFile,
   resources: PdfDict | undefined,
@@ -217,7 +232,11 @@ function collectRuns(
     content,
     buildFonts(file, resources),
     baseCtm,
-    undefined,
+    // §8.6.6.2 — the shading patterns the page NAMES. Type painted with one is
+    // painted with a gradient, and without the map the pattern says nothing
+    // here and the colour in force stands: ShowText-ShadingPattern.pdf sets two
+    // of its four lines in a blue-to-red sweep and both came back black.
+    shadingsOf(file, resources),
     undefined,
     // §8.6.8 — the spaces the page NAMES. Without them `1 scn` says nothing
     // and the colour in force stands: TAMReview.pdf fills its figure boxes

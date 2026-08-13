@@ -141,6 +141,12 @@ export interface TextRun {
    */
   readonly fillPatternName?: string;
   /**
+   * §8.7.4.5 — the glyphs are filled with a SHADING pattern: a sweep from one
+   * colour to another, of which the run carries the middle. The colour is not
+   * lost, the shape of it is.
+   */
+  readonly gradientFill?: boolean;
+  /**
    * §9.3.6 — the page painted these glyphs NOWHERE: mode 3 shows nothing and
    * mode 7 only adds to the clip. A scanned page carries its recognised words
    * that way, under the picture of the page — so the run is kept, because it
@@ -508,6 +514,32 @@ function spaceOf(
   }
 }
 
+/**
+ * §8.7.4.5 — one colour for a whole sweep: the stop at its middle, or the mean
+ * of the two it falls between. A gradient is a shape a run cannot carry, and
+ * the end it starts at is no more the colour of the words than the end it
+ * finishes at.
+ */
+function midGradient(gradient: ShapeGradient): string {
+  const stops = [...gradient.stops].sort((a, b) => a.offset - b.offset);
+  if (stops.length === 0) return '000000';
+  const exact = stops.find((s) => Math.abs(s.offset - 0.5) < 1e-6);
+  if (exact) return exact.colorHex;
+  const before = [...stops].reverse().find((s) => s.offset <= 0.5) ?? stops[0]!;
+  const after = stops.find((s) => s.offset >= 0.5) ?? stops[stops.length - 1]!;
+  const span = after.offset - before.offset;
+  const t = span > 0 ? (0.5 - before.offset) / span : 0;
+  const mix = (at: number): number => {
+    const a = parseInt(before.colorHex.slice(at, at + 2), 16);
+    const b = parseInt(after.colorHex.slice(at, at + 2), 16);
+    return Number.isFinite(a) && Number.isFinite(b) ? Math.round(a + (b - a) * t) : 0;
+  };
+  return [mix(0), mix(2), mix(4)]
+    .map((c) => Math.max(0, Math.min(255, c)).toString(16).padStart(2, '0'))
+    .join('')
+    .toUpperCase();
+}
+
 /** §8.6.8 — the colour a run of `sc` / `scn` operands comes to (see `spaceColor`). */
 function colorOfOperands(
   operands: ReadonlyArray<PdfValue>,
@@ -722,6 +754,7 @@ export function interpretContent(
       ...(state.font.type3 ? { type3: true } : {}),
       ...(state.renderMode === 3 || state.renderMode === 7 ? { invisible: true } : {}),
       ...(state.fillPattern !== undefined ? { fillPatternName: state.fillPattern } : {}),
+      ...(state.fillGradient ? { gradientFill: true } : {}),
       // §9.3.6 — modes 1, 2, 5 and 6 stroke the glyphs; the pen is the one the
       // graphics state holds, in the stroking colour.
       ...(strokesText(state.renderMode)
@@ -732,7 +765,11 @@ export function interpretContent(
         : {}),
       ...(state.font.bold ? { bold: true } : {}),
       ...(state.font.italic ? { italic: true } : {}),
-      colorHex: state.fillColor,
+      // §8.6.6.2 — type painted with a SHADING pattern is painted with a
+      // gradient, and a run carries one colour. It takes the gradient's middle,
+      // which is the colour the sweep spends most of its length near, and the
+      // reconstruction says the shape of it was lost.
+      colorHex: state.fillGradient ? midGradient(state.fillGradient) : state.fillColor,
       ...(mcid !== undefined ? { mcid } : {}),
     });
   };

@@ -476,6 +476,52 @@ function patternTextPdf(): Uint8Array {
   return new TextEncoder().encode(pdf);
 }
 
+/** A page whose one line is filled with a blue-to-red axial SHADING pattern. */
+function gradientTextPdf(): Uint8Array {
+  const content = '/Pattern cs /P1 scn BT /F1 24 Tf 20 100 Td (swept) Tj ET';
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R ' +
+      '/Resources << /Font << /F1 5 0 R >> /Pattern << /P1 6 0 R >> >> >>',
+    `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+    '<< /Type /Pattern /PatternType 2 /Shading << /ShadingType 2 /ColorSpace /DeviceRGB ' +
+      '/Coords [0 0 200 0] /Function 7 0 R /Extend [true true] >> >>',
+    '<< /FunctionType 2 /Domain [0 1] /C0 [0 0 1] /C1 [1 0 0] /N 1 >>',
+  ];
+  let pdf = '%PDF-1.7\n';
+  const offsets: Array<number> = [];
+  objects.forEach((body, i) => {
+    offsets.push(pdf.length);
+    pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+  });
+  const xref = pdf.length;
+  pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+  for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+  pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`;
+  return new TextEncoder().encode(pdf);
+}
+
+describe('type filled with a shading pattern (§8.7.4.5)', () => {
+  it('takes the middle of the sweep, and says the sweep was lost', () => {
+    // ShowText-ShadingPattern.pdf sets two of its four lines in a blue-to-red
+    // gradient. The map of the page's patterns reached the VECTOR pass and not
+    // this one, so the pattern said nothing here and the colour in force stood:
+    // both lines came back black, which is neither end of the sweep nor
+    // anywhere between them.
+    const file = PdfFile.parse(gradientTextPdf());
+    const run = extractPageText(file, file.pages()[0]!)[0];
+    expect(run?.text).toBe('swept');
+    // Halfway from blue to red, since a run carries one colour and no end of a
+    // sweep is more the colour of the words than the other.
+    expect(run?.colorHex).toBe('800080');
+    expect(run?.gradientFill).toBe(true);
+    const doc = readPdf(gradientTextPdf());
+    expect(doc.losses.some((l) => /shading pattern/u.test(l.detail))).toBe(true);
+  });
+});
+
 describe('type filled with a pattern (§8.6.6.2)', () => {
   it('takes the pattern’s colour, at the pattern’s own strength', () => {
     // ContentStreamCycleType3insideType3.pdf fills its glyphs with a magenta

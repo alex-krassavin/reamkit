@@ -133,6 +133,18 @@ export function reconstructByLayout(
         'text filled with a tiling pattern is drawn as a flat tint of the pattern’s colour, not as the pattern',
     });
   }
+  // §8.7.4.5 — and type filled with a SHADING pattern keeps the middle of the
+  // sweep, since a run carries one colour: the colour survives, its shape does
+  // not. ShowText-ShadingPattern.pdf sets two of its four lines in a blue-to-red
+  // gradient and both came back black, which said nothing at all.
+  if (pageRuns.some((page) => page.some((r) => r.gradientFill === true))) {
+    losses.push({
+      severity: 'degraded',
+      feature: FEATURES.text,
+      detail:
+        'text filled with a shading pattern is drawn in the middle colour of the gradient, not as the gradient',
+    });
+  }
   // EP17 — the gutters of every page, and then the DOCUMENT's own. A page is
   // set the way its document is set: bug1997343.pdf's second sheet carries a
   // figure across both columns and a float beside it, which leaves too few
