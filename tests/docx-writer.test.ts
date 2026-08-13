@@ -890,4 +890,122 @@ describe('what a reader can actually draw', () => {
     // And the underline keeps the colour it was given.
     expect(rPr).toContain('w:color="4B99FF"');
   });
+
+  it('writes every property block in the ORDER the schema states (§17.3.1.26)', () => {
+    // Word enforces the sequence CT_PPrBase declares and LibreOffice does not:
+    // a child out of order is a file Word refuses or a property it drops. The
+    // rules and the stops a reconstructed PDF carries were appended after
+    // `w:jc`, which is exactly the mistake this checks for — on the writer's
+    // own output, so no reader is needed to catch it.
+    const source =
+      '<w:p><w:pPr><w:pageBreakBefore/><w:pBdr><w:top w:val="single"/></w:pBdr>' +
+      '<w:tabs><w:tab w:val="left" w:pos="2000"/></w:tabs>' +
+      '<w:spacing w:before="120"/><w:ind w:left="240"/><w:jc w:val="center"/>' +
+      '<w:outlineLvl w:val="1"/></w:pPr>' +
+      '<w:r><w:rPr><w:b/><w:color w:val="FF0000"/><w:sz w:val="28"/></w:rPr>' +
+      '<w:t>a line the page set out</w:t></w:r></w:p>' +
+      '<w:tbl><w:tblPr><w:tblW w:w="5000" w:type="dxa"/></w:tblPr>' +
+      '<w:tblGrid><w:gridCol w:w="2500"/><w:gridCol w:w="2500"/></w:tblGrid>' +
+      '<w:tr><w:trPr><w:trHeight w:val="300"/></w:trPr>' +
+      '<w:tc><w:tcPr><w:tcW w:w="2500" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>a</w:t></w:r></w:p></w:tc>' +
+      '<w:tc><w:tcPr><w:tcW w:w="2500" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>b</w:t></w:r></w:p></w:tc>' +
+      '</w:tr></w:tbl>' +
+      '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/></w:sectPr>';
+    const { doc: flow } = readDocx(buildDocxFromBody(source));
+    const xml = decode(OpcPackage.open(writeDocx(flow).bytes).getMainDocument().data);
+    // §17.3.1.26, §17.3.2.28, §17.6.17, §17.4.60, §17.4.82, §17.4.70 — the
+    // children each of these may hold, in the order they may hold them.
+    const SEQUENCES: Readonly<Record<string, ReadonlyArray<string>>> = {
+      'w:pPr': [
+        'w:pStyle',
+        'w:keepNext',
+        'w:keepLines',
+        'w:pageBreakBefore',
+        'w:numPr',
+        'w:pBdr',
+        'w:shd',
+        'w:tabs',
+        'w:bidi',
+        'w:spacing',
+        'w:ind',
+        'w:contextualSpacing',
+        'w:jc',
+        'w:outlineLvl',
+        'w:rPr',
+        'w:sectPr',
+      ],
+      'w:rPr': [
+        'w:rStyle',
+        'w:rFonts',
+        'w:b',
+        'w:i',
+        'w:strike',
+        'w:color',
+        'w:spacing',
+        'w:sz',
+        'w:highlight',
+        'w:u',
+        'w:shd',
+        'w:vertAlign',
+        'w:rtl',
+        'w:lang',
+      ],
+      'w:sectPr': [
+        'w:headerReference',
+        'w:footerReference',
+        'w:type',
+        'w:pgSz',
+        'w:pgMar',
+        'w:cols',
+        'w:titlePg',
+        'w:bidi',
+        'w:docGrid',
+      ],
+      'w:tblPr': [
+        'w:tblStyle',
+        'w:tblW',
+        'w:jc',
+        'w:tblInd',
+        'w:tblBorders',
+        'w:shd',
+        'w:tblLayout',
+        'w:tblCellMar',
+        'w:tblLook',
+      ],
+      'w:trPr': ['w:gridBefore', 'w:gridAfter', 'w:cantSplit', 'w:trHeight', 'w:tblHeader', 'w:jc'],
+      'w:tcPr': [
+        'w:tcW',
+        'w:gridSpan',
+        'w:hMerge',
+        'w:vMerge',
+        'w:tcBorders',
+        'w:shd',
+        'w:noWrap',
+        'w:tcMar',
+        'w:textDirection',
+        'w:vAlign',
+      ],
+    };
+    for (const [parent, order] of Object.entries(SEQUENCES)) {
+      const rank = new Map(order.map((tag, i) => [tag, i]));
+      const blocks = xml.match(new RegExp(`<${parent}>.*?</${parent}>`, 'gsu')) ?? [];
+      for (const block of blocks) {
+        const kids: Array<string> = [];
+        let depth = 0;
+        for (const m of block
+          .slice(parent.length + 2)
+          .matchAll(/<(\/?)(w:[A-Za-z]+)[^>]*?(\/?)>/gu)) {
+          const [, closing, tag, selfClose] = m;
+          if (closing === '/') {
+            depth--;
+            continue;
+          }
+          if (depth === 0) kids.push(tag!);
+          if (selfClose !== '/') depth++;
+        }
+        const ranks = kids.flatMap((tag) => (rank.has(tag) ? [rank.get(tag)!] : []));
+        expect(ranks, `${parent}: ${kids.join(' ')}`).toEqual([...ranks].sort((a, b) => a - b));
+      }
+    }
+  });
 });

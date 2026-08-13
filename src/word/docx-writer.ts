@@ -1588,32 +1588,29 @@ function runShdXml(fill: string): string {
 // §17.3.1 — paragraph properties as a delta from the resolved defaults, the
 // INNER content of w:pPr (no wrapper, so a section break can be appended).
 function pPrBody(p: ResolvedParagraphProperties): string {
+  // §17.3.1.26 CT_PPrBase is a SEQUENCE, and Word enforces it: a child out of
+  // order is a file it refuses or a property it drops on the floor. The order
+  // below is the schema's — pageBreakBefore, numPr, pBdr, shd, tabs, bidi,
+  // spacing, ind, jc, outlineLvl — and it is not the order these were written
+  // in until now: `w:pBdr` and `w:tabs` were appended after `w:jc`, which
+  // LibreOffice reads anyway and Word does not.
   const out: Array<string> = [];
+  if (p.pageBreakBefore) out.push('<w:pageBreakBefore/>');
   if (p.numbering) {
     // §17.3.1.19 — list membership; the marker itself comes from numbering.xml.
     out.push(
       `<w:numPr><w:ilvl w:val="${p.numbering.ilvl}"/><w:numId w:val="${escapeAttr(p.numbering.numId)}"/></w:numPr>`,
     );
   }
-  if (p.outlineLevel !== undefined) out.push(`<w:outlineLvl w:val="${p.outlineLevel}"/>`);
-  if (p.pageBreakBefore) out.push('<w:pageBreakBefore/>');
-  if (p.bidi !== DEFAULT_PARA.bidi) out.push(toggle('w:bidi', p.bidi));
-  const ind = indXml(p);
-  if (ind) out.push(ind);
-  const spacing = spacingXml(p);
-  if (spacing) out.push(spacing);
-  if (JC.has(p.alignment) && p.alignment !== DEFAULT_PARA.alignment) {
-    out.push(`<w:jc w:val="${p.alignment}"/>`);
-  }
   // §17.3.1.24 `w:pBdr` — the rules the paragraph is drawn with. A PDF has no
   // paragraph borders and draws lines; the reconstruction gives the line to the
-  // paragraph it separates (see `pdf-reader/layout`), and written nowhere it
-  // came back as nothing at all.
+  // paragraph it separates (see `pdf-reader/layout`).
   const pBdr = bordersXml('w:pBdr', p.borders);
   if (pBdr) out.push(pBdr);
   // §17.3.1.38 `w:tabs` — the stops the paragraph's own tabs stand on. Without
   // them a tab falls to the default half-inch grid, which is not where the page
   // that was read set its second column.
+  //
   // The header and footer path hands this raw properties rather than resolved
   // ones, so the field the type promises may not be there.
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
@@ -1629,6 +1626,15 @@ function pPrBody(p: ResolvedParagraphProperties): string {
       .join('');
     out.push(`<w:tabs>${stops}</w:tabs>`);
   }
+  if (p.bidi !== DEFAULT_PARA.bidi) out.push(toggle('w:bidi', p.bidi));
+  const spacing = spacingXml(p);
+  if (spacing) out.push(spacing);
+  const ind = indXml(p);
+  if (ind) out.push(ind);
+  if (JC.has(p.alignment) && p.alignment !== DEFAULT_PARA.alignment) {
+    out.push(`<w:jc w:val="${p.alignment}"/>`);
+  }
+  if (p.outlineLevel !== undefined) out.push(`<w:outlineLvl w:val="${p.outlineLevel}"/>`);
   return out.join('');
 }
 
