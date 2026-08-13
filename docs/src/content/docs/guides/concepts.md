@@ -52,9 +52,11 @@ The same seam runs in reverse for **PDF input**. A PDF reader is just another
 `DocumentReader`, but inbound it _reconstructs_ a FlowDoc rather than parsing a
 clean tree: a tagged PDF is rebuilt from its logical structure tree, an untagged
 one heuristically from glyph positions (lines by baseline, paragraphs by spacing
-and indent, the page read for its own gutters — as many columns as it was set
-in, a running head or foot kept out of the body, a ruled grid rebuilt as a
-table). Which reading it gets is the
+and indent, the page read for its own gutters — as many columns of prose as it
+was set in, a running head or foot kept out of the body, a ruled grid rebuilt as
+a table, a gap no word space could be written as a tab on the stop the page set
+it at, and consecutive lines standing on the same stops rebuilt as a table of
+their own). Which reading it gets is the
 FILE's to decide — a paper is mostly lines and re-flows, a form is mostly marks
 and keeps its page, with nothing for a caller to configure. The result is an ordinary
 FlowDoc, so `Ream.parse(pdfBytes)` converts onward to HTML, Markdown, docx or a re-laid PDF

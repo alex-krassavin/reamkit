@@ -32,11 +32,20 @@ its structure tree — headings, paragraphs, tables, list items, reading order; 
 **untagged** PDF is reconstructed heuristically from glyph positions (lines by
 baseline, paragraphs by spacing and by the indent the page set them with,
 headings by relative font size, a word the line broke in half put back together,
-and the page read for its own gutters: as many columns as it was set in, a page
-RULED into a grid rebuilt as a table with its measured columns and rows, a band
-repeated at the top or bottom of every sheet as a running head or foot with its
-regions and its page number, and a bracketed block of rows and columns as an
-OfficeMath matrix), which is approximate. Text comes
+and the page read for its own gutters: as many columns of PROSE as it was set
+in — a page of labels with figures against the right margin breaks a dozen lines
+at the same x and is not two columns, so it is read across and each label keeps
+its figure — a page RULED into a grid rebuilt as a table with its measured
+columns and rows, a gap no word space could be written as a TAB with the stop
+the page set the piece after it at, consecutive lines standing on the SAME stops
+rebuilt as a table of their own, a line drawn between two blocks given to the
+block it separates as that paragraph's border, a rule typed out of hyphens left
+on the line of its own it was written on, a band repeated at the top or bottom
+of every sheet as a running head or foot with its regions and its page number as
+a field, and a bracketed block of rows and columns as an OfficeMath matrix),
+which is approximate. The margins are measured to the page's INK — a blank is
+not ink, and a picture is: a sheet whose one line of text sits over a picture
+wider than that line keeps a measure the picture still fits. Text comes
 back via each font's `/ToUnicode` map, or — where a composite font ships none —
 from the reverse `cmap` of the program it embeds (§9.10.2), or — where a SIMPLE
 font ships none, which is every PDF from TeX — from the glyph NAMES its
@@ -76,7 +85,9 @@ page's non-stroking colour), images written into the content stream (§8.9.7
 `BI` … `EI`), tiling patterns (§8.7.3 — drawn as a
 picture where they fill a shape, read as a tint at the tile's own density where
 they fill type), constant alpha (§11.6.4.4 `/ca` through the `gs` operator),
-Type 3 glyphs (§9.6.5 — content streams, drawn as the artwork they are),
+Type 3 glyphs (§9.6.5 — content streams, drawn as the artwork they are in every
+reading: such a font has no program and no face, so its codes are never re-set
+in a substitute, which would draw the letter a second time),
 annotation appearance streams (§12.5.5, so a form field draws itself), the text
 render modes (§9.3.6 `Tr` — stroked type keeps its outline, and the invisible
 modes an OCR layer uses are marked rather than painted), the box a viewer shows
@@ -101,7 +112,10 @@ Markdown), `convert('docx')` (write WordprocessingML back out) and
 in-browser editing, and round-tripping. The docx round-trip is semantic, not
 byte-exact, but complete — text, tables, images, lists, links, headers/footers,
 multi-section geometry, footnotes/endnotes, charts and OfficeMath all write
-back. A section states where it must OPEN as well as where it begins: a
+back, and so do a paragraph's tab stops (§17.3.1.38) and its own rules
+(§17.3.1.24 `w:pBdr`), and the page-number fields a running foot is written with
+(§17.16.19 `w:fldSimple` — `PAGE` and `NUMPAGES`, so the second sheet does not
+say it is the first). A section states where it must OPEN as well as where it begins: a
 `w:type` of `oddPage` or `evenPage` (§17.6.22) survives the round trip and is
 laid out as Word lays it out, printing the blank sheet it implies — charged to
 the section that ends, not the one that starts. A drawing that states where on
@@ -138,8 +152,10 @@ rules that do not, so anchored artwork over reflowed text lines up with none of
 it. The FILE decides which it gets. A paper is mostly LINES with a rule or two
 between them and is read as a re-flowable document — paragraphs and tables in
 reading order, from the structure tree where the file has one, and where it has
-none, in the columns the page was set in, with its running head and foot kept
-out of the body and its ruled grids rebuilt as tables. A form or a
+none, in the columns of PROSE the page was set in, with its running head and
+foot kept out of the body, its ruled grids and its rows-on-the-same-stops
+rebuilt as tables, and the lines it drew between blocks given to the paragraphs
+they separate. A form or a
 drawing is mostly MARKS (one form sets 28 numbered rows in 355 ruled boxes) and
 is read as a page: every line stands where its glyphs stand, beside the artwork,
 with no reading order, no paragraphs and no tables. The marks are counted
