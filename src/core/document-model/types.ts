@@ -1733,10 +1733,12 @@ export interface SectionProperties {
   };
   /**
    * §17.6.22 `w:type` — where the section starts. `continuous` starts it on the
-   * page already in hand rather than a fresh one; everything else (nextPage,
-   * and the odd/even/column variants we do not distinguish) starts a page.
+   * page already in hand rather than a fresh one; `nextPage` on the next sheet;
+   * `oddPage` and `evenPage` on the next sheet of that PARITY, which means a
+   * blank one in between when the count falls wrong. (`nextColumn` is not
+   * distinguished from `nextPage`.)
    */
-  readonly sectionStart?: 'continuous' | 'nextPage';
+  readonly sectionStart?: 'continuous' | 'nextPage' | 'oddPage' | 'evenPage';
   /**
    * §17.6.5 `w:docGrid` — the line grid a `lines`/`linesAndChars` section rules
    * its text onto, as the pitch in points. Every line of the section's text is

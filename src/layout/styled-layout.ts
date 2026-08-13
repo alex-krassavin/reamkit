@@ -8551,6 +8551,21 @@ function paginateSections(
       // page it would make is thrown away rather than printed blank.
       if (asm.pageHasContent() || asm.pageInSection === 0) asm.flushPage(true);
       else asm.dropPage();
+      // §17.6.22 — `oddPage` and `evenPage` name the SHEET the next section
+      // opens on, not merely that it opens one: where the count falls on the
+      // wrong parity the sheet between is printed BLANK, which is how a
+      // chapter always starts on a right-hand page. The blank belongs to the
+      // section that ends here — it is printed before the next one begins —
+      // so it is flushed while that section's header and footer still stand.
+      const opening = sectionCtxs[asm.secIdx + 1]?.properties;
+      const wants = opening?.sectionStart;
+      if (wants === 'oddPage' || wants === 'evenPage') {
+        const first = opening?.pageNumberStart ?? asm.pageNumber;
+        if ((first % 2 === 1) !== (wants === 'oddPage')) {
+          asm.cursorY = asm.ctx.pageHeight - asm.ctx.marginTop;
+          asm.flushPage(true);
+        }
+      }
       asm.secIdx++;
       asm.ctx = sectionCtxs[asm.secIdx]!;
       asm.restartPageNumbers(asm.ctx);
