@@ -21,8 +21,12 @@ corpus/.visual-work-*/
 # pixel-scout's LibreOffice cache and its per-run scratch
 corpus/.lo-cache/
 corpus/.pixel-scout-*/
+corpus/.scout-*/
+corpus/.diff-work-*/
 corpus/.pdf-docx-*/
 corpus/.pdf-docx-run.log
 corpus/.fonts/
 corpus/.vs-lo.log
 corpus/.pairs/
+# pages pulled aside to look at
+corpus/.look/
