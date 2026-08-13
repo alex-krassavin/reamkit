@@ -35,11 +35,6 @@
   "aligned": false
  },
  {
-  "name": "bug_jpx.pdf",
-  "score": 97,
-  "aligned": false
- },
- {
   "name": "encrypted-attachment.pdf",
   "score": 97,
   "aligned": false
@@ -222,11 +217,6 @@
  {
   "name": "issue11242_reduced.pdf",
   "score": 0.0617,
-  "aligned": true
- },
- {
-  "name": "bug1708040.pdf",
-  "score": 0.061,
   "aligned": true
  },
  {
@@ -1170,14 +1160,14 @@
   "aligned": true
  },
  {
+  "name": "bigboundingbox.pdf",
+  "score": 0.0046,
+  "aligned": false
+ },
+ {
   "name": "issue11473.pdf",
   "score": 0.0045,
   "aligned": true
- },
- {
-  "name": "bigboundingbox.pdf",
-  "score": 0.0044,
-  "aligned": false
  },
  {
   "name": "bug1046314.pdf",
@@ -1210,13 +1200,13 @@
   "aligned": true
  },
  {
-  "name": "bug1815476.pdf",
+  "name": "bug1922766.pdf",
   "score": 0.0034,
   "aligned": true
  },
  {
-  "name": "bug1922766.pdf",
-  "score": 0.0034,
+  "name": "bug1815476.pdf",
+  "score": 0.0031,
   "aligned": true
  },
  {
@@ -1250,6 +1240,11 @@
   "aligned": false
  },
  {
+  "name": "bug1708040.pdf",
+  "score": 0.0025,
+  "aligned": true
+ },
+ {
   "name": "bug2014080.pdf",
   "score": 0.0024,
   "aligned": true
@@ -1271,6 +1266,11 @@
  },
  {
   "name": "annotation-choice-widget.pdf",
+  "score": 0.0022,
+  "aligned": true
+ },
+ {
+  "name": "bug900822.pdf",
   "score": 0.0022,
   "aligned": true
  },
@@ -1346,11 +1346,6 @@
  },
  {
   "name": "annotation-highlight.pdf",
-  "score": 0.0015,
-  "aligned": true
- },
- {
-  "name": "bug900822.pdf",
   "score": 0.0015,
   "aligned": true
  },
@@ -1931,6 +1926,11 @@
  },
  {
   "name": "bug894572.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bug_jpx.pdf",
   "score": 0,
   "aligned": true
  },

@@ -107,6 +107,11 @@ export function reconstructByLayout(
           runs.filter((r) => foot?.lift[i]?.has(r) !== true && head?.lift[i]?.has(r) !== true),
         )
       : allRuns;
+
+  // Every page's pictures, kept for the margins the section is measured to.
+  const pageMarks: Array<
+    ReadonlyArray<{ x: number; y: number; widthPt: number; heightPt: number }>
+  > = pages.map(() => []);
   const medianFont =
     median(
       pageRuns
@@ -365,6 +370,9 @@ export function reconstructByLayout(
     const raw = collectPageImages(file, page);
     const imgs = { images: placeImages(raw.images, display), losses: raw.losses };
     losses.push(...imgs.losses);
+    // …and kept, because a margin is measured to the page's INK and a picture
+    // is ink (see `withMeasuredMargins`).
+    pageMarks[i] = imgs.images;
     // Filled vector paths (EP10) are ANCHORED where the page drew them — they
     // are artwork, not paragraphs, and a sheet of them has no reading order to
     // take a place in. They still sort by top edge, so their z-order is the
@@ -551,7 +559,12 @@ export function reconstructByLayout(
     const own = sectionFromPdfPages(pages.slice(from, to));
     return mode === 'positional'
       ? own
-      : withMeasuredMargins(own, shown.slice(from, to), pageRuns.slice(from, to));
+      : withMeasuredMargins(
+          own,
+          shown.slice(from, to),
+          pageRuns.slice(from, to),
+          pageMarks.slice(from, to),
+        );
   };
   sectionEnds.push({
     at: body.length,

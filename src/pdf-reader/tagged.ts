@@ -436,7 +436,12 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
       // it needs the same margins: measured off where the source put them.
       // Without this every tagged PDF came back with its text against all four
       // edges of the paper.
-      withMeasuredMargins(sectionFromPdfPages(pages), shown, placedRuns),
+      withMeasuredMargins(
+        sectionFromPdfPages(pages),
+        shown,
+        placedRuns,
+        pageImages.map((p) => p.images),
+      ),
       collectEmbeddedFonts(file, pages, imageLosses),
     ),
     losses: imageLosses,

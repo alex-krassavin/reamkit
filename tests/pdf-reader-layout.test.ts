@@ -1072,4 +1072,24 @@ describe('heuristic layout reconstruction (E-PDF EP4)', () => {
     expect(texts.some((t) => t.startsWith('any checks') && t.includes('---'))).toBe(false);
     expect(texts).toContain('PAYMENT ADDRESS');
   });
+
+  it('measures the margins to the PICTURES too, not to the words alone', () => {
+    // bug1708040.pdf is one short line over a logo 384 points wide. Measured to
+    // the line, the right margin came in past the picture's own edge, and the
+    // layout — which may not set a block wider than its measure — shrank the
+    // logo by an eighth to fit.
+    const wide = onePagePdf(
+      '/MediaBox [0 0 612 792] /Resources << /XObject << /Im0 5 0 R >> >>',
+      'BT /F1 10 Tf 1 0 0 1 72 700 Tm (a short line) Tj ET\nq 384 0 0 400 72 260 cm /Im0 Do Q',
+      [
+        `<< /Type /XObject /Subtype /Image /Width 2 /Height 2 /ColorSpace /DeviceGray /BitsPerComponent 8 /Length 4 >>\nstream\n\u0000\u0080\u0080\u0000\nendstream`,
+      ],
+    );
+    const section = reconstructByLayout(PdfFile.parse(wide)).doc.section;
+    // 612 - (72 + 384) = 156 at the most, and never so wide that the picture
+    // no longer fits the measure it is set across.
+    expect((section?.margins?.right as number) + (section?.margins?.left as number)).toBeLessThan(
+      612 - 384,
+    );
+  });
 });

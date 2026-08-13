@@ -524,6 +524,9 @@ export function withMeasuredMargins(
   section: SectionProperties | undefined,
   shown: ReadonlyArray<{ width: number; height: number }>,
   pageRuns: ReadonlyArray<ReadonlyArray<TextRun>>,
+  pageMarks: ReadonlyArray<
+    ReadonlyArray<{ x: number; y: number; widthPt: number; heightPt: number }>
+  > = [],
 ): SectionProperties | undefined {
   if (!section?.pageSize) return section;
   const width = section.pageSize.width as number;
@@ -568,6 +571,21 @@ export function withMeasuredMargins(
         maxY = r.y;
         topSize = r.fontSizePt;
       }
+    }
+    // A page is more than its words, and the measure has to HOLD what it is
+    // asked to set. bug1708040.pdf is one short line over a picture 384 points
+    // wide: measured to the line alone the right margin came in past the
+    // picture's own edge, and the layout — which may not set a block wider than
+    // its measure — shrank the logo by an eighth to fit.
+    //
+    // Only the far side, though. Where the text starts is the text's own
+    // business: bug1883609.pdf heads its form with a banner that runs wider
+    // than the words under it, and measured to the banner every line of the
+    // form moved out to meet it.
+    for (const mark of pageMarks[i] ?? []) {
+      if (!Number.isFinite(mark.x) || !Number.isFinite(mark.y)) continue;
+      maxX = Math.max(maxX, mark.x + mark.widthPt);
+      minY = Math.min(minY, mark.y);
     }
     if (!Number.isFinite(minX) || !Number.isFinite(minY)) return;
     lefts.push(minX);

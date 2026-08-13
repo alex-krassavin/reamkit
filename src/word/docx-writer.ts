@@ -860,7 +860,8 @@ function chartBlockXml(
   const descr = chart.altText ? ` descr="${escapeAttr(chart.altText)}"` : '';
   return (
     '<w:drawing>' +
-    '<wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">' +
+    '<wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"' +
+    ' distT="0" distB="0" distL="0" distR="0">' +
     `<wp:extent cx="${cx}" cy="${cy}"/>` +
     `<wp:docPr id="${id}" name="Chart ${id}"${descr}/>` +
     '<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">' +
@@ -907,7 +908,11 @@ function drawingFrame(
   const WP_NS =
     ' xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"';
   if (!float) {
-    return `<w:drawing><wp:inline${WP_NS}><wp:extent cx="${cx}" cy="${cy}"/>${head}${graphic}</wp:inline></w:drawing>`;
+    // §20.4.2.8 — the four distances a drawing keeps from the text around it.
+    // Absent, Word reads them as zero and LibreOffice supplies its own frame
+    // spacing: bug1708040.pdf's logo, an inline picture at the margin, came
+    // back nine points right of where the page draws it.
+    return `<w:drawing><wp:inline${WP_NS} distT="0" distB="0" distL="0" distR="0"><wp:extent cx="${cx}" cy="${cy}"/>${head}${graphic}</wp:inline></w:drawing>`;
   }
   const emu = (pt: number | undefined): number =>
     Number.isFinite(pt) ? Math.round((pt ?? 0) * EMU_PER_PT) : 0;
