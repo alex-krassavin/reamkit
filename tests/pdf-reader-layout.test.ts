@@ -32,7 +32,11 @@ const paragraphs = (flow: { body: ReadonlyArray<{ kind: string }> }) =>
     ): b is {
       kind: 'paragraph';
       paragraph: {
-        properties: { outlineLevel?: number; tabs?: ReadonlyArray<unknown> };
+        properties: {
+          outlineLevel?: number;
+          tabs?: ReadonlyArray<unknown>;
+          borders?: { top?: { style?: string } };
+        };
         runs: ReadonlyArray<{ text: string }>;
       };
     } => b.kind === 'paragraph',
@@ -991,5 +995,31 @@ describe('heuristic layout reconstruction (E-PDF EP4)', () => {
         .includes('BigTitle'),
     );
     expect(title?.paragraph.properties.outlineLevel).toBe(0);
+  });
+
+  it('gives a rule to the paragraph it separates, not to the page (§17.3.1.24)', () => {
+    // A rule sits in the white between two blocks: under a table's headings,
+    // over a total. Anchored to the page at the y it was drawn at it stays
+    // there while the words re-set — a receipt came back with a black line
+    // struck through "Max plan - 5x" and another through "Payment history".
+    const lines = [
+      'BT /F1 10 Tf 1 0 0 1 72 700 Tm (Description) Tj ET',
+      '0 0 0 RG 0.75 w 72 678 m 520 678 l S',
+      'BT /F1 10 Tf 1 0 0 1 72 670 Tm (Max plan) Tj ET',
+      'BT /F1 10 Tf 1 0 0 1 72 650 Tm (Aug 11 to Sep 11) Tj ET',
+    ].join('\n');
+    const doc = reconstructByLayout(
+      PdfFile.parse(onePagePdf('/MediaBox [0 0 612 792]', lines)),
+    ).doc;
+    const paras = paragraphs(doc);
+    const under = paras.find((p) =>
+      p.paragraph.runs
+        .map((r) => r.text)
+        .join('')
+        .includes('Max'),
+    );
+    expect(under?.paragraph.properties.borders?.top?.style).toBe('single');
+    // …and the rule is not drawn a second time as a shape over the words.
+    expect(doc.body.some((b) => b.kind === 'shape')).toBe(false);
   });
 });

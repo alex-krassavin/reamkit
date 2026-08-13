@@ -412,6 +412,15 @@ export function reconstructByLayout(
     // mark may cover them: the page's own painting order still ranks the marks
     // against each other, but all of them sit under the text.
     const under = mode !== 'positional';
+    // A RULE is not artwork, it is punctuation: the line under a table's
+    // headings, the line over a total. Anchored to the page at the y it was
+    // drawn at, it stays there while the words around it re-set — a receipt
+    // came back with a black line struck through "Max plan - 5x" and another
+    // through "Payment history". Given to the paragraph it separates it moves
+    // with it (§17.3.1.24). A placed reading keeps its anchor: nothing moves
+    // there.
+    const givenAway =
+      mode !== 'positional' ? ruleBorders(vectors, blocks, display.width) : undefined;
     const marks = [
       ...imgs.images.map((img) => ({
         key: img.orderKey,
@@ -419,12 +428,21 @@ export function reconstructByLayout(
         top: img.y + img.heightPt,
         make: (z: number): BodyElement => imageBlock(img, resources, undefined, frame, z, under),
       })),
-      ...vectors.map((v) => ({
-        key: v.orderKey,
-        col: colOf((v.minX + v.maxX) / 2),
-        top: v.maxY,
-        make: (z: number): BodyElement => shapeBlock(v, frame, z, under),
-      })),
+      ...vectors
+        .filter((v) => givenAway?.has(v) !== true)
+        .map((v) => ({
+          key: v.orderKey,
+          col: colOf((v.minX + v.maxX) / 2),
+          top: v.maxY,
+          // A RULE is not artwork, it is punctuation: the line under a table's
+          // headings, the line over a total. Anchored to the page at the y it was
+          // drawn at, it stays where the page had it while the words around it
+          // re-set — and a receipt came back with a black line struck through
+          // "Max plan - 5x" and another through "Payment history". Set in the
+          // flow instead, it stands between the blocks it separates wherever they
+          // end up. A placed reading keeps its anchor: there nothing moves.
+          make: (z: number): BodyElement => shapeBlock(v, frame, z, under),
+        })),
       ...placed,
     ].sort((a, b) => compareOrder(a.key, b.key));
     marks.forEach((mark, z) => {
@@ -2236,6 +2254,96 @@ const MOST_STRAY_MARKS = 2;
 
 /** …and how many readable runs must stand on that line for them to be strays. */
 const LEAST_READABLE_RUNS = 4;
+
+/**
+ * Give each separator rule to the paragraph it separates, as that paragraph's
+ * own border (§17.3.1.24), and say which rules were given away.
+ *
+ * A rule sits in the white between two blocks: under a table's headings, over a
+ * total. The block BELOW it takes it as a top border, because that is the block
+ * the rule introduces; where nothing follows closely enough, the block above
+ * takes it as a bottom one.
+ *
+ * @param vectors The page's painted paths.
+ * @param blocks  The blocks read off the page so far, which the rule joins.
+ * @param width   The page's width, which a rule is long relative to.
+ * @returns The rules that became borders, and so must not be drawn again.
+ */
+function ruleBorders(
+  vectors: ReadonlyArray<PdfVector>,
+  blocks: Array<{ band: number; col: number; top: number; el: BodyElement }>,
+  width: number,
+): ReadonlySet<PdfVector> {
+  const given = new Set<PdfVector>();
+  const paragraphs = blocks.filter((b) => b.el.kind === 'paragraph');
+  if (paragraphs.length === 0) return given;
+  for (const v of vectors) {
+    if (!separatorRule(v, width)) continue;
+    const y = (v.minY + v.maxY) / 2;
+    // The block the rule introduces: the nearest one under it. Failing that,
+    // the one it closes off above.
+    const below = paragraphs.filter((b) => b.top < y).sort((a, b) => b.top - a.top)[0];
+    const above = paragraphs.filter((b) => b.top >= y).sort((a, b) => a.top - b.top)[0];
+    const side =
+      below !== undefined && y - below.top <= RULE_REACH_PT
+        ? ({ block: below, edge: 'top' } as const)
+        : above !== undefined && above.top - y <= RULE_REACH_PT
+          ? ({ block: above, edge: 'bottom' } as const)
+          : undefined;
+    if (!side || side.block.el.kind !== 'paragraph') continue;
+    const border = {
+      style: 'single' as const,
+      width: pt(Math.max(v.lineWidth ?? v.maxY - v.minY, RULE_MIN_PT)),
+      colorHex: v.strokeHex ?? v.fillHex ?? '000000',
+    };
+    const { paragraph } = side.block.el;
+    side.block.el = {
+      kind: 'paragraph',
+      paragraph: {
+        ...paragraph,
+        properties: {
+          ...paragraph.properties,
+          borders: { ...paragraph.properties.borders, [side.edge]: border },
+        },
+      },
+    };
+    given.add(v);
+  }
+  return given;
+}
+
+/** How far from a paragraph a rule may stand and still belong to it. */
+const RULE_REACH_PT = 14;
+
+/** The thinnest a border may be drawn and still be seen. */
+const RULE_MIN_PT = 0.5;
+
+/**
+ * Whether a painted path is a RULE — a line drawn to separate one block from
+ * the next, rather than a piece of the page's artwork.
+ *
+ * Flat and long: a hairline the width of a column under a table's headings, or
+ * the line a total is written over. Everything else — boxes, panels, drawings —
+ * keeps the place on the page it was drawn at.
+ *
+ * @param v     The painted path.
+ * @param width The page's width, which the rule is long RELATIVE to.
+ * @returns Whether it separates blocks rather than drawing something.
+ */
+function separatorRule(v: PdfVector, width: number): boolean {
+  const w = v.maxX - v.minX;
+  const h = v.maxY - v.minY;
+  return h <= RULE_THICK_PT && w >= width * RULE_SHARE && w > h * RULE_RATIO;
+}
+
+/** How thick a mark may be and still be a rule. */
+const RULE_THICK_PT = 2;
+
+/** How much of the sheet it must run across. */
+const RULE_SHARE = 0.2;
+
+/** …and how much longer than it is thick. */
+const RULE_RATIO = 20;
 
 /** How close two edges stand before they count as the same one. */
 const FLUSH_PT = 1;

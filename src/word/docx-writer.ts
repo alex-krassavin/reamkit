@@ -1363,7 +1363,10 @@ const BORDER_SIDES: ReadonlyArray<[keyof CellBorders, string]> = [
   ['insideV', 'w:insideV'],
 ];
 
-function bordersXml(tag: 'w:tblBorders' | 'w:tcBorders', borders: CellBorders | undefined): string {
+function bordersXml(
+  tag: 'w:tblBorders' | 'w:tcBorders' | 'w:pBdr',
+  borders: CellBorders | undefined,
+): string {
   if (!borders) return '';
   const sides = BORDER_SIDES.map(([key, el]) => {
     const b = borders[key];
@@ -1582,6 +1585,12 @@ function pPrBody(p: ResolvedParagraphProperties): string {
   if (JC.has(p.alignment) && p.alignment !== DEFAULT_PARA.alignment) {
     out.push(`<w:jc w:val="${p.alignment}"/>`);
   }
+  // §17.3.1.24 `w:pBdr` — the rules the paragraph is drawn with. A PDF has no
+  // paragraph borders and draws lines; the reconstruction gives the line to the
+  // paragraph it separates (see `pdf-reader/layout`), and written nowhere it
+  // came back as nothing at all.
+  const pBdr = bordersXml('w:pBdr', p.borders);
+  if (pBdr) out.push(pBdr);
   // §17.3.1.38 `w:tabs` — the stops the paragraph's own tabs stand on. Without
   // them a tab falls to the default half-inch grid, which is not where the page
   // that was read set its second column.
