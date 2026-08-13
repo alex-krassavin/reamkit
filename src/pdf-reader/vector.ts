@@ -260,6 +260,8 @@ export interface PdfVector {
   readonly minY: number;
   readonly maxX: number;
   readonly maxY: number;
+  /** §9.6.6 — a traced glyph rather than artwork: type the file states no character for. */
+  readonly glyph?: boolean;
   readonly mcid?: number;
 }
 
@@ -418,6 +420,7 @@ export function collectPageVectors(
           }
         : {}),
       ...b,
+      ...(v.glyph === true ? { glyph: true } : {}),
       ...(v.mcid !== undefined ? { mcid: v.mcid } : {}),
     });
   }

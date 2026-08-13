@@ -7,6 +7,8 @@ import { describe, expect, it } from 'vitest';
 
 import type { PdfValue } from '@/pdf/objects';
 import { Ream } from '@/core/converter/ream';
+import { PdfFile } from '@/pdf-reader/document';
+import { reconstructByLayout } from '@/pdf-reader/layout';
 import { dict, name, stream } from '@/pdf/objects';
 import { PdfDocument } from '@/pdf/writer';
 
@@ -301,5 +303,52 @@ describe('two-column reconstruction (E-PDF EP17)', () => {
     ops.push('ET');
     const tokens = bodyTokens(onePage(ops));
     expect(tokens[tokens.length - 1]).toBe('FOOTER');
+  });
+
+  it('reads an invoice ACROSS, not down: figures against the right margin are not a column', () => {
+    // A page whose amounts stand against the right margin breaks a dozen lines
+    // at the same x, which is what a gutter looks like from the outside and
+    // nothing like two columns from the inside. Read down, every amount was
+    // torn off the label it belongs to and carried to the end of the document
+    // — a receipt came back with "Total excluding tax" on one sheet and
+    // "$100.00" on the next — and the labels were then indented past the strip
+    // they had been given, one letter per line.
+    const ops = ['BT /F1 10 Tf'];
+    const amounts = ['$100.00', '$16.00', '$116.00', '$4.00', '$8.00', '$12.00'];
+    for (let i = 0; i < ROWS; i++) {
+      const y = 720 - i * 24;
+      const n = String(i + 1).padStart(2, '0');
+      ops.push(`1 0 0 1 72 ${String(y)} Tm (LABEL ${n} of the account) Tj`);
+      // Flush RIGHT: each figure ends at the same place and starts wherever its
+      // own width puts it.
+      const amount = amounts[i % amounts.length]!;
+      const x = 540 - amount.length * 5;
+      ops.push(`1 0 0 1 ${String(x)} ${String(y)} Tm (${amount}) Tj`);
+    }
+    ops.push('ET');
+    const tokens = Ream.parse(onePage(ops))
+      .flow.body.map((el) =>
+        el.kind === 'paragraph' ? el.paragraph.runs.map((r) => r.text).join('') : '',
+      )
+      .filter((line) => line.includes('LABEL'));
+    // Every label keeps its figure on its own line…
+    expect(tokens).toHaveLength(ROWS);
+    expect(tokens[0]).toContain('$100.00');
+    // …and the section is not set in columns.
+    const columns = Ream.parse(onePage(ops)).flow.sections[0]?.properties.columns;
+    expect(columns?.count ?? 1).toBe(1);
+  });
+
+  it('measures the left margin to INK, not to a space set in the corner', () => {
+    // A Stripe invoice opens its page with one non-breaking space at x=0.
+    // Taken for the leftmost thing on the sheet it put the left margin at zero
+    // and moved every line of the document flush against the edge, thirty
+    // points left of where the page sets them.
+    const ops = ['BT /F1 10 Tf', '1 0 0 1 0 779 Tm ( ) Tj'];
+    for (let i = 0; i < ROWS; i++)
+      ops.push(`1 0 0 1 72 ${String(720 - i * 24)} Tm (a line of the document here) Tj`);
+    ops.push('ET');
+    const section = reconstructByLayout(PdfFile.parse(onePage(ops))).doc.section;
+    expect(section?.margins?.left as number).toBeGreaterThan(60);
   });
 });

@@ -545,8 +545,21 @@ export function withMeasuredMargins(
     let bottomSize = 0;
     for (const r of runs) {
       if (!Number.isFinite(r.x) || !Number.isFinite(r.y)) continue;
-      minX = Math.min(minX, r.x);
-      maxX = Math.max(maxX, r.endX);
+      // ACROSS the sheet, a run of nothing but blanks is not ink: a Stripe
+      // invoice opens its page by setting one non-breaking space at the very
+      // corner, x=0, and taken for the leftmost thing on the page it put the
+      // left margin at zero and moved every line of the document flush against
+      // the sheet's edge, thirty points left of where the page sets them.
+      //
+      // DOWN the sheet the same run still says where the page's content
+      // reaches, and a page is more than its words: bug1708040.pdf is one line
+      // of text over a picture four hundred points tall, and measured to the
+      // text alone the wall came half a sheet above the picture's foot and put
+      // the logo on a page of its own.
+      if (r.text.trim() !== '') {
+        minX = Math.min(minX, r.x);
+        maxX = Math.max(maxX, r.endX);
+      }
       if (r.y < minY) {
         minY = r.y;
         bottomSize = r.fontSizePt;
@@ -586,7 +599,13 @@ export function withMeasuredMargins(
   return {
     ...section,
     margins: {
-      left: clamp(median(lefts), width),
+      // Across the sheet the LEFTMOST page decides, the way the tightest page
+      // decides down it: a margin is a wall the text may not cross, and a page
+      // that happens to set its last lines on the right — a receipt's payment
+      // history, ending in a right-hand column — has no left edge to speak of.
+      // Taking the middle of two put the wall three hundred points in and threw
+      // the whole receipt off the right edge of the sheet.
+      left: clamp(Math.min(...lefts), width),
       // The right margin gives back a little of what it measured. The page was
       // set in faces this reader does not have, and re-setting it in
       // substitutes cannot come out narrower everywhere — so a measure exactly

@@ -50,7 +50,8 @@ export function parseToUnicodeCMap(bytes: Uint8Array): ToUnicode {
         if (src.kind !== 'hexstr') continue;
         const dst = lexer.nextToken();
         if (dst.kind !== 'hexstr') continue;
-        map.set(bytesToInt(src.bytes), utf16be(dst.bytes));
+        const text = stated(utf16be(dst.bytes));
+        if (text !== undefined) map.set(bytesToInt(src.bytes), text);
       }
     } else if (tok.value === 'beginbfrange') {
       for (;;) {
@@ -63,21 +64,40 @@ export function parseToUnicodeCMap(bytes: Uint8Array): ToUnicode {
         const hiN = bytesToInt(hi.bytes);
         const dst = lexer.nextToken();
         if (dst.kind === 'hexstr') {
-          const base = utf16be(dst.bytes);
-          for (let i = 0; loN + i <= hiN && i < MAX_RANGE; i++)
-            map.set(loN + i, incString(base, i));
+          const base = stated(utf16be(dst.bytes));
+          if (base !== undefined)
+            for (let i = 0; loN + i <= hiN && i < MAX_RANGE; i++)
+              map.set(loN + i, incString(base, i));
         } else if (dst.kind === 'arrayOpen') {
           let i = 0;
           for (;;) {
             const el = lexer.nextToken();
             if (el.kind === 'arrayClose' || el.kind === 'eof') break;
-            if (el.kind === 'hexstr') map.set(loN + i++, utf16be(el.bytes));
+            if (el.kind !== 'hexstr') continue;
+            const text = stated(utf16be(el.bytes));
+            if (text !== undefined) map.set(loN + i, text);
+            i++;
           }
         }
       }
     }
   }
   return { map, codeBytes };
+}
+
+// §9.10.3 — a destination of U+0000 is the producer saying it does not know
+// what the glyph is, not a claim that the glyph IS the null character: nothing
+// draws NUL, and a text map that answered with it would be answering wrongly.
+// Stripe's invoices state one for every mark of punctuation they set —
+// `<0544> <0000>` is the colon of "Kazakhstan VAT: 86-1696045" — and taken as
+// an answer it stopped the reader asking the font program, which knows: the
+// colon, the hyphens of an invoice number and a postcode, the parentheses and
+// the en dash of a date range all came back unreadable and were drawn as loose
+// glyphs at the far edge of the page. Read as no answer, the next source is
+// asked (§9.10.2, the program's own `cmap`) and the words come back whole.
+function stated(text: string): string | undefined {
+  for (const ch of text) if (ch !== '\u0000') return text;
+  return undefined;
 }
 
 // Big-endian bytes → integer (the character code).

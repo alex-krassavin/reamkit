@@ -28,6 +28,7 @@ import { collectPageVectors } from './vector';
 import { markDrawnRules } from './text-rules';
 import { matrixBlocks } from './math-rows';
 import { isRightToLeft } from './content';
+import type { PdfVector } from './vector';
 import type {
   BodyElement,
   ParagraphProperties,
@@ -191,10 +192,19 @@ export function reconstructByLayout(
     // EP17 — a full-width line cuts the page in two: what is above it is read
     // before it and what is below after, so a paper's columns do not start at
     // the top of the sheet.
-    const split = gutters.length > 0 ? assignColumns(runs, gutters) : undefined;
     // Where the page's text starts and ends, which is the measure a line that
     // spans the page is set across.
     const textEdges = pageTextEdges(runs);
+    // …but only a page set in columns of PROSE is read down them. An invoice
+    // breaks a dozen lines at the same x and is not: read by column its every
+    // amount was taken off the line it belongs to and carried to the end of the
+    // document — "Total excluding tax" on one sheet and "$100.00" on the next.
+    // Read across, each label keeps its figure.
+    const inColumns = proseColumns(runs, gutters, textEdges);
+    // EP17 — a full-width line cuts the page in two: what is above it is read
+    // before it and what is below after, so a paper's columns do not start at
+    // the top of the sheet.
+    const split = gutters.length > 0 && inColumns ? assignColumns(runs, gutters) : undefined;
     const bandEpsilon = (median(runs.map((r) => r.fontSizePt).filter((s) => s > 0)) || 10) / 2;
     const bandAt = (top: number): number => bandOf(split?.breaks ?? [], top, bandEpsilon);
     const addColumn = (allRuns: ReadonlyArray<TextRun>, col: number): void => {
@@ -337,7 +347,21 @@ export function reconstructByLayout(
     // bar is not placed a second time where the words no longer are.
     const placedVectors = placeVectors(lifted.vectors, display);
     const ruled = markDrawnRules(runs, placedVectors);
-    const vectors = placedVectors.filter((v) => !ruled.consumed.has(v));
+    const strayGlyphs = strayMarks(placedVectors, runs);
+    const vectors = placedVectors
+      .filter((v) => !ruled.consumed.has(v))
+      // §9.6.6 — a glyph the file states no character for is DRAWN, which is
+      // right for a page whose words are all drawn and wrong for one mark
+      // inside a line of ordinary text. Stripe declares U+0000 for every piece
+      // of punctuation it sets: the colon of "Kazakhstan VAT: 86-1696045" came
+      // back as a floating shape, and a flowing document has nowhere to float
+      // it — it landed a word away from the line it belongs to, on its own.
+      // Where the line around it is readable the mark is dropped instead: the
+      // words keep their places, and the loss report already says a character
+      // was unrecoverable.
+      // …in the FLOWING reading only. A placed one anchors every mark to the
+      // page, so a drawn glyph lands exactly where the file draws it.
+      .filter((v) => !(mode !== 'positional' && strayGlyphs.has(v)));
     // A page RULED into columns is a table, and its ROWS are what it says; a
     // page SET in columns is prose, and its columns are. Read by column, a
     // table comes back one column at a time with every row torn up.
@@ -436,7 +460,14 @@ export function reconstructByLayout(
     // its own, continuous, so no page is opened for it.
     // The columns the page was READ in, which a ruled page has none of: its
     // gutters are a table's, and the rows were taken whole.
-    const columnsHere = ruledIntoColumns ? 1 : gutters.length + 1;
+    // …and a page whose regions are not PROSE has none either. An invoice is
+    // one column of text with its amounts set against the right margin: a
+    // dozen lines split at the same x, which is what a gutter looks like from
+    // the outside, and nothing at all like two columns from the inside. Set in
+    // two, its "Total excluding tax" was indented past the width of the strip
+    // it had been given and came back one letter per line down the sheet.
+    const columnsHere =
+      ruledIntoColumns || !proseColumns(runs, gutters, textEdges) ? 1 : gutters.length + 1;
     const spacePt = columnsHere > 1 ? median(gutters.map((g) => g.to - g.from)) : 0;
     for (const block of blocks) {
       const count = block.col === SPANNING_COLUMN ? 1 : columnsHere;
@@ -573,9 +604,9 @@ function detectGutters(runs: ReadonlyArray<TextRun>, pageWidth: number): Array<G
   // everywhere and says nothing.
   const sorted = [...spans].sort((a, b) => a[0] - b[0]);
   let curEnd = sorted[0]![1];
-  const empty: Array<Gutter> = [];
+  const bands: Array<Gutter> = [];
   for (const [l, r] of sorted) {
-    if (l - curEnd >= fontSize * 3) empty.push({ mid: (curEnd + l) / 2, from: curEnd, to: l });
+    if (l - curEnd >= fontSize * 3) bands.push({ mid: (curEnd + l) / 2, from: curEnd, to: l });
     if (r > curEnd) curEnd = r;
   }
   // And then the question is asked a LINE at a time: at the gutter, most lines
@@ -590,6 +621,27 @@ function detectGutters(runs: ReadonlyArray<TextRun>, pageWidth: number): Array<G
       })
       .sort((a, b) => a[0] - b[0]),
   );
+  // How many lines a band actually SEPARATES — ink on both sides of it, with a
+  // gap no word space explains.
+  const straddling = (band: Gutter): number => {
+    let n = 0;
+    for (const row of rows) {
+      const before = row.filter(([, r]) => r <= band.from);
+      const after = row.filter(([l]) => l >= band.to);
+      if (before.length === 0 || after.length === 0) continue;
+      const gap = Math.min(...after.map(([l]) => l)) - Math.max(...before.map(([, r]) => r));
+      if (gap >= fontSize * MIN_GUTTER_EM) n++;
+    }
+    return n;
+  };
+  // A band no ink crosses is only a gutter if it has text on BOTH sides of it
+  // over and over. An invoice has one such band and it separates nothing: its
+  // lower half sets the totals on the right and leaves the left empty, so no
+  // run crosses the middle of the sheet — read as a column boundary, "Total
+  // excluding tax" was laid into a strip ten points wide and came back one
+  // letter per line, straight down the page. Two lines that happen to stand
+  // apart are not a page set in columns; a handful, repeated, is.
+  const empty = bands.filter((b) => straddling(b) >= MIN_EMPTY_BAND_ROWS);
   const voted: Array<Gutter> = [];
   for (const x of sample(minX + span * 0.1, minX + span * 0.9, 1)) {
     let columned = 0;
@@ -756,6 +808,14 @@ const MIN_SHARED_ROWS = 3;
 
 /** How many lines have to be split at the same place before the page is in columns. */
 const MIN_COLUMNED_ROWS = 12;
+
+/**
+ * How many lines a band NO run crosses must separate before it is a gutter
+ * rather than an empty half of a page. Lower than the vote's bar, because a
+ * band nothing crosses is stronger evidence than a band most lines avoid — but
+ * not zero, which is what an invoice's blank left half offers.
+ */
+const MIN_EMPTY_BAND_ROWS = 8;
 
 /**
  * The page's runs grouped by baseline.
@@ -2004,6 +2064,131 @@ function looksRuled(
   fills.sort((a, b) => a - b);
   return (fills[Math.floor(fills.length / 2)] ?? 1) <= TABLE_CELL_FILL;
 }
+
+/**
+ * Whether the regions the gutters cut the page into are COLUMNS OF PROSE — the
+ * only thing worth re-setting a document in columns for.
+ *
+ * A gutter is evidence about the page's white space, and white space is not
+ * enough: an invoice sets its labels along the left and its amounts against the
+ * right margin, and a dozen lines then break at the same x. Read as two columns
+ * the amounts became a column of their own and every label was indented past
+ * the strip it was given — "Total excluding tax" came back one letter per line.
+ *
+ * What tells them apart is the same thing that tells a cell from a line of
+ * prose: a column of prose FILLS its measure, over and over, because that is
+ * what wrapping does. A column of values never fills anything — its lines are
+ * short and it is their right edges that line up, not their left. So every
+ * region must hold lines of its own and they must reach across it.
+ *
+ * @param runs    The page's runs.
+ * @param gutters The page's gutters.
+ * @param edges   Where the page's text starts and ends.
+ * @returns Whether the page is set in columns of prose.
+ */
+function proseColumns(
+  runs: ReadonlyArray<TextRun>,
+  gutters: ReadonlyArray<Gutter>,
+  edges: { left: number; right: number } | undefined,
+): boolean {
+  if (gutters.length === 0) return false;
+  if (!edges) return true; // Nothing to measure against: leave the reading alone.
+  const fontSize = median(runs.map((r) => r.fontSizePt).filter((s) => s > 0)) || 10;
+  const rows = rowsOf(runs, fontSize).filter((row) => row.length > 0);
+  if (rows.length === 0) return true;
+  const bounds = columnBounds(runs, gutters, edges);
+  const regions = bounds.slice(0, -1).map((lo, i) => [lo, bounds[i + 1]!] as const);
+  const regionOf = (x: number): number => {
+    for (let i = regions.length - 1; i >= 0; i--) if (x >= regions[i]![0]) return i;
+    return 0;
+  };
+  const edgesIn = regions.map((): Array<{ left: number; right: number }> => []);
+  for (const row of rows) {
+    const byRegion = regions.map((): Array<TextRun> => []);
+    for (const run of row) byRegion[regionOf(run.x)]!.push(run);
+    byRegion.forEach((inRegion, i) => {
+      if (inRegion.length === 0) return;
+      edgesIn[i]!.push({
+        left: Math.min(...inRegion.map((r) => r.x)),
+        right: Math.max(...inRegion.map((r) => r.endX)),
+      });
+    });
+  }
+  // How many lines share an edge, which is what "flush" means.
+  const agreeing = (xs: ReadonlyArray<number>): number => {
+    let most = 0;
+    for (const x of xs) most = Math.max(most, xs.filter((y) => Math.abs(y - x) <= FLUSH_PT).length);
+    return most;
+  };
+  return edgesIn.every((lines) => {
+    if (lines.length < MIN_PROSE_LINES) return false;
+    // Prose is set flush LEFT and comes out ragged right: line after line
+    // starts in the same place and ends wherever its last word ends. A column
+    // of figures is the other way round — an invoice's amounts agree on their
+    // right edge and on nothing else — and that is not a column to re-set a
+    // document in.
+    return agreeing(lines.map((l) => l.right)) <= agreeing(lines.map((l) => l.left));
+  });
+}
+
+/**
+ * The drawn glyphs that are STRAY marks in a line of ordinary text.
+ *
+ * §9.6.6 — a glyph the file states no character for is drawn, because nothing
+ * downstream can write it. That is the whole content of some pages: a subset
+ * that names its glyphs `g18`, a program with no `cmap`, a font of pictures.
+ * On such a page the drawings ARE the words and they stay.
+ *
+ * A single mark among readable words is the other case, and Stripe's invoices
+ * are full of them — a `/ToUnicode` stating U+0000 for every piece of
+ * punctuation it sets. The flowing reading has nowhere to put a shape inside a
+ * line, so the colon of "Kazakhstan VAT: 86-1696045" was placed as a floating
+ * drawing and landed a word away, on a line of its own, pushing the text
+ * around it aside. Dropped, the line keeps its words and the loss report still
+ * says a character was unrecoverable.
+ *
+ * The line decides: where nearly everything on it is drawn, the drawings are
+ * the text — bug1151216.pdf sets three lines of prices that way. Where one or
+ * two marks stand among several readable runs, they are punctuation.
+ *
+ * @param vectors The page's painted paths.
+ * @param runs    The page's runs.
+ * @returns The drawn glyphs to leave out of a flowing reading.
+ */
+function strayMarks(
+  vectors: ReadonlyArray<PdfVector>,
+  runs: ReadonlyArray<TextRun>,
+): ReadonlySet<PdfVector> {
+  const glyphs = vectors.filter((v) => v.glyph === true);
+  const out = new Set<PdfVector>();
+  if (glyphs.length === 0) return out;
+  const readable = runs.filter((r) => r.text.trim() !== '' && !r.text.includes(UNMAPPED));
+  for (const v of glyphs) {
+    const mid = (v.minY + v.maxY) / 2;
+    const size = v.maxY - v.minY || 10;
+    const words = readable.filter((r) => Math.abs(r.y - mid) <= size);
+    // Ink on both sides is what makes it a mark INSIDE a line rather than one
+    // beside it.
+    const before = words.some((r) => r.endX <= v.minX + size);
+    const after = words.some((r) => r.x >= v.maxX - size);
+    if (!before || !after) continue;
+    const drawnHere = glyphs.filter((g) => Math.abs((g.minY + g.maxY) / 2 - mid) <= size).length;
+    if (drawnHere <= MOST_STRAY_MARKS && words.length >= LEAST_READABLE_RUNS) out.add(v);
+  }
+  return out;
+}
+
+/** How few drawn glyphs a line may hold before they are its text, not marks in it. */
+const MOST_STRAY_MARKS = 2;
+
+/** …and how many readable runs must stand on that line for them to be strays. */
+const LEAST_READABLE_RUNS = 4;
+
+/** How close two edges stand before they count as the same one. */
+const FLUSH_PT = 1;
+
+/** And how many lines it takes before a region is a column at all. */
+const MIN_PROSE_LINES = 6;
 
 /**
  * §17.4.38 — the page's rows as the TABLE they are.
