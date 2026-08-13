@@ -1848,7 +1848,7 @@ function edgeLine(
   if (runs.length < 4 || pageHeight <= 0) return undefined;
   const fontSize = median(runs.map((r) => r.fontSizePt).filter((s) => s > 0)) || 10;
   const rows = rowsOf(runs, fontSize);
-  if (rows.length < 4) return undefined;
+  if (rows.length === 0) return undefined;
   // `rowsOf` runs down the page, so the foot grows upward from its last row and
   // the head downward from its first; the gap is to the row on the text's side
   // of the group either way.
@@ -1859,6 +1859,32 @@ function edgeLine(
   const inside = (row: ReadonlyArray<TextRun>): number =>
     where === 'foot' ? Math.min(...row.map((r) => r.y)) : Math.max(...row.map((r) => r.y));
   const y = edgeY(at(0));
+  // A sheet that holds nothing BUT its foot has no text block to measure a gap
+  // against: a receipt's second page is blank but for "Page 2 of 2", and asked
+  // for four rows of it the reader found none, could not confirm the foot
+  // repeated, and flowed page one's "Page 1 of 2" into the body — where it came
+  // back at the TOP of the second sheet.
+  if (rows.length < 4) {
+    // Blanks are not ink here either: both invoices set a space in the top
+    // corner of every sheet, and counted as a row it stood outside the band and
+    // said the page held something other than its foot.
+    const inked = rows.filter((row) => row.some((r) => r.text.trim() !== ''));
+    const inBand =
+      inked.length > 0 &&
+      inked.every((row) =>
+        where === 'foot'
+          ? edgeY(row) <= pageHeight * FOOT_BAND
+          : edgeY(row) >= pageHeight * (1 - FOOT_BAND),
+      );
+    const all = inked.flat();
+    const text = all
+      .map((r) => r.text)
+      .join('')
+      .trim();
+    return inBand && text.length > 0 && text.length <= FOOT_CHARS * inked.length
+      ? { y: edgeY(inked[inked.length - 1] ?? []), runs: all }
+      : undefined;
+  }
   let found: ReadonlyArray<TextRun> | undefined;
   let group: Array<TextRun> = [];
   // Only the foot grows: the lines that OPEN a page are far more often the

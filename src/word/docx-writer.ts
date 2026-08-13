@@ -1585,13 +1585,17 @@ function pPrBody(p: ResolvedParagraphProperties): string {
   // §17.3.1.38 `w:tabs` — the stops the paragraph's own tabs stand on. Without
   // them a tab falls to the default half-inch grid, which is not where the page
   // that was read set its second column.
-  const tabs = p.tabs;
+  // The header and footer path hands this raw properties rather than resolved
+  // ones, so the field the type promises may not be there.
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+  const tabs = p.tabs ?? [];
   if (tabs.length > 0) {
     const stops = tabs
       .map((t) => {
         const pos = twips(t.positionPt);
         const leader = t.leader !== undefined ? ` w:leader="${escapeAttr(t.leader)}"` : '';
-        return `<w:tab w:val="${escapeAttr(t.alignment)}" w:pos="${String(pos)}"${leader}/>`;
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+        return `<w:tab w:val="${escapeAttr(t.alignment ?? 'left')}" w:pos="${String(pos)}"${leader}/>`;
       })
       .join('');
     out.push(`<w:tabs>${stops}</w:tabs>`);
