@@ -961,26 +961,61 @@ export function symbolCodeLength(symbols: number): number {
   return Math.ceil(Math.log2(Math.max(symbols, 1)));
 }
 
+/**
+ * §6.5.8.2 — what a symbol dictionary lends the text region inside it.
+ *
+ * Every one of them, and the SAME ones each time round: a dictionary may build
+ * several of its shapes this way, and the statistics an arithmetic decoder
+ * gathers carry on from one to the next. Given fresh ones for the second shape,
+ * bitmap-symbol-symbolrefine-textrefine.pdf placed its symbols four hundred
+ * million pixels off the page.
+ */
+interface LentCoders {
+  readonly codeLen: number;
+  readonly iadt: IntDecoder;
+  readonly iafs: IntDecoder;
+  readonly iads: IntDecoder;
+  readonly iait: IntDecoder;
+  readonly iari: IntDecoder;
+  readonly iardw: IntDecoder;
+  readonly iardh: IntDecoder;
+  readonly iardx: IntDecoder;
+  readonly iardy: IntDecoder;
+  readonly iaid: IdDecoder;
+  readonly refineCx: Cx;
+}
+
 function decodeTextRegion(
   mq: MQDecoder,
   symbols: ReadonlyArray<Jbig2Bitmap>,
   p: TextRegionParams,
   stripsLog: number,
+  /**
+   * §6.5.8.2 — the decoders a DICTIONARY lends its own aggregate region. The
+   * region is not a stream of its own: it reads on through the dictionary's
+   * arithmetic decoder, and §6.5.8.2.1 says the two share their statistics for
+   * the fields they both have — the id and the refinement offsets, and the
+   * refinement's own contexts. Given fresh ones, every decision after the
+   * first came out of an untrained state and the stream walked off:
+   * bitmap-symbol-symbolrefineseveral.pdf ended in export flags of nonsense
+   * and came back a blank sheet.
+   */
+  lent?: LentCoders,
 ): Jbig2Bitmap {
   const bmp = makeBitmap(p.width, p.height, p.defPixel);
   const strips = 1 << stripsLog;
-  const codeLen = symbolCodeLength(symbols.length);
-  const iadt = new IntDecoder(mq);
-  const iafs = new IntDecoder(mq);
-  const iads = new IntDecoder(mq);
-  const iait = new IntDecoder(mq);
-  const iari = new IntDecoder(mq);
-  const iardw = new IntDecoder(mq);
-  const iardh = new IntDecoder(mq);
-  const iardx = new IntDecoder(mq);
-  const iardy = new IntDecoder(mq);
-  const iaid = new IdDecoder(mq, codeLen);
-  const refineCx = newContexts(1 << 13);
+  const codeLen = lent?.codeLen ?? symbolCodeLength(symbols.length);
+  const iadt = lent?.iadt ?? new IntDecoder(mq);
+  const iafs = lent?.iafs ?? new IntDecoder(mq);
+  const iads = lent?.iads ?? new IntDecoder(mq);
+  const iait = lent?.iait ?? new IntDecoder(mq);
+  const iari = lent?.iari ?? new IntDecoder(mq);
+  const iardw = lent?.iardw ?? new IntDecoder(mq);
+  const iardh = lent?.iardh ?? new IntDecoder(mq);
+  const iardx = lent?.iardx ?? new IntDecoder(mq);
+  const iardy = lent?.iardy ?? new IntDecoder(mq);
+  const iaid = lent?.iaid ?? new IdDecoder(mq, codeLen);
+  const refineCx = lent?.refineCx ?? newContexts(1 << 13);
 
   const num = (v: number | typeof OOB): number => (v === OOB ? 0 : v);
   let stripT = -num(iadt.decode()) * strips;
@@ -1043,10 +1078,17 @@ function decodeTextRegion(
       compose(bmp, sym, x, y, p.combOp);
       curS += (p.transposed ? sh : sw) - 1;
       placed++;
-      if (placed >= p.instances) break;
+      // §6.4.5 step 3(c)(xi) — the strip ends when IADS says out-of-band, and
+      // that decision is READ even after the last instance the region states.
+      // Left in the stream it belonged to whatever came next: a dictionary's
+      // own aggregate region (§6.5.8.2) is followed by the dictionary's export
+      // flags, and those came back as runs of nonsense —
+      // bitmap-symbol-symbolrefineseveral.pdf lost every symbol it had made.
       const ids = iads.decode();
       if (ids === OOB) break; // the strip ends
       curS += ids + p.dsOffset;
+      // A stream that never says out-of-band would place for ever.
+      if (placed > p.instances * 2 + 16) break;
     }
   }
   return bmp;
@@ -1082,6 +1124,29 @@ function decodeSymbolDictionary(
   const refineCx = newContexts(1 << 13);
   const newSymbols: Array<Jbig2Bitmap> = [];
   const num = (v: number | typeof OOB): number => (v === OOB ? 0 : v);
+  // §6.5.8.2.3 — a dictionary that refines names its symbols in as many bits as
+  // the dictionary will END with: the ones it was given plus the ones it is
+  // about to make. Counted as it went — the symbols in hand at that moment —
+  // the id came out a bit wide or a bit narrow, and one wrong bit puts every
+  // field after it in the wrong place: bitmap-symbol-symbolrefineseveral.pdf
+  // came back a blank sheet where the file draws four shapes.
+  const codeLen = symbolCodeLength(input.length + newCount);
+  const iaid = new IdDecoder(mq, codeLen);
+  // …and the region's own decoders, made once for the whole dictionary.
+  const lent: LentCoders = {
+    codeLen,
+    iadt: new IntDecoder(mq),
+    iafs: new IntDecoder(mq),
+    iads: new IntDecoder(mq),
+    iait: new IntDecoder(mq),
+    iari: new IntDecoder(mq),
+    iardw: new IntDecoder(mq),
+    iardh: new IntDecoder(mq),
+    iardx,
+    iardy,
+    iaid,
+    refineCx,
+  };
 
   let height = 0;
   let guard = 0;
@@ -1105,8 +1170,7 @@ function decodeSymbolDictionary(
           // §6.5.8.2.2 — one instance: the new shape is a refinement of an
           // existing one, which is how a dictionary stores a family of glyphs.
           const all = [...input, ...newSymbols];
-          const codeLen = Math.max(1, Math.ceil(Math.log2(Math.max(all.length + newCount, 1))));
-          const id = new IdDecoder(mq, codeLen).decode();
+          const id = iaid.decode();
           const rdx = num(iardx.decode());
           const rdy = num(iardy.decode());
           newSymbols.push(
@@ -1146,6 +1210,7 @@ function decodeSymbolDictionary(
                 rAt,
               },
               0,
+              lent,
             ),
           );
         }
@@ -1299,12 +1364,106 @@ function decodeTextRegionHuff(
       compose(bmp, sym, x, y, p.combOp);
       curS += (p.transposed ? sh : sw) - 1;
       placed++;
-      if (placed >= p.instances) break;
+      // …and the same out-of-band that ends an arithmetic strip ends this one,
+      // read after the last instance as well as between them.
       const ids = huffDecode(bits, t.ds);
       if (ids === OOB) break;
       curS += ids + p.dsOffset;
+      if (placed > p.instances * 2 + 16) break;
     }
   }
+  return bmp;
+}
+
+/**
+ * §6.5.8.2 — one shape of a REFINING Huffman dictionary.
+ *
+ * The dictionary states how many instances the shape is made of. One is a
+ * refinement of a symbol it already holds — the id in as many bits as the
+ * dictionary will end with, the offsets through table B.15, and the
+ * refinement's own length through B.1, so the reader steps over exactly that.
+ * Several is a text region of its own, read with the standard tables §6.5.8.2.1
+ * names and with the symbol ids in plain fixed-width codes.
+ *
+ * @returns The shape, which is `width` by `height` whatever it took to make.
+ */
+function aggregateSymbolHuff(
+  bits: BitReader,
+  data: Uint8Array,
+  symbols: ReadonlyArray<Jbig2Bitmap>,
+  width: number,
+  height: number,
+  codeLen: number,
+  refineCx: Cx,
+  agg: { readonly inst: HuffTable; readonly rTemplate: number; readonly rAt: ReadonlyArray<At> },
+): Jbig2Bitmap {
+  const num = (v: number | typeof OOB): number => (v === OOB ? 0 : v);
+  const instances = num(huffDecode(bits, agg.inst));
+  const b15 = standardTable(15);
+  const b1 = standardTable(1);
+  if (instances !== 1) {
+    // §6.5.8.2.1 — the tables a dictionary's own text region reads through are
+    // fixed: B.6 for the first S, B.8 for the deltas, B.11 for the strip.
+    const ids = buildHuffTable(
+      Array.from({ length: 1 << codeLen }, (_, i) => ({
+        prefLen: codeLen,
+        rangeLen: 0,
+        rangeLow: i,
+      })),
+    );
+    return decodeTextRegionHuff(
+      bits,
+      data,
+      symbols,
+      {
+        width,
+        height,
+        instances: Math.max(1, instances),
+        stripT: 0,
+        refCorner: Corner.TopLeft,
+        transposed: false,
+        combOp: 0,
+        defPixel: 0,
+        dsOffset: 0,
+        refine: true,
+        rTemplate: agg.rTemplate,
+        rAt: agg.rAt,
+      },
+      0,
+      {
+        fs: standardTable(6),
+        ds: standardTable(8),
+        dt: standardTable(11),
+        rdw: b15,
+        rdh: b15,
+        rdx: b15,
+        rdy: b15,
+        rsize: b1,
+        symbolIds: ids,
+      },
+    );
+  }
+  const id = bits.readBits(codeLen);
+  const rdx = num(huffDecode(bits, b15));
+  const rdy = num(huffDecode(bits, b15));
+  const size = num(huffDecode(bits, b1));
+  bits.align();
+  const start = bits.bytePos;
+  const bmp = decodeRefinement(
+    new MQDecoder(data.subarray(start)),
+    refineCx,
+    width,
+    height,
+    agg.rTemplate,
+    symbols[id] ?? makeBitmap(1, 1),
+    rdx,
+    rdy,
+    agg.rAt,
+    false,
+  );
+  // §6.5.8.2.2 — the length is stated, so the reader steps over exactly that
+  // and does not have to unwind the arithmetic coder.
+  bits.skipTo(start + size);
   return bmp;
 }
 
@@ -1325,9 +1484,19 @@ function decodeSymbolDictionaryHuff(
   dh: HuffTable,
   dw: HuffTable,
   bmSize: HuffTable,
+  /** §6.5.9 — the dictionary REFINES: each shape is made, not stored. */
+  agg?: {
+    readonly inst: HuffTable;
+    readonly rTemplate: number;
+    readonly rAt: ReadonlyArray<At>;
+  },
 ): Array<Jbig2Bitmap> {
   const newSymbols: Array<Jbig2Bitmap> = [];
   const num = (v: number | typeof OOB): number => (v === OOB ? 0 : v);
+  // §6.5.8.2.3 — as many bits as the dictionary will END with, the same rule
+  // the arithmetic side follows.
+  const codeLen = symbolCodeLength(input.length + newCount);
+  const refineCx = newContexts(1 << 13);
   let height = 0;
   let guard = 0;
   while (newSymbols.length < newCount && guard++ < 10000) {
@@ -1341,9 +1510,29 @@ function decodeSymbolDictionaryHuff(
       if (d === OOB) break;
       width += d;
       if (width <= 0 || width > 1 << 14 || newSymbols.length + widths.length >= newCount + 1) break;
+      if (agg) {
+        // §6.5.8.2 — a refining dictionary states each shape on its own: how
+        // many instances go into it, and then either the one refinement it is
+        // or the little text region it is drawn as. The collective bitmap
+        // below is for a dictionary that STORES its shapes.
+        newSymbols.push(
+          aggregateSymbolHuff(
+            bits,
+            data,
+            [...input, ...newSymbols],
+            width,
+            height,
+            codeLen,
+            refineCx,
+            agg,
+          ),
+        );
+        continue;
+      }
       widths.push(width);
       totalWidth += width;
     }
+    if (agg) continue;
     if (widths.length === 0) continue;
     const size = num(huffDecode(bits, bmSize));
     bits.align();
@@ -1853,6 +2042,18 @@ export function decodeJbig2(
                 pick(dhSel, [4, 5]),
                 pick(dwSel, [2, 3]),
                 bmSel === 1 ? (custom[ci++] ?? standardTable(1)) : standardTable(1),
+                // §7.4.3.1.2 bit 7 — the table the instance count is read
+                // through, for a dictionary that refines rather than stores.
+                refAgg
+                  ? {
+                      inst:
+                        ((flags >> 7) & 1) === 1
+                          ? (custom[ci++] ?? standardTable(1))
+                          : standardTable(1),
+                      rTemplate,
+                      rAt: rAt.length > 0 ? rAt : NOMINAL_AT_REFINE,
+                    }
+                  : undefined,
               ),
             );
             continue;
