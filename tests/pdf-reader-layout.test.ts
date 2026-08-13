@@ -324,6 +324,85 @@ describe('mathematics is set the way the page sets it', () => {
   });
 });
 
+describe('a matrix is a matrix, not three lines (§22.1.2.68)', () => {
+  /** A page of prose with a 2×2 matrix set in brackets in the middle of it. */
+  const withMatrix = (brackets = true): Uint8Array => {
+    const ops: Array<string> = [];
+    for (let i = 0; i < 5; i++)
+      ops.push(`BT /F0 10 Tf 1 0 0 1 40 ${String(370 - i * 14)} Tm (a line of prose here) Tj ET`);
+    // The numbers stand on two baselines six points apart, the brackets on the
+    // baseline between them — which is where a stretched bracket sits.
+    ops.push('BT /F0 10 Tf 1 0 0 1 60 300 Tm (1) Tj ET');
+    ops.push('BT /F0 10 Tf 1 0 0 1 80 300 Tm (2) Tj ET');
+    if (brackets) {
+      ops.push('BT /F0 10 Tf 1 0 0 1 50 294 Tm (\\() Tj ET');
+      ops.push('BT /F0 10 Tf 1 0 0 1 95 294 Tm (\\)) Tj ET');
+    }
+    ops.push('BT /F0 10 Tf 1 0 0 1 60 288 Tm (3) Tj ET');
+    ops.push('BT /F0 10 Tf 1 0 0 1 80 288 Tm (4) Tj ET');
+    for (let i = 0; i < 5; i++)
+      ops.push(
+        `BT /F0 10 Tf 1 0 0 1 40 ${String(260 - i * 14)} Tm (and more prose after it) Tj ET`,
+      );
+    return onePagePdf(
+      '/MediaBox [0 0 400 400] /Resources << /Font << /F0 5 0 R >> >>',
+      ops.join('\n'),
+      ['<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'],
+    );
+  };
+
+  it('reads the rows and the brackets as the object they are', () => {
+    // A PDF states no mathematics: a matrix reaches the page as numbers on two
+    // baselines with stretched brackets drawn between them. Read line by line,
+    // bug1997343.pdf's product of three matrices came back as three lines of
+    // prose — "1 2 1 1 1 3", "( )( ) = ( )", "3 4 0 1 3 7".
+    const doc = reconstructByLayout(PdfFile.parse(withMatrix())).doc;
+    const math = doc.body
+      .flatMap((b) => (b.kind === 'paragraph' ? b.paragraph.runs : []))
+      .find((r) => r.math !== undefined)?.math;
+    expect(math).toEqual({
+      type: 'row',
+      children: [
+        {
+          type: 'delimiter',
+          begChr: '(',
+          endChr: ')',
+          children: [
+            {
+              type: 'matrix',
+              rows: [
+                [
+                  { type: 'run', text: '1' },
+                  { type: 'run', text: '2' },
+                ],
+                [
+                  { type: 'run', text: '3' },
+                  { type: 'run', text: '4' },
+                ],
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    // …and its numbers are not read a second time as prose.
+    const text = doc.body
+      .flatMap((b) => (b.kind === 'paragraph' ? b.paragraph.runs.map((r) => r.text) : []))
+      .join(' ');
+    expect(text).toContain('a line of prose here');
+    expect(text).not.toMatch(/[1234]/u);
+  });
+
+  it('leaves close-set lines that are NOT a matrix as the prose they are', () => {
+    // The brackets are what say "matrix"; without them these are three short
+    // lines, and read as a matrix a table of figures would lose its columns.
+    const doc = reconstructByLayout(PdfFile.parse(withMatrix(false))).doc;
+    const runs = doc.body.flatMap((b) => (b.kind === 'paragraph' ? b.paragraph.runs : []));
+    expect(runs.some((r) => r.math !== undefined)).toBe(false);
+    expect(runs.map((r) => r.text).join(' ')).toMatch(/1|2|3|4/u);
+  });
+});
+
 describe('a running foot is a foot, not a paragraph (§17.6.13)', () => {
   /**
    * Three pages of body with the same line standing alone at the bottom, and —

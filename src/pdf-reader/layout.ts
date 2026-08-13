@@ -26,6 +26,7 @@ import { collectPageImages } from './images';
 import { extractPageText } from './text';
 import { collectPageVectors } from './vector';
 import { markDrawnRules } from './text-rules';
+import { matrixBlocks } from './math-rows';
 import { isRightToLeft } from './content';
 import type {
   BodyElement,
@@ -224,7 +225,19 @@ export function reconstructByLayout(
         }
         return;
       }
-      const lines = groupIntoLines(colRuns, false, stepped).filter((l) => l.text.length > 0);
+      // §22 — a MATRIX the page drew. It reaches the sheet as numbers on two
+      // baselines with stretched brackets between them, and read line by line —
+      // which is all a page says — bug1997343.pdf's product of three matrices
+      // came back as "1 2 1 1 1 3", "( )( ) = ( )", "3 4 0 1 3 7". Lifted off
+      // before the prose is read, so its numbers are not read twice.
+      const columnSize = median(colRuns.map((r) => r.fontSizePt).filter((s) => s > 0)) || 10;
+      const maths = matrixBlocks(colRuns, columnSize);
+      const inMath = new Set(maths.flatMap((m) => [...m.used]));
+      const lines = groupIntoLines(
+        inMath.size > 0 ? colRuns.filter((r) => !inMath.has(r)) : colRuns,
+        false,
+        stepped,
+      ).filter((l) => l.text.length > 0);
       // The column the paragraphs were set in — its own edges, not the page's,
       // so a two-column page judges each side against the side it belongs to.
       //
@@ -234,6 +247,35 @@ export function reconstructByLayout(
       // bug1997343.pdf sets "A Two Column Example" in the middle of the sheet
       // and we set it flush left.
       const measure = measureOf(col, gutters, textEdges) ?? measureOfLines(lines);
+      for (const found of maths) {
+        // A display stands where the page stood it — centred in its column, as
+        // this one is, or flush with the text.
+        const { alignment } = alignmentOf(
+          [
+            {
+              y: found.top,
+              fontSize: columnSize,
+              text: '',
+              spans: [],
+              x: found.x,
+              width: found.width,
+            },
+          ],
+          measure,
+        );
+        blocks.push({
+          band: bandAt(found.top),
+          col,
+          top: found.top,
+          el: {
+            kind: 'paragraph',
+            paragraph: {
+              properties: alignment ? { alignment } : {},
+              runs: [{ text: '', properties: {}, math: found.math }],
+            },
+          },
+        });
+      }
       for (const para of groupIntoParagraphs(lines, measure, display.height)) {
         blocks.push({
           band: bandAt(para.top),
