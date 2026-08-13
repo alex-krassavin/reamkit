@@ -285,7 +285,9 @@ export function reconstructByLayout(
         ? tableFrom(ruled.runs, gutters, textEdges, stepped)
         : undefined;
     if (asTable) {
-      blocks.push({ band: bandAt(asTable.top), col: 0, top: asTable.top, el: asTable.el });
+      for (const block of asTable) {
+        blocks.push({ band: bandAt(block.top), col: 0, top: block.top, el: block.el });
+      }
     } else if (split && !ruledIntoColumns) {
       // A run the rules pass rebuilt is not the one the split was measured on,
       // so its column is looked up by where it stands.
@@ -430,8 +432,8 @@ export function reconstructByLayout(
   // every section: the foot runs through the document, not through a section.
   const stepped0 = stepsBetweenWords(allRuns[0] ?? []);
   const edges0 = pageTextEdges(allRuns[0] ?? []);
-  const band = foot ? footerBand(foot.band, stepped0, edges0) : [];
-  const headBand = head ? footerBand(head.band, stepped0, edges0) : [];
+  const band = foot ? footerBand(foot.band, stepped0, edges0, foot.numbered) : [];
+  const headBand = head ? footerBand(head.band, stepped0, edges0, head.numbered) : [];
   const withFooter = (properties: SectionProperties | undefined): SectionProperties | undefined =>
     properties
       ? {
@@ -1551,6 +1553,7 @@ export function endedParagraph(
 function alignmentOf(
   lines: ReadonlyArray<Line>,
   column: { left: number; right: number } | undefined,
+  least?: number,
 ): { alignment?: 'center' | 'right' } {
   if (!column || lines.length === 0) return {};
   const width = column.right - column.left;
@@ -1560,8 +1563,9 @@ function alignmentOf(
     trail: column.right - (l.x + l.width),
   }));
   // A tenth of the measure is the smallest inset worth calling a placement:
-  // below it every ragged line would read as placed.
-  const meaningful = width * 0.1;
+  // below it every ragged line would read as placed. A caller with no rag to
+  // guard against — a CELL holds one line — may ask for less.
+  const meaningful = Math.min(width * 0.1, least ?? width);
   const even = width * 0.06;
   // Judged line by line and only then as a whole. Taking the smallest inset
   // over the whole paragraph makes a CENTRED block read as a full one the
@@ -1637,7 +1641,14 @@ function runningFoot(
   pageRuns: ReadonlyArray<ReadonlyArray<TextRun>>,
   shown: ReadonlyArray<{ height: number }>,
   where: 'head' | 'foot',
-): { lift: ReadonlyArray<ReadonlySet<TextRun>>; band: ReadonlyArray<TextRun> } | undefined {
+):
+  | {
+      lift: ReadonlyArray<ReadonlySet<TextRun>>;
+      band: ReadonlyArray<TextRun>;
+      /** Whether a number in it is the PAGE's number rather than part of the text. */
+      numbered: boolean;
+    }
+  | undefined {
   const feet = pageRuns.map((runs, i) => edgeLine(runs, shown[i]?.height ?? 0, where));
   const found = feet.filter((f) => f !== undefined);
   if (found.length < 2 || found.length < pageRuns.length * FOOT_SHARE) return undefined;
@@ -1645,9 +1656,19 @@ function runningFoot(
   const ys = found.map((f) => f.y);
   const mid = median(ys);
   if (ys.some((y) => Math.abs(y - mid) > FOOT_DRIFT)) return undefined;
+  // Whether the foot says something DIFFERENT on each page, which is what a
+  // page number is. ZapfDingbats.pdf signs every sheet "© RenderX 2000", and
+  // read as a number the year came out as the page: "© RenderX 1".
+  const texts = found.map((f) =>
+    f.runs
+      .map((r) => r.text)
+      .join('')
+      .trim(),
+  );
   return {
     lift: feet.map((f) => new Set(f?.runs ?? [])),
     band: found[0]!.runs,
+    numbered: new Set(texts).size > 1,
   };
 }
 
@@ -1766,6 +1787,7 @@ function footerBand(
   runs: ReadonlyArray<TextRun>,
   stepped: boolean,
   measure: { left: number; right: number } | undefined,
+  numbered: boolean,
 ): Array<BodyElement> {
   const lines = groupIntoLines(runs, false, stepped).filter((l) => l.text.length > 0);
   // A line apiece, in the order the page shows them: ZapfDingbats.pdf signs
@@ -1778,7 +1800,7 @@ function footerBand(
       kind: 'paragraph',
       paragraph: {
         ...el.paragraph,
-        runs: el.paragraph.runs.flatMap((run) => pageNumbered(run)),
+        runs: numbered ? el.paragraph.runs.flatMap((run) => pageNumbered(run)) : el.paragraph.runs,
       },
     };
   });
@@ -1847,34 +1869,99 @@ function looksRuled(
  * a cell is what one row leaves in one region, and an empty cell is empty. The
  * grid is measured, so the columns come out where the page put them.
  *
+ * The lines the page hangs ABOVE its ruling come back as themselves. A line
+ * that crosses every column is not a row of the table — ZapfDingbats.pdf heads
+ * each sheet with two red lines of provenance that run wider than the frame
+ * drawn under them, and squeezed into a cell they wrapped and cost the sheet a
+ * row.
+ *
  * @param runs    The page's runs.
  * @param gutters The page's gutters.
  * @param edges   Where the page's text starts and ends.
  * @param stepped Whether the page steps between its words.
- * @returns The table and where it stands.
+ * @returns The blocks, the table among them, each with where it stands.
  */
 function tableFrom(
   runs: ReadonlyArray<TextRun>,
   gutters: ReadonlyArray<Gutter>,
   edges: { left: number; right: number },
   stepped: boolean,
-): { el: BodyElement; top: number } | undefined {
+): Array<{ el: BodyElement; top: number }> | undefined {
   const fontSize = median(runs.map((r) => r.fontSizePt).filter((s) => s > 0)) || 10;
-  const rows = rowsOf(runs, fontSize).filter((row) => row.length > 0);
-  if (rows.length === 0) return undefined;
+  const all = rowsOf(runs, fontSize).filter((row) => row.length > 0);
+  if (all.length === 0) return undefined;
   const bounds = columnBounds(runs, gutters, edges);
-  const regions = bounds.slice(0, -1).map((lo, i) => [lo, bounds[i + 1]!] as const);
-  const regionOf = (x: number): number => {
-    for (let i = regions.length - 1; i >= 0; i--) if (x >= regions[i]![0]) return i;
-    return 0;
+  const regionsAt = (
+    from: ReadonlyArray<number>,
+  ): { regions: ReadonlyArray<readonly [number, number]>; of: (x: number) => number } => {
+    const regions = from.slice(0, -1).map((lo, i) => [lo, from[i + 1]!] as const);
+    return {
+      regions,
+      of: (x: number): number => {
+        for (let i = regions.length - 1; i >= 0; i--) if (x >= regions[i]![0]) return i;
+        return 0;
+      },
+    };
   };
+  const first = regionsAt(bounds);
+  // A line the page hangs above its ruling is not a row of it: read as one it
+  // is cut to the table's measure, and ZapfDingbats.pdf's red lines of
+  // provenance — which run wider than the frame beneath them — wrapped and cost
+  // each sheet a row. Only at the TOP: a line across the middle of a table is a
+  // heading INSIDE it, and it belongs to the ruling.
+  const oneWideLine = (row: ReadonlyArray<TextRun>): boolean => {
+    const to = spanEnd(row, 0, first.regions.length, first.of);
+    // It crosses a boundary, and nothing else stands in that row: a head with a
+    // page number at the far end is two cells and belongs to the ruling.
+    return to > 0 && row.every((run) => first.of(run.x) <= to);
+  };
+  let start = 0;
+  while (start < all.length - 1 && oneWideLine(all[start]!)) start++;
+  const above = all.slice(0, start);
+  const rows = all.slice(start);
+  // The first column begins where its own CELLS begin, not where the page's
+  // widest line does. ZapfDingbats.pdf sets its running head sixteen points
+  // left of the table under it, and started there the whole sheet — three
+  // groups, five hundred entries — stood that far left of where the file has it.
+  const own = rows
+    .filter((row) => spanEnd(row, 0, first.regions.length, first.of) === 0)
+    .flatMap((row) => row.filter((run) => first.of(run.x) === 0))
+    .map((run) => runInk(run)?.[0])
+    .filter((x): x is number => x !== undefined);
+  const left = own.length > 0 ? Math.min(...own) : bounds[0]!;
+  const { regions, of: regionOf } = regionsAt([left, ...bounds.slice(1)]);
+  // Where each column's cells USUALLY start, which is the line a placed cell is
+  // placed against. Measured to the column's edge instead, an ordinary line
+  // that happens to end near the far edge reads as centred — the lead being
+  // only the width of whatever hangs left of the column.
+  const flush = regions.map((region, i) => {
+    const starts: Array<number> = [];
+    for (const row of rows) {
+      const at = row
+        .filter((run) => regionOf(run.x) === i)
+        .map((run) => runInk(run)?.[0])
+        .filter((x): x is number => x !== undefined);
+      if (at.length > 0) starts.push(Math.min(...at));
+    }
+    if (starts.length === 0) return region[0];
+    // The near-leftmost, not the leftmost: one line hanging left of the column
+    // — a head, a heading — would otherwise stand for all of them.
+    starts.sort((a, b) => a - b);
+    return starts[Math.floor(starts.length * COLUMN_LEFT_QUANTILE)] ?? region[0];
+  });
   const table: Table = {
     // The grid is MEASURED — each column is as wide as the band the page drew
     // it in — so a cell's padding would be width the page never spent. Left at
     // the usual eighth of an inch a side, the five columns of ZapfDingbats.pdf
     // came to fifty points more than the sheet holds, and the whole table slid
     // out of the frame drawn around it.
-    properties: { defaultCellMargins: { left: pt(0), right: pt(0) }, layout: 'fixed' },
+    properties: {
+      defaultCellMargins: { left: pt(0), right: pt(0) },
+      layout: 'fixed',
+      // …and it stands in from the margin by as much as it stands in from the
+      // page's text, so the lines that hang to its left still do.
+      ...(left > edges.left ? { indentPt: pt(left - edges.left) } : {}),
+    },
     grid: regions.map((r) => pt(Math.max(r[1] - r[0], 1))),
     rows: rows.map((row, r) => {
       const byRegion = regions.map((): Array<TextRun> => []);
@@ -1891,19 +1978,32 @@ function tableFrom(
         const to = spanEnd(row, i, regions.length, regionOf);
         const inSpan = byRegion.slice(i, to + 1).flat();
         const width = to - i + 1;
+        const size =
+          inSpan.length > 0 ? Math.max(...inSpan.map((r) => r.fontSizePt || fontSize)) : fontSize;
+        const line = inSpan.length > 0 ? lineOf(inSpan, y, size, stepped) : undefined;
+        // A cell's line stands where the page stood it. A cell holds no rag to
+        // guard against, so half an em clear on BOTH sides is placement and not
+        // an accident: ZapfDingbats.pdf centres its title over the first group,
+        // inside the grey panel drawn behind it, and set flush left it came out
+        // of that panel at the wrong end.
+        // Placed in its cell, and standing in from where this column's lines
+        // start: a line that merely reaches the far edge of a wide column is
+        // not centred, and one that hangs left of its column — the running head
+        // over ZapfDingbats.pdf's first group — is not centred either.
+        const placed =
+          line && line.x - flush[i]! >= size / 4
+            ? alignmentOf([line], { left: regions[i]![0], right: regions[to]![1] }, size / 2)
+            : {};
         cells.push({
           properties: width > 1 ? { colSpan: width } : {},
           content:
-            inSpan.length === 0
+            line === undefined
               ? [{ kind: 'paragraph' as const, paragraph: { properties: {}, runs: [] } }]
               : [
                   paragraphFromRuns(
-                    lineOf(
-                      inSpan,
-                      y,
-                      Math.max(...inSpan.map((r) => r.fontSizePt || fontSize)),
-                      stepped,
-                    ).spans,
+                    line.spans,
+                    undefined,
+                    placed.alignment ? { alignment: placed.alignment } : {},
                   ),
                 ],
         });
@@ -1922,7 +2022,17 @@ function tableFrom(
       };
     }),
   };
-  return { el: { kind: 'table', table }, top: Math.max(...rows[0]!.map((r) => r.y)) };
+  return [
+    ...above.map((row) => {
+      const y = Math.max(...row.map((r) => r.y));
+      const size = Math.max(...row.map((r) => r.fontSizePt || fontSize));
+      return {
+        el: paragraphFromRuns(lineOf(row, y, size, stepped).spans),
+        top: y,
+      };
+    }),
+    { el: { kind: 'table' as const, table }, top: Math.max(...rows[0]!.map((r) => r.y)) },
+  ];
 }
 
 /**
@@ -1950,6 +2060,12 @@ function columnBounds(
   const inks = runs
     .map((r) => runInk(r))
     .filter((ink): ink is [number, number] => ink !== undefined);
+  // A column measured to the last hair of its longest line has no room for
+  // that line in another face: the head of ZapfDingbats.pdf's sheet runs 152.8
+  // points across a 152.8-point column, and re-set in a substitute it wrapped.
+  // So the boundary clears the crossing ink by a quarter of an em — never past
+  // the band, which is the other column's.
+  const clearance = (median(runs.map((r) => r.fontSizePt).filter((s) => s > 0)) || 10) / 4;
   return [
     edges.left,
     ...gutters.map((g) => {
@@ -1958,7 +2074,7 @@ function columnBounds(
       // far side is a line spanning the whole page — a heading, a rule of
       // asterisks — and it crosses every gutter there is.
       for (const [from, to] of inks) {
-        if (from < g.mid && to > at && to <= g.to) at = to;
+        if (from < g.mid && to > at && to <= g.to) at = Math.min(to + clearance, g.to);
       }
       return at;
     }),

@@ -201,6 +201,67 @@ describe('two-column reconstruction (E-PDF EP17)', () => {
     expect(cells(5)).toEqual(['A06', 'B06', 'C06', 'D06']);
   });
 
+  it('leaves the line the page hangs ABOVE its ruling where it stands', () => {
+    // A line that crosses every column is not a row of the table.
+    // ZapfDingbats.pdf heads each sheet with two red lines of provenance that
+    // run wider than the frame drawn under them, and squeezed into a cell they
+    // wrapped — and every wrapped line cost the groups beside them an entry.
+    // The table under them starts at its OWN left, not at theirs: read from
+    // there, three groups and five hundred entries stood sixteen points left of
+    // where the file has them.
+    const ops = [
+      'BT /F1 9 Tf',
+      '1 0 0 1 40 740 Tm (A line of provenance right across the sheet, wider than the table) Tj',
+    ];
+    for (let i = 0; i < ROWS; i++) {
+      const y = 720 - i * 14;
+      const n = String(i + 1).padStart(2, '0');
+      ops.push(`1 0 0 1 72 ${String(y)} Tm (A${n}) Tj`);
+      ops.push(`1 0 0 1 200 ${String(y)} Tm (B${n}) Tj`);
+      ops.push(`1 0 0 1 300 ${String(y)} Tm (C${n}) Tj`);
+      ops.push(`1 0 0 1 420 ${String(y)} Tm (D${n}) Tj`);
+    }
+    ops.push('ET');
+    const body = Ream.parse(onePage(ops)).flow.body;
+    const first = body[0];
+    expect(first?.kind).toBe('paragraph');
+    if (first?.kind === 'paragraph') {
+      expect(first.paragraph.runs.map((r) => r.text).join('')).toContain('A line of provenance');
+    }
+    const table = body.find((el) => el.kind === 'table');
+    if (table?.kind !== 'table') throw new Error('the page is a table');
+    expect(table.table.rows).toHaveLength(ROWS);
+    // The table stands in from the page's text by as much as its own left does.
+    expect(table.table.properties.indentPt as number).toBeGreaterThan(20);
+  });
+
+  it('centres a cell the page centred, and leaves the rest flush', () => {
+    // ZapfDingbats.pdf centres its title over the first group, inside the grey
+    // panel drawn behind it; set flush left it came out of that panel at the
+    // wrong end. An ordinary line that merely reaches the far edge of a wide
+    // column is NOT centred, however even its margins look.
+    const ops = ['BT /F1 9 Tf'];
+    for (let i = 0; i < ROWS; i++) {
+      const y = 720 - i * 14;
+      const n = String(i + 1).padStart(2, '0');
+      // Row 0 stands in from both sides of a column whose rows start at 72.
+      if (i === 0) ops.push(`1 0 0 1 113 ${String(y)} Tm (THE GROUP) Tj`);
+      else ops.push(`1 0 0 1 72 ${String(y)} Tm (A${n} entry) Tj`);
+      ops.push(`1 0 0 1 250 ${String(y)} Tm (B${n}) Tj`);
+      ops.push(`1 0 0 1 330 ${String(y)} Tm (C${n}) Tj`);
+      ops.push(`1 0 0 1 430 ${String(y)} Tm (D${n}) Tj`);
+    }
+    ops.push('ET');
+    const table = Ream.parse(onePage(ops)).flow.body.find((el) => el.kind === 'table');
+    if (table?.kind !== 'table') throw new Error('the page is a table');
+    const alignment = (row: number): string | undefined => {
+      const cell = table.table.rows[row]!.cells[0]!.content[0];
+      return cell?.kind === 'paragraph' ? cell.paragraph.properties.alignment : undefined;
+    };
+    expect(alignment(0)).toBe('center');
+    expect(alignment(1)).not.toBe('center');
+  });
+
   it('gives each row the height the PAGE gave it', () => {
     // A row laid out by the height of its own text closes up wherever the page
     // left air, and everything anchored to the sheet — ZapfDingbats.pdf's grey

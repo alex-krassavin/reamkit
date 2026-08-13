@@ -329,16 +329,18 @@ describe('a running foot is a foot, not a paragraph (§17.6.13)', () => {
    * Three pages of body with the same line standing alone at the bottom, and —
    * with `signed` — a publisher's line between it and the text.
    */
-  const paper = (signed = false): Uint8Array => {
+  const paper = (signed = false, foot?: string): Uint8Array => {
     const page = (n: number): string => {
       const ops: Array<string> = [];
       for (let i = 0; i < 8; i++)
         ops.push(
           `BT /F0 10 Tf 1 0 0 1 40 ${String(360 - i * 14)} Tm (body line ${String(i)}) Tj ET`,
         );
-      // Alone at the foot, a long way below the text block.
+      // Alone at the foot, a long way below the text block. `foot` replaces the
+      // line that carries the page's own number with one that repeats.
       if (signed) ops.push('BT /F0 8 Tf 1 0 0 1 40 40 Tm (Thing Press) Tj ET');
-      ops.push(`BT /F0 8 Tf 1 0 0 1 40 20 Tm (The Journal of Things ${String(n)}) Tj ET`);
+      const last = foot ?? `The Journal of Things ${String(n)}`;
+      ops.push(`BT /F0 8 Tf 1 0 0 1 40 20 Tm (${last} 2000) Tj ET`);
       return ops.join('\n');
     };
     const contents = [page(1), page(2), page(3)];
@@ -406,6 +408,27 @@ describe('a running foot is a foot, not a paragraph (§17.6.13)', () => {
     expect(lines).toHaveLength(2);
     expect(lines[0]).toContain('Thing Press');
     expect(lines[1]).toContain('The Journal of Things');
+  });
+
+  it('leaves the number alone where the foot says the SAME thing on every page', () => {
+    // A page number is a number that CHANGES from page to page. ZapfDingbats.pdf
+    // signs each sheet "© RenderX 2000", and read as a page number the year came
+    // out as "© RenderX 1".
+    const doc = reconstructByLayout(PdfFile.parse(paper(true))).doc;
+    const part = doc.section?.footers[0]?.relationshipId;
+    const band = part !== undefined ? doc.headersFooters?.get(part) : undefined;
+    const runs = band?.flatMap((b) => (b.kind === 'paragraph' ? b.paragraph.runs : [])) ?? [];
+    // "Thing Press" repeats, "The Journal of Things 1|2|3" does not — so the
+    // page's own number is still a field.
+    expect(runs.some((r) => r.field === 'PAGE')).toBe(true);
+    const same = paper(true, 'Thing Press');
+    const only = reconstructByLayout(PdfFile.parse(same)).doc;
+    const id = only.section?.footers[0]?.relationshipId;
+    const kept = (id !== undefined ? only.headersFooters?.get(id) : undefined)?.flatMap((b) =>
+      b.kind === 'paragraph' ? b.paragraph.runs : [],
+    );
+    expect(kept?.map((r) => r.text).join('')).toContain('2000');
+    expect(kept?.some((r) => r.field === 'PAGE')).toBe(false);
   });
 
   it('leaves a last paragraph where the page put it', () => {
