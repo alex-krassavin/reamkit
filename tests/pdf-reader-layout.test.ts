@@ -31,7 +31,14 @@ const paragraphs = (flow: { body: ReadonlyArray<{ kind: string }> }) =>
       b,
     ): b is {
       kind: 'paragraph';
-      paragraph: { properties: { outlineLevel?: number }; runs: ReadonlyArray<{ text: string }> };
+      paragraph: {
+        properties: {
+          outlineLevel?: number;
+          tabs?: ReadonlyArray<unknown>;
+          borders?: { top?: { style?: string } };
+        };
+        runs: ReadonlyArray<{ text: string }>;
+      };
     } => b.kind === 'paragraph',
   );
 
@@ -811,10 +818,14 @@ describe('placed reconstruction (E-PDF EP4)', () => {
 
   it('reads one flowing line across the same gap', () => {
     // A paragraph is meant to be read across: only the placed reading splits.
+    // Across the gap stands a TAB, not a space — the page SET the second piece
+    // out there, and a space closes the two up (§17.3.1.38: the stop that keeps
+    // it out is written with the paragraph).
     const flowed = reconstructByLayout(PdfFile.parse(twoColumnLinePdf()));
     const paras = paragraphs(flowed.doc);
     expect(paras).toHaveLength(1);
-    expect(paras[0]!.paragraph.runs.map((r) => r.text).join('')).toBe('Left Right');
+    expect(paras[0]!.paragraph.runs.map((r) => r.text).join('')).toBe('Left\tRight');
+    expect((paras[0]!.paragraph.properties.tabs ?? []).length).toBe(1);
   });
 
   it('stands a turned page up, and its words with it (§14.11.1)', () => {
@@ -984,5 +995,101 @@ describe('heuristic layout reconstruction (E-PDF EP4)', () => {
         .includes('BigTitle'),
     );
     expect(title?.paragraph.properties.outlineLevel).toBe(0);
+  });
+
+  it('gives a rule to the paragraph it separates, not to the page (§17.3.1.24)', () => {
+    // A rule sits in the white between two blocks: under a table's headings,
+    // over a total. Anchored to the page at the y it was drawn at it stays
+    // there while the words re-set — a receipt came back with a black line
+    // struck through "Max plan - 5x" and another through "Payment history".
+    const lines = [
+      'BT /F1 10 Tf 1 0 0 1 72 700 Tm (Description) Tj ET',
+      '0 0 0 RG 0.75 w 72 678 m 520 678 l S',
+      'BT /F1 10 Tf 1 0 0 1 72 670 Tm (Max plan) Tj ET',
+      'BT /F1 10 Tf 1 0 0 1 72 650 Tm (Aug 11 to Sep 11) Tj ET',
+    ].join('\n');
+    const doc = reconstructByLayout(
+      PdfFile.parse(onePagePdf('/MediaBox [0 0 612 792]', lines)),
+    ).doc;
+    const paras = paragraphs(doc);
+    const under = paras.find((p) =>
+      p.paragraph.runs
+        .map((r) => r.text)
+        .join('')
+        .includes('Max'),
+    );
+    expect(under?.paragraph.properties.borders?.top?.style).toBe('single');
+    // …and the rule is not drawn a second time as a shape over the words.
+    expect(doc.body.some((b) => b.kind === 'shape')).toBe(false);
+  });
+
+  it('reads lines set out on the same stops as a TABLE, and numbers the foot (§17.4.38)', () => {
+    // An invoice's item table is a head and a row broken in the same places.
+    // Written as tabbed paragraphs the picture is right and the document is
+    // not: nothing downstream can read a column out of it.
+    const rows = [
+      'BT /F1 8 Tf 1 0 0 1 45 700 Tm (Description) Tj ET',
+      'BT /F1 8 Tf 1 0 0 1 300 700 Tm (Qty) Tj ET',
+      'BT /F1 8 Tf 1 0 0 1 420 700 Tm (Amount) Tj ET',
+      'BT /F1 8 Tf 1 0 0 1 45 680 Tm (Max plan) Tj ET',
+      'BT /F1 8 Tf 1 0 0 1 300 680 Tm (1) Tj ET',
+      'BT /F1 8 Tf 1 0 0 1 424 680 Tm ($100.00) Tj ET',
+    ].join('\n');
+    const doc = reconstructByLayout(PdfFile.parse(onePagePdf('/MediaBox [0 0 612 792]', rows))).doc;
+    const table = doc.body.find((b) => b.kind === 'table');
+    expect(table?.kind).toBe('table');
+    if (table?.kind !== 'table') return;
+    expect(table.table.grid).toHaveLength(3);
+    expect(table.table.rows).toHaveLength(2);
+    const text = (r: number, c: number): string =>
+      table.table.rows[r]!.cells[c]!.content.map((el) =>
+        el.kind === 'paragraph' ? el.paragraph.runs.map((x) => x.text).join('') : '',
+      ).join('');
+    expect(text(0, 0)).toBe('Description');
+    expect(text(1, 2)).toBe('$100.00');
+  });
+
+  it('keeps a rule typed out of hyphens on a line of its own', () => {
+    // A page with no rule to draw types one. Read as prose it joined the
+    // sentence over it: an invoice came back "…NOT to our San Francisco office.
+    // ----------------------------" on one line, and the address the rule
+    // introduces ran on from there.
+    const lines = [
+      'BT /F1 9 Tf 1 0 0 1 45 700 Tm (any checks must be sent to the address below.) Tj ET',
+      'BT /F1 9 Tf 1 0 0 1 45 688 Tm (----------------------------) Tj ET',
+      'BT /F1 9 Tf 1 0 0 1 45 676 Tm (PAYMENT ADDRESS) Tj ET',
+    ].join('\n');
+    const doc = reconstructByLayout(
+      PdfFile.parse(onePagePdf('/MediaBox [0 0 612 792]', lines)),
+    ).doc;
+    const texts = paragraphs(doc).map((p) =>
+      p.paragraph.runs
+        .map((r) => r.text)
+        .join('')
+        .trim(),
+    );
+    expect(texts).toContain('----------------------------');
+    expect(texts.some((t) => t.startsWith('any checks') && t.includes('---'))).toBe(false);
+    expect(texts).toContain('PAYMENT ADDRESS');
+  });
+
+  it('measures the margins to the PICTURES too, not to the words alone', () => {
+    // bug1708040.pdf is one short line over a logo 384 points wide. Measured to
+    // the line, the right margin came in past the picture's own edge, and the
+    // layout — which may not set a block wider than its measure — shrank the
+    // logo by an eighth to fit.
+    const wide = onePagePdf(
+      '/MediaBox [0 0 612 792] /Resources << /XObject << /Im0 5 0 R >> >>',
+      'BT /F1 10 Tf 1 0 0 1 72 700 Tm (a short line) Tj ET\nq 384 0 0 400 72 260 cm /Im0 Do Q',
+      [
+        `<< /Type /XObject /Subtype /Image /Width 2 /Height 2 /ColorSpace /DeviceGray /BitsPerComponent 8 /Length 4 >>\nstream\n\u0000\u0080\u0080\u0000\nendstream`,
+      ],
+    );
+    const section = reconstructByLayout(PdfFile.parse(wide)).doc.section;
+    // 612 - (72 + 384) = 156 at the most, and never so wide that the picture
+    // no longer fits the measure it is set across.
+    expect((section?.margins?.right as number) + (section?.margins?.left as number)).toBeLessThan(
+      612 - 384,
+    );
   });
 });

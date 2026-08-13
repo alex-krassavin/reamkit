@@ -860,7 +860,8 @@ function chartBlockXml(
   const descr = chart.altText ? ` descr="${escapeAttr(chart.altText)}"` : '';
   return (
     '<w:drawing>' +
-    '<wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">' +
+    '<wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"' +
+    ' distT="0" distB="0" distL="0" distR="0">' +
     `<wp:extent cx="${cx}" cy="${cy}"/>` +
     `<wp:docPr id="${id}" name="Chart ${id}"${descr}/>` +
     '<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">' +
@@ -907,7 +908,11 @@ function drawingFrame(
   const WP_NS =
     ' xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"';
   if (!float) {
-    return `<w:drawing><wp:inline${WP_NS}><wp:extent cx="${cx}" cy="${cy}"/>${head}${graphic}</wp:inline></w:drawing>`;
+    // §20.4.2.8 — the four distances a drawing keeps from the text around it.
+    // Absent, Word reads them as zero and LibreOffice supplies its own frame
+    // spacing: bug1708040.pdf's logo, an inline picture at the margin, came
+    // back nine points right of where the page draws it.
+    return `<w:drawing><wp:inline${WP_NS} distT="0" distB="0" distL="0" distR="0"><wp:extent cx="${cx}" cy="${cy}"/>${head}${graphic}</wp:inline></w:drawing>`;
   }
   const emu = (pt: number | undefined): number =>
     Number.isFinite(pt) ? Math.round((pt ?? 0) * EMU_PER_PT) : 0;
@@ -1363,7 +1368,10 @@ const BORDER_SIDES: ReadonlyArray<[keyof CellBorders, string]> = [
   ['insideV', 'w:insideV'],
 ];
 
-function bordersXml(tag: 'w:tblBorders' | 'w:tcBorders', borders: CellBorders | undefined): string {
+function bordersXml(
+  tag: 'w:tblBorders' | 'w:tcBorders' | 'w:pBdr',
+  borders: CellBorders | undefined,
+): string {
   if (!borders) return '';
   const sides = BORDER_SIDES.map(([key, el]) => {
     const b = borders[key];
@@ -1506,8 +1514,24 @@ function runXml(run: Run, state: WriteState, scope: PartScope): string {
   // §17.3.3.1 — a page break is a run-level <w:br w:type="page"/>; emit it so a
   // run that is ONLY a break (no text, no image) survives the round-trip.
   const brk = run.pageBreak ? '<w:br w:type="page"/>' : '';
+  // §17.16.19 `w:fldSimple` — a page number is not the text "1", it is the
+  // number of the sheet it stands on. Written as text, the foot a PDF's every
+  // page shares came back saying "Page 1 of 2" on the second page as well.
+  if (run.field !== undefined && run.text !== '') {
+    const inner = `<w:r>${rPr}<w:t xml:space="preserve">${escapeXml(run.text)}</w:t></w:r>`;
+    return `<w:fldSimple w:instr=" ${run.field} ">${inner}</w:fldSimple>${brk}`;
+  }
   if (run.text === '') return brk ? `<w:r>${rPr}${brk}</w:r>` : '';
-  return `<w:r>${rPr}<w:t xml:space="preserve">${escapeXml(run.text)}</w:t>${brk}</w:r>`;
+  // §17.3.3.30 — a TAB is an ELEMENT, not a character: written inside `w:t` it
+  // is whitespace, and Word draws it as nothing at all. The reconstruction of a
+  // PDF sets a line the page laid out on stops with them — an invoice's "Bill
+  // to" block stands beside the address it belongs to — and written as text the
+  // two ran together.
+  const body = run.text
+    .split('\t')
+    .map((piece) => (piece === '' ? '' : `<w:t xml:space="preserve">${escapeXml(piece)}</w:t>`))
+    .join('<w:tab/>');
+  return `<w:r>${rPr}${body}${brk}</w:r>`;
 }
 
 // §17.3.2 — run properties as a delta from the resolved defaults.
@@ -1518,26 +1542,34 @@ function rPrXml(r: ResolvedRunProperties): string {
   // underline outright, so annotation-squiggly.pdf's wavy blue rule was in the
   // package and on no page.
   const out: Array<string> = [];
+  // A property that is not THERE is not a property with a different value.
+  // The header and footer parts are written from raw properties, not resolved
+  // ones, and compared straight against the defaults every absent field came
+  // out as the string "undefined": `<w:color w:val="undefined"/>` in the foot
+  // of every reconstructed PDF, which is not a colour and not valid markup.
+  const states = <TKey extends keyof ResolvedRunProperties>(key: TKey): boolean =>
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+    r[key] !== undefined && r[key] !== DEFAULT_RUN[key];
   const fonts = rFontsXml(r.fontFamily);
   if (fonts) out.push(fonts);
-  if (r.bold !== DEFAULT_RUN.bold) out.push(toggle('w:b', r.bold));
-  if (r.italic !== DEFAULT_RUN.italic) out.push(toggle('w:i', r.italic));
-  if (r.strike !== DEFAULT_RUN.strike) out.push(toggle('w:strike', r.strike));
-  if (r.colorHex !== DEFAULT_RUN.colorHex) out.push(`<w:color w:val="${r.colorHex}"/>`);
-  if (r.fontSizePt !== DEFAULT_RUN.fontSizePt) {
+  if (states('bold')) out.push(toggle('w:b', r.bold));
+  if (states('italic')) out.push(toggle('w:i', r.italic));
+  if (states('strike')) out.push(toggle('w:strike', r.strike));
+  if (states('colorHex')) out.push(`<w:color w:val="${r.colorHex}"/>`);
+  if (states('fontSizePt')) {
     // §17.3.2.38 w:sz — half-points.
     out.push(`<w:sz w:val="${Math.round(r.fontSizePt * 2)}"/>`);
   }
   // §17.3.2.40 — `w:u @w:color`, the rule's own colour where it has one: a
   // PDF's `/Underline` annotation states its colour and nothing else does.
-  if (r.underline !== DEFAULT_RUN.underline) out.push(underlineXml(r));
+  if (states('underline')) out.push(underlineXml(r));
   // §17.3.2.32 — the wash behind the glyphs, which is what a PDF's `/Highlight`
   // annotation marks its words with.
   if (r.shadingColorHex !== undefined) out.push(runShdXml(r.shadingColorHex));
-  if (r.verticalAlign !== DEFAULT_RUN.verticalAlign) {
+  if (states('verticalAlign')) {
     out.push(`<w:vertAlign w:val="${r.verticalAlign}"/>`);
   }
-  if (r.rtl !== DEFAULT_RUN.rtl) out.push(toggle('w:rtl', r.rtl));
+  if (states('rtl')) out.push(toggle('w:rtl', r.rtl));
   if (r.lang !== undefined) out.push(`<w:lang w:val="${escapeAttr(r.lang)}"/>`);
   return out.length > 0 ? `<w:rPr>${out.join('')}</w:rPr>` : '';
 }
@@ -1572,6 +1604,30 @@ function pPrBody(p: ResolvedParagraphProperties): string {
   if (spacing) out.push(spacing);
   if (JC.has(p.alignment) && p.alignment !== DEFAULT_PARA.alignment) {
     out.push(`<w:jc w:val="${p.alignment}"/>`);
+  }
+  // §17.3.1.24 `w:pBdr` — the rules the paragraph is drawn with. A PDF has no
+  // paragraph borders and draws lines; the reconstruction gives the line to the
+  // paragraph it separates (see `pdf-reader/layout`), and written nowhere it
+  // came back as nothing at all.
+  const pBdr = bordersXml('w:pBdr', p.borders);
+  if (pBdr) out.push(pBdr);
+  // §17.3.1.38 `w:tabs` — the stops the paragraph's own tabs stand on. Without
+  // them a tab falls to the default half-inch grid, which is not where the page
+  // that was read set its second column.
+  // The header and footer path hands this raw properties rather than resolved
+  // ones, so the field the type promises may not be there.
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+  const tabs = p.tabs ?? [];
+  if (tabs.length > 0) {
+    const stops = tabs
+      .map((t) => {
+        const pos = twips(t.positionPt);
+        const leader = t.leader !== undefined ? ` w:leader="${escapeAttr(t.leader)}"` : '';
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+        return `<w:tab w:val="${escapeAttr(t.alignment ?? 'left')}" w:pos="${String(pos)}"${leader}/>`;
+      })
+      .join('');
+    out.push(`<w:tabs>${stops}</w:tabs>`);
   }
   return out.join('');
 }

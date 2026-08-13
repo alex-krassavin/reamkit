@@ -75,6 +75,11 @@
   "aligned": false
  },
  {
+  "name": "comments.pdf",
+  "score": 0.1772,
+  "aligned": false
+ },
+ {
   "name": "colorspace_cos.pdf",
   "score": 0.173,
   "aligned": true
@@ -90,28 +95,23 @@
   "aligned": true
  },
  {
-  "name": "comments.pdf",
-  "score": 0.1708,
-  "aligned": false
- },
- {
   "name": "colorspace_atan.pdf",
   "score": 0.1656,
   "aligned": true
  },
  {
   "name": "bug1992868.pdf",
-  "score": 0.1527,
+  "score": 0.1611,
   "aligned": false
  },
  {
   "name": "highlights.pdf",
-  "score": 0.1527,
+  "score": 0.1611,
   "aligned": false
  },
  {
   "name": "blendmode.pdf",
-  "score": 0.1276,
+  "score": 0.1272,
   "aligned": false
  },
  {
@@ -166,8 +166,13 @@
  },
  {
   "name": "bug1669099.pdf",
-  "score": 0.0784,
+  "score": 0.0794,
   "aligned": true
+ },
+ {
+  "name": "file_pdfjs_test.pdf",
+  "score": 0.074,
+  "aligned": false
  },
  {
   "name": "IndexedCS_negative_and_high.pdf",
@@ -198,11 +203,6 @@
   "name": "bitmap-halftone-skip-grid.pdf",
   "score": 0.0727,
   "aligned": true
- },
- {
-  "name": "file_pdfjs_test.pdf",
-  "score": 0.0721,
-  "aligned": false
  },
  {
   "name": "bug946506.pdf",
@@ -247,11 +247,6 @@
  {
   "name": "cmykjpeg.pdf",
   "score": 0.0447,
-  "aligned": true
- },
- {
-  "name": "bug1245391_reduced.pdf",
-  "score": 0.0428,
   "aligned": true
  },
  {
@@ -361,7 +356,7 @@
  },
  {
   "name": "ZapfDingbats.pdf",
-  "score": 0.0193,
+  "score": 0.0191,
   "aligned": true
  },
  {
@@ -385,6 +380,11 @@
   "aligned": true
  },
  {
+  "name": "bug1157493.pdf",
+  "score": 0.016,
+  "aligned": true
+ },
+ {
   "name": "bug1650302_reduced.pdf",
   "score": 0.0156,
   "aligned": true
@@ -397,11 +397,6 @@
  {
   "name": "bug1068432.pdf",
   "score": 0.0151,
-  "aligned": true
- },
- {
-  "name": "bug1157493.pdf",
-  "score": 0.015,
   "aligned": true
  },
  {
@@ -436,7 +431,7 @@
  },
  {
   "name": "bug1868759.pdf",
-  "score": 0.0123,
+  "score": 0.0122,
   "aligned": true
  },
  {
@@ -586,6 +581,11 @@
  },
  {
   "name": "IdentityToUnicodeMap_charCodeOf.pdf",
+  "score": 0.0081,
+  "aligned": true
+ },
+ {
+  "name": "bug1245391_reduced.pdf",
   "score": 0.0081,
   "aligned": true
  },
@@ -1076,7 +1076,7 @@
  },
  {
   "name": "Test-plusminus.pdf",
-  "score": 0.0066,
+  "score": 0.0067,
   "aligned": true
  },
  {
@@ -1101,7 +1101,7 @@
  },
  {
   "name": "bug1883609.pdf",
-  "score": 0.006,
+  "score": 0.0061,
   "aligned": true
  },
  {
@@ -1160,6 +1160,11 @@
   "aligned": true
  },
  {
+  "name": "bigboundingbox.pdf",
+  "score": 0.0046,
+  "aligned": false
+ },
+ {
   "name": "issue11473.pdf",
   "score": 0.0045,
   "aligned": true
@@ -1185,11 +1190,6 @@
   "aligned": true
  },
  {
-  "name": "bigboundingbox.pdf",
-  "score": 0.0039,
-  "aligned": false
- },
- {
   "name": "bug1365930.pdf",
   "score": 0.0035,
   "aligned": true
@@ -1200,13 +1200,18 @@
   "aligned": true
  },
  {
-  "name": "bug1815476.pdf",
+  "name": "bug1922766.pdf",
   "score": 0.0034,
   "aligned": true
  },
  {
-  "name": "bug1922766.pdf",
-  "score": 0.0034,
+  "name": "bug1815476.pdf",
+  "score": 0.0031,
+  "aligned": true
+ },
+ {
+  "name": "bug1771477.pdf",
+  "score": 0.003,
   "aligned": true
  },
  {
@@ -1220,13 +1225,13 @@
   "aligned": true
  },
  {
-  "name": "bug1771477.pdf",
-  "score": 0.0029,
+  "name": "file_pdfjs_form.pdf",
+  "score": 0.0028,
   "aligned": true
  },
  {
-  "name": "issue1045.pdf",
-  "score": 0.0029,
+  "name": "basicapi.pdf",
+  "score": 0.0027,
   "aligned": true
  },
  {
@@ -1250,12 +1255,22 @@
   "aligned": true
  },
  {
+  "name": "issue1045.pdf",
+  "score": 0.0023,
+  "aligned": true
+ },
+ {
   "name": "issue10529.pdf",
   "score": 0.0022,
   "aligned": true
  },
  {
   "name": "annotation-choice-widget.pdf",
+  "score": 0.0022,
+  "aligned": true
+ },
+ {
+  "name": "bug900822.pdf",
   "score": 0.0022,
   "aligned": true
  },
@@ -1290,17 +1305,7 @@
   "aligned": true
  },
  {
-  "name": "bug1001080.pdf",
-  "score": 0.0017,
-  "aligned": true
- },
- {
   "name": "TrueType_without_cmap.pdf",
-  "score": 0.0017,
-  "aligned": true
- },
- {
-  "name": "french_diacritics.pdf",
   "score": 0.0017,
   "aligned": true
  },
@@ -1340,17 +1345,17 @@
   "aligned": true
  },
  {
-  "name": "bug900822.pdf",
-  "score": 0.0015,
-  "aligned": true
- },
- {
   "name": "colors.pdf",
   "score": 0.0014,
   "aligned": true
  },
  {
   "name": "bug1028735.pdf",
+  "score": 0.0014,
+  "aligned": true
+ },
+ {
+  "name": "dates_save.pdf",
   "score": 0.0014,
   "aligned": true
  },
@@ -1362,11 +1367,6 @@
  {
   "name": "annotation-button-widget.pdf",
   "score": 0.0014,
-  "aligned": true
- },
- {
-  "name": "dates_save.pdf",
-  "score": 0.0013,
   "aligned": true
  },
  {
@@ -1415,12 +1415,12 @@
   "aligned": true
  },
  {
-  "name": "bug1529502.pdf",
+  "name": "annotation-underline-without-appearance.pdf",
   "score": 0.0009,
   "aligned": true
  },
  {
-  "name": "annotation-underline-without-appearance.pdf",
+  "name": "bug1529502.pdf",
   "score": 0.0009,
   "aligned": true
  },
@@ -1455,18 +1455,23 @@
   "aligned": true
  },
  {
-  "name": "basicapi.pdf",
+  "name": "annotation-strikeout-without-appearance.pdf",
   "score": 0.0008,
   "aligned": true
  },
  {
-  "name": "annotation-strikeout-without-appearance.pdf",
+  "name": "bug1001080.pdf",
   "score": 0.0008,
   "aligned": true
  },
  {
   "name": "checkbox_no_appearance.pdf",
   "score": 0.0008,
+  "aligned": true
+ },
+ {
+  "name": "Embedded_font.pdf",
+  "score": 0.0007,
   "aligned": true
  },
  {
@@ -1520,13 +1525,13 @@
   "aligned": true
  },
  {
-  "name": "file_pdfjs_form.pdf",
-  "score": 0.0004,
+  "name": "french_diacritics.pdf",
+  "score": 0.0005,
   "aligned": true
  },
  {
   "name": "bug1708041.pdf",
-  "score": 0.0004,
+  "score": 0.0005,
   "aligned": false
  },
  {
@@ -1540,12 +1545,12 @@
   "aligned": false
  },
  {
-  "name": "bug1918115.pdf",
+  "name": "image-rotated-black-white-ratio.pdf",
   "score": 0.0004,
   "aligned": true
  },
  {
-  "name": "image-rotated-black-white-ratio.pdf",
+  "name": "bug1918115.pdf",
   "score": 0.0004,
   "aligned": true
  },
@@ -1615,11 +1620,6 @@
   "aligned": true
  },
  {
-  "name": "Embedded_font.pdf",
-  "score": 0.0002,
-  "aligned": true
- },
- {
   "name": "firefox_logo.pdf",
   "score": 0.0002,
   "aligned": true
@@ -1665,17 +1665,17 @@
   "aligned": true
  },
  {
+  "name": "bug1989304.pdf",
+  "score": 0.0002,
+  "aligned": true
+ },
+ {
   "name": "annotation-freetext.pdf",
   "score": 0.0001,
   "aligned": true
  },
  {
   "name": "bug1796741.pdf",
-  "score": 0.0001,
-  "aligned": true
- },
- {
-  "name": "bug1989304.pdf",
   "score": 0.0001,
   "aligned": true
  },
@@ -1710,17 +1710,17 @@
   "aligned": true
  },
  {
-  "name": "extract_link.pdf",
-  "score": 0.0001,
-  "aligned": true
- },
- {
   "name": "annotation-tx2.pdf",
   "score": 0.0001,
   "aligned": true
  },
  {
   "name": "doc_3_3_pages.pdf",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "extract_link.pdf",
   "score": 0.0001,
   "aligned": true
  },
@@ -1736,11 +1736,6 @@
  },
  {
   "name": "bug1724918.pdf",
-  "score": 0.0001,
-  "aligned": true
- },
- {
-  "name": "bug1473809.pdf",
   "score": 0.0001,
   "aligned": true
  },
@@ -1796,6 +1791,11 @@
  },
  {
   "name": "bug816075.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bug1473809.pdf",
   "score": 0,
   "aligned": true
  },
