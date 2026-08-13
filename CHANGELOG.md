@@ -3,6 +3,126 @@
 All notable changes to **Ream** (`reamkit`) are documented here. The project
 follows [Semantic Versioning](https://semver.org/).
 
+## 1.29.0
+
+A release about two invoices.
+
+Not test files: the invoice and the receipt this project's own billing sends,
+converted to `.docx` and opened. They came back unusable, and every fault was
+ours — while the four hundred files of the pdf.js suite, measured before and
+after, moved from 6.308 to 6.278 over the same 366 comparable files, one of
+them accounting for the difference.
+
+That gap is the point. A corpus of renderer bug reports is one page and one
+feature apiece; a document a business sends is labels down the left and figures
+against the right margin, two address blocks side by side, a rule typed out of
+hyphens, a space in the corner of every sheet, and a subset font that declares
+U+0000 for every mark of punctuation. Nothing in the suite is shaped like that,
+and the score said everything was fine.
+
+### Added
+
+- **A page number is a field.** §17.16.19 — the reader has marked the number in
+  a running foot a `PAGE` field since it learned to find a foot at all, and the
+  docx writer had no fields, so the mark was dropped on the way out and a
+  receipt's second sheet came back saying "Page 1 of 2". The writer writes
+  `w:fldSimple` now, and the number AFTER the first one is a `NUMPAGES` field:
+  "Page 1 of 2" is two fields with a word between them, not one field and a 2
+  that stays 2 in a longer document.
+
+- **Consecutive lines on the same stops are a TABLE.** §17.4.38 — "Description
+  / Qty / Unit price / Tax / Amount" and the item under it, the payment history
+  under that. Two stops at least, which is three columns, because one stop is a
+  contents entry with its page number at the measure and a list of those is a
+  list. The stops are matched within ten points, since a heading sits over its
+  column and a figure against the far side of it, and each column begins where
+  the EARLIEST row begins it — measured to the middle, "Receipt number" came
+  back one letter per line down a thirty-point strip. The white before the
+  table belongs to its first row's paragraphs, and each row stands as far from
+  the next as the page stood it.
+
+- **The stops themselves** (§17.3.1.38 `w:tabs`, §17.3.3.30 `w:tab`) and
+  **paragraph rules** (§17.3.1.24 `w:pBdr`), which the docx writer could read
+  and never write.
+
+### Fixed
+
+- **A line the page SET OUT stands on stops, not on a space.** A gap no word
+  space could be has ended a paragraph since 1.28.0, and was then written as a
+  space, which closes the two pieces up: "548 Market Street
+  walonade@icloud.com's Organization" was one line of an address that has two
+  columns. The reader writes a tab and remembers where the piece after it
+  begins; a stop is measured from the text area's left edge, not from where a
+  column's lines happen to start.
+
+- **A page of labels and figures is read ACROSS.** Such a page breaks a dozen
+  lines at the same x, which is what a gutter looks like from the outside and
+  nothing like two columns from the inside. Read down them, every amount was
+  taken off the line it belongs to and carried to the end of the document —
+  "Total excluding tax" on one sheet and "$100.00" on the next — and declared
+  as columns, the labels were then indented past the ten-point strip they had
+  been given and came back ONE LETTER PER LINE. A column of prose is set flush
+  left and comes out ragged right; a column of figures agrees on its right edge
+  and on nothing else. Only the first is a page set in columns, and a band no
+  ink crosses is not a gutter either unless it separates lines over and over.
+
+- **The margins are measured to INK.** Both invoices open every sheet with a
+  single non-breaking space at x=0: taken for the leftmost thing on the page it
+  put the left margin at zero and moved every line thirty points left of where
+  the page sets them. Blanks are not ink. Pictures ARE, on the far side: one
+  short line over a logo 384 points wide had the right margin come in past the
+  picture's own edge, and the layout — which may not set a block wider than its
+  measure — shrank the logo by an eighth to fit.
+
+- **A rule belongs to the paragraph it separates.** A PDF has no rules, it
+  draws lines, and each was anchored to the page at the y it was drawn at while
+  the words around it re-set: a receipt came back with a black line struck
+  through "Max plan - 5x" and another through "Payment history". The block
+  below takes it as a top border, the block above as a bottom one where nothing
+  follows closely enough. And a rule TYPED out of hyphens is a line of its own —
+  read as prose it joined the sentence over it and the address under it ran on
+  from there.
+
+- **A Type 3 glyph is a drawing, in every reading.** §9.6.5 — such a font has
+  no program and no face: its glyphs ARE marks, a content stream apiece, and
+  re-setting its codes in a substitute draws the letter a second time.
+  bug1245391_reduced.pdf sets three Chinese characters as 89×85 bitmaps and
+  they came back doubled, the file's light serif under a substitute's heavy
+  sans. The invisible run — the OCR layer under a scan — is still kept, because
+  nothing paints it.
+
+- **U+0000 in a `/ToUnicode` is a producer saying it does not know**, not a
+  claim that the glyph IS the null character (§9.10.3). Stripe declares one for
+  every piece of punctuation it sets — the colon of "Kazakhstan VAT:
+  86-1696045", the hyphens of an invoice number and a postcode, the parentheses,
+  the en dash of a date range — and taken as an answer it stopped the reader
+  asking the font program. Where that one says nothing either the mark is
+  unrecoverable, and a flowing document has nowhere to put a shape inside a
+  line: placed as a floating drawing it landed a word away from the line it
+  belongs to. Such marks are dropped where the line around them is readable;
+  where the line is ALL drawn glyphs they are its text and they stay.
+
+- **A sheet that holds nothing but its foot still states one.** The last page of
+  a receipt is blank but for "Page 2 of 2": asked for four rows of text to
+  measure the gap above the foot against, the reader found one, could not
+  confirm the foot repeated, and left page one's foot in the body — where it
+  came back at the TOP of the second sheet.
+
+- **A property nobody stated is not a property with another value.** The header
+  and footer parts are written from raw run properties, and each absent field,
+  compared straight against the default, came out as the string "undefined":
+  `<w:color w:val="undefined"/>` in the foot of every reconstructed PDF.
+
+- **A picture set in the run keeps no distance from the text.** §20.4.2.8 states
+  four; Word reads their absence as zero and LibreOffice supplies its own frame
+  spacing, which put an inline logo nine points right of the margin.
+
+### Internals
+
+- The scratch a corpus run leaves behind — `.diff-work-<pid>`, `.scout-<pid>`
+  and the LibreOffice cache — is no longer tracked. 318 MB every clone was
+  paying for.
+
 ## 1.28.0
 
 A release about the reading a caller actually gets.
