@@ -46,7 +46,7 @@ export type FamilyKey = 'arimo' | 'tinos' | 'cousine' | 'carlito' | 'caladea';
  * only in the regular weight: Noto Sans SC is ten megabytes, and a bold run in
  * it is better stroked (see `SyntheticFace`) than downloaded four times over.
  */
-export type ScriptKey = 'jp' | 'kr' | 'sc' | 'arabic' | 'hebrew' | 'thai' | 'symbols';
+export type ScriptKey = 'jp' | 'kr' | 'sc' | 'arabic' | 'hebrew' | 'thai' | 'symbols1' | 'symbols2';
 
 /** Either kind of substitute — a Latin family or a per-script face. */
 export type SubstituteKey = FamilyKey | ScriptKey;
@@ -63,7 +63,14 @@ const SCRIPTS: Record<ScriptKey, ScriptFamily> = {
   arabic: { pkg: 'noto-sans-arabic', file: 'NotoSansArabic' },
   hebrew: { pkg: 'noto-sans-hebrew', file: 'NotoSansHebrew' },
   thai: { pkg: 'noto-sans-thai', file: 'NotoSansThai' },
-  symbols: { pkg: 'noto-sans-symbols-2', file: 'NotoSansSymbols2' },
+  // The symbol repertory did not fit in one file, and Noto ships two that
+  // barely overlap: of the dingbats U+2700–27BF, 145 are in the second face and
+  // 35 — the crosses U+271D–2721 among them — only in the first, and the
+  // circled numbers U+2460–24FF are the first face's alone. So a document that
+  // holds one symbol is given BOTH (see `scriptsInFlow`): whichever is tried
+  // first, the other answers for what it lacks.
+  symbols1: { pkg: 'noto-sans-symbols', file: 'NotoSansSymbols' },
+  symbols2: { pkg: 'noto-sans-symbols-2', file: 'NotoSansSymbols2' },
 };
 
 /** Whether a substitute key names a writing system rather than a Latin family. */
@@ -145,6 +152,69 @@ const MONO = new Set([
   'dejavu sans mono',
   'monospace',
 ]);
+
+// The families a PDF names, which are not the families a document names.
+//
+// A word processor asks for "Times New Roman"; a PDF carries the face it was
+// SET in, and TeX and PostScript producers set pages in families whose names
+// are a stem and a size: `LMRoman10-Regular`, `CMR7`, `NimbusRomNo9L-Regu`,
+// `CMTT10`. None of them matches a name in the tables above, so every one of
+// those pages — every paper, every preprint, every LaTeX document there is —
+// came back set in a grotesque. The descriptor cannot help: TeX marks its
+// faces `/Flags 4`, which is Symbolic and says nothing about the shape.
+//
+// These are the stems of the free families that carry the world's typesetting:
+// Latin Modern and Computer Modern (Knuth's own, and the LaTeX default), the
+// URW clones of the PostScript 35 (Nimbus, Palladio, Schoolbook, Bookman), and
+// the serif names a producer writes in full. No stem here starts another, so
+// the order they are tried in does not matter.
+const STEMS: ReadonlyArray<readonly [string, FamilyKey]> = [
+  // Computer Modern and Latin Modern: `R` roman, `BX` bold extended, `TI`
+  // text italic, `SL` slanted, `CSC` small caps, `SS` sans, `TT` typewriter.
+  ['latinmodernroman', 'tinos'],
+  ['latinmodernmath', 'tinos'],
+  ['latinmodernmono', 'cousine'],
+  ['latinmodernsans', 'arimo'],
+  ['lmroman', 'tinos'],
+  ['lmmath', 'tinos'],
+  ['lmmono', 'cousine'],
+  ['lmsans', 'arimo'],
+  ['cmbx', 'tinos'],
+  ['cmcsc', 'tinos'],
+  ['cmti', 'tinos'],
+  ['cmsl', 'tinos'],
+  ['cmmi', 'tinos'],
+  ['cmsy', 'tinos'],
+  ['cmss', 'arimo'],
+  ['cmtt', 'cousine'],
+  ['cmr', 'tinos'],
+  // URW's clones of the PostScript 35, which every PostScript producer embeds.
+  ['nimbusrom', 'tinos'],
+  ['nimbussan', 'arimo'],
+  ['nimbusmon', 'cousine'],
+  ['urwpalladio', 'tinos'],
+  ['urwbookman', 'tinos'],
+  ['centuryschlbk', 'tinos'],
+  ['centuryschoolbook', 'tinos'],
+  ['newcenturyschlbk', 'tinos'],
+  ['bookman', 'tinos'],
+  ['palatino', 'tinos'],
+  // Serif families a producer names in full.
+  ['utopia', 'tinos'],
+  ['charter', 'tinos'],
+  ['baskerville', 'tinos'],
+  ['caslon', 'tinos'],
+  ['minionpro', 'tinos'],
+  ['stoneserif', 'tinos'],
+  ['stonesans', 'arimo'],
+  ['myriadpro', 'arimo'],
+];
+
+/** The family a name STARTS with, for the families named by stem and size. */
+function familyFromStem(name: string): FamilyKey | undefined {
+  for (const [stem, key] of STEMS) if (name.startsWith(stem)) return key;
+  return undefined;
+}
 
 // The words a family name ends with to say which MEMBER of the family it is —
 // a weight, a width or a slant. Each maps to what the substitute can do about
@@ -232,7 +302,10 @@ export function resolveFamilyStyle(name: string | undefined): FamilyStyle {
   const tries = [words.join(' '), words[words.length - 1]!, words[0]!];
   let key: FamilyKey = 'arimo';
   for (const n of tries) {
-    const found = EXACT[n] ?? (MONO.has(n) ? 'cousine' : SERIF.has(n) ? 'tinos' : undefined);
+    const found =
+      EXACT[n] ??
+      (MONO.has(n) ? 'cousine' : SERIF.has(n) ? 'tinos' : undefined) ??
+      familyFromStem(n.replace(/[^a-z]/gu, ''));
     if (found) {
       key = found;
       break;

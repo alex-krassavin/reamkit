@@ -11,17 +11,22 @@
 // the PNG alpha channel, and a stencil /ImageMask (§8.9.6.2) becomes an RGBA
 // picture in the page's own fill colour. The abbreviated keys and filter names
 // an INLINE image writes (§8.9.7 Table 93) are read here too, so one decodes
-// down this same path once wrapped as a stream. Unsupported inputs —
-// Separation/DeviceN/Lab, CCITT Group 3 2-D — return a typed reason so the
-// caller records a loss instead of emitting a broken image.
+// down this same path once wrapped as a stream. A Separation or DeviceN image
+// is run through its own tint transform (§8.6.6.4), which needs a function that
+// can be called (`./function`). Unsupported inputs — CCITT Group 3 2-D —
+// return a typed reason so the caller records a loss instead of emitting a
+// broken image.
 
 import { unzlibSync } from 'fflate';
 
 import { decodeCcitt } from './ccitt';
+import { ascii85Decode, asciiHexDecode, runLengthDecode } from './stream-filters';
 import { labToSrgb } from './cie-color';
+import { readFunction } from './function';
 import { decodeJbig2 } from './jbig2';
 import { decodeJpeg } from './jpeg';
 import { reversePredictor } from './predictor';
+import type { PdfFunction } from './function';
 import type { PngColor } from '@/core/png-encode';
 import type { PdfDict, PdfValue } from '@/pdf/objects';
 
@@ -59,9 +64,10 @@ const MAX_PIXELS = 40_000_000; // DoS guard (~40 MP)
  * colour spaces; Flate, LZW (EP12), RunLength, ASCII85, ASCIIHex and CCITT
  * Group 4 / Group 3 1-D fax (EP15) filters; PNG/TIFF predictors; bit depths
  * 1/2/4/8/16; an `/SMask` folded in as the PNG alpha channel; and a stencil
- * `/ImageMask` (§8.9.6.2) given back as RGBA in `fillHex`. Unsupported inputs
- * (Separation/DeviceN/Lab, CCITT Group 3 2-D) return a typed failure so the
- * caller records a loss.
+ * `/ImageMask` (§8.9.6.2) given back as RGBA in `fillHex`; `Lab` (§8.6.5.8) and
+ * a `Separation`/`DeviceN` through its own tint transform (§8.6.6.4).
+ * Unsupported inputs (CCITT Group 3 2-D) return a typed failure so the caller
+ * records a loss.
  *
  * @param file    The owning file.
  * @param stream  The image XObject, or an inline image wrapped as one.
@@ -337,11 +343,16 @@ function jbig2Bits(
 }
 
 interface ColorSpace {
-  readonly kind: 'gray' | 'rgb' | 'cmyk' | 'indexed' | 'lab';
+  readonly kind: 'gray' | 'rgb' | 'cmyk' | 'indexed' | 'lab' | 'tint';
   readonly components: number;
   readonly base?: ColorSpace; // indexed
   readonly hival?: number;
   readonly lookup?: Uint8Array;
+  /**
+   * §8.6.6.4/§8.6.6.5 — for a `Separation` or `DeviceN` IMAGE, the way out of
+   * it: the tint transform and the space its numbers land in.
+   */
+  readonly tint?: { readonly transform: PdfFunction; readonly alternate: ColorSpace };
   /** §8.6.5.8 — the `Lab` space's white point and the range of `a*`/`b*`. */
   readonly lab?: {
     readonly white: readonly [number, number, number];
@@ -404,7 +415,20 @@ function resolveColorSpace(file: PdfFile, csVal: PdfValue | undefined): ColorSpa
       },
     };
   }
-  // Separation / DeviceN / Pattern — tint transforms not reconstructed.
+  if (tag === 'Separation' || tag === 'DeviceN' || tag === 'I') {
+    // §8.6.6.4/§8.6.6.5 — the space names its colorants, an alternate space and
+    // the transform between them. Run it and the samples are a colour; without
+    // it the whole image is unreadable and the page comes back BLANK:
+    // colorspace_sin.pdf is one 256×256 picture in a `/DeviceN [/X /Y /Z]`
+    // whose transform is a PostScript program, and it was the entire page.
+    const names = file.resolve(cs[1] ?? PDF_NULL);
+    const components = tag === 'Separation' ? 1 : Array.isArray(names) ? names.length : 0;
+    const alternate = resolveColorSpace(file, cs[2]);
+    const transform = readFunction(file, cs[3]);
+    if (components < 1 || !alternate || alternate.kind === 'tint' || !transform) return undefined;
+    return { kind: 'tint', components, tint: { transform, alternate } };
+  }
+  // Pattern — a content stream, not a colour.
   return undefined;
 }
 
@@ -461,6 +485,30 @@ function toColor(
       out[i * 3] = Math.round(255 * (1 - c) * (1 - k));
       out[i * 3 + 1] = Math.round(255 * (1 - m) * (1 - k));
       out[i * 3 + 2] = Math.round(255 * (1 - y) * (1 - k));
+    }
+    return { color: 'rgb', samples: out };
+  }
+  if (cs.kind === 'tint' && cs.tint) {
+    // §8.6.6.4 — every sample through the transform, into the alternate space.
+    // A tint image is small (one colorant, or three) and the transform is the
+    // same function for every pixel, so it is worth caching by the components
+    // that reach it: a photograph in a DeviceN repeats very few of them.
+    const { transform, alternate } = cs.tint;
+    const n = cs.components;
+    const cache = new Map<string, [number, number, number]>();
+    const out = new Uint8Array(px * 3);
+    for (let i = 0; i < px; i++) {
+      const comps: Array<number> = [];
+      for (let k = 0; k < n; k++) comps.push(c01(s[i * n + k]!, k));
+      const key = comps.join(',');
+      let rgb = cache.get(key);
+      if (!rgb) {
+        rgb = alternateRgb(alternate, transform(comps));
+        if (cache.size < MAX_TINT_CACHE) cache.set(key, rgb);
+      }
+      out[i * 3] = rgb[0];
+      out[i * 3 + 1] = rgb[1];
+      out[i * 3 + 2] = rgb[2];
     }
     return { color: 'rgb', samples: out };
   }
@@ -523,6 +571,37 @@ function toColor(
 }
 
 // One palette entry (8-bit per base component) → RGB.
+/** How many distinct tint tuples are remembered before the cache stops growing. */
+const MAX_TINT_CACHE = 1 << 16;
+
+/** §8.6.6.4 — what the alternate space makes of the transform's output. */
+function alternateRgb(alternate: ColorSpace, out: ReadonlyArray<number>): [number, number, number] {
+  const at = (i: number): number => Math.min(1, Math.max(0, out[i] ?? 0));
+  const to255 = (v: number): number => Math.round(v * 255);
+  if (alternate.kind === 'cmyk') {
+    const k = at(3);
+    return [
+      to255((1 - at(0)) * (1 - k)),
+      to255((1 - at(1)) * (1 - k)),
+      to255((1 - at(2)) * (1 - k)),
+    ];
+  }
+  if (alternate.kind === 'lab' && alternate.lab) {
+    const r = alternate.lab.range;
+    const [sr, sg, sb] = labToSrgb(alternate.lab.white, [
+      at(0) * 100,
+      r[0] + at(1) * (r[1] - r[0]),
+      r[2] + at(2) * (r[3] - r[2]),
+    ]);
+    return [to255(sr), to255(sg), to255(sb)];
+  }
+  if (alternate.kind === 'gray') {
+    const g = to255(at(0));
+    return [g, g, g];
+  }
+  return [to255(at(0)), to255(at(1)), to255(at(2))];
+}
+
 function paletteRgb(base: ColorSpace, lookup: Uint8Array, off: number): [number, number, number] {
   if (base.kind === 'rgb') return [lookup[off] ?? 0, lookup[off + 1] ?? 0, lookup[off + 2] ?? 0];
   if (base.kind === 'lab' && base.lab) {
@@ -794,65 +873,6 @@ function lzwEarlyChange(file: PdfFile, d: PdfDict): number {
   const parms = decodeParmsOf(file, d);
   const ec = parms?.get('EarlyChange');
   return ec !== undefined && file.resolve(ec) === 0 ? 0 : 1;
-}
-
-function runLengthDecode(data: Uint8Array): Uint8Array {
-  const out: Array<number> = [];
-  let i = 0;
-  while (i < data.length) {
-    const len = data[i++]!;
-    if (len === 128) break; // EOD
-    if (len < 128) {
-      for (let j = 0; j <= len && i < data.length; j++) out.push(data[i++]!);
-    } else {
-      const b = data[i++] ?? 0;
-      for (let j = 0; j < 257 - len; j++) out.push(b);
-    }
-  }
-  return Uint8Array.from(out);
-}
-
-function ascii85Decode(data: Uint8Array): Uint8Array {
-  const out: Array<number> = [];
-  let tuple = 0;
-  let count = 0;
-  for (const c of data) {
-    if (c === 0x7e) break; // ~> terminator
-    if (c <= 0x20) continue; // whitespace
-    if (c === 0x7a && count === 0) {
-      out.push(0, 0, 0, 0);
-      continue;
-    }
-    if (c < 0x21 || c > 0x75) continue;
-    tuple = tuple * 85 + (c - 0x21);
-    if (++count === 5) {
-      out.push((tuple >>> 24) & 0xff, (tuple >>> 16) & 0xff, (tuple >>> 8) & 0xff, tuple & 0xff);
-      tuple = 0;
-      count = 0;
-    }
-  }
-  if (count > 0) {
-    for (let i = count; i < 5; i++) tuple = tuple * 85 + 84;
-    for (let i = 0; i < count - 1; i++) out.push((tuple >>> (24 - i * 8)) & 0xff);
-  }
-  return Uint8Array.from(out);
-}
-
-function asciiHexDecode(data: Uint8Array): Uint8Array {
-  const out: Array<number> = [];
-  let hi = -1;
-  for (const c of data) {
-    if (c === 0x3e) break; // '>'
-    const v = hexVal(c);
-    if (v < 0) continue;
-    if (hi < 0) hi = v;
-    else {
-      out.push((hi << 4) | v);
-      hi = -1;
-    }
-  }
-  if (hi >= 0) out.push(hi << 4);
-  return Uint8Array.from(out);
 }
 
 // --- small helpers ----------------------------------------------------------

@@ -2,18 +2,18 @@
 // as a single string in a `&`-code mini-language: `&L`/`&C`/`&R` switch the
 // left / centre / right region, field codes (`&P` page, `&N` total, `&A` sheet
 // name, …) inject values, and `&B`/`&I` toggle bold/italic. We expand one string
-// into one aligned paragraph per non-empty region, with `&P`/`&N` as dynamic
-// PAGE/NUMPAGES field runs the renderer resolves per page. The header/footer band
-// layout draws paragraphs, so each region is its own paragraph (a left+right
-// header therefore stacks rather than sharing one line — the common single-region
-// case stays on one line). `&B`/`&I`/`&U`/`&S` toggle bold/italic/underline/
+// into header/footer band content, with `&P`/`&N` as dynamic PAGE/NUMPAGES field
+// runs the renderer resolves per page. Regions that stand together stand on ONE
+// line, separated by tab stops at the middle and the far edge of the band — the
+// way Excel draws them and the way Word writes the same header; a single region
+// is a line of its own, aligned. `&B`/`&I`/`&U`/`&S` toggle bold/italic/underline/
 // strike, `&nn` sets the point size, `&Krrggbb` the colour, and the style
 // suffix of `&"family,style"` acts as another bold/italic toggle (the family
 // itself is dropped — the renderer has one font set). `&F` and `&D`/`&T` are
 // the caller's to supply (a file name, a reference date) and are dropped
 // without one; `&Z` paths and `&G` pictures are dropped outright.
 
-import type { Alignment, BodyElement, Run, RunProperties } from '@/core/document-model';
+import type { Alignment, BodyElement, Run, RunProperties, TabStop } from '@/core/document-model';
 import { pt } from '@/core/ir';
 
 // §18.3.1.55 — the theme-colour order a header/footer's `&K` reference indexes,
@@ -98,18 +98,63 @@ export function buildHeaderFooterContent(
     now,
   );
   const out: Array<BodyElement> = [];
-  const para = (runs: ReadonlyArray<Run>, alignment: Alignment): void => {
-    for (const line of splitLines(runs)) {
-      if (line.length > 0) {
-        out.push({ kind: 'paragraph', paragraph: { properties: { alignment }, runs: line } });
-      }
-    }
+  const lines = {
+    left: splitLines(regions.left),
+    center: splitLines(regions.center),
+    right: splitLines(regions.right),
   };
-  para(regions.left, 'left');
-  para(regions.center, 'center');
-  para(regions.right, 'right');
+  const filled = (region: keyof typeof lines): number =>
+    lines[region].filter((line) => line.length > 0).length;
+  // One region is a line of its own, aligned. Two or three share ONE line, the
+  // way Excel and every reader draw them: the left flush, the centre on the
+  // middle of the band and the right against its far edge (§17.3.1.38 tab
+  // stops, which is how Word writes the same header). Stacked as a paragraph
+  // apiece, 45540_classic_Header.xlsx came back three lines deep where the
+  // sheet has one.
+  const alone =
+    (filled('left') > 0 ? 1 : 0) + (filled('center') > 0 ? 1 : 0) + (filled('right') > 0 ? 1 : 0) <=
+    1;
+  if (alone) {
+    const para = (runs: ReadonlyArray<Run>, alignment: Alignment): void => {
+      for (const line of splitLines(runs)) {
+        if (line.length > 0) {
+          out.push({ kind: 'paragraph', paragraph: { properties: { alignment }, runs: line } });
+        }
+      }
+    };
+    para(regions.left, 'left');
+    para(regions.center, 'center');
+    para(regions.right, 'right');
+    return out;
+  }
+  // A region may itself be several lines, and the k-th line of each stands with
+  // the k-th line of the others.
+  const deep = Math.max(lines.left.length, lines.center.length, lines.right.length);
+  for (let i = 0; i < deep; i++) {
+    const left = lines.left[i] ?? [];
+    const center = lines.center[i] ?? [];
+    const right = lines.right[i] ?? [];
+    if (left.length + center.length + right.length === 0) continue;
+    const runs: Array<Run> = [...left];
+    if (center.length > 0) runs.push(TAB_RUN, ...center);
+    if (right.length > 0) runs.push(TAB_RUN, ...right);
+    out.push({ kind: 'paragraph', paragraph: { properties: { tabs: HEADER_STOPS }, runs } });
+  }
   return out;
 }
+
+/** The tab a header's regions are separated by. */
+const TAB_RUN: Run = { text: '\t', properties: {} };
+
+/**
+ * §17.3.1.38 — the two stops a header's regions stand on: the middle of the
+ * band and its far edge, both stated against the band itself rather than at a
+ * distance, since only the layout knows how wide the band is.
+ */
+const HEADER_STOPS: ReadonlyArray<TabStop> = [
+  { positionPt: pt(0), relativeTo: 'center', alignment: 'center' },
+  { positionPt: pt(0), relativeTo: 'right', alignment: 'right' },
+];
 
 /**
  * Break a region's runs at the line breaks Excel allows inside one — a header

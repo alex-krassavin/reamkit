@@ -1755,6 +1755,12 @@ function sectPrXml(s: SectionProperties, hf: HeaderFooterRefs): string {
   for (const f of hf.footers) {
     parts.push(`<w:footerReference w:type="${f.type}" r:id="${f.relId}"/>`);
   }
+  // §17.6.22 — where the section starts, which Word writes between the
+  // references and the page size. Left out, a section that asked for the next
+  // odd sheet came back asking for the next sheet.
+  if (s.sectionStart !== undefined && s.sectionStart !== 'nextPage') {
+    parts.push(`<w:type w:val="${s.sectionStart}"/>`);
+  }
   if (s.pageSize) {
     const orient = s.pageSize.orientation === 'landscape' ? ' w:orient="landscape"' : '';
     parts.push(

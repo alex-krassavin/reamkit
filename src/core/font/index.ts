@@ -6,5 +6,6 @@ export type { FontVariant, FontBytesByVariant } from '@/core/font/font-registry'
 export { pickVariant } from '@/core/font/font-registry';
 export { parseGposKerning, parseGsubLigatures, shapeText } from '@/core/font/opentype-layout';
 export type { KerningMap, LigatureMap, ShapedRun } from '@/core/font/opentype-layout';
+export { hasSubstitutable, lettersForLigature, substituteLetters } from '@/core/font/ligatures';
 export { createFontMeasure } from '@/core/font/measure';
 export type { FontMeasure } from '@/core/font/measure';

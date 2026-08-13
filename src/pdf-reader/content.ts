@@ -10,7 +10,7 @@
 // font falls back to Latin-1 with a half-em advance so text still surfaces.
 
 import { Lexer } from './lexer';
-import { cieToSrgb } from './cie-color';
+import { cmykHex, grayHex, rgbHex, spaceColor } from './shading';
 import type { ColorSpaceInfo, GsPaint } from './shading';
 import type { TextMarkup } from './annot-draw';
 import type { ShapeGradient } from '@/core/vector';
@@ -26,10 +26,25 @@ import { PDF_NULL, PdfHexString, PdfName } from '@/pdf/objects';
 export interface ContentFont {
   /** Bytes per character code: simple fonts read 1 byte/code, Type0 reads 2. */
   readonly bytesPerCode: 1 | 2;
+  /**
+   * §9.7.6.2 — how a shown string breaks into codes, where the CMap is not
+   * fixed-width. A named CMap like `90ms-RKSJ-H` mixes one-byte and two-byte
+   * codes, and split down the middle a Japanese line came apart into nonsense.
+   * Absent means the fixed width above.
+   */
+  readonly splitCodes?: (bytes: Uint8Array) => Array<number>;
   /** Decode a sequence of character codes to a Unicode string. */
   decode: (codes: ReadonlyArray<number>) => string;
   /** Glyph advance for one code, in 1000-unit text space. */
   width: (code: number) => number;
+  /**
+   * §9.4.4 / §9.7.4.3 — the face sets its text DOWN the page, not across, and
+   * the pen advances by the vertical displacement `w1` rather than by `w0`.
+   * A `…-V` CMap asks for this; `/DW2`'s default `[880 -1000]` is one em down.
+   * The number here is that displacement in 1000-unit text space, and it is
+   * negative because the page's y runs up.
+   */
+  readonly verticalAdvance?: (code: number) => number;
   /** §9.6.2 — the face's own `/BaseFont` name, for a document that embeds it. */
   readonly name?: string;
   /** §9.8.1 — the face is a bold one (weight, the ForceBold flag, or its name). */
@@ -42,6 +57,20 @@ export interface ContentFont {
    * procedure paints, in the resources the font states.
    */
   readonly type3?: Type3Face;
+  /**
+   * §9.6.6 — the OUTLINE a code draws, for a code that stands for no
+   * character. A face that can say what its characters are never has one:
+   * this is the last resort before a blank page.
+   */
+  readonly outline?: GlyphOutline;
+}
+
+/** §9.6.6 — the outlines of a face read by glyph index, and their glyph space. */
+export interface GlyphOutline {
+  /** Glyph space to text space, as a Type 3 font's `/FontMatrix` is. */
+  readonly matrix: Matrix;
+  /** The contours one code draws, or `undefined` where it draws none. */
+  readonly path: (code: number) => Array<PathSeg> | undefined;
 }
 
 /** §9.6.5 — the parts of a Type 3 font a caller needs to run its glyphs. */
@@ -112,6 +141,12 @@ export interface TextRun {
    */
   readonly fillPatternName?: string;
   /**
+   * §8.7.4.5 — the glyphs are filled with a SHADING pattern: a sweep from one
+   * colour to another, of which the run carries the middle. The colour is not
+   * lost, the shape of it is.
+   */
+  readonly gradientFill?: boolean;
+  /**
    * §9.3.6 — the page painted these glyphs NOWHERE: mode 3 shows nothing and
    * mode 7 only adds to the clip. A scanned page carries its recognised words
    * that way, under the picture of the page — so the run is kept, because it
@@ -176,6 +211,8 @@ export interface ImagePlacement {
    */
   readonly fillHex: string;
   readonly mcid?: number;
+  /** §11.6.4.4 `/ca` — how opaque the picture is drawn, when the page asked for less. */
+  readonly alpha?: number;
   /** §11.3.5 `/BM` — a blend the page asked for that nothing here performs. */
   readonly blend?: string;
   /** §11.6.5 `/SMask` — the paint faded from place to place; nothing here does. */
@@ -274,6 +311,13 @@ export interface VectorPlacement {
   /** §11.6.5 `/SMask` — the paint faded from place to place; nothing here does. */
   readonly masked?: boolean;
   /**
+   * §9.6.6 — this path is a GLYPH, traced from the face because its code stands
+   * for no character. It is type, not artwork, so the de-cluttering a page's
+   * paths go through does not apply: a full stop is a mark one point across and
+   * every filter there would throw it out.
+   */
+  readonly glyph?: boolean;
+  /**
    * §8.7.3 — the TILING pattern resource name the path is filled with. Its
    * content is a stream of its own, so what the fill actually shows is only
    * known by walking into it; the `fillHex` beside this is not the fill.
@@ -293,12 +337,46 @@ export interface InterpretResult {
   readonly vectors: Array<VectorPlacement>;
   /** §9.6.5 — every Type 3 glyph the stream showed, with where to run it. */
   readonly glyphs: Array<Type3Call>;
+  /**
+   * §8.7.4.3 — every region the stream painted with a bare `sh`, which fills
+   * the CLIP rather than a path. What a caller can do with one depends on the
+   * shading's own type, so the placement is carried rather than counted.
+   */
+  readonly shadings: Array<ShadingPaint>;
+  /**
+   * §9.6.6 — every glyph the stream showed that stands for NO character, as
+   * the path it draws in page space. There is nothing to write for one, and
+   * there is something to draw.
+   */
+  readonly outlines: Array<VectorPlacement>;
 }
 
 /**
  * §9.6.5 — one showing of a Type 3 glyph: which procedure, and the matrix that
  * puts glyph space on the page.
  */
+/** §8.7.4.3 — one `sh`: which shading, where the CTM put it, what bounded it. */
+export interface ShadingPaint {
+  /** The `/Shading` resource name (no leading slash). */
+  readonly name: string;
+  /** The CTM in force, which maps the shading's own space onto the page. */
+  readonly ctm: Matrix;
+  /** §8.5.4 — the clip the paint was bounded by, which is its whole extent. */
+  readonly clip?: ClipRegion;
+  /**
+   * §11.6.5 `/SMask` — the paint was faded from place to place. For a `sh` that
+   * is not a detail: the mask is the SHAPE, and the clip is only its outer
+   * bound.
+   */
+  readonly masked?: boolean;
+  /** §11.6.4.4 `/ca` — how opaque the paint is, when the page asked for less. */
+  readonly alpha?: number;
+  /** §11.3.5 `/BM` — the paint only DARKENS what it covers. */
+  readonly darkens?: boolean;
+  /** Where it fell in the painting order (§8.5.3). */
+  readonly order: number;
+}
+
 export interface Type3Call {
   readonly stream: PdfStream;
   readonly resources: PdfDict | undefined;
@@ -437,50 +515,40 @@ function spaceOf(
 }
 
 /**
- * §8.6.8 — the colour a run of `sc` / `scn` components comes to.
- *
- * The space in force decides, and where it was not read the COUNT is the next
- * best witness: three numbers are RGB and four are CMYK on every device space
- * there is. One number is the ambiguous case — grey in a device space, but the
- * strength of a colorant in a Separation, where 1 is the ink at full and reads
- * dark — so a lone component is only taken where the space said what it means.
+ * §8.7.4.5 — one colour for a whole sweep: the stop at its middle, or the mean
+ * of the two it falls between. A gradient is a shape a run cannot carry, and
+ * the end it starts at is no more the colour of the words than the end it
+ * finishes at.
  */
-function componentColor(
+function midGradient(gradient: ShapeGradient): string {
+  const stops = [...gradient.stops].sort((a, b) => a.offset - b.offset);
+  if (stops.length === 0) return '000000';
+  const exact = stops.find((s) => Math.abs(s.offset - 0.5) < 1e-6);
+  if (exact) return exact.colorHex;
+  const before = [...stops].reverse().find((s) => s.offset <= 0.5) ?? stops[0]!;
+  const after = stops.find((s) => s.offset >= 0.5) ?? stops[stops.length - 1]!;
+  const span = after.offset - before.offset;
+  const t = span > 0 ? (0.5 - before.offset) / span : 0;
+  const mix = (at: number): number => {
+    const a = parseInt(before.colorHex.slice(at, at + 2), 16);
+    const b = parseInt(after.colorHex.slice(at, at + 2), 16);
+    return Number.isFinite(a) && Number.isFinite(b) ? Math.round(a + (b - a) * t) : 0;
+  };
+  return [mix(0), mix(2), mix(4)]
+    .map((c) => Math.max(0, Math.min(255, c)).toString(16).padStart(2, '0'))
+    .join('')
+    .toUpperCase();
+}
+
+/** §8.6.8 — the colour a run of `sc` / `scn` operands comes to (see `spaceColor`). */
+function colorOfOperands(
   operands: ReadonlyArray<PdfValue>,
   space: ColorSpaceInfo | undefined,
 ): string | undefined {
-  const nums = operands.filter((o): o is number => typeof o === 'number');
-  if (nums.length === 0) return undefined;
-  // §8.6.5.6/§8.6.5.7 — a CIE space's numbers mean what its own transform makes
-  // of them, which is not what the same numbers mean to a device space.
-  if (space?.cie) {
-    const [r, g, b] = cieToSrgb(space.cie, nums);
-    return rgbHex(r, g, b);
-  }
-  const kind = space?.kind ?? (nums.length === 3 ? 'rgb' : nums.length === 4 ? 'cmyk' : undefined);
-  switch (kind) {
-    case 'rgb':
-      return nums.length >= 3 ? rgbHex(nums[0]!, nums[1]!, nums[2]!) : undefined;
-    case 'cmyk':
-      return nums.length >= 4 ? cmykHex(nums[0]!, nums[1]!, nums[2]!, nums[3]!) : undefined;
-    case 'gray':
-      return grayHex(nums[0]!);
-    case 'tint':
-      // §8.6.6.4/§8.6.6.5 — a tint is a strength of colorant, and the space's
-      // own transform says what colour that strength comes to. Run it and the
-      // answer is in the alternate space; devicen.pdf's three triangles are
-      // green, blue and red.
-      if (space?.tint) {
-        const out = space.tint.transform(nums);
-        const hex = componentColor(out, space.tint.alternate);
-        if (hex !== undefined) return hex;
-      }
-      // Without a transform this can run, the honest reading is "this much
-      // ink", which is the inverse of a grey level.
-      return grayHex(1 - Math.max(...nums));
-    default:
-      return undefined;
-  }
+  return spaceColor(
+    operands.filter((o): o is number => typeof o === 'number'),
+    space,
+  );
 }
 
 export function interpretContent(
@@ -496,6 +564,8 @@ export function interpretContent(
   const images: Array<ImagePlacement> = [];
   const vectors: Array<VectorPlacement> = []; // filled paths (EP10)
   const glyphs: Array<Type3Call> = []; // §9.6.5 Type 3 glyph procedures
+  const painted: Array<ShadingPaint> = []; // §8.7.4.3 `sh` — regions, not paths
+  const outlines: Array<VectorPlacement> = []; // §9.6.6 glyphs with no character
   const lexer = new Lexer(bytes);
   const stack: Array<TextState> = [];
   let state = initialState();
@@ -606,17 +676,46 @@ export function interpretContent(
         });
       }
     }
-    const w0 = state.font.width(code) / 1000;
+    // §9.6.6 — a glyph whose code stands for no character. Nothing downstream
+    // can write it, so it is DRAWN, at the place and size the page set it.
+    const outline = state.font.outline;
+    if (outline && visible() && state.renderMode !== 3 && state.renderMode !== 7) {
+      const segs = outline.path(code);
+      if (segs) {
+        const scale: Matrix = [state.fontSize * state.hScale, 0, 0, state.fontSize, 0, state.rise];
+        const place = multiply(outline.matrix, multiply(scale, multiply(tm, state.ctm)));
+        outlines.push({
+          order: paintOrder++,
+          segs: segs.map((seg) => mapSeg(seg, place)),
+          ...(state.clip ? { clip: state.clip } : {}),
+          fillHex: state.fillColor,
+          ...(state.fillAlpha < 1 ? { alpha: state.fillAlpha } : {}),
+          glyph: true,
+        });
+      }
+    }
     const isSpace = state.font.bytesPerCode === 1 && code === 0x20;
-    const tx =
-      (w0 * state.fontSize + state.charSpacing + (isSpace ? state.wordSpacing : 0)) * state.hScale;
+    const spacing = state.charSpacing + (isSpace ? state.wordSpacing : 0);
+    // §9.4.4 — in VERTICAL writing the pen goes down the page and the
+    // horizontal scale does not touch it: `Tz` scales the writing direction,
+    // which is the other axis here.
+    const down = state.font.verticalAdvance;
+    if (down) {
+      tm = multiply(translation(0, (down(code) / 1000) * state.fontSize - spacing), tm);
+      return;
+    }
+    const w0 = state.font.width(code) / 1000;
+    const tx = (w0 * state.fontSize + spacing) * state.hScale;
     tm = multiply(translation(tx, 0), tm);
   };
 
   // Decode a shown string and advance the matrix glyph by glyph, returning its
   // Unicode (without emitting — Tj and TJ both build on this).
   const consume = (operand: PdfValue): string => {
-    const codes = splitCodes(toBytes(operand), state.font.bytesPerCode);
+    const bytes = toBytes(operand);
+    const codes = state.font.splitCodes
+      ? state.font.splitCodes(bytes)
+      : splitCodes(bytes, state.font.bytesPerCode);
     for (const code of codes) advanceGlyph(code);
     return state.font.decode(codes);
   };
@@ -655,6 +754,7 @@ export function interpretContent(
       ...(state.font.type3 ? { type3: true } : {}),
       ...(state.renderMode === 3 || state.renderMode === 7 ? { invisible: true } : {}),
       ...(state.fillPattern !== undefined ? { fillPatternName: state.fillPattern } : {}),
+      ...(state.fillGradient ? { gradientFill: true } : {}),
       // §9.3.6 — modes 1, 2, 5 and 6 stroke the glyphs; the pen is the one the
       // graphics state holds, in the stroking colour.
       ...(strokesText(state.renderMode)
@@ -665,7 +765,11 @@ export function interpretContent(
         : {}),
       ...(state.font.bold ? { bold: true } : {}),
       ...(state.font.italic ? { italic: true } : {}),
-      colorHex: state.fillColor,
+      // §8.6.6.2 — type painted with a SHADING pattern is painted with a
+      // gradient, and a run carries one colour. It takes the gradient's middle,
+      // which is the colour the sweep spends most of its length near, and the
+      // reconstruction says the shape of it was lost.
+      colorHex: state.fillGradient ? midGradient(state.fillGradient) : state.fillColor,
       ...(mcid !== undefined ? { mcid } : {}),
     });
   };
@@ -816,7 +920,9 @@ export function interpretContent(
             ...(state.clip ? { clip: state.clip } : {}),
             fillHex: state.fillColor,
             ...(mcid !== undefined ? { mcid } : {}),
+            ...(state.fillAlpha < 1 ? { alpha: state.fillAlpha } : {}),
             ...(state.blendMode !== undefined ? { blend: state.blendMode } : {}),
+            ...(state.softMask ? { masked: true } : {}),
           });
         }
         break;
@@ -865,7 +971,7 @@ export function interpretContent(
           state.fillPattern = state.fillGradient ? undefined : named;
           break;
         }
-        const hex = componentColor(operands, state.fillSpace);
+        const hex = colorOfOperands(operands, state.fillSpace);
         if (hex !== undefined) {
           state.fillColor = hex;
           state.fillGradient = undefined;
@@ -877,7 +983,7 @@ export function interpretContent(
       case 'SC': {
         const last = operands[operands.length - 1];
         if (last instanceof PdfName) break;
-        const hex = componentColor(operands, state.strokeSpace);
+        const hex = colorOfOperands(operands, state.strokeSpace);
         if (hex !== undefined) state.strokeColor = hex;
         break;
       }
@@ -933,20 +1039,42 @@ export function interpretContent(
         path.push({ op: 'close' });
         paintPath(true, true);
         break;
+      // §8.7.4.3 — `sh` paints the CLIP with a shading, not a path with a fill.
+      // Nothing here lifts that region; counted so the reader can say so where
+      // it happened rather than on every document it reads.
+      case 'sh': {
+        const nm = operands[0];
+        if (nm instanceof PdfName && visible()) {
+          painted.push({
+            name: nm.value,
+            ctm: state.ctm,
+            ...(state.clip ? { clip: state.clip } : {}),
+            ...(state.softMask ? { masked: true } : {}),
+            ...(state.fillAlpha < 1 ? { alpha: state.fillAlpha } : {}),
+            ...(state.fillDarkens ? { darkens: true } : {}),
+            order: paintOrder++,
+          });
+        }
+        break;
+      }
       case 'n':
         paintPath(false, false); // end the path with no paint
         break;
       case 'gs': {
-        // §8.4.5 — a named graphics state, of which the constant fill alpha
-        // and the blend mode are read here. A band meant to be seen through is
-        // not the same mark as one that hides what it covers.
+        // §8.4.5 — a named graphics state, of which the constant fill alpha,
+        // the blend mode and the soft mask are read here. A band meant to be
+        // seen through is not the same mark as one that hides what it covers.
         const nm = operands[operands.length - 1];
-        if (nm instanceof PdfName) {
-          const paint = alphas.get(nm.value);
-          state.fillAlpha = paint?.alpha ?? 1;
-          state.fillDarkens = paint?.darkens ?? false;
-          state.blendMode = paint?.blend;
-          state.softMask = paint?.masked ?? false;
+        const paint = nm instanceof PdfName ? alphas.get(nm.value) : undefined;
+        if (paint) {
+          // §8.4.5 — only what the state NAMES; the rest of the graphics state
+          // is the caller's and stands.
+          if (paint.alpha !== undefined) state.fillAlpha = paint.alpha;
+          if (paint.statesBlend === true) {
+            state.fillDarkens = paint.darkens ?? false;
+            state.blendMode = paint.blend;
+          }
+          if (paint.masked !== undefined) state.softMask = paint.masked;
         }
         break;
       }
@@ -1008,7 +1136,24 @@ export function interpretContent(
         break;
     }
   }
-  return { texts: runs, images, vectors, glyphs };
+  return { texts: runs, images, vectors, glyphs, shadings: painted, outlines };
+}
+
+/** One path segment through a matrix — the glyph's own space onto the page. */
+function mapSeg(seg: PathSeg, m: Matrix): PathSeg {
+  const at = (x: number, y: number): [number, number] => [
+    m[0] * x + m[2] * y + m[4],
+    m[1] * x + m[3] * y + m[5],
+  ];
+  if (seg.op === 'close') return seg;
+  if (seg.op === 'cubic') {
+    const [x1, y1] = at(seg.x1, seg.y1);
+    const [x2, y2] = at(seg.x2, seg.y2);
+    const [x, y] = at(seg.x, seg.y);
+    return { op: 'cubic', x1, y1, x2, y2, x, y };
+  }
+  const [x, y] = at(seg.x, seg.y);
+  return { op: seg.op, x, y };
 }
 
 /** §9.3.6 — the rendering modes that put a line round the glyphs. */
@@ -1072,23 +1217,6 @@ function isRtl(cp: number): boolean {
   );
 }
 
-// PDF colour operands (0..1 per channel) → a 6-hex sRGB string.
-function clamp255(v: number): number {
-  return Math.max(0, Math.min(255, Math.round(v * 255)));
-}
-function hex2(v: number): string {
-  return clamp255(v).toString(16).padStart(2, '0');
-}
-function rgbHex(r: number, g: number, b: number): string {
-  return (hex2(r) + hex2(g) + hex2(b)).toUpperCase();
-}
-function grayHex(v: number): string {
-  return rgbHex(v, v, v);
-}
-function cmykHex(c: number, m: number, y: number, k: number): string {
-  return rgbHex((1 - c) * (1 - k), (1 - m) * (1 - k), (1 - y) * (1 - k));
-}
-
 function matrixFromOperands(operands: ReadonlyArray<PdfValue>): Matrix {
   const n = (i: number): number => (typeof operands[i] === 'number' ? operands[i] : 0);
   return [n(0), n(1), n(2), n(3), n(4), n(5)];
@@ -1116,14 +1244,42 @@ function splitCodes(bytes: Uint8Array, bytesPerCode: 1 | 2): Array<number> {
 }
 
 // Read a content-stream array operand (TJ): numbers and strings up to `]`.
+// An array operand, of whatever an array may hold. Numbers and strings were the
+// only members kept, which is all a `TJ` is made of — and an inline image names
+// its colour space with one: TAMReview.pdf rules its header with a picture one
+// pixel across in `[/I /RGB 3 <ECEBEB…FF9933>]`, and dropping the two names
+// left `[3, <bytes>]`, a space that answers to nothing. The rule was not drawn
+// on any of its 23 pages.
 function readArray(lexer: Lexer): Array<PdfValue> {
   const out: Array<PdfValue> = [];
   for (;;) {
     const tok = lexer.nextToken();
     if (tok.kind === 'arrayClose' || tok.kind === 'eof') break;
-    if (tok.kind === 'num') out.push(tok.value);
-    else if (tok.kind === 'str') out.push(tok.value);
-    else if (tok.kind === 'hexstr') out.push(new PdfHexString(tok.bytes));
+    switch (tok.kind) {
+      case 'num':
+        out.push(tok.value);
+        break;
+      case 'str':
+        out.push(tok.value);
+        break;
+      case 'hexstr':
+        out.push(new PdfHexString(tok.bytes));
+        break;
+      case 'name':
+        out.push(new PdfName(tok.value));
+        break;
+      case 'arrayOpen':
+        out.push(readArray(lexer));
+        break;
+      case 'dictOpen':
+        out.push(readDict(lexer));
+        break;
+      case 'keyword':
+        if (tok.value === 'true' || tok.value === 'false') out.push(tok.value === 'true');
+        break;
+      default:
+        break;
+    }
   }
   return out;
 }

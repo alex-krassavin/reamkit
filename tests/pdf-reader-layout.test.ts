@@ -74,15 +74,609 @@ describe('a multi-page PDF keeps its pages (E-PDF EP4)', () => {
     );
     expect(breaks).toHaveLength(file.pages().length - 1);
   });
+
+  it('opens a SECTION where the page size changes', () => {
+    // §17.6 — a section is what carries a page size, so a document whose pages
+    // differ in size is several of them. function_based_shading_cmyk.pdf is
+    // 290×290 and then 1880×1260, and read as one size the second sheet's six
+    // squares were cut down to the one that fitted.
+    const file = PdfFile.parse(twoSizePdf());
+    const doc = reconstructByLayout(file, 'positional').doc;
+    expect(doc.sections).toHaveLength(2);
+    expect(doc.sections[0]?.properties.pageSize?.width).toBeCloseTo(200, 1);
+    expect(doc.sections[1]?.properties.pageSize?.width).toBeCloseTo(600, 1);
+    // The break the pages would otherwise carry is the section's own: two
+    // sections, and no page-break paragraph between them.
+    const breaks = doc.body.filter(
+      (b) => b.kind === 'paragraph' && b.paragraph.properties.pageBreakBefore === true,
+    );
+    expect(breaks).toHaveLength(0);
+    // And a document of ONE size states no sections at all.
+    expect(
+      reconstructByLayout(
+        PdfFile.parse(onePagePdf('/MediaBox [0 0 200 100]', 'BT ET')),
+        'positional',
+      ).doc.sections,
+    ).toHaveLength(0);
+  });
 });
 
+describe('a page of turned words is a page, not prose (§9.4.2)', () => {
+  it('reads it placed, whatever else is on the sheet', () => {
+    // The placement IS the content: re-set flat, the words come back in an
+    // order the page never had. bug946506.pdf runs every line of its lorem
+    // ipsum down the sheet at twenty degrees, and read as prose its lines
+    // interleaved — "adipiscinnon luctus eleipsum dolor sit".
+    const turned = Array.from(
+      { length: 10 },
+      (_, i) =>
+        `BT /F0 12 Tf 0.94 0.34 -0.34 0.94 ${String(30 + i * 8)} ${String(40 + i * 18)} Tm (word${String(i)}) Tj ET`,
+    ).join('\n');
+    const doc = Ream.parse(
+      onePagePdf('/MediaBox [0 0 300 300] /Resources << /Font << /F0 5 0 R >> >>', turned, [
+        '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+      ]),
+    );
+    expect(doc.losses.some((l) => /read as a PAGE/u.test(l.detail))).toBe(true);
+
+    // An upright page of the same size is prose and keeps the flowing reading.
+    const upright = Array.from(
+      { length: 10 },
+      (_, i) => `BT /F0 12 Tf 1 0 0 1 30 ${String(40 + i * 18)} Tm (word${String(i)}) Tj ET`,
+    ).join('\n');
+    const flowed = Ream.parse(
+      onePagePdf('/MediaBox [0 0 300 300] /Resources << /Font << /F0 5 0 R >> >>', upright, [
+        '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+      ]),
+    );
+    expect(flowed.losses.some((l) => /read as a PAGE/u.test(l.detail))).toBe(false);
+  });
+
+  it('reads a GRID of boxes with a label in each as the page it is', () => {
+    // calgray.pdf is five rows of four grey swatches, each labelled "A = 0.75"
+    // and the like. Nineteen of the twenty boxes are a mark anybody can see —
+    // the twentieth is painted white — and the count had to reach twenty before
+    // the ratio was consulted at all. One short, the page was read as prose: the
+    // four labels of each row ran together into a line and the sheet spilled
+    // onto a second page.
+    const cells: Array<string> = [];
+    for (let row = 0; row < 5; row++) {
+      for (let col = 0; col < 4; col++) {
+        const x = 20 + col * 65;
+        const y = 30 + row * 50;
+        cells.push(`0.${String(row + 3)} g ${String(x)} ${String(y)} 60 45 re f`);
+        cells.push(
+          `0 g BT /F0 8 Tf 1 0 0 1 ${String(x + 4)} ${String(y + 6)} Tm (A=0.${String(row)}${String(col)}) Tj ET`,
+        );
+      }
+    }
+    const doc = Ream.parse(
+      onePagePdf(
+        '/MediaBox [0 0 300 300] /Resources << /Font << /F0 5 0 R >> >>',
+        cells.join('\n'),
+        ['<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'],
+      ),
+    );
+    expect(doc.losses.some((l) => /read as a PAGE/u.test(l.detail))).toBe(true);
+  });
+});
+
+describe('a paragraph keeps the indent the page set it with (§17.3.1.12)', () => {
+  const parasOf = (content: string) => {
+    const doc = reconstructByLayout(
+      PdfFile.parse(
+        onePagePdf('/MediaBox [0 0 400 400] /Resources << /Font << /F0 5 0 R >> >>', content, [
+          '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+        ]),
+      ),
+    ).doc;
+    return doc.body.flatMap((b) => (b.kind === 'paragraph' ? [b.paragraph] : []));
+  };
+  const line = (x: number, y: number, text: string): string =>
+    `BT /F0 10 Tf 1 0 0 1 ${String(x)} ${String(y)} Tm (${text}) Tj ET`;
+
+  it('reads a list item’s indent and its hanging marker', () => {
+    // bug1997343.pdf sets "• They may be unordered bullet lists" ten points in
+    // and its nested "1. lists may also be nested" twenty more, and every one
+    // of them came back flush left against the column.
+    const paras = parasOf(
+      [
+        line(40, 360, 'A line of body text right across the measure'),
+        line(40, 346, 'and it ends here.'),
+        line(55, 332, '- an item whose marker hangs to the left'),
+        line(65, 318, 'and the item runs on under its own text'),
+      ].join('\n'),
+    );
+    const item = paras.find((p) =>
+      p.runs
+        .map((r) => r.text)
+        .join('')
+        .startsWith('-'),
+    );
+    expect(item).toBeDefined();
+    // The BODY of the item is 25pt in; its marker hangs 10pt out of that.
+    expect(item?.properties.indentLeft).toBeCloseTo(25, 0);
+    expect(item?.properties.indentFirstLine).toBeCloseTo(-10, 0);
+    // …and the body it follows is not indented at all.
+    expect(paras[0]?.properties.indentLeft ?? 0).toBe(0);
+  });
+
+  it('starts a paragraph where a short line is followed by an indented one', () => {
+    // The oldest mark in typography. It used to CANCEL the test that ends a
+    // paragraph — the two lines "start at different edges" — so bug1997343.pdf
+    // read "…figures and mathematics. Apart from two commands at the start…"
+    // as one paragraph where the file sets two.
+    const paras = parasOf(
+      [
+        line(40, 360, 'A line of body text right across the measure'),
+        line(40, 346, 'and it ends.'),
+        line(55, 332, 'Apart from that, a new paragraph opens set in'),
+        line(40, 318, 'and runs on to its second line at the measure'),
+      ].join('\n'),
+    );
+    expect(paras).toHaveLength(2);
+    expect(paras[1]?.runs.map((r) => r.text).join('')).toContain('Apart from that');
+    expect(paras[1]?.properties.indentFirstLine).toBeCloseTo(15, 0);
+  });
+
+  it('keeps a list item whose marker line runs the full measure', () => {
+    // A FULL line followed by an indented one is an item and its continuation,
+    // not two paragraphs.
+    const paras = parasOf(
+      [
+        line(40, 360, 'A line of body text right across the measure'),
+        line(55, 346, 'and its own second line, set in under it'),
+      ].join('\n'),
+    );
+    expect(paras).toHaveLength(1);
+  });
+});
+
+describe('a word broken across a line comes back together', () => {
+  it('joins on the discretionary hyphen and drops it', () => {
+    // A line that ends in a hyphen was broken THERE. Read as prose with a
+    // space between every line, bug1997343.pdf came back "typical two-column
+    // docu ment incorporating tables, figures and mathemat ics".
+    const doc = reconstructByLayout(
+      PdfFile.parse(
+        onePagePdf(
+          '/MediaBox [0 0 400 400] /Resources << /Font << /F0 5 0 R >> >>',
+          [
+            'BT /F0 10 Tf 1 0 0 1 40 360 Tm (A line that ends in a docu\\255) Tj ET',
+            'BT /F0 10 Tf 1 0 0 1 40 346 Tm (ment and a two\\055) Tj ET',
+            'BT /F0 10 Tf 1 0 0 1 40 332 Tm (column word after it) Tj ET',
+          ].join('\n'),
+          // WinAnsiEncoding, which is what a producer writing 0xAD for a
+          // discretionary hyphen means by it: StandardEncoding — the built-in
+          // encoding of the face, and its reading with no /Encoding at all —
+          // has a single guillemet at that code (Annex D.2).
+          [
+            '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica ' +
+              '/Encoding /WinAnsiEncoding >>',
+          ],
+        ),
+      ),
+    ).doc;
+    const text = doc.body
+      .flatMap((b) => (b.kind === 'paragraph' ? b.paragraph.runs.map((r) => r.text) : []))
+      .join('');
+    // The soft hyphen goes with the break…
+    expect(text).toContain('document and');
+    // …and the plain one belongs to the word it ends.
+    expect(text).toContain('two-column word');
+  });
+});
+
+describe('mathematics is set the way the page sets it', () => {
+  const spansOf = (content: string) => {
+    const doc = reconstructByLayout(
+      PdfFile.parse(
+        onePagePdf('/MediaBox [0 0 300 200] /Resources << /Font << /F0 5 0 R >> >>', content, [
+          '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+        ]),
+      ),
+    ).doc;
+    return doc.body.flatMap((b) => (b.kind === 'paragraph' ? b.paragraph.runs : []));
+  };
+
+  it('reads a raised smaller run as a superscript (§17.3.2.42)', () => {
+    // A PDF states no such property: an exponent is a smaller face set a little
+    // higher. Read flat, bug1997343.pdf's "n^p = n mod p" came back "np", and
+    // every prime on the page landed beside its letter instead of over it.
+    const runs = spansOf(
+      'BT /F0 10 Tf 1 0 0 1 40 100 Tm (n) Tj ET\n' +
+        'BT /F0 7 Tf 1 0 0 1 46 103.6 Tm (p) Tj ET\n' +
+        'BT /F0 10 Tf 1 0 0 1 52 100 Tm ( = n mod p) Tj ET',
+    );
+    const raised = runs.find((r) => r.text.trim() === 'p');
+    expect(raised?.properties.verticalAlign).toBe('superscript');
+    // …at the LINE's size: a document states the nominal size and the layout
+    // shrinks a script, so the drawn seven points would come out at five.
+    expect(raised?.properties.fontSizePt).toBeCloseTo(10, 1);
+    // A run ON the baseline is not a script however small it is.
+    expect(runs.find((r) => r.text.includes('mod'))?.properties.verticalAlign).toBe('baseline');
+  });
+
+  it('steps between the words of a line that holds no space', () => {
+    // TeX's thin space is a sixth of an em and its medium one two ninths, both
+    // under the quarter a page that draws its own spaces needs — and a LaTeX
+    // document does both: prose with spaces in it, mathematics by stepping.
+    // bug1997343.pdf sets "f(x) = sin x + cos x" and we read "sinx+cosx".
+    const runs = spansOf(
+      'BT /F0 10 Tf 1 0 0 1 40 100 Tm (sin) Tj ET\n' +
+        'BT /F0 10 Tf 1 0 0 1 54.7 100 Tm (x) Tj ET\n' +
+        'BT /F0 10 Tf 1 0 0 1 62 100 Tm (+) Tj ET\n' +
+        'BT /F0 10 Tf 1 0 0 1 71 100 Tm (cos) Tj ET',
+    );
+    expect(runs.map((r) => r.text).join('')).toBe('sin x + cos');
+  });
+
+  it('leaves a page that writes its own spaces alone', () => {
+    // The same gaps inside a line that HAS a space in it are kerning, not
+    // words: a producer that splits a word for kerning leaves eight hundredths
+    // of an em between the halves.
+    const runs = spansOf(
+      'BT /F0 10 Tf 1 0 0 1 40 100 Tm (Con) Tj ET\n' +
+        'BT /F0 10 Tf 1 0 0 1 56.5 100 Tm (tents ) Tj ET\n' +
+        'BT /F0 10 Tf 1 0 0 1 81.5 100 Tm (here) Tj ET',
+    );
+    expect(runs.map((r) => r.text).join('')).toBe('Contents here');
+  });
+});
+
+describe('a matrix is a matrix, not three lines (§22.1.2.68)', () => {
+  /** A page of prose with a 2×2 matrix set in brackets in the middle of it. */
+  const withMatrix = (brackets = true): Uint8Array => {
+    const ops: Array<string> = [];
+    for (let i = 0; i < 5; i++)
+      ops.push(`BT /F0 10 Tf 1 0 0 1 40 ${String(370 - i * 14)} Tm (a line of prose here) Tj ET`);
+    // The numbers stand on two baselines six points apart, the brackets on the
+    // baseline between them — which is where a stretched bracket sits.
+    ops.push('BT /F0 10 Tf 1 0 0 1 60 300 Tm (1) Tj ET');
+    ops.push('BT /F0 10 Tf 1 0 0 1 80 300 Tm (2) Tj ET');
+    if (brackets) {
+      ops.push('BT /F0 10 Tf 1 0 0 1 50 294 Tm (\\() Tj ET');
+      ops.push('BT /F0 10 Tf 1 0 0 1 95 294 Tm (\\)) Tj ET');
+    }
+    ops.push('BT /F0 10 Tf 1 0 0 1 60 288 Tm (3) Tj ET');
+    ops.push('BT /F0 10 Tf 1 0 0 1 80 288 Tm (4) Tj ET');
+    for (let i = 0; i < 5; i++)
+      ops.push(
+        `BT /F0 10 Tf 1 0 0 1 40 ${String(260 - i * 14)} Tm (and more prose after it) Tj ET`,
+      );
+    return onePagePdf(
+      '/MediaBox [0 0 400 400] /Resources << /Font << /F0 5 0 R >> >>',
+      ops.join('\n'),
+      ['<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'],
+    );
+  };
+
+  it('reads the rows and the brackets as the object they are', () => {
+    // A PDF states no mathematics: a matrix reaches the page as numbers on two
+    // baselines with stretched brackets drawn between them. Read line by line,
+    // bug1997343.pdf's product of three matrices came back as three lines of
+    // prose — "1 2 1 1 1 3", "( )( ) = ( )", "3 4 0 1 3 7".
+    const doc = reconstructByLayout(PdfFile.parse(withMatrix())).doc;
+    const math = doc.body
+      .flatMap((b) => (b.kind === 'paragraph' ? b.paragraph.runs : []))
+      .find((r) => r.math !== undefined)?.math;
+    expect(math).toEqual({
+      type: 'row',
+      children: [
+        {
+          type: 'delimiter',
+          begChr: '(',
+          endChr: ')',
+          children: [
+            {
+              type: 'matrix',
+              rows: [
+                [
+                  { type: 'run', text: '1' },
+                  { type: 'run', text: '2' },
+                ],
+                [
+                  { type: 'run', text: '3' },
+                  { type: 'run', text: '4' },
+                ],
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    // …and its numbers are not read a second time as prose.
+    const text = doc.body
+      .flatMap((b) => (b.kind === 'paragraph' ? b.paragraph.runs.map((r) => r.text) : []))
+      .join(' ');
+    expect(text).toContain('a line of prose here');
+    expect(text).not.toMatch(/[1234]/u);
+  });
+
+  it('leaves close-set lines that are NOT a matrix as the prose they are', () => {
+    // The brackets are what say "matrix"; without them these are three short
+    // lines, and read as a matrix a table of figures would lose its columns.
+    const doc = reconstructByLayout(PdfFile.parse(withMatrix(false))).doc;
+    const runs = doc.body.flatMap((b) => (b.kind === 'paragraph' ? b.paragraph.runs : []));
+    expect(runs.some((r) => r.math !== undefined)).toBe(false);
+    expect(runs.map((r) => r.text).join(' ')).toMatch(/1|2|3|4/u);
+  });
+});
+
+describe('a running foot is a foot, not a paragraph (§17.6.13)', () => {
+  /**
+   * Three pages of body with the same line standing alone at the bottom, and —
+   * with `signed` — a publisher's line between it and the text.
+   */
+  const paper = (signed = false, foot?: string): Uint8Array => {
+    const page = (n: number): string => {
+      const ops: Array<string> = [];
+      for (let i = 0; i < 8; i++)
+        ops.push(
+          `BT /F0 10 Tf 1 0 0 1 40 ${String(360 - i * 14)} Tm (body line ${String(i)}) Tj ET`,
+        );
+      // Alone at the foot, a long way below the text block. `foot` replaces the
+      // line that carries the page's own number with one that repeats.
+      if (signed) ops.push('BT /F0 8 Tf 1 0 0 1 40 40 Tm (Thing Press) Tj ET');
+      const last = foot ?? `The Journal of Things ${String(n)}`;
+      ops.push(`BT /F0 8 Tf 1 0 0 1 40 20 Tm (${last} 2000) Tj ET`);
+      return ops.join('\n');
+    };
+    return pages([page(1), page(2), page(3)]);
+  };
+
+  /** Those three pages assembled into a file. */
+  const pages = (contents: ReadonlyArray<string>): Uint8Array => {
+    const kids = contents.map((_, i) => `${String(3 + i * 2)} 0 R`).join(' ');
+    const objects: Array<string> = [
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      `<< /Type /Pages /Kids [${kids}] /Count ${String(contents.length)} >>`,
+    ];
+    const fontAt = 3 + contents.length * 2;
+    contents.forEach((content, i) => {
+      objects.push(
+        `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 400] /Contents ${String(4 + i * 2)} 0 R ` +
+          `/Resources << /Font << /F0 ${String(fontAt)} 0 R >> >> >>`,
+        `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+      );
+    });
+    objects.push('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>');
+    let pdf = '%PDF-1.7\n';
+    const offsets: Array<number> = [];
+    objects.forEach((body, i) => {
+      offsets.push(pdf.length);
+      pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+    });
+    const xref = pdf.length;
+    pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+    for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+    pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`;
+    return new TextEncoder().encode(pdf);
+  };
+
+  it('lifts the repeated line into the section’s footer', () => {
+    // Read as body it goes wherever the reflow puts it: bug1997343.pdf's page
+    // number came out on a sheet of its own between the two the paper has, and
+    // TAMReview.pdf's "Sprouts — http://…" in the middle of the abstract.
+    const doc = reconstructByLayout(PdfFile.parse(paper())).doc;
+    const body = doc.body
+      .flatMap((b) => (b.kind === 'paragraph' ? b.paragraph.runs.map((r) => r.text) : []))
+      .join(' ');
+    expect(body).toContain('body line 0');
+    expect(body).not.toContain('The Journal of Things');
+    // …and the band itself, with the number in it made a field.
+    const part = doc.section?.footers[0]?.relationshipId;
+    expect(part).toBeDefined();
+    const band = part !== undefined ? doc.headersFooters?.get(part) : undefined;
+    const runs = band?.flatMap((b) => (b.kind === 'paragraph' ? b.paragraph.runs : [])) ?? [];
+    expect(runs.map((r) => r.text).join('')).toContain('The Journal of Things');
+    expect(runs.some((r) => r.field === 'PAGE')).toBe(true);
+  });
+
+  it('lifts a foot of TWO lines, in the order the page shows them', () => {
+    // A foot need not be one line. ZapfDingbats.pdf signs each sheet twice —
+    // the publisher's line, and the build stamp thirty points under it — and
+    // taking only the bottom line left the other in the body, where, after a
+    // table that fills the sheet, it had nowhere to go but a page of its own:
+    // a two-page document came out as four.
+    const doc = reconstructByLayout(PdfFile.parse(paper(true))).doc;
+    const body = doc.body
+      .flatMap((b) => (b.kind === 'paragraph' ? b.paragraph.runs.map((r) => r.text) : []))
+      .join(' ');
+    expect(body).not.toContain('Thing Press');
+    const part = doc.section?.footers[0]?.relationshipId;
+    const band = part !== undefined ? doc.headersFooters?.get(part) : undefined;
+    const lines =
+      band?.map((b) =>
+        b.kind === 'paragraph' ? b.paragraph.runs.map((r) => r.text).join('') : '',
+      ) ?? [];
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toContain('Thing Press');
+    expect(lines[1]).toContain('The Journal of Things');
+  });
+
+  it('sets a foot written in REGIONS on the stops it was written at', () => {
+    // A foot is written the way a spreadsheet's is: something at the left,
+    // something against the far edge. ZapfDingbats.pdf signs each sheet
+    // "© RenderX 2000" at the left and "XSL Formatting Objects Test Suite" at
+    // the right, and the two hundred points between them came back as one word
+    // space — the two crowding each other at the left.
+    const page = (n: number): string =>
+      [
+        ...Array.from(
+          { length: 8 },
+          (_, i) =>
+            `BT /F0 10 Tf 1 0 0 1 40 ${String(360 - i * 14)} Tm (body line ${String(i)}) Tj ET`,
+        ),
+        `BT /F0 8 Tf 1 0 0 1 40 20 Tm (Thing Press ${String(n)}) Tj ET`,
+        'BT /F0 8 Tf 1 0 0 1 200 20 Tm (The Journal of Things) Tj ET',
+      ].join('\n');
+    const doc = reconstructByLayout(PdfFile.parse(pages([page(1), page(2), page(3)]))).doc;
+    const part = doc.section?.footers[0]?.relationshipId;
+    const band = part !== undefined ? doc.headersFooters?.get(part) : undefined;
+    const line = band?.[0];
+    if (line?.kind !== 'paragraph') throw new Error('the band has a line');
+    expect(line.paragraph.runs.map((r) => r.text).join('')).toContain('\t');
+    expect(line.paragraph.properties.tabs?.[0]).toMatchObject({ relativeTo: 'right' });
+  });
+
+  it('leaves the number alone where the foot says the SAME thing on every page', () => {
+    // A page number is a number that CHANGES from page to page. ZapfDingbats.pdf
+    // signs each sheet "© RenderX 2000", and read as a page number the year came
+    // out as "© RenderX 1".
+    const doc = reconstructByLayout(PdfFile.parse(paper(true))).doc;
+    const part = doc.section?.footers[0]?.relationshipId;
+    const band = part !== undefined ? doc.headersFooters?.get(part) : undefined;
+    const runs = band?.flatMap((b) => (b.kind === 'paragraph' ? b.paragraph.runs : [])) ?? [];
+    // "Thing Press" repeats, "The Journal of Things 1|2|3" does not — so the
+    // page's own number is still a field.
+    expect(runs.some((r) => r.field === 'PAGE')).toBe(true);
+    const same = paper(true, 'Thing Press');
+    const only = reconstructByLayout(PdfFile.parse(same)).doc;
+    const id = only.section?.footers[0]?.relationshipId;
+    const kept = (id !== undefined ? only.headersFooters?.get(id) : undefined)?.flatMap((b) =>
+      b.kind === 'paragraph' ? b.paragraph.runs : [],
+    );
+    expect(kept?.map((r) => r.text).join('')).toContain('2000');
+    expect(kept?.some((r) => r.field === 'PAGE')).toBe(false);
+  });
+
+  it('leaves a last paragraph where the page put it', () => {
+    // One page proves nothing, and a page whose last line is a line's gap from
+    // the one above it is a paragraph, not a foot.
+    const doc = reconstructByLayout(
+      PdfFile.parse(
+        onePagePdf(
+          '/MediaBox [0 0 300 400] /Resources << /Font << /F0 5 0 R >> >>',
+          Array.from(
+            { length: 9 },
+            (_, i) =>
+              `BT /F0 10 Tf 1 0 0 1 40 ${String(360 - i * 14)} Tm (line ${String(i)}) Tj ET`,
+          ).join('\n'),
+          ['<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'],
+        ),
+      ),
+    ).doc;
+    expect(doc.section?.footers ?? []).toHaveLength(0);
+    const body = doc.body
+      .flatMap((b) => (b.kind === 'paragraph' ? b.paragraph.runs.map((r) => r.text) : []))
+      .join(' ');
+    expect(body).toContain('line 8');
+  });
+});
+
+describe('a crop box cuts the line it crosses (§14.11.2)', () => {
+  it('keeps the letters the page shows and drops the rest', () => {
+    // endchar.pdf is one line of a poster — "LE HOLD-UP PLANÉTAIRE" — cropped
+    // to the fourteen points that hold its É, which is all any viewer shows.
+    // A run that reached into the shown page was kept whole, so the line was
+    // re-set into a column fourteen points wide: four pages of one letter.
+    const doc = reconstructByLayout(
+      PdfFile.parse(
+        onePagePdf(
+          '/MediaBox [0 0 300 300] /CropBox [200 90 260 120] ' +
+            '/Resources << /Font << /F0 5 0 R >> >>',
+          'BT /F0 12 Tf 1 0 0 1 20 100 Tm (ABCDEFGHIJKLMNOPQRSTUVWXYZ) Tj ET',
+          ['<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'],
+        ),
+      ),
+    ).doc;
+    const text = doc.body
+      .flatMap((b) => (b.kind === 'paragraph' ? b.paragraph.runs.map((r) => r.text) : []))
+      .join('');
+    // Helvetica sets those capitals about 8.4pt apart from x=20, so the line
+    // ends around 240 and the crop's 200..260 holds its last few letters. Which
+    // few is an estimate — the run states its width, not its every letter — and
+    // the answer is a letter either way.
+    expect(text.length).toBeGreaterThan(2);
+    expect(text.length).toBeLessThan(12);
+    expect('ABCDEFGHIJKLMNOPQRSTUVWXYZ'.endsWith(text)).toBe(true);
+  });
+
+  it('leaves a line the crop does not reach', () => {
+    const doc = reconstructByLayout(
+      PdfFile.parse(
+        onePagePdf(
+          '/MediaBox [0 0 300 300] /CropBox [0 0 300 300] ' +
+            '/Resources << /Font << /F0 5 0 R >> >>',
+          'BT /F0 12 Tf 1 0 0 1 20 100 Tm (ABCDEFGHIJ) Tj ET',
+          ['<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'],
+        ),
+      ),
+    ).doc;
+    const text = doc.body
+      .flatMap((b) => (b.kind === 'paragraph' ? b.paragraph.runs.map((r) => r.text) : []))
+      .join('');
+    expect(text).toBe('ABCDEFGHIJ');
+  });
+});
+
+describe('a leader is not a row of spaced dots (§17.3.1.25)', () => {
+  it('joins the dots and ends the entry at the line', () => {
+    // A leader is drawn one character at a time with a step about as wide as a
+    // word space, so every threshold that tells a space from a kern says
+    // "space" between every dot. bug886717.pdf's contents came back as
+    // "Abstract . . . . . . . . 3", four times as long as the page sets it, and
+    // its forty entries reflowed into one paragraph across two pages.
+    const line = (y: number, word: string, page: string): string => {
+      const ops = [`BT /F0 12 Tf 1 0 0 1 40 ${String(y)} Tm (${word}) Tj ET`];
+      for (let i = 0; i < 30; i++) {
+        ops.push(`BT /F0 12 Tf 1 0 0 1 ${String(100 + i * 5.3)} ${String(y)} Tm (.) Tj ET`);
+      }
+      ops.push(`BT /F0 12 Tf 1 0 0 1 262 ${String(y)} Tm (${page}) Tj ET`);
+      return ops.join('\n');
+    };
+    const doc = Ream.parse(
+      onePagePdf(
+        '/MediaBox [0 0 300 200] /Resources << /Font << /F0 5 0 R >> >>',
+        `${line(150, 'Abstract', '3')}\n${line(135, 'Foreword', '5')}`,
+        ['<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'],
+      ),
+    ).flow;
+    const texts = doc.body.flatMap((b) =>
+      b.kind === 'paragraph' ? [b.paragraph.runs.map((r) => r.text).join('')] : [],
+    );
+    // Two entries, two paragraphs — not one paragraph of both.
+    expect(texts).toHaveLength(2);
+    expect(texts[0]).toMatch(/^Abstract \.{30} 3$/u);
+    expect(texts[1]).toMatch(/^Foreword \.{30} 5$/u);
+  });
+});
+
+/** Two pages, 200×100 then 600×400, each with one word on it. */
+function twoSizePdf(): Uint8Array {
+  const content = 'BT /F0 12 Tf 20 40 Td (Word) Tj ET';
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R 5 0 R] /Count 2 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Contents 4 0 R ' +
+      '/Resources << /Font << /F0 6 0 R >> >> >>',
+    `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 400] /Contents 4 0 R ' +
+      '/Resources << /Font << /F0 6 0 R >> >> >>',
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+  ];
+  let pdf = '%PDF-1.7\n';
+  const offsets: Array<number> = [];
+  objects.forEach((body, i) => {
+    offsets.push(pdf.length);
+    pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+  });
+  const xref = pdf.length;
+  pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+  for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+  pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`;
+  return new TextEncoder().encode(pdf);
+}
+
 /** A one-page PDF of hand-written objects; `page` is the page dict's body. */
-function onePagePdf(page: string, content: string): Uint8Array {
+function onePagePdf(page: string, content: string, extra: ReadonlyArray<string> = []): Uint8Array {
   const objects = [
     '<< /Type /Catalog /Pages 2 0 R >>',
     '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
     `<< /Type /Page /Parent 2 0 R /Contents 4 0 R ${page} >>`,
     `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+    ...extra,
   ];
   let pdf = '%PDF-1.7\n';
   const offsets: Array<number> = [];

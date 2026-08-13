@@ -47,6 +47,23 @@ describe('/ToUnicode CMap parser (E-PDF EP2)', () => {
     expect(map.get(0x0043)).toBe('c'); // +2
   });
 
+  it('counts an astral destination up as a CHARACTER, not as UTF-16 units', () => {
+    // bug1529502.pdf maps seven codes to the mathematical italic letters a..g
+    // with one range, and UTF-16 writes each of them as a surrogate pair.
+    // Measuring the destination in units made all seven "𝑎": the page reads
+    // "HKDF(s, version, e, 32)" and we read "version, a".
+    const cmap = [
+      'begincmap',
+      '1 begincodespacerange <0000> <FFFF> endcodespacerange',
+      '1 beginbfrange <043B> <0441> <D835DC4E> endbfrange',
+      'endcmap',
+    ].join('\n');
+    const { map } = parseToUnicodeCMap(new TextEncoder().encode(cmap));
+    expect(map.get(0x043b)).toBe('\u{1d44e}'); // 𝑎
+    expect(map.get(0x043f)).toBe('\u{1d452}'); // 𝑒, four along
+    expect(map.get(0x0441)).toBe('\u{1d454}'); // 𝑔, at the end of the range
+  });
+
   it('parses an array-form bfrange', () => {
     const cmap = '1 beginbfrange <0001> <0002> [<0058> <0059>] endbfrange';
     const { map } = parseToUnicodeCMap(new TextEncoder().encode(cmap));
@@ -208,6 +225,98 @@ describe('a font that names its glyphs rather than mapping them (§9.6.6.1)', ()
   });
 });
 
+/**
+ * A one-page PDF drawing `hex` in one of the fourteen standard faces, with
+ * whatever `/Encoding` entry `encoding` gives (none by default).
+ */
+function standardFacePdf(baseFont: string, hex: string, encoding = ''): Uint8Array {
+  const content = `BT /F1 12 Tf 72 720 Td <${hex}> Tj ET`;
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] ' +
+      '/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>',
+    `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+    `<< /Type /Font /Subtype /Type1 /BaseFont /${baseFont} ${encoding} >>`,
+  ];
+  let pdf = '%PDF-1.7\n';
+  const offsets: Array<number> = [];
+  objects.forEach((body, i) => {
+    offsets.push(pdf.length);
+    pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+  });
+  const xref = pdf.length;
+  pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+  for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+  pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\n`;
+  pdf += `startxref\n${String(xref)}\n%%EOF\n`;
+  return new TextEncoder().encode(pdf);
+}
+
+const standardFaceText = (baseFont: string, hex: string, encoding = ''): string | undefined => {
+  const file = PdfFile.parse(standardFacePdf(baseFont, hex, encoding));
+  return extractPageText(file, file.pages()[0]!)[0]?.text;
+};
+
+describe('the encoding a font is read through (Annex D.2)', () => {
+  it('reads a standard Latin face by its BUILT-IN encoding, not Latin-1', () => {
+    // ZapfDingbats.pdf sets its title in Times with no /Encoding at all, and
+    // read as Latin-1 "Character Sets — Zapf Dingbats" came back as
+    // "Character Sets Ð Zapf Dingbats": 0xD0 is Eth there and an em dash here.
+    expect(standardFaceText('Times-Roman', 'd0b1')).toBe('—–');
+    // The typewriter quotes are the typographic ones, which is how a TeX page
+    // writes ``quoted'' — bug1050040.pdf is that and nothing else.
+    expect(standardFaceText('Times-Roman', '606061612727')).toBe('‘‘aa’’');
+  });
+
+  it('reads the punctuation block of a font that names WinAnsiEncoding', () => {
+    // Latin-1 has C1 CONTROLS where CP-1252 has the curly quotes and the
+    // dashes, and a control is dropped as unreadable: the words closed up.
+    expect(standardFaceText('Helvetica', '93619492', '/Encoding /WinAnsiEncoding')).toBe('“a”’');
+    expect(standardFaceText('Helvetica', '968097', '/Encoding /WinAnsiEncoding')).toBe('–€—');
+  });
+
+  it('reads MacRomanEncoding, where the dashes sit elsewhere again', () => {
+    expect(standardFaceText('Helvetica', 'd0d1d5', '/Encoding /MacRomanEncoding')).toBe('–—’');
+    // …and through /BaseEncoding inside an /Encoding dictionary, under which
+    // /Differences still has the last word.
+    const dict =
+      '/Encoding << /Type /Encoding /BaseEncoding /MacRomanEncoding ' +
+      '/Differences [208 /bullet] >>';
+    expect(standardFaceText('Helvetica', 'd0d1', dict)).toBe('•—');
+  });
+
+  it('leaves a face whose encoding nobody knows to Latin-1', () => {
+    // A subset of some sans: its built-in encoding is in the program, and what
+    // a producer meant by its high codes is nearly always Latin-1.
+    expect(standardFaceText('ABCDEF+SomeSans', 'd0e9')).toBe('Ðé');
+  });
+});
+
+describe('a standard face whose own encoding is not the Latin one (Annex D.6)', () => {
+  it('reads ZapfDingbats as the pictures it draws', () => {
+    // The face states no /Encoding — none of the fourteen need to — and read
+    // through the Latin encoding, which is all that is left for a font that
+    // says nothing, ZapfDingbats.pdf's five hundred pictures came back as the
+    // alphabet: K L M for ✫ ✬ ✭.
+    expect(standardFaceText('ZapfDingbats', '4b4c4d')).toBe('✫✬✭');
+    // A subset keeps the encoding of the face it was cut from.
+    expect(standardFaceText('ABCDEF+ZapfDingbats', '4b')).toBe('✫');
+  });
+
+  it('reads the pictures by NAME as well, for a font that names its glyphs', () => {
+    expect(textForGlyphName('a38')).toBe('✫');
+    expect(textForGlyphName('a1')).toBe('✁');
+    expect(textForGlyphName('a202')).toBe('✃');
+    // `a` alone is a letter, not a dingbat.
+    expect(textForGlyphName('a')).toBe('a');
+  });
+
+  it('leaves the other thirteen faces to the Latin encoding', () => {
+    expect(standardFaceText('Helvetica', '4b4c4d')).toBe('KLM');
+  });
+});
+
 describe('the face a run was shown in (§9.8.1)', () => {
   it('reads the weight and the slant off the descriptor', () => {
     // 160F-2019.pdf sets its title in Arial-BoldMT at /FontWeight 700, and
@@ -366,6 +475,52 @@ function patternTextPdf(): Uint8Array {
   pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`;
   return new TextEncoder().encode(pdf);
 }
+
+/** A page whose one line is filled with a blue-to-red axial SHADING pattern. */
+function gradientTextPdf(): Uint8Array {
+  const content = '/Pattern cs /P1 scn BT /F1 24 Tf 20 100 Td (swept) Tj ET';
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R ' +
+      '/Resources << /Font << /F1 5 0 R >> /Pattern << /P1 6 0 R >> >> >>',
+    `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+    '<< /Type /Pattern /PatternType 2 /Shading << /ShadingType 2 /ColorSpace /DeviceRGB ' +
+      '/Coords [0 0 200 0] /Function 7 0 R /Extend [true true] >> >>',
+    '<< /FunctionType 2 /Domain [0 1] /C0 [0 0 1] /C1 [1 0 0] /N 1 >>',
+  ];
+  let pdf = '%PDF-1.7\n';
+  const offsets: Array<number> = [];
+  objects.forEach((body, i) => {
+    offsets.push(pdf.length);
+    pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+  });
+  const xref = pdf.length;
+  pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+  for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+  pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`;
+  return new TextEncoder().encode(pdf);
+}
+
+describe('type filled with a shading pattern (§8.7.4.5)', () => {
+  it('takes the middle of the sweep, and says the sweep was lost', () => {
+    // ShowText-ShadingPattern.pdf sets two of its four lines in a blue-to-red
+    // gradient. The map of the page's patterns reached the VECTOR pass and not
+    // this one, so the pattern said nothing here and the colour in force stood:
+    // both lines came back black, which is neither end of the sweep nor
+    // anywhere between them.
+    const file = PdfFile.parse(gradientTextPdf());
+    const run = extractPageText(file, file.pages()[0]!)[0];
+    expect(run?.text).toBe('swept');
+    // Halfway from blue to red, since a run carries one colour and no end of a
+    // sweep is more the colour of the words than the other.
+    expect(run?.colorHex).toBe('800080');
+    expect(run?.gradientFill).toBe(true);
+    const doc = readPdf(gradientTextPdf());
+    expect(doc.losses.some((l) => /shading pattern/u.test(l.detail))).toBe(true);
+  });
+});
 
 describe('type filled with a pattern (§8.6.6.2)', () => {
   it('takes the pattern’s colour, at the pattern’s own strength', () => {
@@ -645,6 +800,38 @@ describe('the underline a PDF draws rather than states', () => {
     expect(markDrawnRules(white.runs, white.vectors).consumed.size).toBe(0);
     const seam = pageOf(ruledTextPdf('0 0 0.5 rg 72 718 48 0.05 re f'));
     expect(markDrawnRules(seam.runs, seam.vectors).consumed.size).toBe(0);
+  });
+
+  it('reads a STROKED line as an underline too', () => {
+    // A page draws an underline either way, and the stroked one is the
+    // commoner. TAMReview.pdf strokes its copyright licence; read as a filled
+    // bar only it was not a mark at all, stayed artwork, and after the words
+    // re-set it came back crossing the line it should have sat under.
+    const { runs, vectors } = pageOf(ruledTextPdf('0.5 w 0 0 0.5 RG 72 718 m 120 718 l S'));
+    const ruled = markDrawnRules(runs, vectors);
+    expect(ruled.runs[0]?.markup).toEqual({ underline: 'single', underlineHex: '000080' });
+    expect(ruled.consumed.size).toBe(1);
+  });
+
+  it('joins an underline a page drew in PIECES', () => {
+    // A producer may stroke it a word at a time — TAMReview.pdf draws its
+    // licence as six segments end to end. Matched one by one none of them
+    // covers enough of the run it belongs to, and the phrase came back bare.
+    const { runs, vectors } = pageOf(
+      ruledTextPdf('0.5 w 0 0 0.5 RG 72 718 m 90 718 l S 91 718 m 120 718 l S'),
+    );
+    const ruled = markDrawnRules(runs, vectors);
+    expect(ruled.runs[0]?.markup?.underline).toBe('single');
+    // Both pieces are taken over, or the leftover is drawn again as artwork.
+    expect(ruled.consumed.size).toBe(2);
+  });
+
+  it('does not join two rules a word space apart is too far for', () => {
+    // A row of separate table rules is not a broken underline.
+    const { runs, vectors } = pageOf(
+      ruledTextPdf('0.5 w 0 0 0.5 RG 72 718 m 82 718 l S 108 718 m 120 718 l S'),
+    );
+    expect(markDrawnRules(runs, vectors).runs[0]?.markup?.underline).toBeUndefined();
   });
 
   it('reads a bar ACROSS the words as a strikeout', () => {
@@ -959,6 +1146,144 @@ describe('the box a viewer shows (§14.11.2)', () => {
   });
 });
 
+describe('a CMap the file NAMES rather than embeds (§9.7.5.2)', () => {
+  it('splits a mixed-width code space and reads its bytes as its own encoding', () => {
+    // `90ms-RKSJ` is Shift-JIS: one byte for 00–80 and A0–DF, two for 81–9F
+    // and E0–FC. issue11555.pdf shows `<6162632082a082a282a4>`, which is
+    // "abc " in one-byte codes and あいう in two; read as Identity-H, two
+    // bytes to a code, it came apart into six codes of nonsense.
+    const content = 'BT /F0 12 Tf 20 100 Td <6162632082a082a282a4> Tj ET';
+    const objects = [
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /Contents 4 0 R ' +
+        '/Resources << /Font << /F0 5 0 R >> >> >>',
+      `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+      '<< /Type /Font /Subtype /Type0 /BaseFont /KozMinPro6N-Regular ' +
+        '/Encoding /90ms-RKSJ-V /DescendantFonts [6 0 R] >>',
+      '<< /Type /Font /Subtype /CIDFontType0 /BaseFont /KozMinPro6N-Regular /DW 1000 ' +
+        '/CIDSystemInfo << /Registry (Adobe) /Ordering (Japan1) /Supplement 6 >> ' +
+        '/FontDescriptor 7 0 R >>',
+      '<< /Type /FontDescriptor /FontName /KozMinPro6N-Regular /Flags 4 /ItalicAngle 0 ' +
+        '/FontBBox [0 0 1000 1000] /Ascent 880 /Descent -120 /CapHeight 700 /StemV 80 >>',
+    ];
+    let pdf = '%PDF-1.7\n';
+    const offsets: Array<number> = [];
+    objects.forEach((body, i) => {
+      offsets.push(pdf.length);
+      pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+    });
+    const xref = pdf.length;
+    pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+    for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+    pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`;
+    const file = PdfFile.parse(new TextEncoder().encode(pdf));
+    const runs = extractPageText(file, file.pages()[0]!);
+    expect(runs.map((r) => r.text)).toEqual(['abc あいう']);
+    // §9.4.4 / §9.7.4.3 — and a `…-V` CMap sets its text DOWN the page: the pen
+    // advances by `/DW2`'s displacement, one em down by default, not across by
+    // the glyph's width. Read as horizontal the two shows in issue11555.pdf
+    // both sat on one baseline, the second continuing the first sideways where
+    // the file puts it underneath.
+    const run = runs[0]!;
+    expect(run.endX).toBeCloseTo(run.x, 3);
+    expect(run.y - run.endY).toBeCloseTo(7 * 12, 3); // seven glyphs, one em each
+  });
+});
+
+describe('an annotation the file drew no appearance for (§12.5.5)', () => {
+  /** A page whose only content is the annotations given. */
+  const annotated = (annots: ReadonlyArray<string>): Uint8Array => {
+    const objects = [
+      '<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [] >> >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Annots [${annots
+        .map((_, i) => `${String(i + 4)} 0 R`)
+        .join(' ')}] >>`,
+      ...annots,
+    ];
+    let pdf = '%PDF-1.7\n';
+    const offsets: Array<number> = [];
+    objects.forEach((body, i) => {
+      offsets.push(pdf.length);
+      pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+    });
+    const xref = pdf.length;
+    pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+    for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+    pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`;
+    return new TextEncoder().encode(pdf);
+  };
+
+  const shapesOf = (pdf: Uint8Array): number => {
+    const file = PdfFile.parse(pdf);
+    return collectPageVectors(file, file.pages()[0]!).vectors.length;
+  };
+
+  it('draws a ticked check box, and nothing for an unticked one', () => {
+    // §12.7.4.2 — the state is `/AS`, or `/V` where the widget states none, and
+    // `/Off` means nothing is drawn. checkbox_no_appearance.pdf is two boxes
+    // and no `/AP` between them; the page reconstructed to nothing at all.
+    const on = shapesOf(
+      annotated([
+        '<< /Type /Annot /Subtype /Widget /FT /Btn /V /Yes /AS /Yes /Rect [30 140 70 180] >>',
+      ]),
+    );
+    const off = shapesOf(
+      annotated([
+        '<< /Type /Annot /Subtype /Widget /FT /Btn /V /Off /AS /Off /Rect [90 140 130 180] >>',
+      ]),
+    );
+    expect(on).toBeGreaterThan(0);
+    expect(off).toBe(0);
+  });
+
+  it('draws a text markup where the page has no words to carry it', () => {
+    // §12.5.6.10 — a markup normally goes ON the runs it covers. bug1538111.pdf
+    // has none: four of them over an empty page, and skipped as marks about
+    // text that is not there the page came back blank.
+    const marked = shapesOf(
+      annotated([
+        '<< /Type /Annot /Subtype /Highlight /C [1 1 0] /Rect [20 100 180 120] ' +
+          '/QuadPoints [20 120 180 120 20 100 180 100] >>',
+      ]),
+    );
+    expect(marked).toBeGreaterThan(0);
+  });
+});
+
+describe('a stream wearing a transport filter (§7.4.2–7.4.5)', () => {
+  it('undoes ASCIIHex on the PAGE CONTENT, not only inside an image', () => {
+    // asciihexdecode.pdf writes its whole page as `42540A2F46312033302054660A…`
+    // — that is `BT /F1 30 Tf …`. The general-purpose filters were passed
+    // through on the reasoning that the image decoder undoes them, which is
+    // true of an image and false of every other stream a PDF holds, so the
+    // page came back blank.
+    const inner = 'BT /F1 12 Tf 20 100 Td (Hex) Tj ET';
+    const hex = `${[...inner].map((c) => c.charCodeAt(0).toString(16).padStart(2, '0')).join('')}>`;
+    const objects = [
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R ' +
+        '/Resources << /Font << /F1 5 0 R >> >> >>',
+      `<< /Length ${String(hex.length)} /Filter /ASCIIHexDecode >>\nstream\n${hex}\nendstream`,
+      '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+    ];
+    let pdf = '%PDF-1.7\n';
+    const offsets: Array<number> = [];
+    objects.forEach((body, i) => {
+      offsets.push(pdf.length);
+      pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+    });
+    const xref = pdf.length;
+    pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+    for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+    pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`;
+    const file = PdfFile.parse(new TextEncoder().encode(pdf));
+    expect(extractPageText(file, file.pages()[0]!).map((r) => r.text)).toEqual(['Hex']);
+  });
+});
+
 describe('the layers a file turns off (§8.11)', () => {
   /** A page drawing "Shown" bare and "Hidden" inside `/OC /L1 BDC`. */
   const layered = (config: string): Uint8Array => {
@@ -1094,3 +1419,89 @@ describe('a composite font that says nothing about its characters (§9.10.2)', (
     expect(text).not.toContain('�');
   });
 });
+
+describe('text colour through a named space (§8.6.8)', () => {
+  it('takes a `1 scn` in a /Separation as the ink it is, not as white', () => {
+    // The text pass read no `/ColorSpace` resources at all, so `cs` found
+    // nothing and `scn` said nothing — the colour in force simply stood.
+    // TAMReview.pdf fills its figure boxes white and then sets their labels in
+    // `/Cs8 cs 1 scn`, a `/Separation` whose full tint is black: the labels
+    // came out white on white, invisible on a page that shows them plainly.
+    const spot =
+      '[/Separation /Black /DeviceGray << /FunctionType 2 /Domain [0 1] ' +
+      '/C0 [1] /C1 [0] /N 1 >>]';
+    const content = '1 1 1 rg 0 0 200 100 re f BT /F0 12 Tf 20 40 Td /Cs cs 1 scn (Ink) Tj ET';
+    const objects = [
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Contents 4 0 R ' +
+        `/Resources << /Font << /F0 5 0 R >> /ColorSpace << /Cs ${spot} >> >> >>`,
+      `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+      '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+    ];
+    let pdf = '%PDF-1.7\n';
+    const offsets: Array<number> = [];
+    objects.forEach((body, i) => {
+      offsets.push(pdf.length);
+      pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+    });
+    const xref = pdf.length;
+    pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+    for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+    pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`;
+    const file = PdfFile.parse(new TextEncoder().encode(pdf));
+    const run = extractPageText(file, file.pages()[0]!).find((r) => r.text.includes('Ink'));
+    expect(run).toBeDefined();
+    // Tint 1 through this transform is grey 0, which is black.
+    expect(run?.colorHex).toBe('000000');
+  });
+});
+
+describe('the same text struck twice (§9.4.3)', () => {
+  it('reads a re-struck line once, not once per strike', () => {
+    // A page with no bold face to hand fakes one by drawing its text several
+    // times a fraction of a point apart. bug900822.pdf draws one line FOUR
+    // times — twice 0.16pt apart across, twice 0.32pt apart down — and read as
+    // four lines its letters came back interleaved: "TTTTeeeesssstttt" where
+    // the page shows "Test test".
+    const strikes = [
+      '20 40 Td (Test) Tj',
+      '1 0 0 1 20.16 40 Tm (Test) Tj',
+      '1 0 0 1 20 39.68 Tm (Test) Tj',
+      '1 0 0 1 20.16 39.68 Tm (Test) Tj',
+    ].join(' ');
+    const runs = runsOf(`BT /F0 16 Tf ${strikes} ET`);
+    expect(runs.map((r) => r.text)).toEqual(['Test']);
+  });
+
+  it('keeps a letter the page really does repeat', () => {
+    // The tolerance is well inside the advance of even the narrowest letter,
+    // so "ll" is two letters and not one struck twice.
+    const runs = runsOf('BT /F0 16 Tf 20 40 Td (l) Tj 1 0 0 1 24 40 Tm (l) Tj ET');
+    expect(runs.map((r) => r.text)).toEqual(['l', 'l']);
+  });
+});
+
+/** The runs a one-page PDF of this content stream yields. */
+function runsOf(content: string): Array<TextRun> {
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Contents 4 0 R ' +
+      '/Resources << /Font << /F0 5 0 R >> >> >>',
+    `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+  ];
+  let pdf = '%PDF-1.7\n';
+  const offsets: Array<number> = [];
+  objects.forEach((body, i) => {
+    offsets.push(pdf.length);
+    pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+  });
+  const xref = pdf.length;
+  pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+  for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+  pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`;
+  const file = PdfFile.parse(new TextEncoder().encode(pdf));
+  return extractPageText(file, file.pages()[0]!);
+}

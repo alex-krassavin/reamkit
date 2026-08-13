@@ -96,186 +96,196 @@
  },
  {
   "name": "bug65649.docx",
-  "score": 0.097,
+  "score": 0.1084,
   "aligned": false
  },
  {
   "name": "delins.docx",
-  "score": 0.0788,
+  "score": 0.0856,
   "aligned": false
  },
  {
   "name": "WordWithAttachments.docx",
-  "score": 0.0693,
+  "score": 0.0697,
   "aligned": true
  },
  {
-  "name": "drawing.docx",
-  "score": 0.052,
+  "name": "bib-chernigovka.netdo.ru_download_docs_17459.docx",
+  "score": 0.0617,
   "aligned": false
  },
  {
-  "name": "bib-chernigovka.netdo.ru_download_docs_17459.docx",
-  "score": 0.0508,
+  "name": "drawing.docx",
+  "score": 0.0517,
   "aligned": false
+ },
+ {
+  "name": "bug59058.docx",
+  "score": 0.0355,
+  "aligned": true
  },
  {
   "name": "60329.docx",
-  "score": 0.0348,
+  "score": 0.0327,
   "aligned": false
  },
  {
   "name": "form_footnotes.docx",
-  "score": 0.0322,
+  "score": 0.0315,
   "aligned": false
  },
  {
   "name": "61745.docx",
-  "score": 0.0303,
-  "aligned": true
- },
- {
-  "name": "bug59058.docx",
-  "score": 0.0205,
+  "score": 0.0315,
   "aligned": true
  },
  {
   "name": "Bug51170.docx",
-  "score": 0.0203,
+  "score": 0.0205,
   "aligned": true
  },
  {
   "name": "table-alignment.docx",
-  "score": 0.0144,
+  "score": 0.0192,
   "aligned": true
  },
  {
   "name": "61787.docx",
-  "score": 0.0133,
-  "aligned": true
- },
- {
-  "name": "chartex.docx",
-  "score": 0.0108,
-  "aligned": true
- },
- {
-  "name": "bug57031.docx",
-  "score": 0.0095,
-  "aligned": true
- },
- {
-  "name": "bug65738.docx",
-  "score": 0.0094,
-  "aligned": true
- },
- {
-  "name": "tika-3816.docx",
-  "score": 0.0086,
+  "score": 0.0149,
   "aligned": true
  },
  {
   "name": "IllustrativeCases.docx",
-  "score": 0.0072,
+  "score": 0.0144,
   "aligned": false
  },
  {
-  "name": "MultipleBodyBug.docx",
-  "score": 0.0064,
-  "aligned": false
- },
- {
-  "name": "testComment.docx",
-  "score": 0.0061,
-  "aligned": true
- },
- {
-  "name": "59030.docx",
-  "score": 0.0058,
-  "aligned": true
- },
- {
-  "name": "TestTableCellAlign.docx",
-  "score": 0.0058,
-  "aligned": true
- },
- {
-  "name": "Bug54849.docx",
-  "score": 0.0055,
-  "aligned": true
- },
- {
-  "name": "checkboxes.docx",
-  "score": 0.0051,
-  "aligned": true
- },
- {
-  "name": "Bug55142.docx",
-  "score": 0.0048,
-  "aligned": true
- },
- {
-  "name": "table_footnotes.docx",
-  "score": 0.0048,
-  "aligned": true
- },
- {
-  "name": "60316.docx",
-  "score": 0.0045,
-  "aligned": true
- },
- {
-  "name": "bug69628.docx",
-  "score": 0.0043,
-  "aligned": true
- },
- {
-  "name": "WithGIF.docx",
-  "score": 0.0043,
-  "aligned": true
- },
- {
-  "name": "Bug60337.docx",
-  "score": 0.004,
-  "aligned": true
- },
- {
-  "name": "bug66312.docx",
-  "score": 0.0039,
-  "aligned": true
- },
- {
-  "name": "56392.docx",
-  "score": 0.0039,
-  "aligned": true
- },
- {
-  "name": "issue_51265_3.docx",
-  "score": 0.0038,
-  "aligned": true
- },
- {
-  "name": "TestTableColumns.docx",
-  "score": 0.0036,
-  "aligned": true
- },
- {
-  "name": "FancyFoot.docx",
-  "score": 0.0035,
-  "aligned": true
- },
- {
-  "name": "comment.docx",
-  "score": 0.0032,
+  "name": "chartex.docx",
+  "score": 0.0107,
   "aligned": true
  },
  {
   "name": "table-indent.docx",
-  "score": 0.0029,
+  "score": 0.0099,
   "aligned": true
  },
  {
-  "name": "PageSpecificHeadFoot.docx",
+  "name": "Bug60337.docx",
+  "score": 0.0092,
+  "aligned": true
+ },
+ {
+  "name": "tika-3816.docx",
+  "score": 0.0087,
+  "aligned": true
+ },
+ {
+  "name": "bug65738.docx",
+  "score": 0.0085,
+  "aligned": true
+ },
+ {
+  "name": "bug57031.docx",
+  "score": 0.0085,
+  "aligned": true
+ },
+ {
+  "name": "Bug54849.docx",
+  "score": 0.0074,
+  "aligned": true
+ },
+ {
+  "name": "MultipleBodyBug.docx",
+  "score": 0.0072,
+  "aligned": false
+ },
+ {
+  "name": "bug69628.docx",
+  "score": 0.0067,
+  "aligned": true
+ },
+ {
+  "name": "60316.docx",
+  "score": 0.0067,
+  "aligned": true
+ },
+ {
+  "name": "testComment.docx",
+  "score": 0.0064,
+  "aligned": true
+ },
+ {
+  "name": "Bug55142.docx",
+  "score": 0.0059,
+  "aligned": true
+ },
+ {
+  "name": "TestTableColumns.docx",
+  "score": 0.0058,
+  "aligned": true
+ },
+ {
+  "name": "checkboxes.docx",
+  "score": 0.0052,
+  "aligned": true
+ },
+ {
+  "name": "59030.docx",
+  "score": 0.0047,
+  "aligned": true
+ },
+ {
+  "name": "TestTableCellAlign.docx",
+  "score": 0.0047,
+  "aligned": true
+ },
+ {
+  "name": "WithGIF.docx",
+  "score": 0.0045,
+  "aligned": true
+ },
+ {
+  "name": "issue_51265_3.docx",
+  "score": 0.0042,
+  "aligned": true
+ },
+ {
+  "name": "FancyFoot.docx",
+  "score": 0.0041,
+  "aligned": true
+ },
+ {
+  "name": "56392.docx",
+  "score": 0.0041,
+  "aligned": true
+ },
+ {
+  "name": "comment.docx",
+  "score": 0.0035,
+  "aligned": true
+ },
+ {
+  "name": "table_footnotes.docx",
+  "score": 0.0034,
+  "aligned": true
+ },
+ {
+  "name": "Bug66988.docx",
+  "score": 0.0034,
+  "aligned": true
+ },
+ {
+  "name": "Bug54771b.docx",
+  "score": 0.0034,
+  "aligned": true
+ },
+ {
+  "name": "bug66312.docx",
+  "score": 0.0034,
+  "aligned": true
+ },
+ {
+  "name": "65099.docx",
   "score": 0.0028,
   "aligned": true
  },
@@ -285,68 +295,63 @@
   "aligned": true
  },
  {
-  "name": "65099.docx",
-  "score": 0.0023,
-  "aligned": true
- },
- {
-  "name": "Bug54771b.docx",
-  "score": 0.0022,
-  "aligned": true
- },
- {
-  "name": "52288.docx",
-  "score": 0.0022,
+  "name": "PageSpecificHeadFoot.docx",
+  "score": 0.0026,
   "aligned": true
  },
  {
   "name": "Bug54771a.docx",
-  "score": 0.0021,
-  "aligned": true
- },
- {
-  "name": "Bug66988.docx",
-  "score": 0.002,
-  "aligned": true
- },
- {
-  "name": "smarttag-snippet.docx",
-  "score": 0.0019,
-  "aligned": true
- },
- {
-  "name": "58067.docx",
-  "score": 0.0017,
-  "aligned": true
- },
- {
-  "name": "SampleDoc.docx",
-  "score": 0.0016,
+  "score": 0.0025,
   "aligned": true
  },
  {
   "name": "shapes-with-text.docx",
-  "score": 0.0014,
+  "score": 0.0024,
+  "aligned": true
+ },
+ {
+  "name": "58067.docx",
+  "score": 0.0021,
   "aligned": true
  },
  {
   "name": "57312.docx",
-  "score": 0.0013,
+  "score": 0.002,
   "aligned": true
  },
  {
   "name": "heading123.docx",
-  "score": 0.0012,
+  "score": 0.0018,
+  "aligned": true
+ },
+ {
+  "name": "SampleDoc.docx",
+  "score": 0.0017,
+  "aligned": true
+ },
+ {
+  "name": "EmbeddedDocument.docx",
+  "score": 0.0016,
+  "aligned": true
+ },
+ {
+  "name": "issue_51265_2.docx",
+  "score": 0.0014,
   "aligned": true
  },
  {
   "name": "52449.docx",
-  "score": 0.0011,
+  "score": 0.0012,
   "aligned": true
  },
  {
   "name": "endnotes.docx",
-  "score": 0.001,
+  "score": 0.0012,
+  "aligned": true
+ },
+ {
+  "name": "52288.docx",
+  "score": 0.0011,
   "aligned": true
  },
  {
@@ -355,23 +360,23 @@
   "aligned": true
  },
  {
-  "name": "issue_51265_2.docx",
+  "name": "smarttag-snippet.docx",
+  "score": 0.001,
+  "aligned": true
+ },
+ {
+  "name": "60293.docx",
+  "score": 0.0009,
+  "aligned": true
+ },
+ {
+  "name": "emptyPPr.docx",
   "score": 0.0009,
   "aligned": true
  },
  {
   "name": "tika-3388.docx",
-  "score": 0.0008,
-  "aligned": true
- },
- {
-  "name": "60293.docx",
-  "score": 0.0008,
-  "aligned": true
- },
- {
-  "name": "bug-paragraph-alignment.docx",
-  "score": 0.0008,
+  "score": 0.0009,
   "aligned": true
  },
  {
@@ -380,13 +385,23 @@
   "aligned": true
  },
  {
-  "name": "EmbeddedDocument.docx",
+  "name": "footnotes.docx",
+  "score": 0.0008,
+  "aligned": true
+ },
+ {
+  "name": "sample.docx",
   "score": 0.0007,
   "aligned": true
  },
  {
-  "name": "footnotes.docx",
-  "score": 0.0006,
+  "name": "bookmarks.docx",
+  "score": 0.0007,
+  "aligned": true
+ },
+ {
+  "name": "bug-paragraph-alignment.docx",
+  "score": 0.0007,
   "aligned": true
  },
  {
@@ -395,12 +410,7 @@
   "aligned": true
  },
  {
-  "name": "emptyPPr.docx",
-  "score": 0.0006,
-  "aligned": true
- },
- {
-  "name": "bookmarks.docx",
+  "name": "58618.docx",
   "score": 0.0006,
   "aligned": true
  },
@@ -410,32 +420,12 @@
   "aligned": true
  },
  {
-  "name": "sample.docx",
-  "score": 0.0005,
-  "aligned": true
- },
- {
-  "name": "58618.docx",
-  "score": 0.0005,
-  "aligned": true
- },
- {
   "name": "61470.docx",
-  "score": 0.0004,
+  "score": 0.0005,
   "aligned": true
  },
  {
-  "name": "Numbering.docx",
-  "score": 0.0004,
-  "aligned": true
- },
- {
-  "name": "HeaderFooterUnicode.docx",
-  "score": 0.0004,
-  "aligned": true
- },
- {
-  "name": "DiffFirstPageHeadFoot.docx",
+  "name": "SimpleHeadThreeColFoot.docx",
   "score": 0.0004,
   "aligned": true
  },
@@ -445,7 +435,12 @@
   "aligned": true
  },
  {
-  "name": "ComplexNumberedLists.docx",
+  "name": "ThreeColHeadFoot.docx",
+  "score": 0.0003,
+  "aligned": true
+ },
+ {
+  "name": "DiffFirstPageHeadFoot.docx",
   "score": 0.0003,
   "aligned": true
  },
@@ -455,32 +450,22 @@
   "aligned": true
  },
  {
-  "name": "ThreeColHeadFoot.docx",
-  "score": 0.0002,
-  "aligned": true
- },
- {
-  "name": "SimpleHeadThreeColFoot.docx",
-  "score": 0.0002,
+  "name": "HeaderFooterUnicode.docx",
+  "score": 0.0003,
   "aligned": true
  },
  {
   "name": "Tika-792.docx",
-  "score": 0.0002,
+  "score": 0.0003,
   "aligned": true
  },
  {
-  "name": "55966.docx",
-  "score": 0.0002,
+  "name": "Numbering.docx",
+  "score": 0.0003,
   "aligned": true
  },
  {
   "name": "NoHeadFoot.docx",
-  "score": 0.0002,
-  "aligned": true
- },
- {
-  "name": "Styles.docx",
   "score": 0.0002,
   "aligned": true
  },
@@ -495,12 +480,17 @@
   "aligned": true
  },
  {
-  "name": "documentProperties.docx",
-  "score": 0.0001,
+  "name": "EmptyDocumentWithHeaderFooter.docx",
+  "score": 0.0002,
   "aligned": true
  },
  {
-  "name": "documentProtection_forms_no_password.docx",
+  "name": "Bug60341.docx",
+  "score": 0.0002,
+  "aligned": true
+ },
+ {
+  "name": "headerPic.docx",
   "score": 0.0001,
   "aligned": true
  },
@@ -510,17 +500,22 @@
   "aligned": true
  },
  {
-  "name": "headerPic.docx",
+  "name": "documentProperties.docx",
   "score": 0.0001,
   "aligned": true
  },
  {
-  "name": "Bug60341.docx",
+  "name": "ComplexNumberedLists.docx",
   "score": 0.0001,
   "aligned": true
  },
  {
-  "name": "FldSimple.docx",
+  "name": "Styles.docx",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "55966.docx",
   "score": 0.0001,
   "aligned": true
  },
@@ -530,27 +525,22 @@
   "aligned": true
  },
  {
+  "name": "bug56075-changeTracking_on.docx",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "bug56075-changeTracking_off.docx",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "documentProtection_no_protection_tag_existing.docx",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
   "name": "FieldCodes.docx",
-  "score": 0.0001,
-  "aligned": true
- },
- {
-  "name": "protected_sample.docx",
-  "score": 0.0001,
-  "aligned": true
- },
- {
-  "name": "documentProtection_trackedChanges_no_password.docx",
-  "score": 0.0001,
-  "aligned": true
- },
- {
-  "name": "EmptyDocumentWithHeaderFooter.docx",
-  "score": 0.0001,
-  "aligned": true
- },
- {
-  "name": "Headers.docx",
   "score": 0,
   "aligned": true
  },
@@ -560,17 +550,22 @@
   "aligned": true
  },
  {
-  "name": "bug56075-changeTracking_off.docx",
-  "score": 0,
-  "aligned": true
- },
- {
-  "name": "bug56075-changeTracking_on.docx",
-  "score": 0,
-  "aligned": true
- },
- {
   "name": "WithTabs.docx",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "FldSimple.docx",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "documentProtection_forms_no_password.docx",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "documentProtection_trackedChanges_no_password.docx",
   "score": 0,
   "aligned": true
  },
@@ -580,27 +575,7 @@
   "aligned": true
  },
  {
-  "name": "bug56076.docx",
-  "score": 0,
-  "aligned": true
- },
- {
   "name": "EnforcedWith.docx",
-  "score": 0,
-  "aligned": true
- },
- {
-  "name": "documentProtection_comments_no_password.docx",
-  "score": 0,
-  "aligned": true
- },
- {
-  "name": "saut_page.docx",
-  "score": 0,
-  "aligned": true
- },
- {
-  "name": "documentProtection_readonly_no_password.docx",
   "score": 0,
   "aligned": true
  },
@@ -610,7 +585,22 @@
   "aligned": true
  },
  {
-  "name": "documentProtection_no_protection_tag_existing.docx",
+  "name": "documentProtection_comments_no_password.docx",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "Headers.docx",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "protected_sample.docx",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "bug56076.docx",
   "score": 0,
   "aligned": true
  },
@@ -626,6 +616,16 @@
  },
  {
   "name": "Bug62859.docx",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "documentProtection_readonly_no_password.docx",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "saut_page.docx",
   "score": 0,
   "aligned": true
  },

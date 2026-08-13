@@ -203,16 +203,17 @@ stencil image masks, constant alpha, and the Type 3 glyphs that are drawings
 rather than letters. It honours the layers a file turns off (§8.11 optional
 content) and the box it says to show (`/CropBox`), and it decides for itself
 whether a file is a document to re-flow or a page to keep — a paper is mostly
-lines, a form is mostly marks — which `pdfLayout` overrides. It reads modern compressed files (cross-reference
+lines, a form is mostly marks — and there is nothing to configure: a caller
+cannot know which of the two it was handed. It reads modern compressed files (cross-reference
 + object streams) and encrypted ones (RC4 / AES — the user password is passed to
 `Ream.parse(bytes, { password })`, defaulting to the permissions-only case); a
 filter it does not carry can be handed to it through
 `Ream.parse(bytes, { filters })`.
 
-A form or a drawing is not a reflowable document, so
-`Ream.parse(bytes, { pdfLayout: 'positional' })` reads the page instead: every
-line stands where its glyphs stand, beside the artwork, the way up the page is
-shown.
+A form or a drawing is not a reflowable document, so the reader keeps it as a
+page instead: every line stands where its glyphs stand, beside the artwork, the
+way up the page is shown. Which of the two readings a file gets it decides
+itself and records in the losses.
 
 **Reads PowerPoint, too.** `Ream.parse` accepts a `.pptx` and turns each slide
 into a page at the deck size — text boxes (with run formatting, alignment,

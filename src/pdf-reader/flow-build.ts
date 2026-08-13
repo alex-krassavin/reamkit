@@ -9,6 +9,7 @@ import type {
   CustomPathCmd,
   FloatAnchor,
   ParagraphProperties,
+  Section,
   SectionProperties,
   ShapeFill,
   ShapeLine,
@@ -79,6 +80,12 @@ export interface TextSpan {
   readonly bold?: boolean;
   /** §9.8.1 — the face was a slanted one. */
   readonly italic?: boolean;
+  /**
+   * §17.3.2.42 — the glyphs stood OFF the baseline the line is set on, and
+   * smaller: a footnote mark, an exponent, an index. The page states it by
+   * placement, and a document by the property.
+   */
+  readonly script?: 'superscript' | 'subscript';
   /** §12.5.6.10 — a text-markup annotation marks these words. */
   readonly markup?: TextMarkup;
 }
@@ -92,7 +99,10 @@ export interface TextSpan {
 export function paragraphFromRuns(
   spans: ReadonlyArray<TextSpan>,
   outlineLevel?: number,
-  placement?: Pick<ParagraphProperties, 'alignment' | 'spacingBefore'>,
+  placement?: Pick<
+    ParagraphProperties,
+    'alignment' | 'spacingBefore' | 'indentLeft' | 'indentFirstLine'
+  >,
 ): BodyElement {
   const merged: Array<{
     text: string;
@@ -103,6 +113,7 @@ export function paragraphFromRuns(
     outline?: TextOutline;
     bold?: boolean;
     italic?: boolean;
+    script?: 'superscript' | 'subscript';
     markup?: TextMarkup;
   }> = [];
   for (const s of spans) {
@@ -117,6 +128,7 @@ export function paragraphFromRuns(
       last.outline?.widthPt === s.outline?.widthPt &&
       last.bold === s.bold &&
       last.italic === s.italic &&
+      last.script === s.script &&
       sameMarkup(last.markup, s.markup)
     ) {
       last.text += s.text;
@@ -130,11 +142,16 @@ export function paragraphFromRuns(
         ...(s.outline !== undefined ? { outline: s.outline } : {}),
         ...(s.bold !== undefined ? { bold: s.bold } : {}),
         ...(s.italic !== undefined ? { italic: s.italic } : {}),
+        ...(s.script !== undefined ? { script: s.script } : {}),
         ...(s.markup !== undefined ? { markup: s.markup } : {}),
       });
   }
+  // Whitespace a page never drew — the gaps this reader put in — collapses to
+  // one space. A TAB is not that: it is a placement, and the running head and
+  // foot are written with them (see `bandLine`), the regions of a foot standing
+  // on stops the way a spreadsheet's do.
   const runs = merged
-    .map((m) => ({ ...m, text: m.text.replace(/\s+/g, ' ') }))
+    .map((m) => ({ ...m, text: m.text.replace(/[^\S\t]+/gu, ' ') }))
     .filter((m) => m.text.length > 0);
   // Trim the paragraph's outer whitespace.
   if (runs.length > 0) {
@@ -171,6 +188,12 @@ export function paragraphFromRuns(
             ...(r.outline !== undefined ? { textOutline: r.outline } : {}),
             ...(r.bold ? { bold: true } : {}),
             ...(r.italic ? { italic: true } : {}),
+            // §17.3.2.42 `w:vertAlign` — the page set these glyphs off the
+            // line's own baseline and smaller. The SIZE that carries is the
+            // line's, not the mark's: a document states the nominal size and
+            // the layout shrinks a script, so keeping the drawn 7pt under a
+            // superscript would draw it at five.
+            ...(r.script !== undefined ? { verticalAlign: r.script } : {}),
             // §12.5.6.10 — a highlight, an underline or a strikeout stated
             // ABOUT these words rather than painted among them, so it re-sets
             // with them: §17.3.2.32 `w:shd`, §17.3.2.40 `w:u`, §17.3.2.37
@@ -246,6 +269,9 @@ export function imageBlock(
       // §20.1.8.55 — the box above is what the clip left showing, so the source
       // must be cut to match it or the whole picture squeezes into it.
       ...(image.crop ? { crop: image.crop } : {}),
+      // §20.1.8.4 `a:alphaModFix` — the page asked for the picture to be seen
+      // through, and a format that can say so should say so.
+      ...(image.alpha !== undefined ? { alpha: image.alpha } : {}),
       paragraphProperties: {},
       ...(alt ? { altText: alt } : {}),
     },
@@ -485,6 +511,9 @@ export function sectionFromPdfPages(pages: ReadonlyArray<PdfPage>): SectionPrope
 /** What the measure gives back, so the widest line still fits when re-set. */
 const SLACK = 0.01;
 
+/** How much of the sheet a margin down the page may take. */
+const DEEPEST_MARGIN = 0.5;
+
 /** How far a face's ascender stands above its baseline, as a fraction of the size. */
 const ASCENDER = 0.8;
 
@@ -547,9 +576,13 @@ export function withMeasuredMargins(
     const s = [...xs].sort((a, b) => a - b);
     return s[Math.floor(s.length / 2)] ?? 0;
   };
-  // Never more than a third of the sheet, never negative: a margin that eats
-  // the text area is worse than none.
-  const clamp = (v: number, span: number): Pt => pt(Math.max(0, Math.min(v, span / 3)));
+  // Never negative, and never so wide that it eats the text area: a third of
+  // the sheet across, and half of it DOWN. A page may hold its text well below
+  // the middle and still be a page — ShowText-ShadingPattern.pdf sets four
+  // lines under a gradient panel, and held to a third the whole block was
+  // pulled ninety points up, into the panel it stands below.
+  const clamp = (v: number, span: number, most = 1 / 3): Pt =>
+    pt(Math.max(0, Math.min(v, span * most)));
   return {
     ...section,
     margins: {
@@ -561,8 +594,18 @@ export function withMeasuredMargins(
       // basicapi.pdf's contents line runs 504.5pt across a 504.5pt measure, and
       // its page number came back at the head of the line below.
       right: clamp(median(rights) - width * SLACK, width),
-      top: clamp(median(tops), height),
-      bottom: clamp(median(bottoms), height),
+      // Down the page the TIGHTEST page decides, not the middle one. A margin
+      // is a wall the text may not cross, and the pages differ: the last one
+      // ends early, and taking the middle of two puts the wall above the line
+      // the first page ends on. ZapfDingbats.pdf's second sheet stops five rows
+      // short of its first, and its first sheet lost a row to a page of its own.
+      top: clamp(Math.min(...tops), height, DEEPEST_MARGIN),
+      // …and it gives back a little of what it measured, for the same reason
+      // the right margin does: the page was set in faces this reader does not
+      // have, and re-set in substitutes it cannot come out shorter everywhere.
+      // A measure exactly as deep as the text block drops its last line onto a
+      // sheet of its own.
+      bottom: clamp(Math.min(...bottoms) - height * SLACK, height, DEEPEST_MARGIN),
     },
   };
 }
@@ -579,11 +622,16 @@ export function buildFlowDoc(
   resources: ResourceStore = new ResourceStore(),
   section?: SectionProperties,
   embeddedFonts?: ReadonlyMap<string, FontRegistry>,
+  sections: ReadonlyArray<Section> = [],
+  headersFooters?: ReadonlyMap<string, ReadonlyArray<BodyElement>>,
 ): FlowDoc {
   return {
     kind: 'flow',
     body: resolveBodyStyles([...body], EMPTY_STYLE_SHEET),
-    sections: [],
+    // §17.6 — a document whose pages differ in size is several sections; one
+    // page size for all of them is the ordinary case and states none.
+    sections,
+    ...(headersFooters && headersFooters.size > 0 ? { headersFooters } : {}),
     ...(section ? { section } : {}),
     ...(embeddedFonts && embeddedFonts.size > 0 ? { embeddedFonts } : {}),
     styles: EMPTY_STYLE_SHEET,

@@ -10,8 +10,9 @@
 import { interpretContent, multiply } from './content';
 import { decodePdfImage } from './image-decode';
 import { collectPageAppearances } from './annots';
+import { buildFonts } from './text';
 import { hiddenProperties, hiddenXObject } from './optional-content';
-import { buildAlphaMap } from './shading';
+import { buildAlphaMap, sampledShading } from './shading';
 import type { ClipRegion, ContentFont, Matrix } from './content';
 import type { PdfDict, PdfValue } from '@/pdf/objects';
 import type { ImageCrop } from '@/core/document-model/types';
@@ -19,6 +20,7 @@ import type { Loss } from '@/core/ir';
 
 import type { PdfFile, PdfPage } from './document';
 import { PDF_NULL, PdfName, PdfStream } from '@/pdf/objects';
+import { encodePng } from '@/core/png-encode';
 import { FEATURES } from '@/core/ir';
 
 /**
@@ -50,6 +52,12 @@ export interface PdfImage {
   /** Enclosing marked-content id, if the placement was inside a `/Figure`. */
   readonly mcid?: number;
   /**
+   * §11.6.4.4 `/ca` — how opaque the picture is drawn, `0..1`. Absent is
+   * opaque. alphatrans.pdf lays a photograph in at half strength over three
+   * coloured squares, and drawn full-strength it hid all three.
+   */
+  readonly alpha?: number;
+  /**
    * §8.5.3 — where this was painted, as the chain of positions leading to it.
    * The same key a lifted path carries, so the two can be ordered against each
    * other: a picture drawn over a filled box has the larger key.
@@ -63,7 +71,6 @@ export interface PageImages {
   readonly losses: Array<Loss>;
 }
 
-const NO_FONTS: ReadonlyMap<string, ContentFont> = new Map();
 const MAX_FORM_DEPTH = 12;
 const MAX_IMAGES = 4096; // per-page DoS guard
 
@@ -81,6 +88,20 @@ export function collectPageImages(file: PdfFile, page: PdfPage): PageImages {
   const lossByDetail = new Map<string, Loss>();
   const visiting = new Set<PdfStream>();
   const alphaCache = new Map<PdfDict | undefined, ReturnType<typeof buildAlphaMap>>();
+  // §9.6.5 — the fonts have to be built here, empty though this pass's interest
+  // in text is: without them the interpreter cannot know a face is Type 3, and
+  // a Type 3 glyph is a content stream that may paint a PICTURE. Passed
+  // `NO_FONTS`, this pass saw no glyph calls at all and a page set in a bitmap
+  // Type 3 font came back with nothing on it. Cached per resource dictionary,
+  // as the paint states are.
+  const fontCache = new Map<PdfDict | undefined, ReadonlyMap<string, ContentFont>>();
+  const fontsOf = (resources: PdfDict | undefined): ReadonlyMap<string, ContentFont> => {
+    const had = fontCache.get(resources);
+    if (had) return had;
+    const made = buildFonts(file, resources);
+    fontCache.set(resources, made);
+    return made;
+  };
 
   const addLoss = (severity: 'dropped' | 'degraded', detail: string): void => {
     if (!lossByDetail.has(detail)) {
@@ -108,7 +129,7 @@ export function collectPageImages(file: PdfFile, page: PdfPage): PageImages {
     }
     const result = interpretContent(
       content,
-      NO_FONTS,
+      fontsOf(resources),
       baseCtm,
       undefined,
       paints,
@@ -147,6 +168,62 @@ export function collectPageImages(file: PdfFile, page: PdfPage): PageImages {
       visiting.delete(stream);
     }
 
+    // §9.6.5 — a Type 3 glyph is a content stream, and a bitmap font's glyph
+    // is a PICTURE: an inline stencil mask, or a `Do` of one image apiece. The
+    // vector pass has walked these since it learned about Type 3; this one
+    // never did, so a page set in such a font came back with nothing on it at
+    // all. french_diacritics.pdf draws each accented letter as a 40×59 stencil
+    // inside its glyph, and bug1011159.pdf as one XObject per glyph.
+    for (const call of result.glyphs) {
+      if (depth >= MAX_FORM_DEPTH || visiting.has(call.stream)) continue;
+      visiting.add(call.stream);
+      walk(
+        call.resources ?? resources,
+        file.streamData(call.stream),
+        call.ctm,
+        depth + 1,
+        inheritedMcid,
+        [...prefix, call.order],
+      );
+      visiting.delete(call.stream);
+    }
+
+    // §8.7.4.3 / §8.7.4.5.3 — a bare `sh` paints the clip with a shading, and a
+    // FUNCTION-BASED one is a function of two variables over a rectangle: no
+    // gradient stands for it, but a picture does exactly.
+    // function_based_shading.pdf is nine such squares and the whole page.
+    for (const paint of result.shadings) {
+      if (images.length >= MAX_IMAGES) return;
+      const dict = resources ? file.get(resources, 'Shading') : PDF_NULL;
+      const shading =
+        dict instanceof Map ? file.resolve(dict.get(paint.name) ?? PDF_NULL) : PDF_NULL;
+      const sh =
+        shading instanceof PdfStream ? shading.dict : shading instanceof Map ? shading : undefined;
+      if (!sh) continue;
+      // §11.6.5 — a mask decides where a masked paint lands, and none is
+      // applied here; drawn to its clip it would be a hard rectangle.
+      if (paint.masked) continue;
+      const sampled = sampledShading(file, sh);
+      if (!sampled) continue;
+      // §8.7.4.5.3 — the `/Matrix` on the shading maps its domain onto the
+      // space the `sh` was painted in, and the CTM carries that to the page.
+      const placed = multiply(matrixOf(file, sh), paint.ctm);
+      const [dx0, dx1, dy0, dy1] = sampled.domain;
+      const unit: Matrix = [dx1 - dx0, 0, 0, dy1 - dy0, dx0, dy0];
+      images.push({
+        ...geometry(
+          multiply(unit, placed),
+          {
+            bytes: encodePng(sampled.size, sampled.size, 'rgb', sampled.rgb),
+            format: 'png',
+          },
+          inheritedMcid,
+          paint.clip,
+        ),
+        orderKey: [...prefix, paint.order],
+      });
+    }
+
     for (const placement of result.images) {
       if (images.length >= MAX_IMAGES) return;
       // §8.9.7 — an inline image names no resource: it IS the resource, written
@@ -159,7 +236,13 @@ export function collectPageImages(file: PdfFile, page: PdfPage): PageImages {
         );
         if (decoded.ok) {
           images.push({
-            ...geometry(placement.ctm, decoded, placement.mcid ?? inheritedMcid, placement.clip),
+            ...geometry(
+              placement.ctm,
+              decoded,
+              placement.mcid ?? inheritedMcid,
+              placement.clip,
+              placement.alpha,
+            ),
             orderKey: [...prefix, placement.order],
           });
           if (decoded.degraded) addLoss('degraded', decoded.degraded);
@@ -179,7 +262,7 @@ export function collectPageImages(file: PdfFile, page: PdfPage): PageImages {
         const decoded = decodePdfImage(file, stream, placement.fillHex);
         if (decoded.ok) {
           images.push({
-            ...geometry(placement.ctm, decoded, mcid, placement.clip),
+            ...geometry(placement.ctm, decoded, mcid, placement.clip, placement.alpha),
             orderKey: [...prefix, placement.order],
           });
           if (decoded.degraded) addLoss('degraded', decoded.degraded);
@@ -242,6 +325,7 @@ function geometry(
   decoded: { bytes: Uint8Array; format: 'png' | 'jpeg' | 'jpeg2000' },
   mcid: number | undefined,
   clip: ClipRegion | undefined,
+  alpha?: number,
 ): Omit<PdfImage, 'orderKey'> {
   const widthPt = Math.hypot(ctm[0], ctm[1]) || 1;
   const heightPt = Math.hypot(ctm[2], ctm[3]) || 1;
@@ -277,6 +361,7 @@ function geometry(
     ...(crop ? { crop } : {}),
     ...(Math.abs(angle) > 0.5 ? { rotationDeg: angle } : {}),
     ...(mcid !== undefined ? { mcid } : {}),
+    ...(alpha !== undefined ? { alpha } : {}),
   };
 }
 

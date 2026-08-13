@@ -94,7 +94,7 @@ import type { StructNode, StructType } from '@/pdf/struct-tree';
 import type { MetaPicture } from '@/core/metafile/picture';
 import { ResourceStore, halfPtToPt, pt } from '@/core/ir';
 import { headingLevelOf } from '@/core/outline';
-import { createFontMeasure, shapeText } from '@/core/font';
+import { createFontMeasure, hasSubstitutable, shapeText, substituteLetters } from '@/core/font';
 import { resolveFamilyStyle } from '@/core/fonts';
 import { scriptForCodepoint } from '@/core/fonts/scripts';
 import { prepareImage } from '@/core/images';
@@ -4634,6 +4634,49 @@ function fallbackFaceKey(
 }
 
 /**
+ * A character no face on hand can draw, set as the letters it stands for.
+ *
+ * `ﬀ` (U+FB00) is one glyph for two f's — a shape of the FACE, not a letter of
+ * the alphabet, and most faces carry no such code point at all: they form the
+ * ligature from `ff` through their own `liga` table. `𝑝` (U+1D45D) is a lower
+ * case p set in italic, given a code point of its own so that mathematics can
+ * name a variable in plain text; no ordinary face carries that either. So the
+ * run's own face drew nothing, no other loaded face answered, and the character
+ * went out as a box or as nothing at all: bug1873345.pdf reads "different" and
+ * we set "di erent", bug1529502.pdf reads "p ← trim(p)" and we set "□ ← □".
+ * The letters are the same text — the ligature the face is free to form again,
+ * the slant is lost, and both beat a box.
+ *
+ * Only where nobody can draw the character itself: one a face DOES carry is
+ * drawn as written.
+ *
+ * @param options  The render options (the loaded registries).
+ * @param primary  The run's own face.
+ * @param resolved Its resolved properties (weight and slant).
+ * @param text     The run's text.
+ * @returns The text to set, which is `text` itself unless something was undrawable.
+ */
+function drawableText(
+  options: StyledRenderOptions,
+  primary: ParsedTtf,
+  resolved: ResolvedRunProperties,
+  text: string,
+): string {
+  if (!hasSubstitutable(text)) return text;
+  let out = '';
+  for (const ch of text) {
+    const cp = ch.codePointAt(0)!;
+    const letters = substituteLetters(cp);
+    const drawable =
+      letters === undefined ||
+      primary.glyphForCodepoint(cp) !== 0 ||
+      fallbackFaceKey(options, cp, resolved.bold, resolved.italic) !== undefined;
+    out += drawable ? ch : letters;
+  }
+  return out;
+}
+
+/**
  * §9.2.2 — the face a request had to settle for, and what is left to draw.
  *
  * A registry may hold one face and be asked for four: `FontBytesByVariant`
@@ -4830,7 +4873,14 @@ function collectFontResources(
     // /ToUnicode (PDF/A §6.3.5 / §6.3.8).
     // A marker whose glyph the font lacks is drawn as another character
     // (see {@link markerText}), so the subset must reserve THAT one.
-    const text = run.listMarker === true ? markerText(run.text, parsed) : run.text;
+    // A ligature nobody can draw is set as its letters (see
+    // {@link drawableText}), so it is those letters the subset must reserve.
+    const text = drawableText(
+      options,
+      parsed,
+      resolved,
+      run.listMarker === true ? markerText(run.text, parsed) : run.text,
+    );
     // A character this face cannot draw is drawn by ANOTHER one (see
     // {@link fallbackFaceKey}), and its glyphs have to be reserved in THAT
     // face's subset — the walk that measures and the walk that embeds must
@@ -5523,9 +5573,15 @@ function tokenizeParagraph(
     // "Salary⁽²⁾" came out full size, on the line (45540_classic_Header.xlsx).
     const script = SCRIPT_OFFSET[resolvedRun.verticalAlign] ?? 0;
     const own = lookupFont(fontResources, fontKey);
-    const faceFor = facesForRun(options, fontResources, own.parsed, resolvedRun, run.text);
+    // A ligature nobody can draw is set as its letters — before the plans are
+    // built, because everything downstream measures and draws what it is given.
+    const drawn = ((): typeof run => {
+      const text = drawableText(options, own.parsed, resolvedRun, run.text);
+      return text === run.text ? run : { ...run, text };
+    })();
+    const faceFor = facesForRun(options, fontResources, own.parsed, resolvedRun, drawn.text);
     return {
-      run,
+      run: drawn,
       resolvedRun,
       font: own,
       ...(faceFor ? { faceFor } : {}),
@@ -8495,6 +8551,21 @@ function paginateSections(
       // page it would make is thrown away rather than printed blank.
       if (asm.pageHasContent() || asm.pageInSection === 0) asm.flushPage(true);
       else asm.dropPage();
+      // §17.6.22 — `oddPage` and `evenPage` name the SHEET the next section
+      // opens on, not merely that it opens one: where the count falls on the
+      // wrong parity the sheet between is printed BLANK, which is how a
+      // chapter always starts on a right-hand page. The blank belongs to the
+      // section that ends here — it is printed before the next one begins —
+      // so it is flushed while that section's header and footer still stand.
+      const opening = sectionCtxs[asm.secIdx + 1]?.properties;
+      const wants = opening?.sectionStart;
+      if (wants === 'oddPage' || wants === 'evenPage') {
+        const first = opening?.pageNumberStart ?? asm.pageNumber;
+        if ((first % 2 === 1) !== (wants === 'oddPage')) {
+          asm.cursorY = asm.ctx.pageHeight - asm.ctx.marginTop;
+          asm.flushPage(true);
+        }
+      }
       asm.secIdx++;
       asm.ctx = sectionCtxs[asm.secIdx]!;
       asm.restartPageNumbers(asm.ctx);

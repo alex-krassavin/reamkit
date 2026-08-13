@@ -429,7 +429,7 @@ function parseSectPrNode(sectPr: PoNode): SectionProperties {
   let pageNumberStart: number | undefined;
   let lineNumbering: SectionProperties['lineNumbering'];
   let columns: SectionColumns | undefined;
-  let sectionStart: 'continuous' | 'nextPage' | undefined;
+  let sectionStart: 'continuous' | 'nextPage' | 'oddPage' | 'evenPage' | undefined;
   let pageBorders: SectionProperties['pageBorders'];
   let gridLinePitchPt: Pt | undefined;
   const headers: Array<HeaderFooterReference> = [];
@@ -517,10 +517,12 @@ function parseSectPrNode(sectPr: PoNode): SectionProperties {
         gridLinePitchPt = twipsToPt(pitch);
       }
     } else if (poIs(child, 'w:type')) {
-      // §17.6.22 ST_SectionMark. Only `continuous` keeps the page; the
-      // odd/even/column starts all begin a new one, which is what we do for
-      // every section anyway.
-      sectionStart = poAttr(child, 'val') === 'continuous' ? 'continuous' : 'nextPage';
+      // §17.6.22 ST_SectionMark. `continuous` keeps the page; `oddPage` and
+      // `evenPage` ask for a sheet of that parity, which the layout pads to;
+      // `nextColumn` is a page here as it is for a section of one column.
+      const val = poAttr(child, 'val');
+      sectionStart =
+        val === 'continuous' || val === 'oddPage' || val === 'evenPage' ? val : 'nextPage';
     }
   }
 

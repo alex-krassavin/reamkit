@@ -13,9 +13,11 @@ import { buildDecryptor } from './decrypt';
 import { Lexer } from './lexer';
 import { parseIndirectObject, parseObject } from './parser';
 import { reversePredictor } from './predictor';
+import { ascii85Decode, asciiHexDecode, runLengthDecode } from './stream-filters';
 import type { Decryptor } from './decrypt';
 import type { PdfArray, PdfDict, PdfValue } from '@/pdf/objects';
 import { PDF_NULL, PdfName, PdfRef, PdfStream } from '@/pdf/objects';
+import { lzwDecodeMsb } from '@/core/lzw';
 
 /** A PDF rectangle `[llx, lly, urx, ury]` in default user-space units (§7.9.5). */
 export type Rectangle = readonly [number, number, number, number];
@@ -302,6 +304,18 @@ export class PdfFile {
         } catch {
           // leave undecoded on a malformed stream
         }
+      } else if (GENERAL_FILTERS[f.value]) {
+        // §7.4.2–7.4.5 — transport, undone for any stream.
+        data = GENERAL_FILTERS[f.value]!(data);
+        flate = true; // …and a predictor may sit on top of it, as with Flate
+      } else if (f.value === 'LZWDecode' || f.value === 'LZW') {
+        // §7.4.4 — LZW takes one parameter of its own: `/EarlyChange` says
+        // whether the code width grows one code early, and 1 is the default.
+        const parms = this.resolve(stream.dict.get('DecodeParms') ?? PDF_NULL);
+        const p = Array.isArray(parms) ? this.resolve(parms[0] ?? PDF_NULL) : parms;
+        const early = p instanceof Map ? this.resolve(p.get('EarlyChange') ?? PDF_NULL) : undefined;
+        data = lzwDecodeMsb(data, { earlyChange: early === 0 ? 0 : 1, limit: MAX_LZW_OUT });
+        flate = true;
       } else if (this.filters[f.value]) {
         const decoded = runFilter(this.filters[f.value], data);
         if (decoded) data = decoded;
@@ -361,17 +375,30 @@ function runFilter(filter: StreamFilter | undefined, data: Uint8Array): Uint8Arr
   }
 }
 
-// Filters other code undoes (image-decode's own chain) or that need no undoing
-// here — `streamData` leaving them alone is not a failure to report.
+// The image CODECS: undoing one is decoding a picture, which is
+// `./image-decode`'s work and not this. `streamData` leaving them alone is not
+// a failure to report.
+//
+// The general-purpose filters (§7.4.2–7.4.5) are NOT here any more. They say
+// nothing about what the bytes mean — they are transport, and a stream still
+// wearing one has not been read. Passed through on the reasoning that
+// "image-decode undoes them", they left every non-image stream raw:
+// asciihexdecode.pdf writes its whole page as `42540A2F4631…`, which is
+// `BT /F1 30 Tf …`, and the page came back blank.
+/** A decompressed LZW stream larger than this is a bomb, not a document. */
+const MAX_LZW_OUT = 1 << 28;
+
+/** §7.4.2–7.4.5 — the filters that are transport, whatever the stream holds. */
+const GENERAL_FILTERS: Readonly<Record<string, (b: Uint8Array) => Uint8Array>> = {
+  ASCIIHexDecode: asciiHexDecode,
+  AHx: asciiHexDecode,
+  ASCII85Decode: ascii85Decode,
+  A85: ascii85Decode,
+  RunLengthDecode: runLengthDecode,
+  RL: runLengthDecode,
+};
+
 const PASSTHROUGH_FILTERS = new Set([
-  'LZWDecode',
-  'LZW',
-  'RunLengthDecode',
-  'RL',
-  'ASCII85Decode',
-  'A85',
-  'ASCIIHexDecode',
-  'AHx',
   'DCTDecode',
   'DCT',
   'JPXDecode',

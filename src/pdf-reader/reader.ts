@@ -65,20 +65,16 @@ function endsLikePdf(bytes: Uint8Array): boolean {
  *                 opens permissions-only encryption.
  * @param filters  Decoders for `/Filter` names this reader does not implement
  *                 (§7.4); see {@link StreamFilters}.
- * @param layout   `'auto'` (the default) lets the FILE decide: a page that is
- *                 mostly marks is reproduced, one that is mostly lines is re-set,
- *                 and the reader records which it chose. `'flow'` reads a
- *                 re-flowable document out of the page —
- *                 paragraphs and tables in reading order, from the structure
- *                 tree where there is one. `'positional'` keeps the page: every
- *                 line stands where its glyphs do, beside the artwork, which is
- *                 what a form or a drawing needs and what a paragraph cannot be.
  * @returns The reconstructed FlowDoc and its accumulated {@link Loss} report.
+ *
+ * Which of the two readings a file gets is the FILE's to decide and no
+ * caller's: a page that is mostly marks is reproduced where it stands, one
+ * that is mostly lines is re-set as a document, and the reader records which
+ * it chose. There is no override — see the note on {@link readingOf}.
  */
 export function readPdf(
   bytes: Uint8Array,
   password = '',
-  layout: 'flow' | 'positional' | 'auto' = 'auto',
   filters: StreamFilters = {},
 ): ReadResult<FlowDoc> {
   const file = PdfFile.parse(bytes, password, filters);
@@ -107,18 +103,20 @@ export function readPdf(
     });
   }
 
-  // Which reading the FILE asks for, where the caller did not say.
-  const reading = layout === 'auto' ? readingOf(file) : layout;
-  if (layout === 'auto') {
-    losses.push({
-      severity: 'degraded',
-      feature: FEATURES.text,
-      detail:
-        reading === 'positional'
-          ? 'PDF read as a PAGE (placed): its artwork outweighs its prose, so every line stands where its glyphs stand — pass pdfLayout: "flow" to re-set it as a document instead'
-          : 'PDF read as a DOCUMENT (flowing): its prose outweighs its artwork, so the words re-set and the artwork takes its turn in reading order — pass pdfLayout: "positional" to reproduce the page instead',
-    });
-  }
+  // Which reading the file asks for. The FILE decides, always: a caller cannot
+  // know whether the bytes it was handed are a paper or a form, and asking it
+  // to choose only moved the guess outward — and left the choice the library
+  // actually makes untested, because everything that measured it pinned the
+  // other one.
+  const reading = readingOf(file);
+  losses.push({
+    severity: 'degraded',
+    feature: FEATURES.text,
+    detail:
+      reading === 'positional'
+        ? 'PDF read as a PAGE (placed): its artwork outweighs its prose, so every line stands where its glyphs stand'
+        : 'PDF read as a DOCUMENT (flowing): its prose outweighs its artwork, so the words re-set and the artwork takes its turn in reading order',
+  });
   const tagged = reading === 'positional' ? undefined : reconstructTaggedPdf(file);
   const reconstruction = tagged ?? reconstructByLayout(file, reading);
   if (!tagged && reading !== 'positional') {
@@ -131,14 +129,6 @@ export function readPdf(
   }
   // Per-image losses from EP6 (undecodable colour spaces, dropped alpha, …).
   losses.push(...reconstruction.losses);
-  // Filled paths (EP10), stroked lines (EP11), shading-pattern gradients
-  // (EP16c) and the clipping paths that bound them are all lifted; a bare `sh`
-  // shading, which paints a region rather than filling a path, is not.
-  losses.push({
-    severity: 'dropped',
-    feature: FEATURES.images,
-    detail: 'PDF bare-shading (sh) vector regions are not reconstructed',
-  });
   return { doc: reconstruction.doc, losses };
 }
 
@@ -160,22 +150,48 @@ export function readPdf(
  * records which reading it took and why, and the caller can name the other.
  */
 function readingOf(file: PdfFile): 'flow' | 'positional' {
-  /** Below this many marks a page is prose with decoration, whatever the ratio. */
-  const ENOUGH_MARKS = 20;
+  /**
+   * Below this many marks a page is prose with decoration, whatever the ratio.
+   *
+   * It stood at twenty, and calgray.pdf is a five-by-four grid of grey swatches
+   * with a label in each: twenty boxes, of which the one painted white is not a
+   * mark anybody can see. Nineteen — one short — and all three pages of it were
+   * read as prose, the labels of each row run together into a line and the
+   * sheet spilling onto a second page. Nineteen boxes in a grid are not a page
+   * of prose with a rule under its heading.
+   */
+  const ENOUGH_MARKS = 12;
   /** Twice as many marks as lines is a page that is drawn rather than written. */
   const DRAWN = 2;
+  /** Below this many runs, an angle is a stamp or a watermark and not the page. */
+  const ENOUGH_TURNED = 8;
   const ratios: Array<number> = [];
   for (const page of file.pages()) {
     let marks = 0;
     let lines = 0;
+    let turned = 0;
+    let runs = 0;
     try {
       marks = collectPageVectors(file, page, []).vectors.length;
       // Baselines, not runs: a line broken into twenty runs is still one line,
       // and counting runs would make ordinary justified prose look drawn.
       const ys = new Set<number>();
-      for (const run of extractPageText(file, page)) ys.add(Math.round(run.y));
+      for (const run of extractPageText(file, page)) {
+        ys.add(Math.round(run.y));
+        runs++;
+        if (run.angleDeg !== undefined) turned++;
+      }
       lines = ys.size;
     } catch {
+      continue;
+    }
+    // §9.4.2 — a page whose words are set at an ANGLE is a page being drawn,
+    // whatever else is on it: the placement IS the content, and re-set flat the
+    // words come back in an order the page never had. bug946506.pdf runs every
+    // line of its lorem ipsum down the sheet at twenty degrees, and read as
+    // prose its columns interleaved — "adipiscinnon luctus eleipsum dolor sit".
+    if (runs >= ENOUGH_TURNED && turned > runs * 0.5) {
+      ratios.push(DRAWN);
       continue;
     }
     if (marks < ENOUGH_MARKS) {
@@ -203,11 +219,6 @@ export const pdfReader: DocumentReader<FlowDoc> = {
     readPdf(
       bytes,
       typeof opts?.password === 'string' ? opts.password : '',
-      opts?.pdfLayout === 'positional'
-        ? 'positional'
-        : opts?.pdfLayout === 'flow'
-          ? 'flow'
-          : 'auto',
       isFilters(opts?.filters) ? opts.filters : {},
     ),
 };

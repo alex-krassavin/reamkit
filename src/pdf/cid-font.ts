@@ -10,7 +10,7 @@
 import type { FontMeasure, ParsedTtf } from '@/core/font';
 import type { PdfRef } from '@/pdf/objects';
 import type { PdfDocument } from '@/pdf/writer';
-import { createFontMeasure, glyphClosure, subsetTtf } from '@/core/font';
+import { createFontMeasure, glyphClosure, lettersForLigature, subsetTtf } from '@/core/font';
 import { deflatedStream, dict, name, ref } from '@/pdf/objects';
 
 const encoder = new TextEncoder();
@@ -199,6 +199,24 @@ function consecutiveRuns(ids: ReadonlyArray<number>): Array<Array<number>> {
   return runs;
 }
 
+/**
+ * How much a code point says about the character a glyph stands for.
+ *
+ * A presentation form is a shape — the ligature two letters make, the form a
+ * letter takes where it joins — but a shape that names its letters. A
+ * private-use code is a font's own numbering and names nothing at all. A glyph
+ * several codes reach keeps the one that says the most.
+ *
+ * @param cp The code point.
+ * @returns 0 for a character, 1 for a presentation form, 2 for private use.
+ */
+function codeRank(cp: number): 0 | 1 | 2 {
+  if (cp >= 0xe000 && cp <= 0xf8ff) return 2;
+  // Alphabetic and Arabic presentation forms, A and B.
+  if ((cp >= 0xfb00 && cp <= 0xfdff) || (cp >= 0xfe70 && cp <= 0xfeff)) return 1;
+  return 0;
+}
+
 // PDF spec Annex D — ToUnicode CMap.
 // We scan the BMP (U+0020..U+FFFF) once and emit a bfchar entry for every
 // codepoint mapped to a non-.notdef glyph. Each glyph keeps only its first
@@ -226,9 +244,29 @@ function buildToUnicodeCMap(parsed: ParsedTtf, subsetGids?: ReadonlyArray<number
   for (let cp = 0x0009; cp <= 0xffff; cp++) {
     if (cp >= 0xd800 && cp <= 0xdfff) continue;
     const gid = parsed.glyphForCodepoint(cp);
-    if (gid === 0 || gidToCps.has(gid)) continue;
+    if (gid === 0) continue;
+    const had = gidToCps.get(gid);
+    if (had) {
+      // Two codes reaching one glyph: keep the one that says the most about the
+      // character. Arimo's fl ligature answers both to U+FB02 and to U+F002,
+      // the legacy private-use slot, and the scan runs upward — so every "fl"
+      // we set went out mapped to a code that means nothing outside that one
+      // font, and the text of our own page could not be searched.
+      if (had.length === 1 && codeRank(cp) < codeRank(had[0]!)) gidToCps.set(gid, [cp]);
+      continue;
+    }
     gidToCps.set(gid, [cp]);
     order.push(gid);
+  }
+  // A ligature the font gives a code point of its own is still those letters:
+  // "ﬂ" is a shape, and a search for "flavor" does not find "ﬂavor".
+  for (const [gid, cps] of gidToCps) {
+    const letters = cps.length === 1 ? lettersForLigature(cps[0]!) : undefined;
+    if (letters !== undefined)
+      gidToCps.set(
+        gid,
+        [...letters].map((c) => c.codePointAt(0)!),
+      );
   }
   // Resolve ligatures to a fixpoint so chained ligatures (e.g. ffi = ff + i)
   // expand fully even if their component is itself a ligature glyph.
@@ -236,22 +274,27 @@ function buildToUnicodeCMap(parsed: ParsedTtf, subsetGids?: ReadonlyArray<number
   while (changed) {
     changed = false;
     for (const [key, ligGid] of parsed.ligatures) {
-      if (gidToCps.has(ligGid)) continue;
+      const have = gidToCps.get(ligGid);
+      // A ligature the `cmap` also reaches directly is still a ligature: the
+      // code it answers to is its SHAPE (U+FB02 is "the fl glyph"), and §9.10.3
+      // asks for the characters it stands for. A search for "flavor" does not
+      // find "ﬂavor".
+      if (have && !(have.length === 1 && codeRank(have[0]!) > 0)) continue;
       const cps: Array<number> = [];
       let ok = true;
       for (const comp of key.split(',')) {
         const c = gidToCps.get(Number(comp));
-        if (!c) {
+        if (!c || c === have) {
           ok = false;
           break;
         }
         cps.push(...c);
       }
-      if (ok && cps.length > 0) {
-        gidToCps.set(ligGid, cps);
-        order.push(ligGid);
-        changed = true;
-      }
+      if (!ok || cps.length === 0) continue;
+      if (have?.join(',') === cps.join(',')) continue;
+      gidToCps.set(ligGid, cps);
+      if (!have) order.push(ligGid);
+      changed = true;
     }
   }
   const pairs = order

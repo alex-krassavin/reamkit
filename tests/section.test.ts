@@ -131,6 +131,48 @@ describe('parseSection', () => {
   });
 });
 
+describe('a section that opens on an odd or even sheet (§17.6.22)', () => {
+  const sect = (type: string): string =>
+    `<w:sectPr><w:type w:val="${type}"/><w:pgSz w:w="11906" w:h="16838"/>` +
+    '<w:pgMar w:top="720" w:right="720" w:bottom="720" w:left="720"/></w:sectPr>';
+
+  /** Three sections, the middle one starting the way `type` says. */
+  const threeSections = (type: string): Uint8Array =>
+    buildDocxFromBody(
+      `<w:p><w:pPr>${sect('nextPage')}</w:pPr><w:r><w:t>ONE</w:t></w:r></w:p>` +
+        `<w:p><w:pPr>${sect(type)}</w:pPr><w:r><w:t>TWO</w:t></w:r></w:p>` +
+        '<w:p><w:r><w:t>THREE</w:t></w:r></w:p>' +
+        sect('nextPage'),
+    );
+
+  it('reads the type the section states, rather than flattening it', () => {
+    const sections = parseSections(
+      OpcPackage.open(threeSections('oddPage')).getMainDocument().data,
+    );
+    expect(sections.map((s) => s.properties.sectionStart)).toEqual([
+      'nextPage',
+      'oddPage',
+      'nextPage',
+    ]);
+  });
+
+  it('prints the blank sheet between where the count falls wrong', () => {
+    // The first section ends on page 1, so a section that must open on an ODD
+    // page opens on page 3 — page 2 is printed blank. Read as a plain
+    // `nextPage`, the chapter opened on the left-hand sheet.
+    const pdf = asLatin1(convertDocxToPdfSync(threeSections('oddPage'), { fonts: FONTS }));
+    expect((pdf.match(/\/Type\s*\/Page[^s]/gu) ?? []).length).toBe(4);
+    // …and an EVEN start needs none here, since page 2 already is one.
+    const even = asLatin1(convertDocxToPdfSync(threeSections('evenPage'), { fonts: FONTS }));
+    expect((even.match(/\/Type\s*\/Page[^s]/gu) ?? []).length).toBe(3);
+  });
+
+  it('writes the type back out, so a round trip keeps it', () => {
+    const flow = readDocx(threeSections('oddPage')).doc;
+    expect(flow.sections[1]?.properties.sectionStart).toBe('oddPage');
+  });
+});
+
 describe('a section that names no band of its own (§17.10.1)', () => {
   it('takes the header, the footer and the titlePg of the one before it', () => {
     // endingSectionProps.docx puts its references on the FIRST section and

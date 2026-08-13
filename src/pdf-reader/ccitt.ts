@@ -1,9 +1,9 @@
 // E-PDF EP15 — CCITT Group 3 / Group 4 fax decoding (ITU-T T.4 / T.6, as used by
 // PDF's /CCITTFaxDecode filter, ISO 32000-1 §7.4.6). Decodes a bilevel scan into
 // a packed 1-bit-per-pixel bitmap (bit 1 = black), which image-decode.ts turns
-// into a DeviceGray raster. Supports Group 4 (K < 0, the common PDF case, pure
-// two-dimensional T.6 coding) and Group 3 one-dimensional (K = 0); Group 3 mixed
-// 2-D (K > 0) is not decoded (its line tag bits + EOL framing are rare in PDF).
+// into a DeviceGray raster. Group 4 (K < 0, the common PDF case, pure
+// two-dimensional T.6 coding), Group 3 one-dimensional (K = 0) and Group 3
+// MIXED (K > 0), where every line says for itself which of the two it is.
 //
 // The white/black run-length codes are the fixed modified-Huffman tables from
 // T.4; the two-dimensional vertical/pass/horizontal mode codes are from T.6.
@@ -13,7 +13,7 @@
  * §7.4.6), pulled from the filter's `/DecodeParms`.
  */
 export interface CcittParams {
-  /** `/K` — `<0` Group 4, `0` Group 3 1-D, `>0` Group 3 2-D (unsupported). */
+  /** `/K` — `<0` Group 4, `0` Group 3 1-D, `>0` Group 3 mixed 1-D/2-D. */
   readonly k: number;
   /** `/Columns` (pixels per row). */
   readonly columns: number;
@@ -30,8 +30,7 @@ export interface CcittParams {
  * @param data   The raw fax codestream (any wrapping filters already stripped).
  * @param params The `/CCITTFaxDecode` parameters.
  * @returns The packed bitmap (`rowBytes × rows`, bit 1 = black, MSB first), or
- *   `undefined` when the stream cannot be decoded (e.g. Group 3 2-D, or nothing
- *   decoded at all).
+ *   `undefined` when nothing could be decoded at all.
  */
 export function decodeCcitt(data: Uint8Array, params: CcittParams): Uint8Array | undefined {
   return decodeInto(new BitReader(data), params);
@@ -79,7 +78,6 @@ export function decodeCcittPlanes(
 
 function decodeInto(reader: BitReader, params: CcittParams): Uint8Array | undefined {
   const { k, columns, rows, byteAlign } = params;
-  if (k > 0) return undefined; // Group 3 two-dimensional — not supported
   if (columns <= 0 || rows <= 0 || columns > 1 << 20) return undefined;
 
   const rowBytes = (columns + 7) >> 3;
@@ -90,7 +88,21 @@ function decodeInto(reader: BitReader, params: CcittParams): Uint8Array | undefi
 
   for (let y = 0; y < rows; y++) {
     if (byteAlign && y > 0) reader.align();
-    const cur = k < 0 ? decode2D(reader, ref, columns) : decode1D(reader, columns);
+    // T.4 §4.2.1 — under mixed coding every line says which of the two it is:
+    // an end-of-line, then ONE bit, 1 for a one-dimensional line and 0 for a
+    // two-dimensional one. The end-of-line is optional in a PDF stream
+    // (`/EndOfLine` defaults to false), so it is stepped over where it stands
+    // and the tag bit read either way. ccitt_EndOfBlock_false.pdf draws the
+    // same word six times over — `/K -1`, `/K 0`, `/K 1`, each twice — and the
+    // two `/K 1` panels were the only ones missing from the page.
+    let twoDimensional = k < 0;
+    if (k > 0) {
+      reader.skipEol();
+      twoDimensional = reader.readBit() === 0;
+    } else if (k === 0) {
+      reader.skipEol();
+    }
+    const cur = twoDimensional ? decode2D(reader, ref, columns) : decode1D(reader, columns);
     if (!cur) {
       if (y === 0) return undefined; // nothing decoded at all
       break; // EOFB / truncated — keep the rows we have (rest stay white)
@@ -258,6 +270,29 @@ class BitReader {
   }
 
   /**
+   * T.4 §4.1.2 — step over an end-of-line, which is eleven zeroes and a one.
+   * A stream that carries none is left exactly where it stands.
+   */
+  skipEol(): void {
+    const at = { byte: this.bytePos, bit: this.bitPos };
+    let zeros = 0;
+    for (;;) {
+      const b = this.readBit();
+      if (b < 0 || (b === 0 && zeros > MAX_EOL_FILL)) break;
+      if (b === 0) {
+        zeros++;
+        continue;
+      }
+      // A one after eleven or more zeroes ends the EOL; the fill before it is
+      // part of it. Anything else was never an EOL.
+      if (zeros >= 11) return;
+      break;
+    }
+    this.bytePos = at.byte;
+    this.bitPos = at.bit;
+  }
+
+  /**
    * Step over the end-of-facsimile-block that closes an MMR plane: two EOLs,
    * each eleven zeroes and a one. Anything else is left where it stands.
    */
@@ -287,6 +322,9 @@ class BitReader {
     }
   }
 }
+
+/** How much fill an end-of-line may carry before this stops looking for one. */
+const MAX_EOL_FILL = 64;
 
 // --- the fixed T.4 / T.6 code tables ----------------------------------------
 

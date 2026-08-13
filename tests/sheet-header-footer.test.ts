@@ -1,5 +1,7 @@
 // E-SHEET W4 — sheet header/footer text. Excel's &-code mini-language expands
-// into one aligned paragraph per region (left / centre / right), with &P/&N as
+// into band content: regions that stand together share ONE line, on tab stops
+// at the middle and the far edge of the band, and a lone region is a line of
+// its own, aligned. With &P/&N as
 // dynamic PAGE/NUMPAGES field runs the renderer resolves per page and &A as the
 // sheet name. The content rides on FlowDoc.headersFooters and the section's
 // header/footer references, so the existing HF band layout paints it.
@@ -28,11 +30,36 @@ const paraRuns = (
 };
 
 describe('header/footer &-codes (E-SHEET W4)', () => {
-  it('splits &L/&C/&R into three aligned regions', () => {
+  it('sets &L/&C/&R on ONE line, on the stops they stand at', () => {
+    // Excel draws the three regions across one line, and so does every reader.
+    // A paragraph apiece stacked them: 45540_classic_Header.xlsx came back
+    // three lines deep where the sheet has one.
     const content = buildHeaderFooterContent('&LLeft&CCenter&RRight', 'Sheet1');
-    expect(paraRuns(content, 'left')[0]?.text).toBe('Left');
-    expect(paraRuns(content, 'center')[0]?.text).toBe('Center');
-    expect(paraRuns(content, 'right')[0]?.text).toBe('Right');
+    expect(content).toHaveLength(1);
+    const line = content[0];
+    if (line?.kind !== 'paragraph') throw new Error('one line');
+    expect(line.paragraph.runs.map((r) => r.text)).toEqual(['Left', '\t', 'Center', '\t', 'Right']);
+    // …the middle of the band and its far edge, both stated against the band.
+    expect(line.paragraph.properties.tabs).toEqual([
+      { positionPt: 0, relativeTo: 'center', alignment: 'center' },
+      { positionPt: 0, relativeTo: 'right', alignment: 'right' },
+    ]);
+  });
+
+  it('leaves a single region a line of its own, aligned', () => {
+    const right = buildHeaderFooterContent('&RRight', 'Sheet1');
+    expect(right).toHaveLength(1);
+    expect(paraRuns(right, 'right')[0]?.text).toBe('Right');
+  });
+
+  it('stands the k-th line of each region with the k-th of the others', () => {
+    // A region is not necessarily one line, and Excel pairs them up.
+    const content = buildHeaderFooterContent('&LA\nB&RC', 'Sheet1');
+    expect(content).toHaveLength(2);
+    const texts = content.map((el) =>
+      el.kind === 'paragraph' ? el.paragraph.runs.map((r) => r.text).join('') : '',
+    );
+    expect(texts).toEqual(['A\tC', 'B']);
   });
 
   it('treats the default region (no code) as centre', () => {

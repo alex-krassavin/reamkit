@@ -9,6 +9,7 @@ import { collectPageAppearances } from './annots';
 import { textMarkupOf } from './annot-draw';
 import { patternTint } from './pattern-tint';
 import { hiddenProperties, hiddenXObject } from './optional-content';
+import { buildColorSpaceMap, buildShadingMap } from './shading';
 import type { Quad, TextMarkup, TextMarkupAnnot } from './annot-draw';
 import type { ContentFont, Matrix, TextRun } from './content';
 import type { PdfDict } from '@/pdf/objects';
@@ -49,8 +50,9 @@ export function extractPageText(file: PdfFile, page: PdfPage): Array<TextRun> {
   }
   const links = collectLinks(file, page);
   const marks = collectTextMarkup(file, page);
-  if (links.length === 0 && marks.length === 0) return runs;
-  return runs.flatMap((run) => {
+  const shown = withoutRestrikes(runs);
+  if (links.length === 0 && marks.length === 0) return shown;
+  return shown.flatMap((run) => {
     const link = links.find((l) => inRect(run.x, run.y, l.rect));
     const linked = link ? { ...run, href: link.href } : run;
     const marked = marks.find((m) => m.quads.some((q) => touches(q, linked)));
@@ -125,6 +127,95 @@ function collectTextMarkup(file: PdfFile, page: PdfPage): Array<TextMarkupAnnot>
   return out;
 }
 
+/**
+ * §9.4.3 — the same text struck again in the same place, dropped.
+ *
+ * A page with no bold face to hand fakes one by drawing its text several times
+ * a fraction of a point apart, and every copy is a run of its own.
+ * bug900822.pdf draws one line FOUR times — twice 0.16pt apart across, twice
+ * 0.32pt apart down — and read as four lines its letters came back interleaved:
+ * "TTTTeeeesssstttt" where the page shows "Test test".
+ *
+ * A copy is a run with the SAME text and size within a small fraction of an em
+ * of another. That is well inside the advance of even the narrowest letter, so
+ * a word that really does repeat a character is never mistaken for one. The
+ * LAST copy is the one kept: it is the one painted on top.
+ *
+ * The extra strikes are not read as WEIGHT. It is tempting — the offset is
+ * exactly how a face with no bold cut is emboldened — but two strikes a tenth
+ * of a point apart are a hair of ink and not a bold face:
+ * issue11150_reduced.pdf strikes each of its three letters twice and every
+ * renderer shows them at the weight of the text around them.
+ *
+ * @param runs The page's runs, in painting order.
+ * @returns The runs a reader sees, each drawn once.
+ */
+function withoutRestrikes(runs: ReadonlyArray<TextRun>): Array<TextRun> {
+  const kept = new Map<string, number>();
+  const out: Array<TextRun> = [];
+  for (const run of runs) {
+    if (run.text.length === 0) {
+      out.push(run);
+      continue;
+    }
+    const tol = Math.max((run.fontSizePt || 10) * RESTRIKE_EM, 0.05);
+    const cell = (x: number, y: number): string =>
+      `${run.text}|${run.fontSizePt.toFixed(1)}|${String(Math.round(x / tol))}|${String(Math.round(y / tol))}`;
+    // The copy may fall the other side of a cell boundary, so its neighbours
+    // are asked too.
+    let at = -1;
+    for (const dx of [-1, 0, 1]) {
+      for (const dy of [-1, 0, 1]) {
+        const had = kept.get(cell(run.x + dx * tol, run.y + dy * tol));
+        if (had !== undefined) at = had;
+      }
+    }
+    if (at >= 0) {
+      out[at] = run; // the last copy is the one on top
+      kept.set(cell(run.x, run.y), at);
+      continue;
+    }
+    kept.set(cell(run.x, run.y), out.length);
+    out.push(run);
+  }
+  return out;
+}
+
+/** How near, in ems, a re-strike of the same text lands to the one it thickens. */
+const RESTRIKE_EM = 0.08;
+
+// §8.6 — the colour spaces one resource dictionary names, read once. A page's
+// forms nearly all share one, and reading the same `/Separation`'s tint
+// transform for every stream is work with one answer.
+const spaceCache = new WeakMap<PdfDict, ReturnType<typeof buildColorSpaceMap>>();
+
+/** The page's shading patterns, read once per resource dictionary. */
+const shadingCache = new WeakMap<PdfDict, ReturnType<typeof buildShadingMap>>();
+
+function shadingsOf(
+  file: PdfFile,
+  resources: PdfDict | undefined,
+): ReturnType<typeof buildShadingMap> {
+  if (!resources) return new Map();
+  const had = shadingCache.get(resources);
+  if (had) return had;
+  const made = buildShadingMap(file, resources);
+  shadingCache.set(resources, made);
+  return made;
+}
+
+function spacesOf(
+  file: PdfFile,
+  resources: PdfDict | undefined,
+): ReturnType<typeof buildColorSpaceMap> {
+  if (!resources) return new Map();
+  const had = spaceCache.get(resources);
+  if (had) return had;
+  const made = buildColorSpaceMap(file, resources);
+  spaceCache.set(resources, made);
+  return made;
+}
+
 // Interpret one content stream (a page or a Form XObject) into runs, then recurse
 // into the Form XObjects it paints — each composing its /Matrix onto the
 // placement CTM and using its own /Resources fonts.
@@ -141,9 +232,18 @@ function collectRuns(
     content,
     buildFonts(file, resources),
     baseCtm,
+    // §8.6.6.2 — the shading patterns the page NAMES. Type painted with one is
+    // painted with a gradient, and without the map the pattern says nothing
+    // here and the colour in force stands: ShowText-ShadingPattern.pdf sets two
+    // of its four lines in a blue-to-red sweep and both came back black.
+    shadingsOf(file, resources),
     undefined,
-    undefined,
-    undefined,
+    // §8.6.8 — the spaces the page NAMES. Without them `1 scn` says nothing
+    // and the colour in force stands: TAMReview.pdf fills its figure boxes
+    // white, then sets their labels in `/Cs8 cs 1 scn` — a `/Separation` whose
+    // full tint is black — and the labels came out white on white, invisible
+    // on a page that shows them plainly.
+    spacesOf(file, resources),
     hiddenProperties(file, resources),
   );
   out.push(...result.texts.map((r) => withPatternColour(file, resources, r, visiting)));

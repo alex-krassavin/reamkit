@@ -391,12 +391,170 @@ describe('image reconstruction end-to-end (E-PDF EP6)', () => {
     expect(html).toContain('data:image/');
   });
 
-  it('still reports vector graphics as an unreconstructed loss', async () => {
-    const pdf = await Ream.parse(docxWithImage()).convert('pdf', { fonts: FONTS });
-    const doc = Ream.parse(pdf);
-    expect(doc.losses.some((l) => /vector/i.test(l.detail))).toBe(true);
+  it('reports a bare `sh` region where there is one, and NOT where there is none', async () => {
+    // §8.7.4.3 — `sh` paints the clip rather than filling a path, and nothing
+    // here lifts it. Reported unconditionally it fired on all four hundred
+    // files of the pdf.js corpus, most of which contain no `sh` at all — and a
+    // loss report that cries wolf on every document tells a reader nothing.
+    const plain = await Ream.parse(docxWithImage()).convert('pdf', { fonts: FONTS });
+    expect(Ream.parse(plain).losses.some((l) => /bare-shading/u.test(l.detail))).toBe(false);
+
+    const content = '/Sh0 sh';
+    const objects = [
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Contents 4 0 R ' +
+        '/Resources << /Shading << /Sh0 << /ShadingType 2 /ColorSpace /DeviceRGB ' +
+        '/Coords [0 0 100 0] /Function << /FunctionType 2 /Domain [0 1] ' +
+        '/C0 [1 0 0] /C1 [0 0 1] /N 1 >> >> >> >> >>',
+      `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+    ];
+    let pdf = '%PDF-1.7\n';
+    const offsets: Array<number> = [];
+    objects.forEach((body, i) => {
+      offsets.push(pdf.length);
+      pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+    });
+    const xref = pdf.length;
+    pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+    for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+    pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`;
+    const shaded = Ream.parse(new TextEncoder().encode(pdf));
+    expect(shaded.losses.some((l) => /bare-shading/u.test(l.detail))).toBe(true);
+  });
+
+  it('fills the clip a bare axial `sh` painted with its gradient', () => {
+    // §8.7.4.3 — a `sh` paints the CLIP, so where there is one the clip's own
+    // path is the shape and the shading is its fill. 131 of the pdf.js corpus's
+    // `sh` paints are axial, and every one of them was dropped: S2.pdf's colour
+    // bars are drawn this way and came back blank.
+    const doc = Ream.parse(shPdf('20 20 60 60 re W n /Sh0 sh'));
+    expect(doc.losses.some((l) => /bare-shading/u.test(l.detail))).toBe(false);
+    const shape = doc.flow.body.find((b) => b.kind === 'shape' && b.shape.fill.kind === 'gradient');
+    expect(shape).toBeDefined();
+    if (shape?.kind !== 'shape' || shape.shape.fill.kind !== 'gradient') return;
+    const stops = (shape.shape.fill.gradient?.stops ?? []).map((s) => s.colorHex);
+    expect(stops[0]).toBe('FF0000');
+    expect(stops[stops.length - 1]).toBe('0000FF');
+  });
+
+  it('takes a shading colour through the space the shading STATES', () => {
+    // §8.6.6.4 — a `/Separation` function gives ONE number and that number is a
+    // strength of ink, not a grey level. Read by component count,
+    // function_based_shading_cmyk.pdf's spot-colour square came back a
+    // black-to-white ramp where the file paints a warm red.
+    const spot =
+      '[/Separation /Spot /DeviceCMYK << /FunctionType 2 /Domain [0 1] ' +
+      '/C0 [0 0 0 0] /C1 [0 1 1 0] /N 1 >>]';
+    const doc = Ream.parse(
+      shPdf(
+        '20 20 60 60 re W n /Sh0 sh',
+        `/ShadingType 2 /ColorSpace ${spot} /Coords [0 0 100 0] ` +
+          '/Function << /FunctionType 2 /Domain [0 1] /C0 [0] /C1 [1] /N 1 >>',
+      ),
+    );
+    const shape = doc.flow.body.find((b) => b.kind === 'shape' && b.shape.fill.kind === 'gradient');
+    expect(shape).toBeDefined();
+    if (shape?.kind !== 'shape' || shape.shape.fill.kind !== 'gradient') return;
+    const stops = (shape.shape.fill.gradient?.stops ?? []).map((s) => s.colorHex);
+    // Tint 0 is no ink at all — the paper — and tint 1 is the colorant at full,
+    // which through this transform is CMYK 0 1 1 0: red.
+    expect(stops[0]).toBe('FFFFFF');
+    expect(stops[stops.length - 1]).toBe('FF0000');
+  });
+
+  it('does not paint a bare `sh` the page put under a soft mask', () => {
+    // §11.6.5 — under a soft mask the clip is not the extent: the MASK is, and
+    // none is applied here. bug1721218_reduced.pdf fades a shadow out beneath
+    // the router it draws, and filled to its clip that shadow arrived as a
+    // solid black blob beside the picture.
+    const gs = '/ExtGState << /G0 << /SMask << /S /Luminosity /G 5 0 R >> >> >>';
+    const doc = Ream.parse(shPdf('/G0 gs 20 20 60 60 re W n /Sh0 sh', undefined, gs));
+    expect(doc.flow.body.some((b) => b.kind === 'shape' && b.shape.fill.kind === 'gradient')).toBe(
+      false,
+    );
+    expect(doc.losses.some((l) => /bare-shading/u.test(l.detail))).toBe(true);
+  });
+
+  it('draws a picture the page asked to be seen through at the opacity it asked for', () => {
+    // §11.6.4.4 — `/ca` governs a picture as much as a fill, and the model has
+    // `a:alphaModFix` to say so. alphatrans.pdf lays a photograph in at half
+    // strength over three coloured squares, and drawn full-strength it hid all
+    // three.
+    const image =
+      '<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceRGB ' +
+      '/BitsPerComponent 8 /Length 3 >>\nstream\nÿ  \nendstream';
+    const doc = Ream.parse(
+      onePagePdf(
+        'q /GS0 gs 50 0 0 50 20 20 cm /Im0 Do Q',
+        '/ExtGState << /GS0 << /ca 0.5 >> >> /XObject << /Im0 5 0 R >>',
+        [image],
+      ),
+    );
+    const picture = doc.flow.body.find((b) => b.kind === 'image');
+    expect(picture).toBeDefined();
+    if (picture?.kind !== 'image') return;
+    expect(picture.image.alpha).toBe(0.5);
+  });
+
+  it('keeps a fill alpha a later graphics state does not name', () => {
+    // §8.4.5 — a `gs` changes ONLY the parameters its dictionary names.
+    // alphatrans.pdf sets `ca` 0.5 in one state and then names a second holding
+    // `/CA` alone; read as "everything unnamed is the default", the second
+    // turned the fill opaque and every translucent square buried what it
+    // covered.
+    const gs = '/ExtGState << /A << /ca 0.5 >> /B << /CA 1 >> >>';
+    const doc = Ream.parse(
+      onePagePdf('/A gs /B gs 1 0 0 rg 10 10 80 80 re f', `${gs} /XObject << >>`),
+    );
+    const shape = doc.flow.body.find((b) => b.kind === 'shape');
+    expect(shape).toBeDefined();
+    if (shape?.kind !== 'shape') return;
+    expect(shape.shape.fill.alpha).toBe(0.5);
   });
 });
+
+/**
+ * A one-page PDF whose content stream is `content` and whose `/Sh0` shading is
+ * `shading` — the smallest file that exercises the `sh` operator.
+ */
+function shPdf(content: string, shading?: string, extraResources = ''): Uint8Array {
+  const sh =
+    shading ??
+    '/ShadingType 2 /ColorSpace /DeviceRGB /Coords [0 0 100 0] ' +
+      '/Function << /FunctionType 2 /Domain [0 1] /C0 [1 0 0] /C1 [0 0 1] /N 1 >>';
+  return onePagePdf(content, `/Shading << /Sh0 << ${sh} >> >> ${extraResources}`, [
+    // The mask's own group, referenced by an /SMask; never walked when the
+    // paint it masks is skipped.
+    '<< /Type /XObject /Subtype /Form /BBox [0 0 100 100] /Length 0 >>\nstream\n\nendstream',
+  ]);
+}
+
+/** A 100×100-point page with the given content stream and `/Resources` body. */
+function onePagePdf(
+  content: string,
+  resources: string,
+  extraObjects: ReadonlyArray<string> = [],
+): Uint8Array {
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Contents 4 0 R /Resources << ${resources} >> >>`,
+    `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+    ...extraObjects,
+  ];
+  let pdf = '%PDF-1.7\n';
+  const offsets: Array<number> = [];
+  objects.forEach((body, i) => {
+    offsets.push(pdf.length);
+    pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+  });
+  const xref = pdf.length;
+  pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+  for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+  pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`;
+  return new TextEncoder().encode(pdf);
+}
 
 /** Read back a PNG this suite made: its size and its pixels as RGBA. */
 function decodePngPixels(png: Uint8Array): { width: number; height: number; rgba: Uint8Array } {
@@ -555,6 +713,25 @@ describe('§8.9.6.2 — a stencil mask, and §8.9.7 — an image written into th
     const { rgba } = pixels(real);
     expect([rgba[0], rgba[4], rgba[8]]).toEqual([0x00, 0x80, 0xff]);
   });
+
+  it('reads an inline image’s colour space when it is an ARRAY', () => {
+    // §8.9.7 Table 93 — an inline image abbreviates the space's name as well as
+    // the key: `/I` is Indexed and `/RGB` DeviceRGB. TAMReview.pdf rules its
+    // header with a picture one pixel across in exactly this space, and the
+    // content parser kept only the numbers and strings of an array operand —
+    // enough for a `TJ`, not for this. Both names were dropped, `[3, <bytes>]`
+    // answered to no space at all, and the rule was drawn on none of its 23
+    // pages.
+    const pdf = page(
+      '0 0 100 100 cm BI /CS [/I /RGB 1 <FF993300FF00>] /W 2 /H 1 /BPC 8 ID \u0000\u0001EI',
+      [],
+      new Map(),
+    );
+    const { width, rgba } = pixels(pdf);
+    expect(width).toBe(2);
+    expect([...rgba.slice(0, 3)]).toEqual([0xff, 0x99, 0x33]);
+    expect([...rgba.slice(4, 7)]).toEqual([0x00, 0xff, 0x00]);
+  });
   it('reads /BlackIs1, which says which bit the fax filter hands on', () => {
     // §7.4.6 — the decoder codes black as 1; false (the default) means the
     // black pixel LEAVES as a 0, and true means it leaves as a 1, which
@@ -580,6 +757,133 @@ describe('§8.9.6.2 — a stencil mask, and §8.9.7 — an image written into th
     expect(shot(false)).toBe(255);
     expect(shot(true)).toBe(0);
   });
+  it('samples a function-based shading a bare `sh` paints', () => {
+    // §8.7.4.5.3 — type 1 is a function of TWO variables over a rectangle, and
+    // no gradient stands for one; a picture does exactly.
+    // function_based_shading.pdf is nine such squares and 43% of the page's
+    // ink, and reconstructed to a blank sheet.
+    const ps = '{ pop }'; // grey = x, whatever y is
+    const content = 'q 10 10 100 100 re W n /Sh0 sh Q';
+    const objects = [
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R ' +
+        '/Resources << /Shading << /Sh0 5 0 R >> >> >>',
+      `<< /Length ${String(content.length)} >>`,
+      '<< /ShadingType 1 /ColorSpace /DeviceGray /Domain [0 1 0 1] ' +
+        '/Matrix [100 0 0 100 10 10] /Function 6 0 R >>',
+      `<< /FunctionType 4 /Domain [0 1 0 1] /Range [0 1] /Length ${String(ps.length)} >>`,
+    ];
+    const enc = (t: string): Uint8Array => Uint8Array.from([...t].map((c) => c.charCodeAt(0)));
+    const bytes: Array<number> = [];
+    const push = (t: string): void => {
+      for (const ch of t) bytes.push(ch.charCodeAt(0) & 0xff);
+    };
+    push('%PDF-1.7\n');
+    const offsets: Array<number> = [];
+    objects.forEach((body, i) => {
+      offsets.push(bytes.length);
+      push(`${String(i + 1)} 0 obj\n${body}\n`);
+      const data = i === 3 ? enc(content) : i === 5 ? enc(ps) : undefined;
+      if (data) {
+        push('stream\n');
+        for (const b of data) bytes.push(b);
+        push('\nendstream\n');
+      }
+      push('endobj\n');
+    });
+    const xref = bytes.length;
+    push(`xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`);
+    for (const off of offsets) push(`${String(off).padStart(10, '0')} 00000 n \n`);
+    push(
+      `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`,
+    );
+    const file = PdfFile.parse(Uint8Array.from(bytes));
+    const { images } = collectPageImages(file, file.pages()[0]!);
+    expect(images).toHaveLength(1);
+    // The `/Matrix` maps the unit domain onto 100pt at (10,10).
+    expect([images[0]!.x, images[0]!.y, images[0]!.widthPt, images[0]!.heightPt]).toEqual([
+      10, 10, 100, 100,
+    ]);
+    // …and the picture runs black on the left to white on the right.
+    const { rgba, width } = decodePngPixels(images[0]!.bytes);
+    expect(rgba[0]).toBeLessThan(8);
+    expect(rgba[(width - 1) * 4]).toBeGreaterThan(247);
+  });
+
+  it('lifts the picture a Type 3 glyph PAINTS', () => {
+    // §9.6.5 — a Type 3 glyph is a content stream, and a bitmap font's glyph is
+    // a picture. This pass interpreted with an empty font map, so it never knew
+    // a face was Type 3 and never saw a glyph call at all:
+    // french_diacritics.pdf draws each accented letter as a 40×59 inline
+    // stencil inside its glyph, and the page came back with nothing on it.
+    const glyph = '10 0 0 0 10 10 d1 q 10 0 0 10 0 0 cm BI /W 2 /H 1 /IM true /BPC 1 ID \x40 EI Q';
+    const content = 'BT /T3 10 Tf 20 100 Td (A) Tj ET';
+    const objects = [
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R ' +
+        '/Resources << /Font << /T3 5 0 R >> >> >>',
+      `<< /Length ${String(content.length)} >>`,
+      '<< /Type /Font /Subtype /Type3 /FontBBox [0 0 10 10] /FontMatrix [0.1 0 0 0.1 0 0] ' +
+        '/CharProcs << /square 6 0 R >> /Encoding << /Differences [65 /square] >> ' +
+        '/FirstChar 65 /LastChar 65 /Widths [10] >>',
+      `<< /Length ${String(glyph.length)} >>`,
+    ];
+    const enc = (t: string): Uint8Array => Uint8Array.from([...t].map((c) => c.charCodeAt(0)));
+    // Assembled by hand: `page` above wires its own fixed object list.
+    const bytes: Array<number> = [];
+    const push = (t: string): void => {
+      for (const ch of t) bytes.push(ch.charCodeAt(0) & 0xff);
+    };
+    push('%PDF-1.7\n');
+    const offsets: Array<number> = [];
+    objects.forEach((body, i) => {
+      offsets.push(bytes.length);
+      push(`${String(i + 1)} 0 obj\n${body}\n`);
+      const data = i === 3 ? enc(content) : i === 5 ? enc(glyph) : undefined;
+      if (data) {
+        push('stream\n');
+        for (const b of data) bytes.push(b);
+        push('\nendstream\n');
+      }
+      push('endobj\n');
+    });
+    const xref = bytes.length;
+    push(`xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`);
+    for (const off of offsets) push(`${String(off).padStart(10, '0')} 00000 n \n`);
+    push(
+      `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`,
+    );
+    const file = PdfFile.parse(Uint8Array.from(bytes));
+    expect(collectPageImages(file, file.pages()[0]!).images).toHaveLength(1);
+  });
+
+  it('runs a DeviceN image through its own tint transform', () => {
+    // §8.6.6.4 — the space names its colorants, an alternate space and the
+    // transform between them. Without running it the whole image is
+    // unreadable and the page comes back BLANK: colorspace_sin.pdf is one
+    // 256×256 picture in a `/DeviceN [/X /Y /Z]` whose transform is a
+    // PostScript program, and that picture was the entire page.
+    const ps = '{ 3 1 roll exch }'; // hands the components back reversed
+    const pdf = page(
+      '0 0 100 100 cm /Im Do',
+      [
+        '<< /Type /XObject /Subtype /Image /Width 2 /Height 1 /BitsPerComponent 8 ' +
+          '/ColorSpace [/DeviceN [/X /Y /Z] /DeviceRGB 6 0 R] /Length 6 >>',
+        `<< /FunctionType 4 /Domain [0 1 0 1 0 1] /Range [0 1 0 1 0 1] /Length ${String(ps.length)} >>`,
+      ],
+      new Map([
+        [5, Uint8Array.from([255, 0, 0, 0, 0, 255])],
+        [6, Uint8Array.from([...ps].map((c) => c.charCodeAt(0)))],
+      ]),
+    );
+    const { rgba } = pixels(pdf);
+    // (1,0,0) reversed is blue; (0,0,1) reversed is red.
+    expect([...rgba.slice(0, 3)]).toEqual([0, 0, 255]);
+    expect([...rgba.slice(4, 7)]).toEqual([255, 0, 0]);
+  });
+
   it('reads a Lab image, and an Indexed palette whose base is one', () => {
     // §8.6.5.8 — `L*` 0..100 and `a*`/`b*` over the stated range, against the
     // stated white. issue10339_reduced.pdf paints two grids of blue swatches

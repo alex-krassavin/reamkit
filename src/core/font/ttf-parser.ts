@@ -88,19 +88,32 @@ export interface ParsedTtf {
 }
 
 const SFNT_TRUETYPE = 0x00010000;
-const SFNT_OPENTYPE_CFF = 0x4f54544f;
+const SFNT_OPENTYPE_CFF = 0x4f54544f; // 'OTTO'
+/**
+ * `'true'` — Apple's own sfnt tag, and as much a TrueType font as `0x00010000`.
+ * Rejected outright, the reader could not read the program a file embedded and
+ * so could not say what its glyphs were: complex_ttf_font.pdf,
+ * PDFJS-7562-reduced.pdf and arial_unicode_en_cidfont.pdf each carry one and
+ * each reconstructed to a blank page.
+ */
+const SFNT_APPLE_TRUE = 0x74727565;
 
 /**
  * Parse TrueType / OpenType font bytes into a {@link ParsedTtf}.
  *
- * @param raw The font bytes (sfnt: TrueType `0x00010000` or OpenType-CFF `OTTO`).
+ * @param raw The font bytes (sfnt: TrueType `0x00010000` or `'true'`, or
+ *            OpenType-CFF `OTTO`).
  * @returns The parsed metrics, mappings and layout tables.
  * @throws Error when the bytes are not a TrueType or OpenType font.
  */
 export function parseTtf(raw: Uint8Array): ParsedTtf {
   const r = new BigEndianReader(raw);
   const sfntVersion = r.u32();
-  if (sfntVersion !== SFNT_TRUETYPE && sfntVersion !== SFNT_OPENTYPE_CFF) {
+  if (
+    sfntVersion !== SFNT_TRUETYPE &&
+    sfntVersion !== SFNT_OPENTYPE_CFF &&
+    sfntVersion !== SFNT_APPLE_TRUE
+  ) {
     throw new Error(
       `Not a TrueType or OpenType font (sfntVersion=0x${sfntVersion.toString(16).padStart(8, '0')})`,
     );

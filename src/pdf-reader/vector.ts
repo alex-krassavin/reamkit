@@ -7,7 +7,13 @@
 // and the bare `sh` operator are not captured (a documented loss).
 
 import { IDENTITY, interpretContent, multiply } from './content';
-import { buildAlphaMap, buildColorSpaceMap, buildShadingMap } from './shading';
+import {
+  buildAlphaMap,
+  buildColorSpaceMap,
+  buildShadingMap,
+  gradientShading,
+  shadingTypeOf,
+} from './shading';
 import { collectPageAppearances } from './annots';
 import { hiddenProperties, hiddenXObject } from './optional-content';
 import { buildFonts } from './text';
@@ -50,8 +56,13 @@ interface ResourceMaps {
 function paintedVectors(
   file: PdfFile,
   page: PdfPage,
-): Array<VectorPlacement & { orderKey: ReadonlyArray<number> }> {
+): {
+  placements: Array<VectorPlacement & { orderKey: ReadonlyArray<number> }>;
+  /** §8.7.4.3 — how many `sh` regions the page painted that this does not lift. */
+  bareShadings: number;
+} {
   const out: Array<VectorPlacement & { orderKey: ReadonlyArray<number> }> = [];
+  let bareShadings = 0;
   const visiting = new Set<PdfStream>();
   // §7.8.3 — a name resolves against the resources IN FORCE, which is the
   // form's or the appearance's own where it has one. annotation-highlight.pdf
@@ -90,6 +101,45 @@ function paintedVectors(
       maps.spaces,
       hiddenProperties(file, resources),
     );
+    // §8.7.4.3 — a bare `sh` paints the CLIP with a shading. Where that shading
+    // is axial or radial it is a gradient, and the region it fills is the clip:
+    // 131 of the corpus's `sh` paints are axial, ten times as many as the
+    // function-based ones, and every one of them was dropped.
+    for (const paint of result.shadings) {
+      if (out.length >= MAX_VECTORS) break;
+      const dict = resources ? file.get(resources, 'Shading') : PDF_NULL;
+      const found = dict instanceof Map ? file.resolve(dict.get(paint.name) ?? PDF_NULL) : PDF_NULL;
+      const sh = found instanceof PdfStream ? found.dict : found instanceof Map ? found : undefined;
+      // §8.7.4.5.3 — a function-based shading is a PICTURE, and the image pass
+      // draws it. Counted here it was a loss the file did not have.
+      if (sh && shadingTypeOf(file, sh) === 1) continue;
+      const gradient = sh ? gradientShading(file, sh) : undefined;
+      // §11.6.5 — under a soft mask the clip is not the extent: the MASK is,
+      // and nothing here applies one. bug1721218_reduced.pdf fades a shadow out
+      // under the router it draws, and painted to its clip that shadow arrived
+      // as a solid black blob beside the picture.
+      if (paint.masked) {
+        bareShadings++;
+        continue;
+      }
+      if (!sh || !gradient || !paint.clip) {
+        bareShadings++;
+        continue;
+      }
+      // The clip is the whole of what the paint covers, so the clip's own path
+      // IS the shape. Without one the region is the page, which is a guess this
+      // does not make.
+      out.push({
+        order: paint.order,
+        segs: paint.clip.segs,
+        gradient,
+        // §11.6.4.4 — alphatrans.pdf paints its gradient at half opacity over
+        // three coloured squares, and drawn solid it buried all three.
+        ...(paint.alpha !== undefined ? { alpha: paint.alpha } : {}),
+        ...(paint.darkens ? { darkens: true } : {}),
+        orderKey: [...prefix, paint.order],
+      });
+    }
 
     // §8.5.3 — later marks cover earlier ones, and a form is drawn where its
     // `Do` stands, not after everything around it. Walking the stream first and
@@ -103,6 +153,11 @@ function paintedVectors(
       glyph?: Type3Call;
     }> = [
       ...result.vectors.map((vector) => ({ order: vector.order, vector })),
+      // §9.6.6 — a glyph whose code stands for no character is a PATH here,
+      // painted where the page set it. complex_ttf_font.pdf is eight lines of
+      // Arabic in a subset that says nothing about its characters, and without
+      // this the file reconstructs to a blank sheet.
+      ...result.outlines.map((vector) => ({ order: vector.order, vector })),
       ...result.images.map((xobject) => ({ order: xobject.order, xobject })),
       ...result.glyphs.map((glyph) => ({ order: glyph.order, glyph })),
     ].sort((a, b) => a.order - b.order);
@@ -159,7 +214,7 @@ function paintedVectors(
       [Number.MAX_SAFE_INTEGER, index],
     );
   });
-  return out;
+  return { placements: out, bareShadings };
 }
 
 /** §8.10.2 `/Matrix` — the form's own space, composed onto the placement CTM. */
@@ -257,12 +312,14 @@ export function collectPageVectors(
   // over anything else it is the thing that HIDES it, and the caller seeds this
   // with the pictures it has already placed.
   const painted: Array<Box> = [...occupied];
-  const raws = paintedVectors(file, page);
+  const lifted = paintedVectors(file, page);
+  const raws = lifted.placements;
   // §11.6.5 — a mask that fades the paint from place to place, which no shape
   // downstream has. bug852992_reduced.pdf fades both its green ground and the
   // orange box on it toward the edges, and both came back flat with nothing
   // said. §11.3.5 — and a blend rule nothing here performs, likewise.
   const losses: Array<Loss> = [];
+  const bareShadings = lifted.bareShadings;
   const asked = new Set<string>();
   for (const raw of raws) {
     if (raw.masked === true) {
@@ -325,7 +382,11 @@ export function collectPageVectors(
     // burying the words is not its size but where it sits: the flowing reading
     // puts every mark behind the text, and the placed one keeps the page's own
     // painting order.
-    const filled = (v.gradient !== undefined || solidFill) && (isBox || isRule);
+    // §9.6.6 — a traced GLYPH is type, and none of the de-cluttering below
+    // applies to it: TAMReview.pdf's full stops are marks a point across, which
+    // every bound here would throw out as specks, and the page came back with
+    // no sentence ending anywhere.
+    const filled = (v.gradient !== undefined || solidFill) && (isBox || isRule || v.glyph === true);
     // White paint is invisible only over white — the same rule the fill above
     // follows, which the stroke did not. 160F-2019.pdf's every form field is a
     // tinted box with a WHITE one-point border stroked inside it, and dropping
@@ -367,6 +428,18 @@ export function collectPageVectors(
       severity: 'dropped',
       feature: FEATURES.shapes,
       detail: `page carries more than ${String(MAX_VECTORS)} painted paths; the rest were not read`,
+    });
+  }
+  // §8.7.4.3 — a bare `sh` paints the clip region rather than filling a path,
+  // and nothing here lifts it. Said where it HAPPENED: reported for every
+  // document instead, it fired on all four hundred files of the pdf.js corpus,
+  // most of which contain no `sh` at all, and a loss report that cries wolf on
+  // every document tells a reader nothing.
+  if (bareShadings > 0) {
+    losses.push({
+      severity: 'dropped',
+      feature: FEATURES.images,
+      detail: `${String(bareShadings)} bare-shading (sh) region${bareShadings === 1 ? '' : 's'} painted the clip rather than a path, and ${bareShadings === 1 ? 'was' : 'were'} not reconstructed`,
     });
   }
   return { vectors: out, losses };
