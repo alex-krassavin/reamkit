@@ -3,6 +3,172 @@
 All notable changes to **Ream** (`reamkit`) are documented here. The project
 follows [Semantic Versioning](https://semver.org/).
 
+## 1.28.0
+
+A release about the reading a caller actually gets.
+
+1.27.0 measured the wrong thing, and the correction comes first. The corpus
+harness pinned `pdfLayout: 'positional'` for every PDF, so the whole 400-file
+sweep behind that release measured a placed reading — words dropped at the
+coordinates the page gave them. Unpinned, 387 of those 400 are read as
+DOCUMENTS by default: paragraphs, headings, columns, tables. The path a user
+takes had never been measured once. The option is gone (below), and every
+number here is taken on the default path.
+
+On that footing: 366 of the 400 come back in the same number of pages as the
+file has, and their summed worst-page difference is 6.31. Of the 364 files
+comparable in both sweeps it is 5.72 against 7.77 for the 1.27.0 build, and
+the count under 0.01 — a page you cannot tell from its source — went 282 to
+293. Those two sweeps are not the same measurement, so the honest claim is the
+direction and the per-file numbers below, not the total.
+
+What that reading is made of is most of this release: a page is read for its
+gutters and its rules, so a page set in columns comes back in columns and a
+page ruled into a grid comes back as a table; a running head is a head, a foot
+is a foot with its number; a paragraph keeps its indent, its tab stops and a
+word the line broke in half; an exponent stands over its letter and a matrix
+comes back a matrix. Then the glyphs themselves: a font that cannot say what
+its characters are is drawn from its outlines, one that names them after
+nothing is drawn by those names, and a font of pictures is read as pictures.
+
+One defect stays open and belongs in the number. Twenty-two files that
+paginated alike at 1.27.0 no longer do: the flowing reading now sets a
+paragraph with the measure the page gave it, and where a line is wider than
+the sheet the wrap costs a line and the page count parts. ShowText-ShadingPattern.pdf
+is the plainest case — the picture is right, the pagination is not.
+
+### Removed (breaking)
+
+- `pdfLayout` is no longer part of the public API. A caller holding a
+  `Uint8Array` cannot know whether it is a paper or a form, so asking it to
+  choose only moved the guess outward; since 1.27.0 the file decides on its
+  own and the option was an override nobody needed. Removing it in a minor is
+  deliberate while the reader is this young — and it was doing real damage to
+  verification, not to callers.
+
+### Added
+
+- **A page ruled into columns comes back as the TABLE it is.** ZapfDingbats.pdf
+  rules five hundred entries into groups of glyph, name and code; read as prose
+  it came back as one long list. The regions between the gutters are the
+  table's columns now and the rows are its rows — a cell is what one row leaves
+  in one region, the grid is measured from the page, each cell keeps the
+  alignment its own line witnesses, and the row keeps the pitch the page set it
+  at. The same page went from four sheets to the two it has.
+
+- **The glyphs of a font that cannot say what its characters are.** A subset
+  font may carry no usable `cmap`, or name its glyphs after nothing a reader
+  knows. Both are answerable without guessing: the CFF charstrings are a
+  program, so they are run (§9.6.4, Type 2 hints, seac, flex and all), the
+  `glyf` outlines are read as outlines including composites, and a face nobody
+  can address by character is addressed by the names its `post` table gives —
+  format 2.0 over the Macintosh standard order. What the file draws is drawn.
+
+- **The CMaps a file NAMES instead of embedding, and one that runs down the
+  page.** §9.7.5.2 — the predefined CMaps are a fixed set with fixed meanings;
+  a file that names one is not incomplete. Their vertical forms advance the pen
+  DOWN the page, with the `W2`/`DW2` metrics that says how far.
+
+- **The gradient a bare `sh` paints, in the colour space it states.** §8.7.4.5
+  — a shading painted by the operator rather than through a pattern, function-
+  based (type 1) included, in the space the shading dictionary names.
+
+- **The colour an ICC profile states, and the colour a CalRGB states.** §8.6.5.5
+  and §8.6.5.7 — an `/ICCBased` stream is decoded through its profile instead
+  of being read as whatever `/N` looks like, and a `/CalRGB` runs its gamma and
+  matrix into XYZ, adapts onto D65 by Bradford, and comes out sRGB. Three
+  renderers disagree with each other on the CalRGB samples and no two agree on
+  both pages; the model from the specification matches poppler byte for byte,
+  and the measurement is written into the code so the next reader need not take
+  it again. calrgb.pdf 0.630 → 0.621.
+
+- **A fax whose every line says which coding it is.** CCITT Group 3 2-D
+  (K > 0): each line begins with the bit that says whether it is coded one-
+  dimensionally or against the line above.
+
+- **A check box and a text markup the file drew no appearance for.** §12.5.5 —
+  an annotation with no `/AP` is still on the page, and a viewer draws it from
+  its own type and state.
+
+- **A matrix comes back a matrix.** §22 OfficeMathML — a bracketed block of
+  rows and columns is read as a matrix inside a delimiter, not as three lines
+  of loose numbers that happen to be near each other.
+
+- **A section that must open on an odd sheet gets one.** ECMA-376 §17.6.22 —
+  `w:type="oddPage"`/`"evenPage"` survives the round trip and the blank sheet
+  it implies is printed, charged to the section that ENDS. Two files in 1121
+  state it and LibreOffice honours it in neither; Word is the authority here
+  and this follows the specification.
+
+### Fixed
+
+- **A code means what the font's encoding says it means.** Annex D.2/D.6 — a
+  simple font's codes were read as Latin-1 whatever the font said. Standard,
+  WinAnsi and MacRoman are tables, `/Differences` amends them by glyph NAME,
+  and a symbolic font's built-in encoding wins over all of them. A font of
+  pictures — ZapfDingbats — is read as pictures now and drawn from the two Noto
+  symbol faces, not as the letters those codes carry in text.
+
+- **A face nobody can address by character is drawn by name.**
+  TrueType_without_cmap.pdf 0.006 → 0.002: with no `cmap` and nothing stated,
+  a code is a glyph index, and the question "what letter is this" has no
+  answer — so it is not asked.
+
+- **A page is read for the columns it actually has.** Not always two and a
+  middle, and rarely two and nothing else: the gutters are measured from where
+  ink stops, a title is centred against its COLUMN rather than against itself,
+  a line with a tab in it does not run on into the next, and nineteen boxes in
+  a grid are not a page of prose.
+
+- **A running head is a head and a running foot is a foot.** Repeated bands at
+  the top and bottom of every sheet were coming back as body paragraphs, the
+  foot's page number with them; a foot may be several lines deep and its
+  regions stand where the page put them.
+
+- **A paragraph keeps the indent the page set it with**, the leader that fills
+  its line stays a leader instead of a row of spaced dots, a word broken across
+  a line comes back together, and an exponent stands over its letter.
+
+- **The regions of a head or foot stand on one line.** Left, centre and right
+  are three regions of ONE line — in the sheet writer and in the PDF reader
+  both — joined by tabs at centre and right stops, not stacked three deep.
+
+- **Words painted with a gradient come back in its colours**, not in black:
+  text filled with a shading pattern takes the colour from the middle of the
+  gradient it was painted with.
+
+- **A JBIG2 dictionary that refines builds its shapes again.** §6.5.8.2 — four
+  files draw the same four shapes, each stating them a different way, and all
+  four came back blank or half-drawn. The out-of-band decision that ends a
+  strip is READ after the last instance; a region inside a dictionary shares
+  that dictionary's decoder and statistics rather than making its own; and the
+  Huffman path builds an aggregate the same way the arithmetic one does. All
+  four now at 0.007.
+
+- **A picture the page asked to be seen THROUGH**, a `/Separation` or
+  `/DeviceN` IMAGE run through its own tint transform, and a transport filter
+  undone on every stream rather than only inside an image.
+
+- **A page keeps its own size, and a document may have several**; a crop box
+  cuts the line it crosses, not just the sheet around it.
+
+- **The same line struck four times is one line**, an underline a page STROKES
+  is an underline, and one it draws in pieces is too.
+
+- **A letter set in italic is still that letter**, a ligature is two letters
+  and says so, and a page whose words are set at an ANGLE is a page being
+  drawn rather than a paragraph being read.
+
+- **A paper set in Latin Modern is not set in a grotesque.** The fallback
+  reached for a sans face where the document asked for a serif one.
+
+- **`true` is a TrueType tag**, and a font wearing it is readable; the picture
+  a Type 3 glyph paints is painted; an array operand may hold names, and one of
+  them is a colour.
+
+- **The bare-shading loss is reported where it happens**, not on every file
+  that follows it.
+
 ## 1.27.0
 
 A release about what the reader SEES.
