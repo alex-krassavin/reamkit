@@ -27,7 +27,15 @@ import { extractPageText } from './text';
 import { collectPageVectors } from './vector';
 import { markDrawnRules } from './text-rules';
 import { isRightToLeft } from './content';
-import type { BodyElement, Run, SectionProperties, Table, TableCell } from '@/core/document-model';
+import type {
+  BodyElement,
+  ParagraphProperties,
+  Run,
+  SectionProperties,
+  TabStop,
+  Table,
+  TableCell,
+} from '@/core/document-model';
 import type { Loss, Pt } from '@/core/ir';
 
 import type { TextRun } from './content';
@@ -1779,9 +1787,18 @@ function pageNumbered(run: Run): Array<Run> {
  * §17.16.5.35 — a page number is not the text "1"; it is the number of the page
  * it is drawn on, which is why the same band serves every page.
  *
+ * A foot is written in REGIONS, the way a spreadsheet's is: something at the
+ * left of the sheet, something at the middle, something against the far edge.
+ * ZapfDingbats.pdf signs each page "© RenderX 2000" at the left and "XSL
+ * Formatting Objects Test Suite" at the right, and the two hundred points
+ * between them came back as one word space, the two texts crowding each other
+ * at the left. They stand on TAB STOPS instead (§17.3.1.38), which is what the
+ * two hundred points are.
+ *
  * @param runs     The foot's runs.
  * @param stepped  Whether the page steps between its words.
  * @param measure  The measure it was set across, for its alignment.
+ * @param numbered Whether a number in it is the page's own.
  */
 function footerBand(
   runs: ReadonlyArray<TextRun>,
@@ -1789,12 +1806,14 @@ function footerBand(
   measure: { left: number; right: number } | undefined,
   numbered: boolean,
 ): Array<BodyElement> {
-  const lines = groupIntoLines(runs, false, stepped).filter((l) => l.text.length > 0);
+  const fontSize = median(runs.map((r) => r.fontSizePt).filter((s) => s > 0)) || 10;
+  const lines = rowsOf(runs, fontSize)
+    .map((row) => bandLine(row, fontSize, stepped, measure))
+    .filter((line) => line !== undefined);
   // A line apiece, in the order the page shows them: ZapfDingbats.pdf signs
   // each sheet with the publisher's line and the build stamp under it.
-  return lines.map((line) => {
-    const { alignment } = alignmentOf([line], measure);
-    const el = paragraphFromRuns(line.spans, undefined, alignment ? { alignment } : {});
+  return lines.map(({ spans, properties }) => {
+    const el = paragraphFromRuns(spans, undefined, properties);
     if (el.kind !== 'paragraph') return el;
     return {
       kind: 'paragraph',
@@ -1805,6 +1824,76 @@ function footerBand(
     };
   });
 }
+
+/**
+ * One line of a running head or foot: its spans, and the placement that puts
+ * them where the page had them.
+ *
+ * A wide gap inside such a line is not a word space, it is the space BETWEEN
+ * REGIONS — and each region after the first stands on a tab stop, at the middle
+ * of the band or against its far edge, whichever it was written at.
+ *
+ * @param row      The line's runs.
+ * @param fontSize The band's size, for the runs that state none.
+ * @param stepped  Whether the page steps between its words.
+ * @param measure  The measure the band was set across.
+ * @returns The line, or `undefined` where it holds no text.
+ */
+function bandLine(
+  row: ReadonlyArray<TextRun>,
+  fontSize: number,
+  stepped: boolean,
+  measure: { left: number; right: number } | undefined,
+): { spans: ReadonlyArray<TextSpan>; properties: ParagraphProperties } | undefined {
+  const ordered = [...row].sort((a, b) => a.x - b.x);
+  const pieces: Array<Array<TextRun>> = [[]];
+  for (const run of ordered) {
+    const last = pieces[pieces.length - 1]!;
+    const prev = last[last.length - 1];
+    if (prev && run.x - prev.endX > (run.fontSizePt || fontSize) * BAND_REGION_EM) pieces.push([]);
+    pieces[pieces.length - 1]!.push(run);
+  }
+  const y = Math.max(...ordered.map((r) => r.y));
+  const lines = pieces
+    .filter((piece) => piece.length > 0)
+    .map((piece) =>
+      lineOf(piece, y, Math.max(...piece.map((r) => r.fontSizePt || fontSize)), stepped),
+    )
+    .filter((line) => line.text.length > 0);
+  if (lines.length === 0) return undefined;
+  // One region is a line of its own, placed the way the page placed it.
+  if (lines.length === 1 || lines.length > BAND_REGIONS || !measure) {
+    const { alignment } = alignmentOf(lines.slice(0, 1), measure);
+    const spans = lines.flatMap((line, i) =>
+      i === 0 ? line.spans : [{ text: ' ' }, ...line.spans],
+    );
+    return { spans, properties: alignment ? { alignment } : {} };
+  }
+  const width = measure.right - measure.left;
+  const spans: Array<TextSpan> = [...lines[0]!.spans];
+  const tabs: Array<TabStop> = [];
+  for (const line of lines.slice(1)) {
+    // Against the far edge, or somewhere in the middle: which one it is is
+    // where the page put it.
+    const flush = measure.right - (line.x + line.width) <= width * BAND_RIGHT_SHARE;
+    tabs.push({
+      positionPt: pt(0),
+      relativeTo: flush ? 'right' : 'center',
+      alignment: flush ? 'right' : 'center',
+    });
+    spans.push({ text: '\t' }, ...line.spans);
+  }
+  return { spans, properties: { tabs } };
+}
+
+/** A gap this wide, in ems, stands BETWEEN the regions of a head or foot. */
+const BAND_REGION_EM = 4;
+
+/** How many regions a band line may hold — left, centre, right. */
+const BAND_REGIONS = 3;
+
+/** How near the far edge a region has to end to be set against it. */
+const BAND_RIGHT_SHARE = 0.05;
 
 /**
  * Whether the page is RULED into columns rather than SET in them.

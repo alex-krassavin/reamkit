@@ -146,8 +146,12 @@ export function paragraphFromRuns(
         ...(s.markup !== undefined ? { markup: s.markup } : {}),
       });
   }
+  // Whitespace a page never drew — the gaps this reader put in — collapses to
+  // one space. A TAB is not that: it is a placement, and the running head and
+  // foot are written with them (see `bandLine`), the regions of a foot standing
+  // on stops the way a spreadsheet's do.
   const runs = merged
-    .map((m) => ({ ...m, text: m.text.replace(/\s+/g, ' ') }))
+    .map((m) => ({ ...m, text: m.text.replace(/[^\S\t]+/gu, ' ') }))
     .filter((m) => m.text.length > 0);
   // Trim the paragraph's outer whitespace.
   if (runs.length > 0) {

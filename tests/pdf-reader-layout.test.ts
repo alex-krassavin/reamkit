@@ -343,15 +343,21 @@ describe('a running foot is a foot, not a paragraph (§17.6.13)', () => {
       ops.push(`BT /F0 8 Tf 1 0 0 1 40 20 Tm (${last} 2000) Tj ET`);
       return ops.join('\n');
     };
-    const contents = [page(1), page(2), page(3)];
+    return pages([page(1), page(2), page(3)]);
+  };
+
+  /** Those three pages assembled into a file. */
+  const pages = (contents: ReadonlyArray<string>): Uint8Array => {
+    const kids = contents.map((_, i) => `${String(3 + i * 2)} 0 R`).join(' ');
     const objects: Array<string> = [
       '<< /Type /Catalog /Pages 2 0 R >>',
-      '<< /Type /Pages /Kids [3 0 R 5 0 R 7 0 R] /Count 3 >>',
+      `<< /Type /Pages /Kids [${kids}] /Count ${String(contents.length)} >>`,
     ];
+    const fontAt = 3 + contents.length * 2;
     contents.forEach((content, i) => {
       objects.push(
         `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 400] /Contents ${String(4 + i * 2)} 0 R ` +
-          '/Resources << /Font << /F0 9 0 R >> >> >>',
+          `/Resources << /Font << /F0 ${String(fontAt)} 0 R >> >> >>`,
         `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
       );
     });
@@ -408,6 +414,31 @@ describe('a running foot is a foot, not a paragraph (§17.6.13)', () => {
     expect(lines).toHaveLength(2);
     expect(lines[0]).toContain('Thing Press');
     expect(lines[1]).toContain('The Journal of Things');
+  });
+
+  it('sets a foot written in REGIONS on the stops it was written at', () => {
+    // A foot is written the way a spreadsheet's is: something at the left,
+    // something against the far edge. ZapfDingbats.pdf signs each sheet
+    // "© RenderX 2000" at the left and "XSL Formatting Objects Test Suite" at
+    // the right, and the two hundred points between them came back as one word
+    // space — the two crowding each other at the left.
+    const page = (n: number): string =>
+      [
+        ...Array.from(
+          { length: 8 },
+          (_, i) =>
+            `BT /F0 10 Tf 1 0 0 1 40 ${String(360 - i * 14)} Tm (body line ${String(i)}) Tj ET`,
+        ),
+        `BT /F0 8 Tf 1 0 0 1 40 20 Tm (Thing Press ${String(n)}) Tj ET`,
+        'BT /F0 8 Tf 1 0 0 1 200 20 Tm (The Journal of Things) Tj ET',
+      ].join('\n');
+    const doc = reconstructByLayout(PdfFile.parse(pages([page(1), page(2), page(3)]))).doc;
+    const part = doc.section?.footers[0]?.relationshipId;
+    const band = part !== undefined ? doc.headersFooters?.get(part) : undefined;
+    const line = band?.[0];
+    if (line?.kind !== 'paragraph') throw new Error('the band has a line');
+    expect(line.paragraph.runs.map((r) => r.text).join('')).toContain('\t');
+    expect(line.paragraph.properties.tabs?.[0]).toMatchObject({ relativeTo: 'right' });
   });
 
   it('leaves the number alone where the foot says the SAME thing on every page', () => {

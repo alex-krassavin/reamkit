@@ -267,11 +267,15 @@ describe('real documents: SpreadsheetML dialects', () => {
 
     // A literal CR LF inside the centre header region is a line break, not text
     // — drawn as text it came out as a missing-glyph box mid-title.
+    // (The regions themselves share one line, on tab stops, so the break shows
+    // as a second LINE of the band rather than a second centred paragraph.)
     const bands = [...(doc.headersFooters?.values() ?? [])].flat();
-    const centre = bands.filter(
-      (b) => b.kind === 'paragraph' && b.paragraph.properties.alignment === 'center',
+    const deepest = Math.max(
+      ...[...(doc.headersFooters?.values() ?? [])].map(
+        (band) => band.filter((b) => b.kind === 'paragraph').length,
+      ),
     );
-    expect(centre.length).toBeGreaterThanOrEqual(2);
+    expect(deepest).toBeGreaterThanOrEqual(2);
     for (const b of bands) {
       if (b.kind !== 'paragraph') continue;
       for (const run of b.paragraph.runs) expect(run.text).not.toMatch(/[\r\n]/);
