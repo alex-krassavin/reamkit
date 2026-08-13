@@ -352,6 +352,14 @@ export class PdfFile {
  * reader takes one from whoever needs it:
  *
  * ```ts
+ * // browser: any wasm/JS decoder you ship — brotli-dec-wasm is ~200 KB
+ * import brotliPromise from 'brotli-dec-wasm';
+ * const brotli = await brotliPromise;
+ * Ream.parse(pdf, { filters: { BrotliDecode: (b) => brotli.decompress(b) } });
+ * ```
+ *
+ * ```ts
+ * // node, where the runtime already carries one
  * import { brotliDecompressSync } from 'node:zlib';
  * Ream.parse(pdf, { filters: { BrotliDecode: (b) => brotliDecompressSync(b) } });
  * ```

@@ -262,16 +262,22 @@ decode is a stream it has not read — and when that stream is the
 cross-reference, the file has no pages at all. Supply the decoder and it does:
 
 ```ts
-import { brotliDecompressSync } from 'node:zlib';
+import brotliPromise from 'brotli-dec-wasm'; // ~200 KB wasm, browsers and workers
 import { Ream } from 'reamkit';
 
+const brotli = await brotliPromise;
+
 const doc = Ream.parse(pdfBytes, {
-  filters: { BrotliDecode: (bytes) => brotliDecompressSync(bytes) },
+  filters: { BrotliDecode: (bytes) => brotli.decompress(bytes) },
 });
 ```
 
-In a browser, pass any Brotli implementation you already ship. Without one the
-loss report names the filter, so a document that comes back empty says why.
+Any Brotli implementation you already ship will do — on a server the runtime
+carries one, so `import { brotliDecompressSync } from 'node:zlib'` and pass
+that instead. Ream itself imports neither: a 122 KB static dictionary in every
+browser bundle, for a filter almost nothing produces, is not a cost the common
+case should pay. Without a decoder the loss report names the filter, so a
+document that comes back empty says why.
 
 ## pdf → pdf: a form keeps its form
 

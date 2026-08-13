@@ -119,12 +119,17 @@ the whole document is missing. Rather than carry a decoder for every filter
 anyone might write, `Ream.parse(bytes, { filters })` takes one from the caller:
 
 ```ts
-import { brotliDecompressSync } from 'node:zlib';
-Ream.parse(pdf, { filters: { BrotliDecode: (b) => brotliDecompressSync(b) } });
+import brotliPromise from 'brotli-dec-wasm'; // ~200 KB wasm, browsers and workers
+const brotli = await brotliPromise;
+Ream.parse(pdf, { filters: { BrotliDecode: (b) => brotli.decompress(b) } });
 ```
 
-Absent, or throwing, the filter is reported unreadable by name rather than
-producing an empty document silently. FlateDecode, LZW, RunLength, ASCII85,
+On a server the runtime already carries one, so `brotliDecompressSync` from
+`node:zlib` goes in the same slot. Brotli is RFC 7932's context-modelled
+Huffman scheme over a 122 KB static dictionary, and a filter almost nothing
+produces does not belong in every browser bundle — which is why this is a hook
+rather than a dependency. Absent, or throwing, the filter is reported
+unreadable by name rather than producing an empty document silently. FlateDecode, LZW, RunLength, ASCII85,
 ASCIIHex, CCITT, DCT, JPX and JBIG2 need nothing supplied.
 
 **The two PDF readings** — a
