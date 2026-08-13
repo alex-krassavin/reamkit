@@ -383,6 +383,25 @@ export interface Type3Call {
   readonly ctm: Matrix;
   /** §8.5.3 — its place in the stream's painting order, as a form call has. */
   readonly order: number;
+  /**
+   * §9.6.5/§9.10 — the font SAYS what character this glyph stands for. A
+   * flowing reading re-sets that character in a face of its own, so drawing the
+   * procedure as well puts two copies of the letter on the page.
+   */
+  readonly readable: boolean;
+}
+
+/**
+ * §9.10 — whether the font says what character a glyph stands for: text that is
+ * neither empty nor the replacement character a reader writes where nothing is
+ * stated.
+ *
+ * @param text What the font's decode gave for the code.
+ * @returns Whether a flowing reading can write it as a letter.
+ */
+export function statesACharacter(text: string): boolean {
+  const trimmed = text.trim();
+  return trimmed.length > 0 && !trimmed.includes('\uFFFD');
 }
 
 /**
@@ -673,6 +692,7 @@ export function interpretContent(
           resources: type3.resources,
           ctm: multiply(type3.matrix, multiply(scale, multiply(tm, state.ctm))),
           order: paintOrder++,
+          readable: statesACharacter(state.font.decode([code])),
         });
       }
     }

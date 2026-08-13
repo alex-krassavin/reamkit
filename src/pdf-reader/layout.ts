@@ -228,10 +228,18 @@ export function reconstructByLayout(
       // are kept for the FLOWING reading, which is a document being read rather
       // than a page being reproduced: a scanned page's every word lives in its
       // invisible layer.
-      const colRuns =
-        mode === 'positional'
-          ? allRuns.filter((r) => r.type3 !== true && r.invisible !== true)
-          : allRuns;
+      // A Type 3 glyph is drawn in EVERY reading, because the page's marks are
+      // its only typeface — so its code is not re-set in a substitute anywhere.
+      // bug1245391_reduced.pdf sets three Chinese characters as 89×85 bitmaps
+      // and they came back doubled: the file's own light strokes with a
+      // substitute's heavy ones over them.
+      //
+      // §9.3.6 — a run the page painted NOWHERE is a different thing, and a
+      // flowing reading keeps it: a document is being read rather than a page
+      // reproduced, and a scanned page's every word lives in that layer.
+      const colRuns = allRuns.filter(
+        (r) => r.type3 !== true && (mode !== 'positional' || r.invisible !== true),
+      );
       if (mode === 'positional') {
         // Every line stands where the page set it. Lines are NOT grouped into
         // paragraphs here: a paragraph is a thing that reflows, and nothing in

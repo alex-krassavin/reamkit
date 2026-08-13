@@ -250,11 +250,6 @@
   "aligned": true
  },
  {
-  "name": "bug1245391_reduced.pdf",
-  "score": 0.0428,
-  "aligned": true
- },
- {
   "name": "calgray.pdf",
   "score": 0.0426,
   "aligned": true
@@ -586,6 +581,11 @@
  },
  {
   "name": "IdentityToUnicodeMap_charCodeOf.pdf",
+  "score": 0.0081,
+  "aligned": true
+ },
+ {
+  "name": "bug1245391_reduced.pdf",
   "score": 0.0081,
   "aligned": true
  },
@@ -1305,17 +1305,7 @@
   "aligned": true
  },
  {
-  "name": "bug1001080.pdf",
-  "score": 0.0017,
-  "aligned": true
- },
- {
   "name": "TrueType_without_cmap.pdf",
-  "score": 0.0017,
-  "aligned": true
- },
- {
-  "name": "french_diacritics.pdf",
   "score": 0.0017,
   "aligned": true
  },
@@ -1470,6 +1460,11 @@
   "aligned": true
  },
  {
+  "name": "bug1001080.pdf",
+  "score": 0.0008,
+  "aligned": true
+ },
+ {
   "name": "checkbox_no_appearance.pdf",
   "score": 0.0008,
   "aligned": true
@@ -1526,6 +1521,11 @@
  },
  {
   "name": "hello_world_rotated.pdf",
+  "score": 0.0005,
+  "aligned": true
+ },
+ {
+  "name": "french_diacritics.pdf",
   "score": 0.0005,
   "aligned": true
  },
