@@ -577,17 +577,29 @@ function colorSpaceAt(file: PdfFile, cs: PdfValue, depth: number): ColorSpaceInf
     // image path's business; a bare `sc` into one is rare and left alone.
     return undefined;
   }
+  if (head.value === 'CalRGB') {
+    // §8.6.5.7 — three numbers through their gammas and the matrix into XYZ,
+    // then adapted from the white the file STATES to the white a screen has.
+    // The decode is unambiguous; the adaptation is where implementations part,
+    // and calrgb.pdf — whose whole point is extreme white points — was measured
+    // through three of them at the same swatches:
+    //
+    //   A,B,C = 0.10 0 0, white [0.2 1 0.2]:  poppler 200,0,44  mutool 95,0,15
+    //                                         CoreGraphics 97,37,8
+    //   A,B,C = 0.10 0 0, white [2 1 1.7]:    poppler 88,0,13   mutool 93,0,8
+    //                                         CoreGraphics 190,0,20
+    //
+    // No two agree on both: mutool sides with CoreGraphics on the first page
+    // and with poppler on the second. So there is no oracle to copy, and what
+    // is left is the model — the Bradford adaptation this reader already runs
+    // for CalGray, which poppler's numbers match to the byte on both pages.
+    const params = file.resolve(cs[1] ?? PDF_NULL);
+    const cie = params instanceof Map ? cieParams(file, params, true) : undefined;
+    const base = { kind: 'rgb' as const, components: 3 };
+    return cie ? { ...base, cie } : base;
+  }
   if (head.value === 'CalGray') {
     // §8.6.5.6 — one number through one gamma, which is unambiguous.
-    //
-    // `CalRGB` is NOT read this way, though the file states it the same way.
-    // Its transform is well defined on paper and no two renderers agree on the
-    // chromatic adaptation at the end of it: calrgb.pdf's neutral column comes
-    // back light blue-grey from mutool, and neither adapting the stated white
-    // to D65 (Bradford or von Kries) nor ignoring the white reproduces that.
-    // Guessing at it moved the file 0.630 to 0.621 while making some of its
-    // pages worse, so it keeps the device reading until there is something to
-    // check an implementation against.
     const params = file.resolve(cs[1] ?? PDF_NULL);
     const cie = params instanceof Map ? cieParams(file, params, false) : undefined;
     const base = { kind: 'gray' as const, components: 1 };

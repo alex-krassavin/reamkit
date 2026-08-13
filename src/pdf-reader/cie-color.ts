@@ -6,11 +6,13 @@
 // viewer shows is what comes back out of that. calgray.pdf reads 0.258 against
 // its source as a device grey and 0.044 as what it is.
 //
-// The RGB half is written here and NOT used: see `./shading`. Its way back from
-// XYZ needs a chromatic adaptation, and no two renderers agree on which —
-// calrgb.pdf's neutral column comes back light blue-grey from mutool and
-// neither Bradford, nor von Kries, nor ignoring the white point reproduces
-// that. It waits for something to check it against.
+// The way back from XYZ needs a chromatic adaptation — the file states the
+// white its colours are relative to, and a screen has one of its own — and that
+// is the one step implementations part on. Measured at the same swatches of
+// calrgb.pdf, poppler, mutool and CoreGraphics give three different answers and
+// no two of them agree on both of its pages (see `./shading`). What is written
+// here is the model itself: gamma and matrix into XYZ, Bradford onto D65, the
+// sRGB matrix and its transfer — which is what poppler gives, to the byte.
 
 /** §8.6.5.6/§8.6.5.7 — what a CIE-based space states about itself. */
 export interface CieSpace {

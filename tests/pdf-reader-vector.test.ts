@@ -896,6 +896,41 @@ describe('the CIE-based grey space (§8.6.5.6)', () => {
   });
 });
 
+describe('the CIE-based RGB space (§8.6.5.7)', () => {
+  /** A page filling a box in a CalRGB space with the given parameters. */
+  const calRgbPdf = (params: string, value: string): Uint8Array => {
+    const content = `/Cs cs ${value} sc 20 20 100 100 re f`;
+    return assemble([
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R ' +
+        `/Resources << /ColorSpace << /Cs [/CalRGB << ${params} >>] >> >> >>`,
+      `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+    ]);
+  };
+
+  it('decodes through the gamma and the matrix, and adapts the white it states', () => {
+    // Three numbers that look like a DeviceRGB's and are not. Under the sRGB
+    // white and an identity matrix the space IS sRGB's own primaries scaled,
+    // so a half-red comes back the sRGB transfer of what the matrix gives.
+    const d65 =
+      '/WhitePoint [0.9505 1 1.089] /Matrix [0.4124 0.2126 0.0193 0.3576 0.7152 0.1192 0.1805 0.0722 0.9505]';
+    const half = PdfFile.parse(calRgbPdf(d65, '0.5 0 0'));
+    expect(collectPageVectors(half, half.pages()[0]!).vectors[0]?.fillHex).toBe('BC0000');
+    // …and the gamma is the space's own: 0.5^2.2 is a quarter of the light.
+    const gammaed = PdfFile.parse(calRgbPdf(`${d65} /Gamma [2.2 2.2 2.2]`, '0.5 0 0'));
+    expect(collectPageVectors(gammaed, gammaed.pages()[0]!).vectors[0]?.fillHex).toBe('800000');
+  });
+
+  it('keeps the device reading where the space states no white point', () => {
+    // §8.6.5.7 makes /WhitePoint required. Without one there is nothing to
+    // adapt from, and the three numbers are read as the device colour they
+    // look like.
+    const odd = PdfFile.parse(calRgbPdf('/Gamma [1 1 1]', '0.5 0 0'));
+    expect(collectPageVectors(odd, odd.pages()[0]!).vectors[0]?.fillHex).toBe('800000');
+  });
+});
+
 describe('a shading stitched out of shadings (§7.10.4)', () => {
   /** A page filling one square with pattern `/P1`, whose function is `fn`. */
   const shaded = (fn: string): Uint8Array => {
