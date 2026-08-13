@@ -162,11 +162,21 @@ always in the clear.
 (cross-reference streams, object streams) or an encrypted one. A tagged PDF (the
 ones Ream writes) is rebuilt from its structure tree — headings, paragraphs,
 tables, lists in reading order; an untagged PDF is reconstructed heuristically
-from glyph positions — in the columns the page was set in, with a running head
-or foot kept out of the body, a page ruled into a grid rebuilt as a table with
-its own columns and row heights, a word the line broke in half put back
-together, and a bracketed block of rows and columns read as an OfficeMath
-matrix. **Raster images, hyperlinks and the page's artwork come
+from glyph positions — in the columns of prose the page was set in, with a
+running head or foot kept out of the body and its page number written as a
+field, a page ruled into a grid rebuilt as a table with its own columns and row
+heights, a word the line broke in half put back together, and a bracketed block
+of rows and columns read as an OfficeMath matrix.
+
+A page that is not prose in columns is read ACROSS: an invoice sets its labels
+along the left and its figures against the right margin, and every one of those
+figures belongs to the line beside it. A gap no word space could be comes back
+as a TAB standing on the stop the page set the piece after it at, consecutive
+lines broken at the SAME stops come back as a table, and a line the page drew
+between two blocks becomes the border of the paragraph it separates rather than
+a shape anchored where the words used to be.
+
+**Raster images, hyperlinks and the page's artwork come
 back too** — images lifted out and sized from their placement (including the
 ones written into the content stream, and stencil masks painted in the page's
 own colour), link annotations re-attached to the text, filled paths, stroked
