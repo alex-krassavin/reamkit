@@ -11,102 +11,117 @@
  },
  {
   "name": "tdf136952_pgBreak3.docx",
-  "score": 0.1534,
+  "score": 0.1512,
   "aligned": false
  },
  {
   "name": "tdf130214.docx",
-  "score": 0.1128,
+  "score": 0.1205,
   "aligned": false
  },
  {
   "name": "tdf60351.docx",
-  "score": 0.0433,
+  "score": 0.0429,
   "aligned": true
  },
  {
   "name": "fdo87488.docx",
-  "score": 0.0318,
+  "score": 0.0325,
   "aligned": false
  },
  {
-  "name": "ole-anchor.docx",
-  "score": 0.019,
+  "name": "tdf123386.docx",
+  "score": 0.0296,
   "aligned": true
  },
  {
-  "name": "tdf87533_bidi.docx",
-  "score": 0.0174,
+  "name": "tdf133647.docx",
+  "score": 0.0275,
   "aligned": true
  },
  {
   "name": "tdf143475_rotatedWord2007image.docx",
-  "score": 0.0174,
+  "score": 0.0189,
+  "aligned": true
+ },
+ {
+  "name": "ole-anchor.docx",
+  "score": 0.0189,
+  "aligned": true
+ },
+ {
+  "name": "tdf87533_bidi.docx",
+  "score": 0.0187,
+  "aligned": true
+ },
+ {
+  "name": "tdf122224.docx",
+  "score": 0.018,
   "aligned": true
  },
  {
   "name": "n758883.docx",
-  "score": 0.0155,
+  "score": 0.0178,
   "aligned": true
  },
  {
   "name": "tdf113182.docx",
-  "score": 0.0149,
+  "score": 0.0135,
   "aligned": true
  },
  {
   "name": "bnc821804.docx",
+  "score": 0.0131,
+  "aligned": true
+ },
+ {
+  "name": "tdf143219_ContourWrap_rotate.docx",
   "score": 0.0127,
   "aligned": true
  },
  {
   "name": "groupshape-relsize.docx",
-  "score": 0.0127,
+  "score": 0.0124,
   "aligned": true
  },
  {
-  "name": "tdf143219_ContourWrap_rotate.docx",
-  "score": 0.0123,
+  "name": "tdf109053.docx",
+  "score": 0.0117,
   "aligned": true
  },
  {
-  "name": "tdf133647.docx",
-  "score": 0.0118,
+  "name": "tdf133647_unicode.docx",
+  "score": 0.0116,
   "aligned": true
  },
  {
   "name": "tdf115719b.docx",
-  "score": 0.011,
+  "score": 0.0113,
   "aligned": false
  },
  {
   "name": "tdf143475_rotatedWord2007imageInline.docx",
-  "score": 0.0098,
+  "score": 0.011,
   "aligned": true
  },
  {
-  "name": "tdf95755.docx",
-  "score": 0.0094,
+  "name": "tdf123389.docx",
+  "score": 0.0103,
   "aligned": true
  },
  {
-  "name": "tdf123386.docx",
-  "score": 0.0092,
-  "aligned": true
- },
- {
-  "name": "tdf143476_lockedCanvas_position.docx",
-  "score": 0.0079,
-  "aligned": true
- },
- {
-  "name": "n779627b.docx",
+  "name": "fdo76583.docx",
   "score": 0.0073,
   "aligned": true
  },
  {
-  "name": "tdf133448.docx",
-  "score": 0.007,
+  "name": "tdf143476_lockedCanvas_position.docx",
+  "score": 0.0072,
+  "aligned": true
+ },
+ {
+  "name": "tdf95755.docx",
+  "score": 0.0072,
   "aligned": true
  },
  {
@@ -115,128 +130,98 @@
   "aligned": true
  },
  {
-  "name": "tdf122224.docx",
-  "score": 0.0069,
-  "aligned": true
- },
- {
-  "name": "tdf168567.docx",
+  "name": "tdf154370.docx",
   "score": 0.0067,
   "aligned": true
  },
  {
-  "name": "text-copy.docx",
-  "score": 0.0065,
-  "aligned": true
- },
- {
   "name": "groupshape-child-rotation.docx",
-  "score": 0.0065,
-  "aligned": true
- },
- {
-  "name": "tdf106606.docx",
-  "score": 0.0063,
-  "aligned": true
- },
- {
-  "name": "tdf109053.docx",
-  "score": 0.0059,
-  "aligned": true
- },
- {
-  "name": "tdf99135.docx",
-  "score": 0.0054,
-  "aligned": true
- },
- {
-  "name": "tdf75573_page1frame.docx",
-  "score": 0.0054,
-  "aligned": true
- },
- {
-  "name": "tdf154370.docx",
-  "score": 0.0053,
-  "aligned": true
- },
- {
-  "name": "tdf123389.docx",
-  "score": 0.0053,
-  "aligned": true
- },
- {
-  "name": "n820504.docx",
-  "score": 0.0049,
-  "aligned": false
- },
- {
-  "name": "fdo76583.docx",
-  "score": 0.0047,
-  "aligned": true
- },
- {
-  "name": "tdf133647_unicode.docx",
-  "score": 0.0046,
-  "aligned": true
- },
- {
-  "name": "n780645.docx",
-  "score": 0.0043,
-  "aligned": true
- },
- {
-  "name": "tdf154319-ToC_with_s_and_d.docx",
-  "score": 0.0041,
+  "score": 0.0066,
   "aligned": true
  },
  {
   "name": "tdf114217.docx",
-  "score": 0.0041,
+  "score": 0.0066,
   "aligned": true
  },
  {
-  "name": "tdf120547.docx",
-  "score": 0.0041,
+  "name": "text-copy.docx",
+  "score": 0.0064,
   "aligned": true
  },
  {
-  "name": "tdf109316_dropCaps.docx",
-  "score": 0.0035,
+  "name": "tdf106606.docx",
+  "score": 0.0064,
   "aligned": true
  },
  {
-  "name": "groupshape-fontname.docx",
-  "score": 0.003,
+  "name": "n820504.docx",
+  "score": 0.0063,
+  "aligned": false
+ },
+ {
+  "name": "tdf168567.docx",
+  "score": 0.0062,
+  "aligned": true
+ },
+ {
+  "name": "tdf75573_page1frame.docx",
+  "score": 0.0062,
+  "aligned": true
+ },
+ {
+  "name": "tdf99135.docx",
+  "score": 0.0059,
+  "aligned": true
+ },
+ {
+  "name": "n779627b.docx",
+  "score": 0.005,
   "aligned": true
  },
  {
   "name": "tdf131841_HighlightColorGroupedShape.docx",
-  "score": 0.003,
-  "aligned": true
- },
- {
-  "name": "tdf124754.docx",
-  "score": 0.0029,
-  "aligned": true
- },
- {
-  "name": "table_width.docx",
-  "score": 0.0028,
-  "aligned": true
- },
- {
-  "name": "tdf169173.docx",
-  "score": 0.0026,
+  "score": 0.0048,
   "aligned": true
  },
  {
   "name": "tdf48658_transparentOLEheader.docx",
-  "score": 0.0026,
+  "score": 0.0047,
   "aligned": true
  },
  {
-  "name": "tdf85523.docx",
-  "score": 0.0025,
+  "name": "tdf120547.docx",
+  "score": 0.0043,
+  "aligned": true
+ },
+ {
+  "name": "groupshape-fontname.docx",
+  "score": 0.0043,
+  "aligned": true
+ },
+ {
+  "name": "tdf133448.docx",
+  "score": 0.0042,
+  "aligned": true
+ },
+ {
+  "name": "tdf154319-ToC_with_s_and_d.docx",
+  "score": 0.0037,
+  "aligned": true
+ },
+ {
+  "name": "n780645.docx",
+  "score": 0.0036,
+  "aligned": true
+ },
+ {
+  "name": "tdf109316_dropCaps.docx",
+  "score": 0.003,
+  "aligned": true
+ },
+ {
+  "name": "n775899.docx",
+  "score": 0.003,
   "aligned": true
  },
  {
@@ -245,38 +230,63 @@
   "aligned": true
  },
  {
-  "name": "tdf100830.docx",
+  "name": "tdf85523.docx",
+  "score": 0.0025,
+  "aligned": true
+ },
+ {
+  "name": "tdf169173.docx",
+  "score": 0.0025,
+  "aligned": true
+ },
+ {
+  "name": "textbox-wps-only.docx",
+  "score": 0.0024,
+  "aligned": true
+ },
+ {
+  "name": "tdf124754.docx",
+  "score": 0.0024,
+  "aligned": true
+ },
+ {
+  "name": "tdf120551.docx",
   "score": 0.0023,
   "aligned": true
  },
  {
-  "name": "tdf124600.docx",
+  "name": "strict-lockedcanvas.docx",
+  "score": 0.0023,
+  "aligned": true
+ },
+ {
+  "name": "tdf82824.docx",
+  "score": 0.0023,
+  "aligned": true
+ },
+ {
+  "name": "tdf127825.docx",
   "score": 0.0022,
   "aligned": true
  },
  {
-  "name": "strict-lockedcanvas.docx",
+  "name": "tdf100830.docx",
   "score": 0.0022,
   "aligned": true
  },
  {
   "name": "tdf153791-shd_overrides_fontRef.docx",
-  "score": 0.0022,
-  "aligned": true
- },
- {
-  "name": "textbox-wps-only.docx",
-  "score": 0.0022,
-  "aligned": true
- },
- {
-  "name": "tdf127825.docx",
-  "score": 0.0018,
+  "score": 0.0021,
   "aligned": true
  },
  {
   "name": "tdf95970.docx",
-  "score": 0.0018,
+  "score": 0.0021,
+  "aligned": true
+ },
+ {
+  "name": "dml-groupshape-paraadjust.docx",
+  "score": 0.002,
   "aligned": true
  },
  {
@@ -286,11 +296,21 @@
  },
  {
   "name": "n757890.docx",
-  "score": 0.0017,
+  "score": 0.0018,
   "aligned": true
  },
  {
-  "name": "tdf114212.docx",
+  "name": "image-lazy-read.docx",
+  "score": 0.0018,
+  "aligned": false
+ },
+ {
+  "name": "tdf97038.docx",
+  "score": 0.0016,
+  "aligned": true
+ },
+ {
+  "name": "tdf124600.docx",
   "score": 0.0016,
   "aligned": true
  },
@@ -300,47 +320,32 @@
   "aligned": true
  },
  {
-  "name": "tdf126426.docx",
-  "score": 0.0016,
-  "aligned": true
- },
- {
-  "name": "image-lazy-read.docx",
+  "name": "table_width.docx",
   "score": 0.0015,
-  "aligned": false
- },
- {
-  "name": "tdf82824.docx",
-  "score": 0.0015,
-  "aligned": true
- },
- {
-  "name": "dml-groupshape-paraadjust.docx",
-  "score": 0.0014,
-  "aligned": true
- },
- {
-  "name": "tdf97038.docx",
-  "score": 0.0014,
   "aligned": true
  },
  {
   "name": "n751077.docx",
+  "score": 0.0014,
+  "aligned": true
+ },
+ {
+  "name": "tdf124398.docx",
+  "score": 0.0014,
+  "aligned": true
+ },
+ {
+  "name": "groupshape-line.docx",
   "score": 0.0013,
   "aligned": true
  },
  {
-  "name": "tdf159897_broken_link.docx",
-  "score": 0.0013,
+  "name": "tdf154695-ToC_no_numbers.docx",
+  "score": 0.0012,
   "aligned": true
  },
  {
-  "name": "n775899.docx",
-  "score": 0.0013,
-  "aligned": true
- },
- {
-  "name": "tdf120551.docx",
+  "name": "tdf134902.docx",
   "score": 0.0012,
   "aligned": true
  },
@@ -350,58 +355,48 @@
   "aligned": true
  },
  {
-  "name": "tdf124398.docx",
-  "score": 0.0011,
-  "aligned": true
- },
- {
-  "name": "groupshape-line.docx",
-  "score": 0.0011,
-  "aligned": true
- },
- {
   "name": "fdo75722-vml.docx",
   "score": 0.0011,
   "aligned": true
  },
  {
-  "name": "tdf134902.docx",
-  "score": 0.001,
-  "aligned": true
- },
- {
-  "name": "tdf154695-ToC_no_numbers.docx",
-  "score": 0.001,
-  "aligned": true
- },
- {
-  "name": "tdf121804.docx",
-  "score": 0.0009,
-  "aligned": true
- },
- {
-  "name": "tdf96218.docx",
-  "score": 0.0009,
+  "name": "tdf159897_broken_link.docx",
+  "score": 0.0011,
   "aligned": true
  },
  {
   "name": "tdf100072.docx",
-  "score": 0.0009,
+  "score": 0.0011,
   "aligned": true
  },
  {
-  "name": "tdf108545_embeddedDocxIcon.docx",
-  "score": 0.0007,
+  "name": "tdf114212.docx",
+  "score": 0.001,
   "aligned": true
  },
  {
   "name": "tdf105127.docx",
-  "score": 0.0007,
+  "score": 0.0008,
+  "aligned": true
+ },
+ {
+  "name": "n779627.docx",
+  "score": 0.0008,
+  "aligned": true
+ },
+ {
+  "name": "tdf105143.docx",
+  "score": 0.0008,
   "aligned": true
  },
  {
   "name": "tdf129912.docx",
-  "score": 0.0007,
+  "score": 0.0008,
+  "aligned": true
+ },
+ {
+  "name": "tdf108545_embeddedDocxIcon.docx",
+  "score": 0.0008,
   "aligned": true
  },
  {
@@ -410,17 +405,47 @@
   "aligned": true
  },
  {
-  "name": "n779627.docx",
+  "name": "tdf121440.docx",
+  "score": 0.0007,
+  "aligned": true
+ },
+ {
+  "name": "tdf119039_bad_embedded_compound.docx",
+  "score": 0.0007,
+  "aligned": true
+ },
+ {
+  "name": "tdf130804.docx",
+  "score": 0.0007,
+  "aligned": true
+ },
+ {
+  "name": "tdf126426.docx",
+  "score": 0.0006,
+  "aligned": true
+ },
+ {
+  "name": "tdf96218.docx",
+  "score": 0.0006,
+  "aligned": true
+ },
+ {
+  "name": "tdf108806.docx",
+  "score": 0.0006,
+  "aligned": true
+ },
+ {
+  "name": "testfdo90720.docx",
   "score": 0.0005,
   "aligned": true
  },
  {
-  "name": "fdo43641.docx",
+  "name": "tdf152200-bad_fldChar_end.docx",
   "score": 0.0005,
   "aligned": true
  },
  {
-  "name": "tdf105143.docx",
+  "name": "tdf143476_lockedCanvas_twoShapes.docx",
   "score": 0.0005,
   "aligned": true
  },
@@ -430,32 +455,22 @@
   "aligned": true
  },
  {
-  "name": "tdf152200-bad_fldChar_end.docx",
-  "score": 0.0004,
-  "aligned": true
- },
- {
-  "name": "testfdo90720.docx",
-  "score": 0.0004,
+  "name": "tdf75573_lostTable.docx",
+  "score": 0.0005,
   "aligned": true
  },
  {
   "name": "tdf108849.docx",
+  "score": 0.0005,
+  "aligned": true
+ },
+ {
+  "name": "tdf124670.docx",
   "score": 0.0004,
   "aligned": true
  },
  {
-  "name": "xml_space.docx",
-  "score": 0.0004,
-  "aligned": true
- },
- {
-  "name": "tdf130804.docx",
-  "score": 0.0004,
-  "aligned": true
- },
- {
-  "name": "tdf108806.docx",
+  "name": "tdf118693.docx",
   "score": 0.0004,
   "aligned": true
  },
@@ -465,52 +480,52 @@
   "aligned": true
  },
  {
-  "name": "tdf143476_lockedCanvas_twoShapes.docx",
+  "name": "tdf111550.docx",
   "score": 0.0004,
   "aligned": true
  },
  {
-  "name": "tdf124670.docx",
+  "name": "tdf108714.docx",
+  "score": 0.0004,
+  "aligned": true
+ },
+ {
+  "name": "xml_space.docx",
   "score": 0.0004,
   "aligned": true
  },
  {
   "name": "tdf104167.docx",
-  "score": 0.0003,
-  "aligned": true
- },
- {
-  "name": "tdf111550.docx",
-  "score": 0.0003,
-  "aligned": true
- },
- {
-  "name": "tdf85232.docx",
-  "score": 0.0003,
-  "aligned": true
- },
- {
-  "name": "tdf121664.docx",
-  "score": 0.0003,
-  "aligned": true
- },
- {
-  "name": "tdf119200.docx",
-  "score": 0.0003,
+  "score": 0.0004,
   "aligned": true
  },
  {
   "name": "image-hyperlink.docx",
+  "score": 0.0004,
+  "aligned": true
+ },
+ {
+  "name": "tdf121664.docx",
+  "score": 0.0004,
+  "aligned": true
+ },
+ {
+  "name": "tdf119200.docx",
+  "score": 0.0004,
+  "aligned": true
+ },
+ {
+  "name": "tdf121804.docx",
   "score": 0.0003,
   "aligned": true
  },
  {
-  "name": "tdf121440.docx",
+  "name": "line-rotation.docx",
   "score": 0.0003,
   "aligned": true
  },
  {
-  "name": "unbalanced-columns-compat.docx",
+  "name": "tdf103931.docx",
   "score": 0.0003,
   "aligned": true
  },
@@ -520,47 +535,32 @@
   "aligned": true
  },
  {
+  "name": "tdf141969-font_in_table_with_style.docx",
+  "score": 0.0003,
+  "aligned": true
+ },
+ {
   "name": "tdf115883.docx",
   "score": 0.0003,
   "aligned": true
  },
  {
-  "name": "tdf108714.docx",
+  "name": "tdf74367_MarginsZeroed.docx",
   "score": 0.0002,
   "aligned": true
  },
  {
-  "name": "tdf75573_lostTable.docx",
+  "name": "tdf85232.docx",
   "score": 0.0002,
   "aligned": true
  },
  {
-  "name": "line-rotation.docx",
+  "name": "fdo43641.docx",
   "score": 0.0002,
   "aligned": true
  },
  {
-  "name": "tdf118693.docx",
-  "score": 0.0002,
-  "aligned": true
- },
- {
-  "name": "tdf103931.docx",
-  "score": 0.0002,
-  "aligned": true
- },
- {
-  "name": "tdf120548.docx",
-  "score": 0.0002,
-  "aligned": true
- },
- {
-  "name": "tdf141969-font_in_table_with_style.docx",
-  "score": 0.0002,
-  "aligned": true
- },
- {
-  "name": "groupshape-sdt.docx",
+  "name": "tdf103664.docx",
   "score": 0.0002,
   "aligned": true
  },
@@ -570,8 +570,33 @@
   "aligned": true
  },
  {
-  "name": "tdf43017.docx",
+  "name": "n766477.docx",
   "score": 0.0002,
+  "aligned": true
+ },
+ {
+  "name": "tdf170171.docx",
+  "score": 0.0002,
+  "aligned": true
+ },
+ {
+  "name": "tdf158023_import.docx",
+  "score": 0.0002,
+  "aligned": true
+ },
+ {
+  "name": "groupshape-sdt.docx",
+  "score": 0.0002,
+  "aligned": true
+ },
+ {
+  "name": "numbering-circle.docx",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "tdf120548.docx",
+  "score": 0.0001,
   "aligned": true
  },
  {
@@ -580,32 +605,17 @@
   "aligned": true
  },
  {
-  "name": "tdf103664.docx",
+  "name": "tdf43017.docx",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "unbalanced-columns-compat.docx",
   "score": 0.0001,
   "aligned": true
  },
  {
   "name": "line-wps-only.docx",
-  "score": 0.0001,
-  "aligned": true
- },
- {
-  "name": "tdf170171.docx",
-  "score": 0.0001,
-  "aligned": true
- },
- {
-  "name": "tdf74367_MarginsZeroed.docx",
-  "score": 0.0001,
-  "aligned": true
- },
- {
-  "name": "n766477.docx",
-  "score": 0.0001,
-  "aligned": true
- },
- {
-  "name": "numbering-circle.docx",
   "score": 0.0001,
   "aligned": true
  },
@@ -620,27 +630,7 @@
   "aligned": true
  },
  {
-  "name": "tdf158023_import.docx",
-  "score": 0.0001,
-  "aligned": true
- },
- {
-  "name": "__RefNumPara__.docx",
-  "score": 0.0001,
-  "aligned": true
- },
- {
-  "name": "tdf125038.docx",
-  "score": 0.0001,
-  "aligned": true
- },
- {
   "name": "tdf101627.docx",
-  "score": 0.0001,
-  "aligned": true
- },
- {
-  "name": "tdf115094v2.docx",
   "score": 0.0001,
   "aligned": true
  },
@@ -650,47 +640,52 @@
   "aligned": true
  },
  {
-  "name": "tdf169843.docx",
+  "name": "tdf125038.docx",
   "score": 0.0001,
   "aligned": true
  },
  {
-  "name": "bnc779620.docx",
+  "name": "__RefNumPara__.docx",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "n751017.docx",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "bnc773061.docx",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "tdf115094v2.docx",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "tdf117843.docx",
   "score": 0.0001,
   "aligned": true
  },
  {
   "name": "n773061.docx",
-  "score": 0,
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "tdf115094.docx",
+  "score": 0.0001,
   "aligned": true
  },
  {
   "name": "tdf126114.docx",
-  "score": 0,
+  "score": 0.0001,
   "aligned": true
  },
  {
-  "name": "tdf117843.docx",
-  "score": 0,
-  "aligned": true
- },
- {
-  "name": "bnc773061.docx",
-  "score": 0,
-  "aligned": true
- },
- {
-  "name": "tdf125038c.docx",
-  "score": 0,
-  "aligned": true
- },
- {
-  "name": "tdf107784.docx",
-  "score": 0,
-  "aligned": true
- },
- {
-  "name": "tdf128076.docx",
+  "name": "tdf169843.docx",
   "score": 0,
   "aligned": true
  },
@@ -700,12 +695,57 @@
   "aligned": true
  },
  {
-  "name": "tdf109524.docx",
+  "name": "bnc779620.docx",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "tdf125038c.docx",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "n820788.docx",
   "score": 0,
   "aligned": true
  },
  {
   "name": "ink.docx",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "tdf109524.docx",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "tdf128076.docx",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "tdf121203.docx",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "fdo75722-dml.docx",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "n778140.docx",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "n782061.docx",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "n760764.docx",
   "score": 0,
   "aligned": true
  },
@@ -720,47 +760,7 @@
   "aligned": true
  },
  {
-  "name": "n820788.docx",
-  "score": 0,
-  "aligned": true
- },
- {
-  "name": "tdf121203.docx",
-  "score": 0,
-  "aligned": true
- },
- {
-  "name": "tdf115094.docx",
-  "score": 0,
-  "aligned": true
- },
- {
-  "name": "fdo75722-dml.docx",
-  "score": 0,
-  "aligned": true
- },
- {
-  "name": "n751017.docx",
-  "score": 0,
-  "aligned": true
- },
- {
-  "name": "tdf105975.docx",
-  "score": 0,
-  "aligned": true
- },
- {
-  "name": "n782061.docx",
-  "score": 0,
-  "aligned": true
- },
- {
-  "name": "n778140.docx",
-  "score": 0,
-  "aligned": true
- },
- {
-  "name": "n760764.docx",
+  "name": "tdf96674.docx",
   "score": 0,
   "aligned": true
  },
@@ -775,6 +775,16 @@
   "aligned": true
  },
  {
+  "name": "tdf105975.docx",
+  "score": 0,
+  "aligned": true
+ },
+ {
+  "name": "tdf107784.docx",
+  "score": 0,
+  "aligned": true
+ },
+ {
   "name": "tdf112443.docx",
   "score": 0,
   "aligned": true
@@ -785,17 +795,7 @@
   "aligned": true
  },
  {
-  "name": "tdf119039_bad_embedded_compound.docx",
-  "score": 0,
-  "aligned": true
- },
- {
   "name": "tdf122717.docx",
-  "score": 0,
-  "aligned": true
- },
- {
-  "name": "tdf96674.docx",
   "score": 0,
   "aligned": true
  }
