@@ -162,7 +162,11 @@ always in the clear.
 (cross-reference streams, object streams) or an encrypted one. A tagged PDF (the
 ones Ream writes) is rebuilt from its structure tree — headings, paragraphs,
 tables, lists in reading order; an untagged PDF is reconstructed heuristically
-from glyph positions. **Raster images, hyperlinks and the page's artwork come
+from glyph positions — in the columns the page was set in, with a running head
+or foot kept out of the body, a page ruled into a grid rebuilt as a table with
+its own columns and row heights, a word the line broke in half put back
+together, and a bracketed block of rows and columns read as an OfficeMath
+matrix. **Raster images, hyperlinks and the page's artwork come
 back too** — images lifted out and sized from their placement (including the
 ones written into the content stream, and stencil masks painted in the page's
 own colour), link annotations re-attached to the text, filled paths, stroked
@@ -170,11 +174,18 @@ lines and shading-pattern gradients turned into shapes, the clipping paths that
 limit them, tiling patterns, constant alpha, the appearance an annotation
 carries — or one drawn from its properties where the file supplies none — and
 the Type 3 glyphs that are drawings rather than letters. Colour comes back
-through whatever space states it: device, CIE (`CalGray`, `Lab`), or a
-`Separation`/`DeviceN` run through its own tint transform. The layers a file
-turns off stay off, and the box it says to show is the box you get. The result
-is an ordinary `FlowDoc`, so it converts onward like any other source.
-Clip-bounded (`sh`) shadings are not read (reported as a loss).
+through whatever space states it: device, CIE (`CalGray`, `CalRGB`, `Lab`), an
+`/ICCBased` stream through the profile it carries, or a `Separation`/`DeviceN`
+run through its own tint transform — for an image as much as for a fill. A
+gradient the page paints with a bare `sh` is read too, function-based included,
+and words filled with one come back in its colours. The layers a file
+turns off stay off, and the box it says to show is the box you get. Type is
+read the way the font states it — the base encoding it declares, the built-in
+one a symbolic font carries (ZapfDingbats is a font of pictures and comes back
+as pictures), a predefined CMap it names instead of embedding — and a face that
+cannot be addressed by character at all is DRAWN from its outlines rather than
+guessed at. The result is an ordinary `FlowDoc`, so it converts onward like any
+other source.
 
 A form or a drawing is not a reflowable document, though — its rules and boxes
 are placed absolutely, and a label an inch from the box it labels says nothing.
@@ -264,10 +275,11 @@ loss report names the filter, so a document that comes back empty says why.
 
 ## pdf → pdf: a form keeps its form
 
-A PDF reads back as a re-flowable document — paragraphs and tables in reading
-order. A form is not that: its grid is painted at fixed coordinates, and text
-that flows beside the grid sits in none of its boxes. Ask for the page instead
-and every line stands where its glyphs do:
+A paper reads back as a re-flowable document — paragraphs, columns and tables in
+reading order. A form is not that: its grid is painted at fixed coordinates, and
+text that flows beside the grid sits in none of its boxes. So a form is read as
+a page instead, every line standing where its glyphs stand — and the file, not
+the call, decides which of the two it gets:
 
 ```ts
 import { Ream } from 'reamkit';
@@ -276,8 +288,10 @@ const doc = Ream.parse(pdfBytes);
 const pdf = await doc.convert('pdf', { fonts });
 ```
 
-Keep the default for anything going onward to DOCX, Markdown or HTML — the
-placed reading has no reading order, no paragraphs and no tables to give them.
+The reader counts the marks against the baselines on the median page and records
+which reading it took and why, so a plan folded into a report does not make the
+report a plan. Worth knowing when the output is DOCX, Markdown or HTML: a file
+read as a page has no reading order, no paragraphs and no tables to give them.
 
 ## pptx → pdf: render a slide deck
 

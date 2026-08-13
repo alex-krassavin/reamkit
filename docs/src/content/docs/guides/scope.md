@@ -30,24 +30,44 @@ user password is passed to `Ream.parse`, defaulting to the empty permissions-onl
 case). A **tagged** PDF (including the ones Ream writes) is rebuilt from
 its structure tree — headings, paragraphs, tables, list items, reading order; an
 **untagged** PDF is reconstructed heuristically from glyph positions (lines by
-baseline, paragraphs by spacing, headings by relative font size, and a clean
-two-column page split at its central gutter), which is approximate. Text comes
+baseline, paragraphs by spacing and by the indent the page set them with,
+headings by relative font size, a word the line broke in half put back together,
+and the page read for its own gutters: as many columns as it was set in, a page
+RULED into a grid rebuilt as a table with its measured columns and rows, a band
+repeated at the top or bottom of every sheet as a running head or foot with its
+regions and its page number, and a bracketed block of rows and columns as an
+OfficeMath matrix), which is approximate. Text comes
 back via each font's `/ToUnicode` map, or — where a composite font ships none —
 from the reverse `cmap` of the program it embeds (§9.10.2), or — where a SIMPLE
 font ships none, which is every PDF from TeX — from the glyph NAMES its
-`/Encoding /Differences` states (§9.6.6.1); the weight and slant
+`/Encoding /Differences` states (§9.6.6.1) over the base encoding the font
+declares (Annex D.2 Standard, WinAnsi and MacRoman, or a symbolic font's own
+built-in one — ZapfDingbats is a font of PICTURES and is read as pictures,
+Annex D.6). A face that cannot be addressed by character at all — a TrueType
+program with no usable `cmap` (§9.6.6.4) — is not guessed at: its codes are
+glyph indices, the text is marked unrecoverable and the glyphs are DRAWN from
+their outlines, as are the glyphs of a font that names them after nothing a
+reader knows (CFF charstrings run as the programs they are, `glyf` outlines and
+their composites, `post` names over the Macintosh standard order). The
+predefined CMaps a file names instead of embedding are known (§9.7.5.2),
+including the vertical ones that advance the pen down the page. The weight and slant
 come from the `/FontDescriptor`, and the embedded font programs themselves are
 carried into the output, so a rebuilt page is set in the type it was set in.
 **Raster images, hyperlinks and vector artwork** are lifted back out too (JPEG
 verbatim, other images re-encoded as PNG with soft-mask alpha — including
 JBIG2, the bilevel coding a scanner stores a page of text in (ISO/IEC 14492:
 generic, refinement, symbol-dictionary, text and halftone regions, arithmetic
-and Huffman) — `/Link` URIs
+and Huffman, and a dictionary whose symbols are REFINEMENTS of the ones it
+already holds), and CCITT Group 3 two-dimensional, where every line begins with
+the bit that says how it is coded — `/Link` URIs
 re-attached to the text, filled paths, stroked lines and shading-pattern
 gradients turned into shapes), colour set through a named space (§8.6.8 `cs` /
 `sc`, which is how every PDF a browser prints states it) — including the CIE
-spaces `CalGray` (§8.6.5.6) and `Lab` (§8.6.5.8), and a `Separation` or
-`DeviceN` run through its own tint transform (§8.6.6.4/§8.6.6.5), which needs
+spaces `CalGray` (§8.6.5.6), `CalRGB` (§8.6.5.7, gamma and matrix into XYZ,
+adapted onto D65 by Bradford) and `Lab` (§8.6.5.8), an `/ICCBased` stream
+decoded through the profile it carries (§8.6.5.5), and a `Separation` or
+`DeviceN` run through its own tint transform (§8.6.6.4/§8.6.6.5) — for an
+IMAGE as much as for a fill — which needs
 all four kinds of PDF function (§7.10: sampled, exponential, stitching, and the
 type-4 PostScript calculator) — along with clipping
 paths (§8.5.4 `W` / `W*`, applied to paths and pictures alike, and carried into
@@ -68,8 +88,11 @@ An annotation the file gives no `/AP` is drawn from its own properties (§12.5.5
 — Ink, Line, Square, Circle, Polygon, PolyLine, a text field's `/V` set in its
 `/DA`, and the text markups' `QuadPoints` applied to the words they cover). The
 built-in metrics of the 14 standard fonts (§9.6.2.2) stand in where a file
-embeds neither the face nor a `/Widths` array. Clip-bounded (`sh`) shadings are
-not read.
+embeds neither the face nor a `/Widths` array. A gradient the page paints with
+a bare `sh` is read as the shape it covers (§8.7.4.5, function-based type 1
+included), in the colour space the shading dictionary states; text filled with
+one comes back in its colours rather than in black, and the loss report says
+where the gradient's shape was flattened to a single colour.
 
 **Output** — `convert('pdf')`, `convert('svg')` (a page-stack preview),
 `convert('html')` (flowed, needs no fonts), `convert('md')` (GitHub-Flavored
@@ -78,7 +101,11 @@ Markdown), `convert('docx')` (write WordprocessingML back out) and
 in-browser editing, and round-tripping. The docx round-trip is semantic, not
 byte-exact, but complete — text, tables, images, lists, links, headers/footers,
 multi-section geometry, footnotes/endnotes, charts and OfficeMath all write
-back, and a drawing that states where on the page it belongs is written back as
+back. A section states where it must OPEN as well as where it begins: a
+`w:type` of `oddPage` or `evenPage` (§17.6.22) survives the round trip and is
+laid out as Word lays it out, printing the blank sheet it implies — charged to
+the section that ends, not the one that starts. A drawing that states where on
+the page it belongs is written back as
 the `wp:anchor` that puts it there (§20.4.2.3) rather than flattened into the
 text flow. No image part the format cannot show goes into the package: JPEG
 2000 is not among the parts §15.2.14 admits, and is dropped with a loss that
@@ -105,7 +132,9 @@ conversion cannot have both readings at once: words that move cannot agree with
 rules that do not, so anchored artwork over reflowed text lines up with none of
 it. The FILE decides which it gets. A paper is mostly LINES with a rule or two
 between them and is read as a re-flowable document — paragraphs and tables in
-reading order, from the structure tree where the file has one. A form or a
+reading order, from the structure tree where the file has one, and where it has
+none, in the columns the page was set in, with its running head and foot kept
+out of the body and its ruled grids rebuilt as tables. A form or a
 drawing is mostly MARKS (one form sets 28 numbered rows in 355 ruled boxes) and
 is read as a page: every line stands where its glyphs stand, beside the artwork,
 with no reading order, no paragraphs and no tables. The marks are counted
