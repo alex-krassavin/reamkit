@@ -1537,26 +1537,34 @@ function rPrXml(r: ResolvedRunProperties): string {
   // underline outright, so annotation-squiggly.pdf's wavy blue rule was in the
   // package and on no page.
   const out: Array<string> = [];
+  // A property that is not THERE is not a property with a different value.
+  // The header and footer parts are written from raw properties, not resolved
+  // ones, and compared straight against the defaults every absent field came
+  // out as the string "undefined": `<w:color w:val="undefined"/>` in the foot
+  // of every reconstructed PDF, which is not a colour and not valid markup.
+  const states = <TKey extends keyof ResolvedRunProperties>(key: TKey): boolean =>
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+    r[key] !== undefined && r[key] !== DEFAULT_RUN[key];
   const fonts = rFontsXml(r.fontFamily);
   if (fonts) out.push(fonts);
-  if (r.bold !== DEFAULT_RUN.bold) out.push(toggle('w:b', r.bold));
-  if (r.italic !== DEFAULT_RUN.italic) out.push(toggle('w:i', r.italic));
-  if (r.strike !== DEFAULT_RUN.strike) out.push(toggle('w:strike', r.strike));
-  if (r.colorHex !== DEFAULT_RUN.colorHex) out.push(`<w:color w:val="${r.colorHex}"/>`);
-  if (r.fontSizePt !== DEFAULT_RUN.fontSizePt) {
+  if (states('bold')) out.push(toggle('w:b', r.bold));
+  if (states('italic')) out.push(toggle('w:i', r.italic));
+  if (states('strike')) out.push(toggle('w:strike', r.strike));
+  if (states('colorHex')) out.push(`<w:color w:val="${r.colorHex}"/>`);
+  if (states('fontSizePt')) {
     // §17.3.2.38 w:sz — half-points.
     out.push(`<w:sz w:val="${Math.round(r.fontSizePt * 2)}"/>`);
   }
   // §17.3.2.40 — `w:u @w:color`, the rule's own colour where it has one: a
   // PDF's `/Underline` annotation states its colour and nothing else does.
-  if (r.underline !== DEFAULT_RUN.underline) out.push(underlineXml(r));
+  if (states('underline')) out.push(underlineXml(r));
   // §17.3.2.32 — the wash behind the glyphs, which is what a PDF's `/Highlight`
   // annotation marks its words with.
   if (r.shadingColorHex !== undefined) out.push(runShdXml(r.shadingColorHex));
-  if (r.verticalAlign !== DEFAULT_RUN.verticalAlign) {
+  if (states('verticalAlign')) {
     out.push(`<w:vertAlign w:val="${r.verticalAlign}"/>`);
   }
-  if (r.rtl !== DEFAULT_RUN.rtl) out.push(toggle('w:rtl', r.rtl));
+  if (states('rtl')) out.push(toggle('w:rtl', r.rtl));
   if (r.lang !== undefined) out.push(`<w:lang w:val="${escapeAttr(r.lang)}"/>`);
   return out.length > 0 ? `<w:rPr>${out.join('')}</w:rPr>` : '';
 }

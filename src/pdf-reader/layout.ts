@@ -2288,11 +2288,14 @@ function strayMarks(
     const mid = (v.minY + v.maxY) / 2;
     const size = v.maxY - v.minY || 10;
     const words = readable.filter((r) => Math.abs(r.y - mid) <= size);
-    // Ink on both sides is what makes it a mark INSIDE a line rather than one
-    // beside it.
+    // Ink beside it on the line is what makes it a mark IN that line rather
+    // than a drawing of its own. On both sides where the mark is inside a word
+    // — the hyphen of a postcode — and on one where the page ends its line with
+    // it: "PAYMENT ADDRESS:" states nothing for its colon either, and kept, the
+    // colon came back a word to the right of the line below.
     const before = words.some((r) => r.endX <= v.minX + size);
     const after = words.some((r) => r.x >= v.maxX - size);
-    if (!before || !after) continue;
+    if (!before && !after) continue;
     const drawnHere = glyphs.filter((g) => Math.abs((g.minY + g.maxY) / 2 - mid) <= size).length;
     if (drawnHere <= MOST_STRAY_MARKS && words.length >= LEAST_READABLE_RUNS) out.add(v);
   }
@@ -2372,11 +2375,16 @@ function tabbedRows(
           // white BEFORE the table is the first row's own: a table has no
           // spacing of its own to carry it, and glued to the block above it the
           // invoice's item table came up against the address over it.
-          const next = rows[r + 1];
-          const pitch = next ? row.top - next.top : 0;
-          const opening = r === 0 ? row.spacingBefore : undefined;
+          const prev = rows[r - 1];
+          // The white a row keeps from the one above it, less the line it would
+          // have taken anyway — the same measure a paragraph's spacing is read
+          // by. Stated as the ROW's height instead, LibreOffice set the rows
+          // solid and an invoice's heading sat on the item under it.
+          const pitch = prev ? prev.top - row.top - row.fontSize * 1.2 : 0;
+          const opening =
+            r === 0 ? row.spacingBefore : pitch > row.fontSize * 0.3 ? pitch : undefined;
           return {
-            properties: pitch > 0 ? { height: pt(pitch), heightRule: 'atLeast' as const } : {},
+            properties: {},
             cells: splitAtTabs(row.spans).map((cell) => ({
               properties: {},
               content: [

@@ -35,6 +35,11 @@
   "aligned": false
  },
  {
+  "name": "bug_jpx.pdf",
+  "score": 97,
+  "aligned": false
+ },
+ {
   "name": "encrypted-attachment.pdf",
   "score": 97,
   "aligned": false
@@ -1170,6 +1175,11 @@
   "aligned": true
  },
  {
+  "name": "bigboundingbox.pdf",
+  "score": 0.0044,
+  "aligned": false
+ },
+ {
   "name": "bug1046314.pdf",
   "score": 0.0043,
   "aligned": true
@@ -1188,11 +1198,6 @@
   "name": "extgstate.pdf",
   "score": 0.004,
   "aligned": true
- },
- {
-  "name": "bigboundingbox.pdf",
-  "score": 0.0038,
-  "aligned": false
  },
  {
   "name": "bug1365930.pdf",
@@ -1926,11 +1931,6 @@
  },
  {
   "name": "bug894572.pdf",
-  "score": 0,
-  "aligned": true
- },
- {
-  "name": "bug_jpx.pdf",
   "score": 0,
   "aligned": true
  },
