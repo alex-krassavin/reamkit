@@ -1507,7 +1507,16 @@ function runXml(run: Run, state: WriteState, scope: PartScope): string {
   // run that is ONLY a break (no text, no image) survives the round-trip.
   const brk = run.pageBreak ? '<w:br w:type="page"/>' : '';
   if (run.text === '') return brk ? `<w:r>${rPr}${brk}</w:r>` : '';
-  return `<w:r>${rPr}<w:t xml:space="preserve">${escapeXml(run.text)}</w:t>${brk}</w:r>`;
+  // §17.3.3.30 — a TAB is an ELEMENT, not a character: written inside `w:t` it
+  // is whitespace, and Word draws it as nothing at all. The reconstruction of a
+  // PDF sets a line the page laid out on stops with them — an invoice's "Bill
+  // to" block stands beside the address it belongs to — and written as text the
+  // two ran together.
+  const body = run.text
+    .split('\t')
+    .map((piece) => (piece === '' ? '' : `<w:t xml:space="preserve">${escapeXml(piece)}</w:t>`))
+    .join('<w:tab/>');
+  return `<w:r>${rPr}${body}${brk}</w:r>`;
 }
 
 // §17.3.2 — run properties as a delta from the resolved defaults.
@@ -1572,6 +1581,20 @@ function pPrBody(p: ResolvedParagraphProperties): string {
   if (spacing) out.push(spacing);
   if (JC.has(p.alignment) && p.alignment !== DEFAULT_PARA.alignment) {
     out.push(`<w:jc w:val="${p.alignment}"/>`);
+  }
+  // §17.3.1.38 `w:tabs` — the stops the paragraph's own tabs stand on. Without
+  // them a tab falls to the default half-inch grid, which is not where the page
+  // that was read set its second column.
+  const tabs = p.tabs;
+  if (tabs.length > 0) {
+    const stops = tabs
+      .map((t) => {
+        const pos = twips(t.positionPt);
+        const leader = t.leader !== undefined ? ` w:leader="${escapeAttr(t.leader)}"` : '';
+        return `<w:tab w:val="${escapeAttr(t.alignment)}" w:pos="${String(pos)}"${leader}/>`;
+      })
+      .join('');
+    out.push(`<w:tabs>${stops}</w:tabs>`);
   }
   return out.join('');
 }

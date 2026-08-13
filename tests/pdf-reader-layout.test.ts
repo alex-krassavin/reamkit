@@ -31,7 +31,10 @@ const paragraphs = (flow: { body: ReadonlyArray<{ kind: string }> }) =>
       b,
     ): b is {
       kind: 'paragraph';
-      paragraph: { properties: { outlineLevel?: number }; runs: ReadonlyArray<{ text: string }> };
+      paragraph: {
+        properties: { outlineLevel?: number; tabs?: ReadonlyArray<unknown> };
+        runs: ReadonlyArray<{ text: string }>;
+      };
     } => b.kind === 'paragraph',
   );
 
@@ -811,10 +814,14 @@ describe('placed reconstruction (E-PDF EP4)', () => {
 
   it('reads one flowing line across the same gap', () => {
     // A paragraph is meant to be read across: only the placed reading splits.
+    // Across the gap stands a TAB, not a space — the page SET the second piece
+    // out there, and a space closes the two up (§17.3.1.38: the stop that keeps
+    // it out is written with the paragraph).
     const flowed = reconstructByLayout(PdfFile.parse(twoColumnLinePdf()));
     const paras = paragraphs(flowed.doc);
     expect(paras).toHaveLength(1);
-    expect(paras[0]!.paragraph.runs.map((r) => r.text).join('')).toBe('Left Right');
+    expect(paras[0]!.paragraph.runs.map((r) => r.text).join('')).toBe('Left\tRight');
+    expect((paras[0]!.paragraph.properties.tabs ?? []).length).toBe(1);
   });
 
   it('stands a turned page up, and its words with it (§14.11.1)', () => {

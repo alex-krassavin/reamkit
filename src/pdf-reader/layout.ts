@@ -62,6 +62,13 @@ interface Line {
   readonly width: number;
   /** Whether a TAB stands inside it — a gap no word space could be. */
   readonly tabbed?: boolean;
+  /**
+   * Where the pieces after each such gap begin, in page space. A line the page
+   * SET OUT stands on stops, and a space in place of them puts the second piece
+   * against the first: an invoice's "Bill to" block ran into its own address as
+   * "548 Market Street walonade@icloud.com's Organization".
+   */
+  readonly stops?: ReadonlyArray<number>;
 }
 
 /**
@@ -304,6 +311,13 @@ export function reconstructByLayout(
           col,
           top: para.top,
           el: paragraphFromRuns(para.spans, headingLevel(para.fontSize, medianFont), {
+            ...(para.stops !== undefined && para.stops.length > 0
+              ? {
+                  tabs: para.stops
+                    .filter((x) => x > 0)
+                    .map((x) => ({ positionPt: pt(x), alignment: 'left' as const })),
+                }
+              : {}),
             ...(para.alignment !== undefined ? { alignment: para.alignment } : {}),
             ...(para.spacingBefore !== undefined ? { spacingBefore: pt(para.spacingBefore) } : {}),
             ...(para.indentLeft !== undefined ? { indentLeft: pt(para.indentLeft) } : {}),
@@ -1242,7 +1256,7 @@ function lineOf(runs: ReadonlyArray<TextRun>, y: number, fontSize: number, stepp
   // "f(x) = sin x + cos x". A line with no space in it anywhere was stepped
   // across, whatever the rest of the page does.
   const steppedLine = stepped || (runs.length > 1 && !runs.some((r) => SPACE.test(r.text)));
-  const ordered = lineSpans(runs, fontSize, steppedLine);
+  const { spans: ordered, stops } = lineSpans(runs, fontSize, steppedLine);
   // §9.4 — the runs came off the page in the order they were PAINTED, which is
   // left to right whatever the script. `logicalOrder` turned each run's own
   // letters back the right way round; the runs themselves are still in visual
@@ -1258,6 +1272,7 @@ function lineOf(runs: ReadonlyArray<TextRun>, y: number, fontSize: number, stepp
     y,
     fontSize,
     ...(tabbed(runs, fontSize) ? { tabbed: true as const } : {}),
+    ...(stops.length > 0 ? { stops } : {}),
     text: spans
       .map((s) => s.text)
       .join('')
@@ -1368,8 +1383,9 @@ function lineSpans(
   runs: ReadonlyArray<TextRun>,
   fontSize: number,
   stepped: boolean,
-): Array<TextSpan> {
+): { spans: Array<TextSpan>; stops: Array<number> } {
   const spans: Array<TextSpan> = [];
+  const stops: Array<number> = [];
   // §17.3.2.42 — the line's OWN baseline, which a script stands off. Taken from
   // the runs set at the line's size: the marks are the ones that moved.
   const body = runs.filter((r) => (r.fontSizePt || fontSize) > fontSize * SCRIPT_SIZE);
@@ -1381,7 +1397,12 @@ function lineSpans(
       run.x - prev.endX > spaceGap(prev, fontSize, stepped) &&
       !(isLeader(prev.text) && prev.text === run.text)
     ) {
-      spans.push({ text: ' ' });
+      // A gap no word space could be is a TAB, and the piece after it starts
+      // where the page starts it. Written as a space the two pieces close up.
+      if (run.x - prev.endX >= (run.fontSizePt || fontSize) * TAB_GAP_EM) {
+        spans.push({ text: '\t' });
+        stops.push(run.x);
+      } else spans.push({ text: ' ' });
     }
     // §9.3.1/§8.6.8 — the size and colour the page showed the glyphs at. The
     // tagged path has carried these since it learned to; this one never did, so
@@ -1405,7 +1426,7 @@ function lineSpans(
     });
     prev = run;
   }
-  return spans;
+  return { spans, stops };
 }
 
 /**
@@ -1475,6 +1496,7 @@ function groupIntoParagraphs(
   indentLeft?: number;
   indentFirstLine?: number;
   spacingBefore?: number;
+  stops?: Array<number>;
 }> {
   const groups: Array<Array<Line>> = [];
   const gaps: Array<number> = [];
@@ -1517,10 +1539,15 @@ function groupIntoParagraphs(
     const opened = (gaps[i] ?? 0) - fontSize * 1.2;
     const most = pageHeight > 0 ? pageHeight / 3 : fontSize * 3;
     const spacingBefore = opened > fontSize * 0.3 ? Math.min(opened, most) : undefined;
+    // §17.3.1.38 — the stops the page set the line out on, measured from where
+    // the column begins. A tabbed line ends its paragraph, so these are one
+    // line's stops and not a merge of several.
+    const stops = g.length === 1 ? (first.stops ?? []) : [];
     return {
       spans: joinLines(g),
       fontSize,
       top: first.y,
+      ...(stops.length > 0 ? { stops: stops.map((x) => x - columnLeft) } : {}),
       ...(spacingBefore !== undefined ? { spacingBefore } : {}),
       ...alignmentOf(g, column),
       ...indentOf(g, columnLeft, alignmentOf(g, column).alignment),

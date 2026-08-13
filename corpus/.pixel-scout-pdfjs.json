@@ -115,18 +115,18 @@
   "aligned": false
  },
  {
-  "name": "blendmode.pdf",
-  "score": 0.1276,
-  "aligned": false
- },
- {
   "name": "bug1844576.pdf",
   "score": 0.1264,
   "aligned": false
  },
  {
+  "name": "blendmode.pdf",
+  "score": 0.1257,
+  "aligned": false
+ },
+ {
   "name": "bug1978317.pdf",
-  "score": 0.1205,
+  "score": 0.1204,
   "aligned": true
  },
  {
@@ -171,7 +171,7 @@
  },
  {
   "name": "bug1669099.pdf",
-  "score": 0.0784,
+  "score": 0.0785,
   "aligned": true
  },
  {
@@ -446,7 +446,7 @@
  },
  {
   "name": "bug1868759.pdf",
-  "score": 0.0123,
+  "score": 0.0124,
   "aligned": true
  },
  {
@@ -1111,7 +1111,7 @@
  },
  {
   "name": "bug1883609.pdf",
-  "score": 0.006,
+  "score": 0.0061,
   "aligned": true
  },
  {
@@ -1166,7 +1166,7 @@
  },
  {
   "name": "issue10640.pdf",
-  "score": 0.0047,
+  "score": 0.0046,
   "aligned": true
  },
  {
@@ -1196,7 +1196,7 @@
  },
  {
   "name": "bigboundingbox.pdf",
-  "score": 0.0039,
+  "score": 0.004,
   "aligned": false
  },
  {
@@ -1220,22 +1220,17 @@
   "aligned": true
  },
  {
+  "name": "bug1771477.pdf",
+  "score": 0.003,
+  "aligned": true
+ },
+ {
   "name": "highlight.pdf",
   "score": 0.003,
   "aligned": true
  },
  {
   "name": "ArabicCIDTrueType.pdf",
-  "score": 0.0029,
-  "aligned": true
- },
- {
-  "name": "bug1771477.pdf",
-  "score": 0.0029,
-  "aligned": true
- },
- {
-  "name": "issue1045.pdf",
   "score": 0.0029,
   "aligned": true
  },
@@ -1251,6 +1246,11 @@
  },
  {
   "name": "bug1937438_mml_from_latex.pdf",
+  "score": 0.0023,
+  "aligned": true
+ },
+ {
+  "name": "issue1045.pdf",
   "score": 0.0023,
   "aligned": true
  },
@@ -1346,7 +1346,7 @@
  },
  {
   "name": "bug900822.pdf",
-  "score": 0.0015,
+  "score": 0.0014,
   "aligned": true
  },
  {
@@ -1356,6 +1356,11 @@
  },
  {
   "name": "bug1028735.pdf",
+  "score": 0.0014,
+  "aligned": true
+ },
+ {
+  "name": "dates_save.pdf",
   "score": 0.0014,
   "aligned": true
  },
@@ -1371,11 +1376,6 @@
  },
  {
   "name": "basicapi.pdf",
-  "score": 0.0013,
-  "aligned": true
- },
- {
-  "name": "dates_save.pdf",
   "score": 0.0013,
   "aligned": true
  },
@@ -1425,12 +1425,12 @@
   "aligned": true
  },
  {
-  "name": "bug1529502.pdf",
+  "name": "annotation-underline-without-appearance.pdf",
   "score": 0.0009,
   "aligned": true
  },
  {
-  "name": "annotation-underline-without-appearance.pdf",
+  "name": "bug1529502.pdf",
   "score": 0.0009,
   "aligned": true
  },
@@ -1545,12 +1545,12 @@
   "aligned": false
  },
  {
-  "name": "bug1918115.pdf",
+  "name": "image-rotated-black-white-ratio.pdf",
   "score": 0.0004,
   "aligned": true
  },
  {
-  "name": "image-rotated-black-white-ratio.pdf",
+  "name": "bug1918115.pdf",
   "score": 0.0004,
   "aligned": true
  },
@@ -1670,17 +1670,17 @@
   "aligned": true
  },
  {
+  "name": "bug1989304.pdf",
+  "score": 0.0002,
+  "aligned": true
+ },
+ {
   "name": "annotation-freetext.pdf",
   "score": 0.0001,
   "aligned": true
  },
  {
   "name": "bug1796741.pdf",
-  "score": 0.0001,
-  "aligned": true
- },
- {
-  "name": "bug1989304.pdf",
   "score": 0.0001,
   "aligned": true
  },

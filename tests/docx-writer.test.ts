@@ -610,8 +610,10 @@ describe('the package is a document XML can carry', () => {
         return cp < 0x20 && cp !== 0x9 && cp !== 0xa && cp !== 0xd;
       }),
     ).toBe(false);
-    // A tab is one of the three XML does admit, and survives.
-    expect(xml).toContain('c\td');
+    // A tab survives, as the ELEMENT §17.3.3.30 spells it with: written inside
+    // `w:t` Word draws it as nothing at all.
+    expect(xml).toContain('<w:t xml:space="preserve">abc</w:t><w:tab/>');
+    expect(xml).toContain('<w:t xml:space="preserve">de</w:t>');
     // And the package parses as XML, which is the whole point.
     expect(() => readDocx(bytes)).not.toThrow();
   });

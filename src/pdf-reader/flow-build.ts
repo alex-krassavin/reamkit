@@ -101,7 +101,7 @@ export function paragraphFromRuns(
   outlineLevel?: number,
   placement?: Pick<
     ParagraphProperties,
-    'alignment' | 'spacingBefore' | 'indentLeft' | 'indentFirstLine'
+    'alignment' | 'spacingBefore' | 'indentLeft' | 'indentFirstLine' | 'tabs'
   >,
 ): BodyElement {
   const merged: Array<{
