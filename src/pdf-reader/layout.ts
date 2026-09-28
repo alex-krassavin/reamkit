@@ -30,9 +30,11 @@ import { collectPageImages } from './images';
 import { extractPageText } from './text';
 import { collectPageVectors } from './vector';
 import { markDrawnRules } from './text-rules';
+import { regionsOf } from './regions';
 import { punctuationOf } from './glyph-shapes';
 import { matrixBlocks } from './math-rows';
 import { isRightToLeft } from './content';
+import type { SideBySide } from './regions';
 import type { PdfVector } from './vector';
 import type {
   BodyElement,
@@ -86,6 +88,16 @@ interface Line {
 interface Extent {
   readonly from: number;
   readonly to: number;
+}
+
+/**
+ * The last line a region set: its baseline and the exact box it stands in,
+ * which is what the next region's first paragraph is spaced from. A box of no
+ * height is an edge — the foot of a band of blocks side by side.
+ */
+interface LineBox {
+  readonly y: number;
+  readonly lineHeight: number;
 }
 
 /**
@@ -295,11 +307,8 @@ export function reconstructByLayout(
       const columnSize = median(colRuns.map((r) => r.fontSizePt).filter((s) => s > 0)) || 10;
       const maths = matrixBlocks(colRuns, columnSize);
       const inMath = new Set(maths.flatMap((m) => [...m.used]));
-      const lines = groupIntoLines(
-        inMath.size > 0 ? colRuns.filter((r) => !inMath.has(r)) : colRuns,
-        false,
-        stepped,
-      ).filter((l) => l.text.length > 0);
+      const textRuns = inMath.size > 0 ? colRuns.filter((r) => !inMath.has(r)) : colRuns;
+      const lines = groupIntoLines(textRuns, false, stepped).filter((l) => l.text.length > 0);
       // The column the paragraphs were set in — its own edges, not the page's,
       // so a two-column page judges each side against the side it belongs to.
       //
@@ -338,33 +347,61 @@ export function reconstructByLayout(
           },
         });
       }
-      const paras = groupIntoParagraphs(lines, measure, display.height);
+      // The column read region by region: a stretch that reads straight down,
+      // then a band of blocks side by side, each spaced from the one before.
+      let above: LineBox | undefined;
+      for (const region of regionsOf(textRuns)) {
+        if (region.kind === 'side') {
+          const made = sideBySide(region, measure, above);
+          if (made === undefined) continue;
+          blocks.push({ band: bandAt(made.top), col, top: made.top, el: made.el });
+          above = made.below;
+          continue;
+        }
+        const regionLines = groupIntoLines(region.runs, false, stepped).filter(
+          (l) => l.text.length > 0,
+        );
+        const paras = groupIntoParagraphs(regionLines, measure, display.height, above);
+        for (const set of setParagraphs(
+          paras,
+          measure && {
+            left: measure.left,
+            // The table runs to where the PAGE's text ends, not to where this
+            // column's longest line does: the last column of a payment history
+            // begins at its heading and its figures reach past it, and measured
+            // to the line the column came out a point wide.
+            right: Math.max(measure.right, textEdges?.right ?? measure.right),
+          },
+        )) {
+          blocks.push({ band: bandAt(set.top), col, top: set.top, el: set.el });
+        }
+        const last = paras[paras.length - 1];
+        if (last !== undefined) above = { y: last.bottom, lineHeight: last.lineHeight };
+      }
+    };
+    /**
+     * A region's paragraphs as the elements they are set in: the lines that
+     * stand on the same stops as a table (§17.4.38), the rest as paragraphs
+     * placed and spaced the way the page placed and spaced them.
+     */
+    const setParagraphs = (
+      paras: ReturnType<typeof groupIntoParagraphs>,
+      tableMeasure: { left: number; right: number } | undefined,
+    ): Array<{ top: number; el: BodyElement }> => {
       // §17.4.38 — consecutive lines set out on the SAME stops are a table:
       // "Description / Qty / Unit price / Tax / Amount" and the row under it.
       // Written as tabbed paragraphs the picture is right and the document is
       // not — nothing downstream can read a column out of it, and a reader that
       // re-wraps one cell drags the whole line with it.
-      const asRows = tabbedRows(
-        paras,
-        measure && {
-          left: measure.left,
-          // The table runs to where the PAGE's text ends, not to where this
-          // column's longest line does: the last column of a payment history
-          // begins at its heading and its figures reach past it, and measured
-          // to the line the column came out a point wide.
-          right: Math.max(measure.right, textEdges?.right ?? measure.right),
-        },
-      );
+      const asRows = tabbedRows(paras, tableMeasure);
+      const out: Array<{ top: number; el: BodyElement }> = [];
       for (const [at, para] of paras.entries()) {
         const table = asRows.get(at);
         if (table !== undefined) {
-          if (table !== null)
-            blocks.push({ band: bandAt(para.top), col, top: para.top, el: table });
+          if (table !== null) out.push({ top: para.top, el: table });
           continue;
         }
-        blocks.push({
-          band: bandAt(para.top),
-          col,
+        out.push({
           top: para.top,
           el: paragraphFromRuns(para.spans, headingLevel(para.fontSize, medianFont), {
             ...(para.stops !== undefined && para.stops.length > 0
@@ -385,6 +422,86 @@ export function reconstructByLayout(
           }),
         });
       }
+      return out;
+    };
+    /**
+     * §17.4.38 — a band of blocks side by side, as the borderless table a
+     * writer sets such a band in: one row, a cell a block, each cell's lines
+     * read down on their own and spaced from what stands above the band.
+     */
+    const sideBySide = (
+      region: SideBySide,
+      measure: { left: number; right: number } | undefined,
+      above: LineBox | undefined,
+    ): { top: number; below: LineBox; el: BodyElement } | undefined => {
+      const left = measure?.left ?? Math.min(...region.cells.map((c) => c.from));
+      const right = Math.max(
+        measure?.right ?? 0,
+        textEdges?.right ?? 0,
+        ...region.cells.map((c) => c.to),
+      );
+      const cells = region.cells.map((cell) => {
+        const lines = groupIntoLines(cell.runs, false, stepped).filter((l) => l.text.length > 0);
+        return { cell, lines };
+      });
+      if (cells.some((c) => c.lines.length === 0)) return undefined;
+      // Where the band begins: the top of the highest first line's box. Each
+      // cell's first line is spaced down from it, so every block starts where
+      // the page started it, not at the top of the row.
+      const top = Math.max(...cells.map((c) => c.lines[0]!.y));
+      const edge: LineBox = above ?? {
+        y: Math.max(
+          ...cells.map((c) => c.lines[0]!.y + BASELINE_AT * NATURAL_LINE_EM * c.lines[0]!.fontSize),
+        ),
+        lineHeight: 0,
+      };
+      // Each cell begins where its ink does, the first at the measure.
+      const starts = cells.map((c, k) => (k === 0 ? left : c.cell.from));
+      let foot = Infinity;
+      const row = cells.map(({ cell, lines }, k) => {
+        const own = { left: cell.from, right: cell.to };
+        // A block beside another is a stack of lines — a label over its value,
+        // an address — set as narrow as it is: run together, its lines re-wrap
+        // wherever a substitute's widths put the break.
+        const paras = groupIntoParagraphs(lines, own, display.height, edge, true);
+        const last = paras[paras.length - 1]!;
+        foot = Math.min(foot, last.bottom - (1 - BASELINE_AT) * last.lineHeight);
+        const inset = cell.from - starts[k]!;
+        const content = setParagraphs(paras, own).map(({ el }) =>
+          inset > 0 && el.kind === 'paragraph'
+            ? {
+                ...el,
+                paragraph: {
+                  ...el.paragraph,
+                  properties: {
+                    ...el.paragraph.properties,
+                    indentLeft: pt((el.paragraph.properties.indentLeft ?? 0) + inset),
+                  },
+                },
+              }
+            : el,
+        );
+        const width = (starts[k + 1] ?? right) - starts[k]!;
+        return { properties: { width: pt(Math.max(width, 1)) }, content };
+      });
+      const grid = row.map((c) => c.properties.width);
+      return {
+        top,
+        below: { y: foot, lineHeight: 0 },
+        el: {
+          kind: 'table',
+          table: {
+            properties: {
+              defaultCellMargins: { left: pt(0), right: pt(0) },
+              layout: 'fixed',
+              widthType: 'dxa',
+              widthPt: pt(grid.reduce((sum, w) => sum + w, 0)),
+            },
+            grid,
+            rows: [{ properties: {}, cells: row }],
+          },
+        },
+      };
     };
     const placed: Array<{
       key: ReadonlyArray<number>;
@@ -1711,10 +1828,14 @@ function groupIntoParagraphs(
   lines: ReadonlyArray<Line>,
   column?: { left: number; right: number },
   pageHeight = 0,
+  before?: LineBox,
+  eachLine = false,
 ): Array<{
   spans: Array<TextSpan>;
   fontSize: number;
   top: number;
+  /** The baseline of the paragraph's last line. */
+  bottom: number;
   alignment?: 'center' | 'right';
   indentLeft?: number;
   indentFirstLine?: number;
@@ -1731,6 +1852,7 @@ function groupIntoParagraphs(
     const opened = prev !== undefined && gap > line.fontSize * 1.5;
     if (
       groups.length === 0 ||
+      eachLine ||
       opened ||
       // A line of nothing but rule characters is a RULE, and a rule is its own
       // line: an invoice sets one between the address it asks for cheques at
@@ -1745,7 +1867,9 @@ function groupIntoParagraphs(
           prev.tabbed === true))
     ) {
       groups.push([]);
-      gaps.push(prev === undefined ? 0 : gap);
+      // The first paragraph stands off whatever the column set above it, where
+      // that is known: the region before this one.
+      gaps.push(prev === undefined ? (before !== undefined ? before.y - line.y : 0) : gap);
     }
     groups[groups.length - 1]!.push(line);
     prev = line;
@@ -1773,7 +1897,7 @@ function groupIntoParagraphs(
       Math.max(inner.length > 0 ? median(inner) : fontSize * NATURAL_LINE_EM, fontSize),
       fontSize * TALLEST_LINE_EM,
     );
-    const above = heights[i - 1];
+    const above = i > 0 ? heights[i - 1] : before?.lineHeight;
     const gap = gaps[i] ?? 0;
     // A line alone has no pitch of its own, and takes no taller a box than the
     // gap above it leaves: a box the gap cannot hold pushes it down.
@@ -1815,6 +1939,7 @@ function groupIntoParagraphs(
       spans: joinLines(g),
       fontSize,
       top: first.y,
+      bottom: g[g.length - 1]!.y,
       // §17.3.1.38 — a stop is measured from the text area's own left edge, not
       // from where this column's lines happen to start. Measured from the
       // latter, every stop stood a little right of where the page set it, and

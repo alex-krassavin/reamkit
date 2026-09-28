@@ -1248,6 +1248,38 @@ describe('a flowing reading re-sets the page where the page set it', () => {
     expect(table.table.rows[0]!.cells.every((c) => c.properties.width !== undefined)).toBe(true);
   });
 
+  it('sets blocks with leading of their own side by side, as a table of one row', () => {
+    // An invoice's stack of labels beside the address it bills, each a point or
+    // three off the other's lines. Read across, "INVOICE → Jun 3, 2013 → 23
+    // Main Street" was one line of three different things.
+    const doc = reconstructByLayout(
+      PdfFile.parse(
+        helvetica(
+          [
+            'BT /F1 9 Tf 1 0 0 1 360 669.5 Tm (Invoice Date) Tj ET',
+            'BT /F1 9 Tf 1 0 0 1 360 658.8 Tm (Jun 3, 2013) Tj ET',
+            'BT /F1 9 Tf 1 0 0 1 360 640.9 Tm (Invoice Number) Tj ET',
+            'BT /F1 9 Tf 1 0 0 1 472 668.5 Tm (Orange Demo Inc.) Tj ET',
+            'BT /F1 9 Tf 1 0 0 1 472 655.5 Tm (23 Main Street) Tj ET',
+            'BT /F1 9 Tf 1 0 0 1 472 642.5 Tm (Central City) Tj ET',
+          ].join('\n'),
+        ),
+      ),
+    ).doc;
+    const table = doc.body.find((b) => b.kind === 'table');
+    if (table?.kind !== 'table') throw new Error('the band is a table');
+    expect(table.table.rows).toHaveLength(1);
+    const cells = table.table.rows[0]!.cells.map((c) =>
+      c.content.map((el) => (el.kind === 'paragraph' ? textOf(el) : '')),
+    );
+    expect(cells).toEqual([
+      ['Invoice Date', 'Jun 3, 2013', 'Invoice Number'],
+      ['Orange Demo Inc.', '23 Main Street', 'Central City'],
+    ]);
+    // …and read once: nothing of it is left in the body's own lines.
+    expect(paragraphs(doc).map(textOf).join(' ')).not.toContain('Invoice');
+  });
+
   it('takes a rule drawn in pieces as one rule (§17.3.1.24)', () => {
     // An invoice draws the rule under its headings cell by cell. Measured apart
     // only the widest piece was long enough to be a rule: it moved with the
