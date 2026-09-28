@@ -1296,18 +1296,30 @@ function geomXml(g: ShapeGeometry): string {
 
 function fillXml(f: ShapeFill): string {
   if (f.kind === 'solid' && f.colorHex)
-    return `<a:solidFill><a:srgbClr val="${f.colorHex}"/></a:solidFill>`;
-  if (f.kind === 'gradient' && f.gradient) return gradFillXml(f.gradient);
+    return `<a:solidFill>${srgbXml(f.colorHex, f.alpha)}</a:solidFill>`;
+  if (f.kind === 'gradient' && f.gradient) return gradFillXml(f.gradient, f.alpha);
   return '<a:noFill/>';
+}
+
+/**
+ * §20.1.2.3.19 `a:srgbClr`, with the §20.1.2.3.1 `a:alpha` of a fill that is
+ * seen through. The model carried the opacity and the writer dropped it:
+ * bug1755507.pdf lays a card on a shadow painted at a fifth of full strength,
+ * and the shadow came back as a solid black slab around the card.
+ */
+function srgbXml(colorHex: string, alpha: number | undefined): string {
+  if (alpha === undefined || !(alpha < 1)) return `<a:srgbClr val="${colorHex}"/>`;
+  const val = Math.round(Math.max(0, alpha) * 100000);
+  return `<a:srgbClr val="${colorHex}"><a:alpha val="${String(val)}"/></a:srgbClr>`;
 }
 
 // A gradient fill → a:gradFill (EP16): stops as a:gs (@pos in 1000ths of a
 // percent), direction as a:lin (@ang in 60000ths of a degree) or a:path (radial).
-function gradFillXml(g: ShapeGradient): string {
+function gradFillXml(g: ShapeGradient, alpha?: number): string {
   const stops = g.stops
     .map((s) => {
       const pos = Math.round(Math.max(0, Math.min(1, s.offset)) * 100000);
-      return `<a:gs pos="${pos}"><a:srgbClr val="${s.colorHex}"/></a:gs>`;
+      return `<a:gs pos="${pos}">${srgbXml(s.colorHex, alpha)}</a:gs>`;
     })
     .join('');
   const dir =

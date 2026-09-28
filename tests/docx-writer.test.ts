@@ -735,6 +735,24 @@ describe('a drawing that states where it goes is placed there (§20.4.2.3)', () 
     expect(xml).toContain(`<wp:extent cx="${String(40 * 12700)}" cy="${String(20 * 12700)}"/>`);
   });
 
+  it('draws a fill that is seen through as that transparent (§20.1.2.3.1)', () => {
+    // bug1755507.pdf lays a card on a shadow painted at a fifth of full
+    // strength: the model carried the alpha and the writer dropped it, and
+    // the shadow came back as a solid black slab around the card.
+    const shadow = {
+      ...floatingShape(0, 0),
+      fill: { kind: 'solid' as const, colorHex: '000000', alpha: 0.2 },
+    };
+    const bytes = writeDocx(docWith([{ kind: 'shape' as const, shape: shadow }])).bytes;
+    const xml = decode(OpcPackage.open(bytes).getMainDocument().data);
+    expect(xml).toContain('<a:srgbClr val="000000"><a:alpha val="20000"/></a:srgbClr>');
+    // …and reads back as the same colour at the same strength.
+    const again = readDocx(bytes).doc.body.find((b) => b.kind === 'shape');
+    if (again?.kind !== 'shape') throw new Error('expected a shape');
+    expect(again.shape.fill).toMatchObject({ kind: 'solid', colorHex: '000000' });
+    expect(again.shape.fill.alpha).toBeCloseTo(0.2, 3);
+  });
+
   it('leaves a drawing that states no placement inline', () => {
     const { float: _drop, ...flowing } = floatingShape(0, 0);
     const xml = xmlOf([{ kind: 'shape' as const, shape: flowing }]);
