@@ -30,6 +30,7 @@ import { collectPageImages } from './images';
 import { extractPageText } from './text';
 import { collectPageVectors } from './vector';
 import { markDrawnRules } from './text-rules';
+import { punctuationOf } from './glyph-shapes';
 import { matrixBlocks } from './math-rows';
 import { isRightToLeft } from './content';
 import type { PdfVector } from './vector';
@@ -420,8 +421,16 @@ export function reconstructByLayout(
     // the runs BEFORE they are grouped, so the mark travels with them and the
     // bar is not placed a second time where the words no longer are.
     const placedVectors = placeVectors(lifted.vectors, display);
-    const ruled = markDrawnRules(runs, placedVectors);
+    const drawnRules = markDrawnRules(runs, placedVectors);
     const strayGlyphs = strayMarks(placedVectors, runs);
+    // …and the marks the page draws for want of a character, read where their
+    // shape says what they are: the hyphen of an invoice number, the colon
+    // after a label. A flowing reading drops the drawing, so this is the only
+    // way the character is written at all.
+    const ruled =
+      mode !== 'positional'
+        ? { ...drawnRules, runs: readDrawnMarks(drawnRules.runs, strayGlyphs) }
+        : drawnRules;
     const vectors = placedVectors
       .filter((v) => !ruled.consumed.has(v))
       // §9.6.6 — a glyph the file states no character for is DRAWN, which is
@@ -1567,6 +1576,12 @@ function lineSpans(
   // blanks before it, not from them.
   let inked: number | undefined;
   for (const run of runs) {
+    // §9.10.2 — a glyph the file names no character for is a character this
+    // reader cannot write, and dropped it takes its place on the line with it:
+    // "6VOBWUGP-0010" came back "6VOBWUGP0010" and "Aug 11 – Sep 11" came back
+    // "Aug 11Sep 11". What it stood in is still a gap between two words, and
+    // the next run is measured from the last one that says something.
+    if (run.text.replaceAll(UNMAPPED, '') === '' && run.text !== '') continue;
     if (
       prev !== undefined &&
       run.x - prev.endX > spaceGap(prev, fontSize, stepped) &&
@@ -2525,8 +2540,12 @@ function strayMarks(
   const readable = runs.filter((r) => r.text.trim() !== '' && !r.text.includes(UNMAPPED));
   for (const v of glyphs) {
     const mid = (v.minY + v.maxY) / 2;
-    const size = v.maxY - v.minY || 10;
-    const words = readable.filter((r) => Math.abs(r.y - mid) <= size);
+    // The line's size, not the mark's: a hyphen is a tenth of an em tall, and
+    // measured by its own height no word stood near enough to its line to
+    // make it a mark in one — every hyphen of an invoice stayed a drawing.
+    const words = readable.filter((r) => Math.abs(r.y - mid) <= (r.fontSizePt || 10));
+    const size =
+      words.length > 0 ? median(words.map((r) => r.fontSizePt || 10)) : v.maxY - v.minY || 10;
     // Ink beside it on the line is what makes it a mark IN that line rather
     // than a drawing of its own. On both sides where the mark is inside a word
     // — the hyphen of a postcode — and on one where the page ends its line with
@@ -2539,6 +2558,37 @@ function strayMarks(
     if (drawnHere <= MOST_STRAY_MARKS && words.length >= LEAST_READABLE_RUNS) out.add(v);
   }
   return out;
+}
+
+/**
+ * §9.10.2 — the runs of a line with each glyph the file names no character for
+ * read off the shape it draws (see {@link punctuationOf}), where it is one of
+ * the stray marks inside a readable line.
+ *
+ * @param runs   The page's runs.
+ * @param strays The drawn glyphs that stand inside lines of readable text.
+ * @returns The runs, with every mark that could be read written as text.
+ */
+function readDrawnMarks(
+  runs: ReadonlyArray<TextRun>,
+  strays: ReadonlySet<PdfVector>,
+): Array<TextRun> {
+  if (strays.size === 0) return [...runs];
+  const marks = [...strays];
+  return runs.map((run) => {
+    if (!run.text.includes(UNMAPPED) || run.text.replaceAll(UNMAPPED, '').trim() !== '') {
+      return run;
+    }
+    const size = run.fontSizePt || 10;
+    const mark = marks.find((v) => {
+      const x = (v.minX + v.maxX) / 2;
+      return (
+        x >= run.x - 0.5 && x <= run.endX + 0.5 && Math.abs((v.minY + v.maxY) / 2 - run.y) <= size
+      );
+    });
+    const read = mark ? punctuationOf(mark, run.y, size) : undefined;
+    return read === undefined ? run : { ...run, text: run.text.replaceAll(UNMAPPED, read) };
+  });
 }
 
 /** How few drawn glyphs a line may hold before they are its text, not marks in it. */
