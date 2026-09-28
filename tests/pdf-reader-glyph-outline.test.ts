@@ -477,3 +477,32 @@ function assemble(objects: ReadonlyArray<string | Uint8Array>): Uint8Array {
   }
   return out;
 }
+
+describe('a TrueType program whose subsetter zeroed the glyphs it dropped', () => {
+  /** Roboto with the `loca` entry after `gid` written as zero, as TCPDF writes a dropped glyph's. */
+  const zeroedAfter = (gid: number): Uint8Array => {
+    const out = Uint8Array.from(ROBOTO);
+    const view = new DataView(out.buffer);
+    const count = view.getUint16(4);
+    const table = (tag: string): number => {
+      for (let i = 0; i < count; i++) {
+        const at = 12 + i * 16;
+        if (String.fromCharCode(...out.subarray(at, at + 4)) === tag) return view.getUint32(at + 8);
+      }
+      throw new Error(`no ${tag}`);
+    };
+    const long = view.getInt16(table('head') + 50) === 1;
+    const at = table('loca') + (gid + 1) * (long ? 4 : 2);
+    if (long) view.setUint32(at, 0);
+    else view.setUint16(at, 0);
+    return out;
+  };
+
+  it('reads a kept glyph to the next entry past its start', () => {
+    // bug1650302_reduced.pdf's dotless i and caron were read as empty, and
+    // with them the stem of its í and the whole of its ř.
+    const gid = glyphFor('A');
+    const whole = outlineSource(ROBOTO)?.path(gid);
+    expect(outlineSource(zeroedAfter(gid))?.path(gid)).toEqual(whole);
+  });
+});
