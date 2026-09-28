@@ -144,6 +144,23 @@ const SERIF = new Set([
   'serif',
 ]);
 
+// Sans families whose name also starts a mono or serif cut's, matched whole.
+const SANS = new Set([
+  'roboto',
+  'noto sans',
+  'notosans',
+  'dejavu sans',
+  'dejavusans',
+  'lucida sans',
+  'lucidasans',
+  'ubuntu',
+  'lato',
+  'inter',
+  'din',
+  'sans',
+  'sans serif',
+]);
+
 const MONO = new Set([
   'consolas',
   'monaco',
@@ -206,15 +223,62 @@ const STEMS: ReadonlyArray<readonly [string, FamilyKey]> = [
   ['caslon', 'tinos'],
   ['minionpro', 'tinos'],
   ['stoneserif', 'tinos'],
+  // The sans families a producer names, which a descriptor can mislabel:
+  // bug898853.pdf flags its FrutigerLTStd-Light Serif, and read off the flag
+  // "Canadian" came back in a roman. None of these starts a mono or serif
+  // cut's name — Roboto Mono and DejaVu Sans Mono are why those two are
+  // matched whole instead (see SANS).
   ['stonesans', 'arimo'],
-  ['myriadpro', 'arimo'],
+  ['myriad', 'arimo'],
+  ['arial', 'arimo'],
+  ['helvetica', 'arimo'],
+  ['frutiger', 'arimo'],
+  ['univers', 'arimo'],
+  ['futura', 'arimo'],
+  ['gillsans', 'arimo'],
+  ['optima', 'arimo'],
+  ['avenir', 'arimo'],
+  ['verdana', 'arimo'],
+  ['tahoma', 'arimo'],
+  ['trebuchet', 'arimo'],
+  ['segoeui', 'arimo'],
+  ['franklingothic', 'arimo'],
+  ['newsgothic', 'arimo'],
+  ['tradegothic', 'arimo'],
+  ['centurygothic', 'arimo'],
+  ['akzidenz', 'arimo'],
+  ['eurostile', 'arimo'],
+  ['avantgarde', 'arimo'],
+  ['gotham', 'arimo'],
+  ['proximanova', 'arimo'],
+  ['opensans', 'arimo'],
+  ['sourcesans', 'arimo'],
+  ['ptsans', 'arimo'],
+  ['firasans', 'arimo'],
+  ['montserrat', 'arimo'],
+  ['candara', 'arimo'],
+  ['corbel', 'arimo'],
+  ['lucidagrande', 'arimo'],
+  ['mssansserif', 'arimo'],
+  ['microsoftsansserif', 'arimo'],
+  ['dinpro', 'arimo'],
+  ['dinnext', 'arimo'],
 ];
 
 /** The family a name STARTS with, for the families named by stem and size. */
 function familyFromStem(name: string): FamilyKey | undefined {
-  for (const [stem, key] of STEMS) if (name.startsWith(stem)) return key;
+  for (const [stem, key] of STEMS) {
+    if (!name.startsWith(stem)) continue;
+    // A sans family's cut that names another class is that class's: Arial
+    // Monospaced is a typewriter face and Roboto Slab a serif one.
+    if (key === 'arimo' && OTHER_CLASS.test(name.slice(stem.length))) return undefined;
+    return key;
+  }
   return undefined;
 }
+
+/** The words that make a sans family's cut some other class of face. */
+const OTHER_CLASS = /mono|typewriter|serif|slab/u;
 
 // The words a family name ends with to say which MEMBER of the family it is —
 // a weight, a width or a slant. Each maps to what the substitute can do about
@@ -277,6 +341,33 @@ const NARROW_SCALE = 0.82;
  */
 export function resolveFamilyStyle(name: string | undefined): FamilyStyle {
   if (!name) return { key: 'arimo' };
+  const { words, bold, italic, narrow } = readName(name);
+  return {
+    key: familyOfWords(words) ?? 'arimo',
+    ...(bold ? { bold } : {}),
+    ...(italic ? { italic } : {}),
+    ...(narrow ? { widthScale: NARROW_SCALE } : {}),
+  };
+}
+
+/**
+ * Whether the tables KNOW a family name — so the substitute it maps to is the
+ * name's own answer, and not the sans that every name nobody knows falls to.
+ *
+ * @param name The referenced family or face name.
+ * @returns `true` where the name matched a twin, a class or a stem.
+ */
+export function knowsFamily(name: string | undefined): boolean {
+  return name !== undefined && name !== '' && familyOfWords(readName(name).words) !== undefined;
+}
+
+/** A name's family words, with the face words that ended it taken off and read. */
+function readName(name: string): {
+  words: Array<string>;
+  bold: boolean;
+  italic: boolean;
+  narrow: boolean;
+} {
   // PostScript spells the face with a hyphen (`CenturySchoolbook-Bold`), and a
   // stray comma is how some producers separate it (`Arial,Bold`).
   const words = name
@@ -297,26 +388,26 @@ export function resolveFamilyStyle(name: string | undefined): FamilyStyle {
     if (word === 'narrow') narrow = true;
     words.pop();
   }
+  return { words, bold, italic, narrow };
+}
+
+/** The substitute a family's words name, or `undefined` where no table knows them. */
+function familyOfWords(words: ReadonlyArray<string>): FamilyKey | undefined {
+  if (words.length === 0) return undefined;
   // The whole name first, then the words a foundry prefix or a modifier may be
   // hiding the family behind: `Adobe Garamond Pro` is a Garamond.
-  const tries = [words.join(' '), words[words.length - 1]!, words[0]!];
-  let key: FamilyKey = 'arimo';
+  const whole = words.join(' ');
+  const tries = [whole, words[words.length - 1]!, words[0]!];
   for (const n of tries) {
     const found =
       EXACT[n] ??
       (MONO.has(n) ? 'cousine' : SERIF.has(n) ? 'tinos' : undefined) ??
+      // Whole only: `Roboto` is a sans and `Roboto Mono` is not.
+      (n === whole && SANS.has(n) ? 'arimo' : undefined) ??
       familyFromStem(n.replace(/[^a-z]/gu, ''));
-    if (found) {
-      key = found;
-      break;
-    }
+    if (found) return found;
   }
-  return {
-    key,
-    ...(bold ? { bold } : {}),
-    ...(italic ? { italic } : {}),
-    ...(narrow ? { widthScale: NARROW_SCALE } : {}),
-  };
+  return undefined;
 }
 
 /**

@@ -365,6 +365,24 @@ describe('the face a run was shown in (§9.8.1)', () => {
     expect(styleOf('Helvetica', '/Flags 262176 /FontWeight 700').bold).toBe(true);
   });
 
+  it('lets a name that states a light weight overrule the ForceBold flag', () => {
+    // bug898853.pdf sets "Canadian" in FrutigerLTStd-Light — no /FontWeight,
+    // ForceBold set — and read off the flag the light word came back heavy.
+    expect(styleOf('FrutigerLTStd-Light', '/Flags 262178').bold).toBeUndefined();
+    expect(styleOf('FrutigerLTStd-Bold', '/Flags 262178').bold).toBe(true);
+  });
+
+  it('reads the class off a name the substitution knows, over the flags', () => {
+    // The same descriptor calls that Frutiger Serif, and read off the flag
+    // the sans came back in a roman.
+    const flow = Ream.parse(styledFontPdf('FrutigerLTStd-Light', '/Flags 262178')).flow;
+    const families = [...(flow.faceFamilies?.values() ?? [])];
+    expect(families.map((f) => f.generic)).toEqual(['swiss']);
+    // A name nobody knows still takes the class the flags state.
+    const unknown = Ream.parse(styledFontPdf('SomeFoundryFace', '/Flags 34')).flow;
+    expect([...(unknown.faceFamilies?.values() ?? [])].map((f) => f.generic)).toEqual(['roman']);
+  });
+
   it('takes a weight below 100 for no weight at all', () => {
     // §9.8.1 gives the weight as one of 100…900, and a producer writing
     // anything else has written a placeholder: issue10519_reduced.pdf states

@@ -16,7 +16,7 @@ import type { PdfDict, PdfValue } from '@/pdf/objects';
 import type { ContentFont, GlyphOutline, Matrix, PathSeg, Type3Face } from './content';
 import type { PdfFile, PdfPage } from './document';
 import type { FaceFamily } from '@/core/ir/flow';
-import { resolveFamilyStyle } from '@/core/fonts';
+import { knowsFamily, resolveFamilyStyle } from '@/core/fonts';
 import { PDF_NULL, PdfName, PdfStream } from '@/pdf/objects';
 import { parseTtf } from '@/core/font/ttf-parser';
 
@@ -911,8 +911,11 @@ function differences(file: PdfFile, fontDict: PdfDict): Map<number, string> {
 function runFontName(file: PdfFile, fontDict: PdfDict, isType0: boolean): string | undefined {
   const name = embeddedFontName(file, fontDict);
   if (name === undefined || hasLiftableProgram(file, fontDict)) return name;
-  // A name the substitution knows already says what it is.
-  if (resolveFamilyStyle(name).key !== 'arimo') return name;
+  // A name the substitution knows already says what it is — a sans as much as
+  // a serif, and over flags that say otherwise: bug898853.pdf's descriptor
+  // calls its FrutigerLTStd-Light Serif, and read off the flag "Canadian" came
+  // back in a roman.
+  if (knowsFamily(name)) return name;
   const owner = isType0 ? descendantFont(file, fontDict) : fontDict;
   const descriptor = file.resolve(owner.get('FontDescriptor') ?? PDF_NULL);
   if (!(descriptor instanceof Map)) return name;
@@ -1004,8 +1007,11 @@ const STYLE_WORDS =
 
 /** §17.8.3.10 — the kind of face a family is, from the descriptor or, failing that, its name. */
 function genericOf(family: string, flags: number): FaceFamily['generic'] {
-  if ((flags & FLAG_FIXED_PITCH) !== 0) return 'modern';
-  if ((flags & FLAG_SERIF) !== 0) return 'roman';
+  // The flags speak for a family the tables do not know, as in `runFontName`.
+  if (!knowsFamily(family)) {
+    if ((flags & FLAG_FIXED_PITCH) !== 0) return 'modern';
+    if ((flags & FLAG_SERIF) !== 0) return 'roman';
+  }
   const key = resolveFamilyStyle(family).key;
   if (key === 'cousine') return 'modern';
   return key === 'tinos' || key === 'caladea' ? 'roman' : 'swiss';
@@ -1077,10 +1083,15 @@ function faceStyle(
     // It says so for the Bold of a family and not for its SemiBold, which is
     // a family of its own there — so the name `Inter-SemiBold` still counts,
     // and `NewBasrahBold`, a family whose program says Regular, still does not.
+    //
+    // Nor does the flag outweigh a name that states a weight of its own under
+    // the bold one: bug898853.pdf sets "Canadian" in FrutigerLTStd-Light with
+    // ForceBold set, and read off the flag the light word came back heavy.
     const own = programStyle(file, fontDict);
+    const forced = (flags & FLAG_FORCE_BOLD) !== 0 && !named.light;
     const bold = stated
       ? asNumber(weightVal, 0) >= BOLD_WEIGHT
-      : (flags & FLAG_FORCE_BOLD) !== 0 || own?.bold === true || named.bold;
+      : forced || own?.bold === true || named.bold;
     // The slant and the flag each state italic outright; where neither does,
     // the program and the name are the witnesses left.
     const italic =
@@ -1099,14 +1110,17 @@ function faceStyle(
  * ArabicCIDTrueType.pdf — is not a bold cut of anything, and reading it as one
  * set two lines heavy that no reader sets heavy. `Times-Bold` is.
  */
-function styleFromName(baseFont: string): { bold: boolean; italic: boolean } {
+function styleFromName(baseFont: string): { bold: boolean; italic: boolean; light: boolean } {
   // §9.6.4 — six arbitrary capitals and a plus sign mark a subset, and they may
   // spell anything at all.
   const name = baseFont.replace(/^[A-Z]{6}\+/u, '');
   const style = /[-,]([A-Za-z]+)$/u.exec(name)?.[1] ?? '';
+  const bold = /bold|black|heavy|semib|demi/iu.test(style);
   return {
-    bold: /bold|black|heavy|semib|demi/iu.test(style),
+    bold,
     italic: /italic|oblique/iu.test(style),
+    // A weight the name states at or under the medium one: `-Light`, `-Book`.
+    light: !bold && /light|thin|hairline|book|regular|roman|normal|medium/iu.test(style),
   };
 }
 

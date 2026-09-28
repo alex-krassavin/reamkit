@@ -12,7 +12,7 @@ import { describe, expect, it } from 'vitest';
 import { buildXlsx } from './fixtures/build-xlsx';
 import { Ream } from '@/core/converter/ream';
 import { familiesInFlow } from '@/core/fonts/families';
-import { resolveFamilyStyle } from '@/core/fonts';
+import { knowsFamily, resolveFamilyStyle } from '@/core/fonts';
 
 const families = (bytes: Uint8Array): Array<string> =>
   [...familiesInFlow(Ream.parse(bytes).flow)].sort();
@@ -86,6 +86,28 @@ describe('the families a PDF names (E-FONT F3)', () => {
     expect(resolveFamilyStyle('NimbusSanL-Regu').key).toBe('arimo');
     // A name that says nothing still says nothing.
     expect(resolveFamilyStyle('SomeFoundryFace').key).toBe('arimo');
+  });
+});
+
+describe('the sans families a PDF names (E-FONT F3)', () => {
+  it('knows them, so a descriptor’s flags do not outvote the name', () => {
+    // bug898853.pdf flags its FrutigerLTStd-Light Serif; a sans the tables do
+    // not know is indistinguishable from a name that says nothing.
+    expect(knowsFamily('FrutigerLTStd-Light')).toBe(true);
+    expect(knowsFamily('HelveticaNeue-Bold')).toBe(true);
+    expect(knowsFamily('ArialMT')).toBe(true);
+    expect(knowsFamily('Roboto')).toBe(true);
+    expect(resolveFamilyStyle('FrutigerLTStd-Light').key).toBe('arimo');
+    // A name that says nothing still says nothing.
+    expect(knowsFamily('SomeFoundryFace')).toBe(false);
+  });
+
+  it('does not take a sans family’s mono or slab cut for the sans', () => {
+    expect(knowsFamily('ArialMonospacedMT')).toBe(false);
+    expect(knowsFamily('Roboto Mono')).toBe(false);
+    expect(knowsFamily('RobotoSlab-Regular')).toBe(false);
+    // …which leaves the descriptor's FixedPitch flag its say.
+    expect(knowsFamily('DejaVuSansMono')).toBe(false);
   });
 });
 
