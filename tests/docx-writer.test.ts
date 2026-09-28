@@ -1113,6 +1113,38 @@ describe('a document written for another program to read', () => {
     expect(() => writeDocx(flow)).not.toThrow();
   });
 
+  it('writes z-orders the way Word reads them (§20.4.2.3)', () => {
+    // Word reads a relativeHeight of 0 or 1 as ABOVE everything, and a
+    // negative one is no value the attribute admits: a PDF's first two marks
+    // came back over everything drawn after them, and a tagged reading, which
+    // counts up from minus a million, wrote numbers no reader should accept.
+    const mark = (z: number) =>
+      shapeBlock(
+        {
+          orderKey: [z],
+          segs: [
+            { op: 'move', x: 10, y: 10 },
+            { op: 'line', x: 20, y: 10 },
+            { op: 'line', x: 20, y: 20 },
+            { op: 'close' },
+          ],
+          minX: 10,
+          minY: 10,
+          maxX: 20,
+          maxY: 20,
+          fillHex: '2E6DAD',
+        },
+        { left: 0, top: 100 },
+        z,
+      );
+    const { doc } = readDocx(buildDocxFromBody('<w:p><w:r><w:t>after</w:t></w:r></w:p>'));
+    const xml = bodyOf(writeDocx({ ...doc, body: [mark(-1_000_000), mark(0), mark(1)] }).bytes);
+    const heights = [...xml.matchAll(/relativeHeight="(\d+)"/gu)].map((m) => Number(m[1]));
+    expect(heights).toHaveLength(3);
+    expect(heights.every((h) => h >= 2)).toBe(true);
+    expect([...heights].sort((a, b) => a - b)).toEqual(heights);
+  });
+
   it('anchors a floating mark in a paragraph that takes no room (§17.3.1.33)', () => {
     // Every rule and fill a page draws is anchored where it was drawn. The
     // paragraph carrying it is on no page, and written bare it took a reader's

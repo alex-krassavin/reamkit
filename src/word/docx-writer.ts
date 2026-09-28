@@ -230,6 +230,8 @@ interface WriteState {
   // Word's `Inter`), and the families written, for the font table.
   readonly faceFamilies?: ReadonlyMap<string, FaceFamily>;
   readonly familiesUsed: Map<string, FaceFamily>;
+  // Every z-order the document's floats state, by rank (see `relativeHeight`).
+  readonly zRanks: ReadonlyMap<number, number>;
 }
 
 // Per-PART relationship scope (OPC §9.3 — rIds are scoped to their owning
@@ -275,6 +277,7 @@ export function writeDocx(flow: FlowDoc): WriteResult {
     ...(flow.charts ? { charts: flow.charts } : {}),
     ...(flow.faceFamilies ? { faceFamilies: flow.faceFamilies } : {}),
     familiesUsed: new Map(),
+    zRanks: zRanksOf(flow),
   };
   const docScope = newScope();
   const extraParts: Array<OpcPart> = [];
@@ -460,6 +463,58 @@ function fontTableXml(families: ReadonlyMap<string, FaceFamily>): string {
     '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
     `<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">${fonts}</w:fonts>`
   );
+}
+
+/**
+ * §20.4.2.3 `relativeHeight` — a float's z-order, written the way Word writes
+ * it: a rank over every z-order the document states, counted up from Word's
+ * own floor.
+ *
+ * The model's z-order is an ORDER, and may be any number. Written as it stood,
+ * a PDF's first two marks got 0 and 1 — which Word, and LibreOffice after it,
+ * read as "above everything": an "APPROVED" stamp's blue box came back over
+ * its own lettering. A tagged reading counts up from minus a million, and a
+ * negative number is not a value the attribute admits at all.
+ */
+function relativeHeight(zOrder: number | undefined, state: WriteState): number {
+  const rank = zOrder !== undefined ? state.zRanks.get(zOrder) : undefined;
+  // A float that states no order stands over those that do, in document order.
+  const at = rank ?? state.zRanks.size + ++state.drawingSeq;
+  const step = Math.max(1, Math.min(Z_STEP, Math.floor((Z_CEILING - Z_FLOOR) / Z_ROOM)));
+  return Math.min(Z_FLOOR + at * step, Z_CEILING);
+}
+
+/** Word's first float, and the highest value §20.4.2.3 lets a float take. */
+const Z_FLOOR = 0xf000000;
+const Z_CEILING = 0x1dffffff;
+/** …and the step Word counts up in, while there is room for it. */
+const Z_STEP = 1024;
+const Z_ROOM = 1 << 17;
+
+/** Every z-order the document's floats state, and each one's rank among them. */
+function zRanksOf(flow: FlowDoc): Map<number, number> {
+  const seen = new Set<number>();
+  const visit = (blocks: ReadonlyArray<BodyElement>): void => {
+    for (const el of blocks) {
+      const z =
+        el.kind === 'image'
+          ? el.image.float?.zOrder
+          : el.kind === 'shape'
+            ? el.shape.float?.zOrder
+            : el.kind === 'chart'
+              ? el.chart.float?.zOrder
+              : undefined;
+      if (z !== undefined && Number.isFinite(z)) seen.add(z);
+      if (el.kind === 'table') {
+        for (const row of el.table.rows) for (const cell of row.cells) visit(cell.content);
+      }
+    }
+  };
+  visit(flow.body);
+  for (const band of flow.headersFooters?.values() ?? []) visit(band);
+  for (const note of flow.footnotes?.values() ?? []) visit(note);
+  for (const note of flow.endnotes?.values() ?? []) visit(note);
+  return new Map([...seen].sort((a, b) => a - b).map((z, i) => [z, i] as const));
 }
 
 interface NoteConfig {
@@ -983,7 +1038,7 @@ function drawingFrame(
   // §20.4.2.3 — the z-order among the page's floats. A drawing that states none
   // still needs a number, and one that rises with document order keeps the
   // painting order the source had.
-  const z = float.zOrder ?? ++state.drawingSeq;
+  const z = relativeHeight(float.zOrder, state);
   const attrs =
     `${dist} simplePos="0" relativeHeight="${String(z)}"` +
     ` behindDoc="${float.behind ? '1' : '0'}" locked="0"` +
