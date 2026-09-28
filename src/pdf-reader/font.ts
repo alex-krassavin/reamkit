@@ -915,7 +915,8 @@ function runFontName(file: PdfFile, fontDict: PdfDict, isType0: boolean): string
   // a serif, and over flags that say otherwise: bug898853.pdf's descriptor
   // calls its FrutigerLTStd-Light Serif, and read off the flag "Canadian" came
   // back in a roman.
-  if (knowsFamily(name)) return name;
+  const face = familyOfFace(asName(file.resolve(fontDict.get('BaseFont') ?? PDF_NULL)));
+  if (knowsFamily(name) || knowsFamily(face)) return name;
   const owner = isType0 ? descendantFont(file, fontDict) : fontDict;
   const descriptor = file.resolve(owner.get('FontDescriptor') ?? PDF_NULL);
   if (!(descriptor instanceof Map)) return name;
@@ -955,7 +956,7 @@ export function collectFaceFamilies(
     const family =
       typeof stated === 'string' && /^[\x20-\x7e]+$/u.test(stated.trim())
         ? stated.trim()
-        : familyOfFace(asName(file.resolve(fontDict.get('BaseFont') ?? PDF_NULL)));
+        : familyOfFace(cidFontName(file, fontDict, isType0));
     if (family.length === 0) return;
     const flags =
       descriptor instanceof Map
@@ -964,6 +965,17 @@ export function collectFaceFamilies(
     out.set(key, { family, generic: genericOf(family, flags) });
   });
   return out;
+}
+
+/**
+ * §9.7.6.1 — a composite font's `/BaseFont` is its CIDFont's name, a hyphen and
+ * the name of the CMap it is encoded by (`HeiseiMin-W3-UniJIS-UCS2-H`); the
+ * face is the part before the CMap's.
+ */
+function cidFontName(file: PdfFile, fontDict: PdfDict, isType0: boolean): string {
+  const base = asName(file.resolve(fontDict.get('BaseFont') ?? PDF_NULL));
+  const cmap = isType0 ? asName(file.resolve(fontDict.get('Encoding') ?? PDF_NULL)) : '';
+  return cmap !== '' && base.endsWith(`-${cmap}`) ? base.slice(0, -cmap.length - 1) : base;
 }
 
 /**
@@ -976,7 +988,7 @@ export function collectFaceFamilies(
  * words come apart where the capitals say they do.
  */
 export function familyOfFace(baseFont: string): string {
-  const name = baseFont.replace(/^[A-Z]{6}\+/u, '').trim();
+  const name = plainFace(baseFont);
   const cut = /^(.+?)[-,]([^-,]+)$/u.exec(name);
   const whole =
     cut && STYLE_WORDS.test(cut[2]!)
@@ -992,6 +1004,33 @@ export function familyOfFace(baseFont: string): string {
     .replace(/\s+/gu, ' ')
     .trim();
 }
+
+/**
+ * A face name with what producers write around it taken off: the subset tag
+ * (§9.6.4) and, after the face, the charset Acrobat's Office export appends
+ * (`Arial,Bold-WinCharSetFFFF`, `-H2`), the encoding a CIDFont was cut for
+ * (`-Identity-H`, `-OneByteIdentityH`), a serial number, and the slant or
+ * stretch an interpreter synthesised (`-Slant_167`, `-Extend_850`). Left on,
+ * bug900822.pdf's .docx asked for "Courier New,Bold Win Char Set FFFF", which
+ * no machine has, over the Courier New every machine does.
+ */
+function plainFace(baseFont: string): string {
+  let name = baseFont
+    .replace(/^[A-Z]{6}\+/u, '')
+    // ASCII punctuation only: `*Arial-68771-Identity-H`. A name in some
+    // other encoding read as Latin-1 is letters all the same.
+    .replace(/^[!-/:-@[-`{-~]+/u, '')
+    .trim();
+  for (let next = name.replace(PRODUCER_TAIL, ''); next !== name; ) {
+    name = next;
+    next = name.replace(PRODUCER_TAIL, '');
+  }
+  return name;
+}
+
+/** One piece of producer debris at the end of a face name (see `plainFace`). */
+const PRODUCER_TAIL =
+  /[-_](?:WinCharSet[0-9A-F]+|Identity-[HV]|OneByteIdentity[HV]|H\d+|\d+|(?:Slant|Extend)_\d+)$/iu;
 
 /**
  * A style run on to a family with no separator — `CalibriBold` — which is the
@@ -1113,7 +1152,7 @@ function faceStyle(
 function styleFromName(baseFont: string): { bold: boolean; italic: boolean; light: boolean } {
   // §9.6.4 — six arbitrary capitals and a plus sign mark a subset, and they may
   // spell anything at all.
-  const name = baseFont.replace(/^[A-Z]{6}\+/u, '');
+  const name = plainFace(baseFont);
   const style = /[-,]([A-Za-z]+)$/u.exec(name)?.[1] ?? '';
   const bold = /bold|black|heavy|semib|demi/iu.test(style);
   return {
