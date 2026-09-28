@@ -1364,6 +1364,10 @@ function tblPrXml(p: TableProperties): string {
   if (p.alignment && p.alignment !== 'left') out.push(`<w:jc w:val="${p.alignment}"/>`);
   const borders = bordersXml('w:tblBorders', p.borders);
   if (borders) out.push(borders);
+  // §17.4.53 — a FIXED table is laid out by its grid and nothing else. Left
+  // unsaid, a reader sizes the columns to their contents, and a receipt's
+  // last column came back too narrow for the number it was ruled to hold.
+  if (p.layout === 'fixed') out.push('<w:tblLayout w:type="fixed"/>');
   const margins = cellMarginsXml('w:tblCellMar', p.defaultCellMargins);
   if (margins) out.push(margins);
   return `<w:tblPr>${out.join('')}</w:tblPr>`;

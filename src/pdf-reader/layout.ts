@@ -73,6 +73,18 @@ interface Line {
    * "548 Market Street walonade@icloud.com's Organization".
    */
   readonly stops?: ReadonlyArray<number>;
+  /**
+   * The ink each tab-separated piece covers, in page space: the first piece
+   * and one after every stop. What tells a column of figures set against its
+   * right edge from one set from its left.
+   */
+  readonly pieces?: ReadonlyArray<Extent>;
+}
+
+/** An extent across the page, from where the ink starts to where it ends. */
+interface Extent {
+  readonly from: number;
+  readonly to: number;
 }
 
 /**
@@ -1272,10 +1284,12 @@ function groupIntoLines(runs: ReadonlyArray<TextRun>, split = false, stepped = f
       clusters.push({ y: run.y, fontSize: run.fontSizePt || 10, runs: [run] });
     }
   }
+  for (const c of clusters) c.runs.sort((a, b) => a.x - b.x);
+  const stops = sharedStops(clusters.map((c) => c.runs));
   return clusters.flatMap((c) => {
-    const ordered = c.runs.sort((a, b) => a.x - b.x);
+    const ordered = c.runs;
     const fontSize = c.fontSize || 10;
-    if (!split) return [lineOf(ordered, c.y, fontSize, stepped)];
+    if (!split) return [lineOf(ordered, c.y, fontSize, stepped, stops)];
     const pieces: Array<Array<TextRun>> = [[]];
     for (const run of ordered) {
       const prev = pieces[pieces.length - 1]!;
@@ -1318,10 +1332,55 @@ function groupIntoLines(runs: ReadonlyArray<TextRun>, split = false, stepped = f
         piece[0]!.y,
         Math.max(...piece.map((r) => r.fontSizePt || 0)) || fontSize,
         stepped,
+        stops,
       ),
     );
   });
 }
+
+/**
+ * §17.3.1.38 — the stops a block of lines is set out on: where text resumes,
+ * after a gap wider than a word space, at the same place on more than one line
+ * — and on at least one of them after a gap only a tab makes.
+ *
+ * A tab's gap is as wide as what stands before it leaves it. An invoice sets
+ * "Date due", "Date of issue" and "Invoice number" over one column of values
+ * at 108pt, and only the shortest label leaves a gap no space could make: the
+ * other two came back with their values a word's width after the label
+ * instead of in the column.
+ *
+ * @param lines Each line's runs, left to right.
+ * @returns The x of every stop two lines share.
+ */
+function sharedStops(lines: ReadonlyArray<ReadonlyArray<TextRun>>): Array<number> {
+  const seen: Array<{ x: number; line: number; tab: boolean }> = [];
+  lines.forEach((runs, line) => {
+    let end: number | undefined;
+    for (const run of runs) {
+      if (run.text.replaceAll(UNMAPPED, '').trim() === '') continue;
+      const size = run.fontSizePt || 10;
+      if (end !== undefined && run.x - end >= size * STOP_GAP_EM) {
+        seen.push({ x: run.x, line, tab: run.x - end >= size * TAB_GAP_EM });
+      }
+      end = Math.max(end ?? run.endX, run.endX);
+    }
+  });
+  const stops: Array<number> = [];
+  for (const tab of seen) {
+    if (!tab.tab || stops.some((x) => Math.abs(x - tab.x) <= STOP_SLACK_PT)) continue;
+    const lined = new Set(
+      seen.filter((o) => Math.abs(o.x - tab.x) <= STOP_SLACK_PT).map((o) => o.line),
+    );
+    if (lined.size >= 2) stops.push(tab.x);
+  }
+  return stops;
+}
+
+/** The least gap, in ems, that lands a run on a stop the lines around it share. */
+const STOP_GAP_EM = 0.5;
+
+/** How far from a shared stop a run may start and still stand on it. */
+const STOP_SLACK_PT = 0.75;
 
 /**
  * Where a line's INK is, which is not how far its pen travelled.
@@ -1353,7 +1412,13 @@ function inkSpan(runs: ReadonlyArray<TextRun>): { x: number; width: number } {
 }
 
 /** One run of runs, left to right on a shared baseline, as a {@link Line}. */
-function lineOf(runs: ReadonlyArray<TextRun>, y: number, fontSize: number, stepped: boolean): Line {
+function lineOf(
+  runs: ReadonlyArray<TextRun>,
+  y: number,
+  fontSize: number,
+  stepped: boolean,
+  shared: ReadonlyArray<number> = [],
+): Line {
   // A page may do both. A LaTeX document writes its prose with spaces in it and
   // sets its mathematics by stepping — TeX's thin space is a sixth of an em and
   // its medium one two ninths, both under the quarter a drawn-space page needs
@@ -1361,7 +1426,7 @@ function lineOf(runs: ReadonlyArray<TextRun>, y: number, fontSize: number, stepp
   // "f(x) = sin x + cos x". A line with no space in it anywhere was stepped
   // across, whatever the rest of the page does.
   const steppedLine = stepped || (runs.length > 1 && !runs.some((r) => SPACE.test(r.text)));
-  const { spans: ordered, stops } = lineSpans(runs, fontSize, steppedLine);
+  const { spans: ordered, stops, pieces } = lineSpans(runs, fontSize, steppedLine, shared);
   // §9.4 — the runs came off the page in the order they were PAINTED, which is
   // left to right whatever the script. `logicalOrder` turned each run's own
   // letters back the right way round; the runs themselves are still in visual
@@ -1376,8 +1441,8 @@ function lineOf(runs: ReadonlyArray<TextRun>, y: number, fontSize: number, stepp
     width: ink.width,
     y,
     fontSize,
-    ...(tabbed(runs, fontSize) ? { tabbed: true as const } : {}),
-    ...(stops.length > 0 ? { stops } : {}),
+    ...(tabbed(runs, fontSize) || stops.length > 0 ? { tabbed: true as const } : {}),
+    ...(stops.length > 0 ? { stops, pieces } : {}),
     text: spans
       .map((s) => s.text)
       .join('')
@@ -1488,14 +1553,19 @@ function lineSpans(
   runs: ReadonlyArray<TextRun>,
   fontSize: number,
   stepped: boolean,
-): { spans: Array<TextSpan>; stops: Array<number> } {
+  shared: ReadonlyArray<number> = [],
+): { spans: Array<TextSpan>; stops: Array<number>; pieces: Array<Extent> } {
   const spans: Array<TextSpan> = [];
   const stops: Array<number> = [];
+  const pieces: Array<{ from: number; to: number }> = [{ from: Infinity, to: -Infinity }];
   // §17.3.2.42 — the line's OWN baseline, which a script stands off. Taken from
   // the runs set at the line's size: the marks are the ones that moved.
   const body = runs.filter((r) => (r.fontSizePt || fontSize) > fontSize * SCRIPT_SIZE);
   const baseline = median((body.length > 0 ? body : runs).map((r) => r.y));
   let prev: TextRun | undefined;
+  // Where the last run that MARKS anything ends: a stop is reached across the
+  // blanks before it, not from them.
+  let inked: number | undefined;
   for (const run of runs) {
     if (
       prev !== undefined &&
@@ -1504,9 +1574,16 @@ function lineSpans(
     ) {
       // A gap no word space could be is a TAB, and the piece after it starts
       // where the page starts it. Written as a space the two pieces close up.
-      if (run.x - prev.endX >= (run.fontSizePt || fontSize) * TAB_GAP_EM) {
+      // So is a narrower one that lands on a stop the lines around it share.
+      const size = run.fontSizePt || fontSize;
+      const onStop =
+        inked !== undefined &&
+        run.x - inked >= size * STOP_GAP_EM &&
+        shared.some((x) => Math.abs(x - run.x) <= STOP_SLACK_PT);
+      if (run.x - prev.endX >= size * TAB_GAP_EM || onStop) {
         spans.push({ text: '\t' });
         stops.push(run.x);
+        pieces.push({ from: Infinity, to: -Infinity });
       } else spans.push({ text: ' ' });
     }
     // §9.3.1/§8.6.8 — the size and colour the page showed the glyphs at. The
@@ -1530,8 +1607,14 @@ function lineSpans(
       ...(run.href !== undefined ? { href: run.href } : {}),
     });
     prev = run;
+    if (run.text.trim() !== '') {
+      inked = Math.max(inked ?? run.endX, run.endX);
+      const piece = pieces[pieces.length - 1]!;
+      piece.from = Math.min(piece.from, run.x);
+      piece.to = Math.max(piece.to, run.endX);
+    }
   }
-  return { spans, stops };
+  return { spans, stops, pieces };
 }
 
 /**
@@ -1623,6 +1706,7 @@ function groupIntoParagraphs(
   spacingBefore?: number;
   lineHeight: number;
   stops?: Array<number>;
+  pieces?: Array<Extent>;
 }> {
   const groups: Array<Array<Line>> = [];
   const gaps: Array<number> = [];
@@ -1699,6 +1783,19 @@ function groupIntoParagraphs(
     // the column begins. A tabbed line ends its paragraph, so these are one
     // line's stops and not a merge of several.
     const stops = g.length === 1 ? (first.stops ?? []) : [];
+    // A line that starts where another line of the column starts, or on a stop
+    // one of them is set out on, is set FROM there: "walonade@icloud.com"
+    // closes the "Bill to" address at the x every line of it starts at, and
+    // being short and near the middle of the sheet it read as centred.
+    const flush = g.every((l) =>
+      lines.some(
+        (o) =>
+          !g.includes(o) &&
+          (Math.abs(o.x - l.x) <= STOP_SLACK_PT ||
+            (o.stops ?? []).some((x) => Math.abs(x - l.x) <= STOP_SLACK_PT)),
+      ),
+    );
+    const aligned = flush ? {} : alignmentOf(g, column);
     return {
       spans: joinLines(g),
       fontSize,
@@ -1707,11 +1804,19 @@ function groupIntoParagraphs(
       // from where this column's lines happen to start. Measured from the
       // latter, every stop stood a little right of where the page set it, and
       // the last column of a table came out a point wide.
-      ...(stops.length > 0 ? { stops: stops.map((x) => x - (column?.left ?? columnLeft)) } : {}),
+      ...(stops.length > 0
+        ? {
+            stops: stops.map((x) => x - (column?.left ?? columnLeft)),
+            pieces: (first.pieces ?? []).map((p) => ({
+              from: p.from - (column?.left ?? columnLeft),
+              to: p.to - (column?.left ?? columnLeft),
+            })),
+          }
+        : {}),
       ...(spacingBefore !== undefined ? { spacingBefore } : {}),
       lineHeight,
-      ...alignmentOf(g, column),
-      ...indentOf(g, columnLeft, alignmentOf(g, column).alignment),
+      ...aligned,
+      ...indentOf(g, columnLeft, aligned.alignment),
     };
   });
 }
@@ -2471,6 +2576,7 @@ function tabbedRows(
     top: number;
     spacingBefore?: number;
     lineHeight: number;
+    pieces?: Array<Extent>;
   }>,
   measure: { left: number; right: number } | undefined,
 ): Map<number, BodyElement | null> {
@@ -2499,12 +2605,57 @@ function tabbedRows(
     // one letter per line down a thirty-point strip.
     const bounds = stops.map((_, k) => Math.min(...rows.map((r) => r.stops![k]!)));
     const width = measure.right - measure.left;
+    // The ink each column covers, over every row; `undefined` where a row
+    // does not say (a cell with nothing in it).
+    const inks = [0, ...bounds].map((_, k): Extent | undefined => {
+      const cells = rows.map((r) => r.pieces?.[k]);
+      if (cells.some((c) => c === undefined || !Number.isFinite(c.from))) return undefined;
+      return {
+        from: Math.min(...cells.map((c) => c!.from)),
+        to: Math.max(...cells.map((c) => c!.to)),
+      };
+    });
+    // §17.3.1.13 — a column whose cells END together and start apart is set
+    // against its right edge: the "Qty", "Tax" and "Amount" of an item table,
+    // figures and headings alike. Set from the left the "1" stood under the Q
+    // of "Qty", eight points from the figure the page puts under its y.
+    const flush = inks.map((ink, k) => {
+      if (k === 0 || ink === undefined) return false;
+      const tos = rows.map((r) => r.pieces![k]!.to);
+      const froms = rows.map((r) => r.pieces![k]!.from);
+      const even = Math.max(...tos) - Math.min(...tos);
+      return (
+        even <= FLUSH_SLACK_PT && Math.max(...froms) - Math.min(...froms) > even + FLUSH_SLACK_PT
+      );
+    });
+    // Where each column begins. One set from its left begins at its stop; one
+    // set against its right has no stop to begin at, and begins halfway across
+    // the white before it — a cell only as wide as the page's figure wraps the
+    // figure the moment the face it is re-set in runs a little wider.
     const edges = [0, ...bounds, width];
+    for (let k = 1; k < bounds.length + 1; k++) {
+      const before = inks[k - 1];
+      const own = inks[k];
+      if (!flush[k] || before === undefined || own === undefined) continue;
+      const mid = (before.to + own.from) / 2;
+      if (mid > edges[k - 1]! && mid < own.from) edges[k] = mid;
+    }
+    const flushRight = flush.map((right, k) =>
+      right ? Math.max(0, edges[k + 1]! - inks[k]!.to) : undefined,
+    );
+    const grid = edges.slice(0, -1).map((from, k) => pt(Math.max(edges[k + 1]! - from, 1)));
     out.set(i, {
       kind: 'table',
       table: {
-        properties: { defaultCellMargins: { left: pt(0), right: pt(0) }, layout: 'fixed' },
-        grid: edges.slice(0, -1).map((from, k) => pt(Math.max(edges[k + 1]! - from, 1))),
+        // §17.4.63/§17.4.72 — as wide as the measure, each cell as wide as its
+        // column: the widths the grid gives, stated where a reader looks first.
+        properties: {
+          defaultCellMargins: { left: pt(0), right: pt(0) },
+          layout: 'fixed',
+          widthType: 'dxa',
+          widthPt: pt(grid.reduce((sum, w) => sum + w, 0)),
+        },
+        grid,
         rows: rows.map((row, r) => {
           // The row stands as far from the next as the page stood it, and the
           // white BEFORE the table is the first row's own: a table has no
@@ -2524,16 +2675,23 @@ function tabbedRows(
           const opening = r === 0 ? row.spacingBefore : pitch > 0 ? pitch : undefined;
           return {
             properties: {},
-            cells: splitAtTabs(row.spans).map((cell) => ({
-              properties: {},
-              content: [
-                paragraphFromRuns(cell, undefined, {
-                  ...(opening !== undefined ? { spacingBefore: pt(opening) } : {}),
-                  spacingLine: pt(row.lineHeight),
-                  spacingLineRule: 'exact',
-                }),
-              ],
-            })),
+            cells: splitAtTabs(row.spans).map((cell, k) => {
+              const inset = flushRight[k];
+              const own = grid[k];
+              return {
+                properties: own !== undefined ? { width: own } : {},
+                content: [
+                  paragraphFromRuns(cell, undefined, {
+                    ...(opening !== undefined ? { spacingBefore: pt(opening) } : {}),
+                    spacingLine: pt(row.lineHeight),
+                    spacingLineRule: 'exact',
+                    ...(inset !== undefined
+                      ? { alignment: 'right' as const, indentRight: pt(inset) }
+                      : {}),
+                  }),
+                ],
+              };
+            }),
           };
         }),
       },
@@ -2543,6 +2701,9 @@ function tabbedRows(
   }
   return out;
 }
+
+/** How far apart the ends of a column's cells may stand and still be flush. */
+const FLUSH_SLACK_PT = 2;
 
 /** How many stops a line must stand on before a run of them is a table. */
 const LEAST_TABLE_STOPS = 2;

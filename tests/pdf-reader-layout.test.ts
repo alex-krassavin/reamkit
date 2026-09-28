@@ -1154,4 +1154,76 @@ describe('a flowing reading re-sets the page where the page set it', () => {
       1,
     );
   });
+
+  it('stands a value on the stop its column shares, however short the gap to it (§17.3.1.38)', () => {
+    // "Date due" leaves its value a tab's width away; "Invoice number" leaves
+    // it less than two ems, which a word space could almost be. Both values
+    // stand at 108, and read as a space the second came back a word after its
+    // label instead of in the column.
+    const doc = reconstructByLayout(
+      PdfFile.parse(
+        helvetica(
+          [
+            'BT /F1 9 Tf 1 0 0 1 30 714 Tm (Invoice number) Tj 1 0 0 1 108 714 Tm (6VOBWUGP) Tj ET',
+            'BT /F1 9 Tf 1 0 0 1 30 700.5 Tm (Date due) Tj 1 0 0 1 108 700.5 Tm (August 12, 2026) Tj ET',
+          ].join('\n'),
+        ),
+      ),
+    ).doc;
+    const texts = paragraphs(doc).map(textOf);
+    expect(texts).toContain('Invoice number\t6VOBWUGP');
+    expect(texts).toContain('Date due\tAugust 12, 2026');
+  });
+
+  it('keeps a short line where its column starts, rather than reading it as centred', () => {
+    // "walonade@icloud.com" closes an address block at the x every line of it
+    // starts at; short, and near the middle of the sheet, it read as centred.
+    const long =
+      'This line runs the whole measure of the page from the left margin across to the right one, as prose does.';
+    const doc = reconstructByLayout(
+      PdfFile.parse(
+        helvetica(
+          [
+            'BT /F1 9 Tf 1 0 0 1 30 700 Tm (548 Market Street) Tj 1 0 0 1 250 700 Tm (Organization) Tj ET',
+            'BT /F1 9 Tf 1 0 0 1 250 686.5 Tm (Kazakhstan) Tj ET',
+            'BT /F1 9 Tf 1 0 0 1 250 673 Tm (someone@example.com) Tj ET',
+            `BT /F1 9 Tf 1 0 0 1 30 600 Tm (${long}) Tj ET`,
+          ].join('\n'),
+        ),
+      ),
+    ).doc;
+    const last = paragraphs(doc).find((p) => textOf(p) === 'someone@example.com');
+    expect(last?.paragraph.properties).not.toMatchObject({ alignment: 'center' });
+  });
+
+  it('sets a column of figures against its right edge, and states every width (§17.4.38)', () => {
+    // An invoice's "Qty" stands eight points left of the "1" under it and both
+    // END at the same place. Set from the left the "1" stood under the Q; and
+    // a table that states no widths is sized by its reader to its contents.
+    const doc = reconstructByLayout(
+      PdfFile.parse(
+        helvetica(
+          [
+            'BT /F1 8 Tf 1 0 0 1 45 700 Tm (Description) Tj ET',
+            'BT /F1 8 Tf 1 0 0 1 300 700 Tm (Qty) Tj ET',
+            'BT /F1 8 Tf 1 0 0 1 420 700 Tm (Amount) Tj ET',
+            'BT /F1 8 Tf 1 0 0 1 45 680 Tm (Max plan) Tj ET',
+            'BT /F1 8 Tf 1 0 0 1 308 680 Tm (1) Tj ET',
+            'BT /F1 8 Tf 1 0 0 1 411.984 680 Tm ($1,100.00) Tj ET',
+          ].join('\n'),
+        ),
+      ),
+    ).doc;
+    const table = doc.body.find((b) => b.kind === 'table');
+    if (table?.kind !== 'table') throw new Error('the rows are a table');
+    const alignment = (r: number, c: number): string | undefined => {
+      const el = table.table.rows[r]!.cells[c]!.content[0];
+      return el?.kind === 'paragraph' ? el.paragraph.properties.alignment : undefined;
+    };
+    expect(alignment(0, 0)).not.toBe('right');
+    expect([alignment(0, 1), alignment(1, 1)]).toEqual(['right', 'right']);
+    expect([alignment(0, 2), alignment(1, 2)]).toEqual(['right', 'right']);
+    expect(table.table.properties).toMatchObject({ layout: 'fixed', widthType: 'dxa' });
+    expect(table.table.rows[0]!.cells.every((c) => c.properties.width !== undefined)).toBe(true);
+  });
 });
