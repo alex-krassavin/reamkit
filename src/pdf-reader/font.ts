@@ -109,8 +109,9 @@ export function buildContentFont(file: PdfFile, fontDict: PdfDict): ContentFont 
   // thousand of its nine thousand characters were traced as drawings instead
   // of read — forty thousand shapes where a page of text stands.
   let byIndex: ReadonlyMap<number, string> | undefined | null = null;
+  const numbering = isType0 ? undefined : numberingOf(differences(file, fontDict).values());
   const fromIndex = (name: string): string | undefined => {
-    const gid = numberedGlyph(name);
+    const gid = numberedGlyph(name, numbering);
     if (gid === undefined) return undefined;
     byIndex ??= programCharacters(file, fontDict);
     return byIndex?.get(gid);
@@ -496,6 +497,7 @@ function simpleGlyphs(file: PdfFile, fontDict: PdfDict): SimpleGlyphs | undefine
   const typeOne = file.resolve(descriptor.get('FontFile') ?? PDF_NULL);
   const truetype = file.resolve(descriptor.get('FontFile2') ?? PDF_NULL);
   const compact = file.resolve(descriptor.get('FontFile3') ?? PDF_NULL);
+  const numbering = numberingOf(differences(file, fontDict).values());
   try {
     if (typeOne instanceof PdfStream) {
       const face = type1Font(file.streamData(typeOne));
@@ -517,7 +519,7 @@ function simpleGlyphs(file: PdfFile, fontDict: PdfDict): SimpleGlyphs | undefine
       // under Latin names.
       const named = postGlyphNames(bytes);
       const gidOf = (name: string): number | undefined => {
-        const gid = named?.get(name) ?? numberedGlyph(name);
+        const gid = named?.get(name) ?? numberedGlyph(name, numbering);
         return gid !== undefined && gid < glyf.count ? gid : undefined;
       };
       return {
@@ -541,7 +543,7 @@ function simpleGlyphs(file: PdfFile, fontDict: PdfDict): SimpleGlyphs | undefine
     if (!outlines) return undefined;
     const names = cffNameToGid(cff);
     const gidOf = (name: string): number | undefined => {
-      const gid = names?.get(name) ?? numberedGlyph(name);
+      const gid = names?.get(name) ?? numberedGlyph(name, numbering);
       return gid !== undefined && gid < outlines.count ? gid : undefined;
     };
     return {
@@ -566,9 +568,13 @@ function simpleGlyphs(file: PdfFile, fontDict: PdfDict): SimpleGlyphs | undefine
  * INDEX — `g24`, `glyph24`, `index24`, `cid24` — and that name is then the only
  * way back to the outline. bug1151216.pdf names them `g24`, `g381`, `g3`, and
  * its three lines of prices are drawn from nothing else.
+ *
+ * @param name      The glyph's name.
+ * @param numbering How the font writes the number, where its names say (see
+ *                  {@link numberingOf}); four digits are hexadecimal otherwise.
  */
-function numberedGlyph(name: string): number | undefined {
-  const hex = /^g([0-9a-f]{4})$/u.exec(name);
+function numberedGlyph(name: string, numbering?: 'hex' | 'decimal'): number | undefined {
+  const hex = numbering !== 'decimal' ? /^g([0-9a-f]{4})$/u.exec(name) : null;
   if (hex) return Number.parseInt(hex[1]!, 16);
   const m = /^(?:g|glyph|index|cid|G)(\d+)$/u.exec(name);
   const n = m ? Number(m[1]) : Number.NaN;
@@ -577,6 +583,34 @@ function numberedGlyph(name: string): number | undefined {
 
 /** No font holds more glyphs than this; a bigger number is not an index. */
 const MAX_GLYPH_INDEX = 65536;
+
+/**
+ * How a font's index names write their numbers, where its names say.
+ *
+ * A subsetter that pads the number to four digits writes it in hexadecimal —
+ * bug1027533.pdf's `g0024` is glyph 36 — and one that does not pad writes it
+ * in decimal. One name cannot tell the two apart: bug1151216.pdf names its
+ * glyphs `g24`, `g381` and `g1004`, and `g1004` is four digits either way.
+ * Read as hexadecimal it is glyph 4100, which no subset of a thousand glyphs
+ * holds: five of the file's codes drew nothing, fell back to Latin-1, and its
+ * prices came back "$@'' for 1" set over the glyphs that were drawn. The rest
+ * of the font's names say which it is — a leading zero or a letter is
+ * hexadecimal, a number of any length but four is decimal.
+ *
+ * @param names The glyph names the font's `/Differences` gives.
+ * @returns The numbering, or `undefined` where the names do not say.
+ */
+function numberingOf(names: Iterable<string>): 'hex' | 'decimal' | undefined {
+  let hex = false;
+  let decimal = false;
+  for (const name of names) {
+    const digits = /^g([0-9a-f]+)$/u.exec(name)?.[1];
+    if (digits === undefined) continue;
+    if (/[a-f]/u.test(digits) || (digits.length === 4 && digits.startsWith('0'))) hex = true;
+    else if (digits.length !== 4) decimal = true;
+  }
+  return hex === decimal ? undefined : hex ? 'hex' : 'decimal';
+}
 
 /** §9.7.4.2 `/CIDToGIDMap` — a stream of two-byte glyph indices, CID by CID. */
 function readCidToGid(file: PdfFile, cidFont: PdfDict): Array<number> | undefined {

@@ -176,6 +176,14 @@ describe('glyph outlines (§9.6.6)', () => {
     }
   });
 
+  it('reads four digits the way the font’s other index names read', () => {
+    // bug1151216.pdf names its glyphs `g24`, `g381` and `g1004`: decimal, all
+    // of them. Read as hexadecimal, `g1004` is glyph 4100, which its subset
+    // does not hold — five of its codes drew nothing and fell back to Latin-1.
+    const doc = Ream.parse(simpleTruetypePdf('g1004', '66 /g24'));
+    expect(doc.flow.body.filter((b) => b.kind === 'shape')).toHaveLength(1);
+  });
+
   it('reaches a legacy eight-bit face by the NAME its program gives the glyph', () => {
     // §9.6.6.4 — a TrueType with no `cmap` cannot be reached by character at
     // all. What is left is the encoding's glyph NAME and the program's `post`
@@ -240,7 +248,7 @@ describe('glyph outlines (§9.6.6)', () => {
  * A one-page PDF setting code 65 in a SIMPLE TrueType font whose `/Differences`
  * name that code `name` — the shape of a subset whose `cmap` was dropped.
  */
-function simpleTruetypePdf(name: string): Uint8Array {
+function simpleTruetypePdf(name: string, more = ''): Uint8Array {
   const content = 'BT /F0 40 Tf 20 40 Td (A) Tj ET';
   return assemble([
     '<< /Type /Catalog /Pages 2 0 R >>',
@@ -249,7 +257,7 @@ function simpleTruetypePdf(name: string): Uint8Array {
       '/Resources << /Font << /F0 5 0 R >> >> >>',
     `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
     '<< /Type /Font /Subtype /TrueType /BaseFont /Roboto /FirstChar 65 /LastChar 65 ' +
-      `/Widths [600] /FontDescriptor 6 0 R /Encoding << /Type /Encoding /Differences [65 /${name}] >> >>`,
+      `/Widths [600] /FontDescriptor 6 0 R /Encoding << /Type /Encoding /Differences [65 /${name} ${more}] >> >>`,
     '<< /Type /FontDescriptor /FontName /Roboto /Flags 4 /ItalicAngle 0 /StemV 80 ' +
       '/Ascent 900 /Descent -200 /CapHeight 700 /FontBBox [-500 -300 1500 1000] /FontFile2 7 0 R >>',
     fontStreamObject(withoutCmap()),
