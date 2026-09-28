@@ -99,6 +99,7 @@ export function collectPageAppearances(file: PdfFile, page: PdfPage): Array<Appe
   const annots = file.get(page.dict, 'Annots');
   if (!Array.isArray(annots)) return [];
   const out: Array<Appearance> = [];
+  const regenerate = needsAppearances(file);
   for (const entry of annots) {
     const annot = file.resolve(entry);
     if (!(annot instanceof Map)) continue;
@@ -117,6 +118,18 @@ export function collectPageAppearances(file: PdfFile, page: PdfPage): Array<Appe
     if (typeof flags === 'number' && (flags & FLAG_HIDDEN || flags & FLAG_NOVIEW)) continue;
 
     const stream = normalAppearance(file, annot);
+    // §12.7.2 `/NeedAppearances` — the form says its appearances are not to be
+    // trusted and the viewer is to build them from the fields' values. A text
+    // field's variable text is its value (§12.7.3.3); the rest of what the
+    // stale appearance draws — the frame, the tint — stands.
+    const typed = regenerate && isWidget(file, annot) ? drawnAppearance(file, annot) : undefined;
+    if (typed && typedField(file, annot)) {
+      const kept = stream ? withoutVariableText(file, stream) : undefined;
+      const rect = rectangle(file.get(annot, 'Rect'));
+      if (kept && rect) out.push(fitted(file, kept, rect));
+      out.push({ stream: typed, ctm: IDENTITY, resources: drawnResources(file, annot) });
+      continue;
+    }
     if (!stream) {
       // §12.5.5 — no appearance to paint, so one is written from the geometry
       // the annotation states. Already in page space, so it is placed as it is.
@@ -126,18 +139,65 @@ export function collectPageAppearances(file: PdfFile, page: PdfPage): Array<Appe
     }
     const rect = rectangle(file.get(annot, 'Rect'));
     if (!rect) continue;
-
-    const matrix = matrixOf(file, stream.dict);
-    const bbox = rectangle(file.get(stream.dict, 'BBox'));
-    const resources = file.get(stream.dict, 'Resources');
-    out.push({
-      stream,
-      ctm: multiply(matrix, fitToRect(bbox, matrix, rect)),
-      resources: resources instanceof Map ? resources : undefined,
-      ...(bbox ? { bbox } : {}),
-    });
+    out.push(fitted(file, stream, rect));
   }
   return out;
+}
+
+/** An appearance stream placed on its annotation's `/Rect` (§12.5.5). */
+function fitted(
+  file: PdfFile,
+  stream: PdfStream,
+  rect: readonly [number, number, number, number],
+): Appearance {
+  const matrix = matrixOf(file, stream.dict);
+  const bbox = rectangle(file.get(stream.dict, 'BBox'));
+  const resources = file.get(stream.dict, 'Resources');
+  return {
+    stream,
+    ctm: multiply(matrix, fitToRect(bbox, matrix, rect)),
+    resources: resources instanceof Map ? resources : undefined,
+    ...(bbox ? { bbox } : {}),
+  };
+}
+
+/** §12.7.2 — whether the form asks the viewer to build its fields' appearances. */
+function needsAppearances(file: PdfFile): boolean {
+  const acro = file.get(file.catalog, 'AcroForm');
+  return acro instanceof Map && file.get(acro, 'NeedAppearances') === true;
+}
+
+function isWidget(file: PdfFile, annot: PdfDict): boolean {
+  const subtype = file.get(annot, 'Subtype');
+  return subtype instanceof PdfName && subtype.value === 'Widget';
+}
+
+/** Whether a widget belongs to a text field — `/FT /Tx`, on it or up its field tree. */
+function typedField(file: PdfFile, annot: PdfDict): boolean {
+  let node: PdfDict | undefined = annot;
+  for (let depth = 0; node && depth < 32; depth++) {
+    const type = file.get(node, 'FT');
+    if (type instanceof PdfName) return type.value === 'Tx';
+    const parent = file.get(node, 'Parent');
+    node = parent instanceof Map ? parent : undefined;
+  }
+  return false;
+}
+
+/**
+ * §12.7.3.3 — an appearance with its variable text taken out: the part it
+ * marks `/Tx BMC … EMC`, which is what a viewer rebuilds from the value.
+ * bug1844583.pdf's stale appearance still reads "Dlrow Olleh" there, over a
+ * field whose value is "Hello World".
+ */
+function withoutVariableText(file: PdfFile, stream: PdfStream): PdfStream {
+  const text = new TextDecoder('latin1').decode(file.streamData(stream));
+  const stripped = text.replace(/\/Tx\s+BMC[\s\S]*?EMC/gu, '');
+  // The bytes come back decoded, so the filters that encoded them go too.
+  const dict = new Map(stream.dict);
+  dict.delete('Filter');
+  dict.delete('DecodeParms');
+  return new PdfStream(dict, Uint8Array.from([...stripped].map((c) => c.charCodeAt(0))));
 }
 
 /** §12.5.5 `/AP` `/N` — the normal appearance, through `/AS` when it is a set. */

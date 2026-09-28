@@ -16,6 +16,7 @@ import { reconstructByLayout } from '@/pdf-reader/layout';
 import { shapeBlock } from '@/pdf-reader/flow-build';
 import { collectPageVectors } from '@/pdf-reader/vector';
 import { collectPageImages } from '@/pdf-reader/images';
+import { extractPageText } from '@/pdf-reader/text';
 
 const FONTS = {
   regular: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Regular.ttf')),
@@ -250,6 +251,37 @@ describe('annotation appearances (§12.5.5)', () => {
     expect(box!.minY).toBeCloseTo(60, 1);
     expect(box!.maxX).toBeCloseTo(90, 1);
     expect(box!.maxY).toBeCloseTo(80, 1);
+  });
+
+  it('builds a text field from its value when the form asks (§12.7.2)', () => {
+    // bug1844583.pdf's form says `/NeedAppearances true`, and its field's
+    // stale appearance still reads "Dlrow Olleh" over the value "Hello World".
+    // The variable text is rebuilt from the value; the frame stays.
+    const ap = '0 G 0.5 0.5 99 19 re S /Tx BMC BT /Helv 12 Tf 2 6 Td (Dlrow Olleh) Tj ET EMC';
+    const content = '';
+    const file = PdfFile.parse(
+      assemble([
+        '<< /Type /Catalog /Pages 2 0 R /AcroForm << /NeedAppearances true ' +
+          '/DR << /Font << /Helv 6 0 R >> >> /DA (/Helv 12 Tf 0 g) >> >>',
+        '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+        '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R ' +
+          '/Annots [<< /Type /Annot /Subtype /Widget /FT /Tx /V (Hello World) ' +
+          '/Rect [50 60 150 80] /DA (/Helv 12 Tf 0 g) /AP << /N 5 0 R >> >>] >>',
+        `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+        `<< /Type /XObject /Subtype /Form /BBox [0 0 100 20] ` +
+          `/Resources << /Font << /Helv 6 0 R >> >> /Length ${String(ap.length)} >>\nstream\n${ap}\nendstream`,
+        '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+      ]),
+    );
+    const page = file.pages()[0]!;
+    const text = extractPageText(file, page)
+      .map((r) => r.text)
+      .join('');
+    expect(text).toContain('Hello World');
+    expect(text).not.toContain('Dlrow');
+    expect(collectPageVectors(file, page).vectors.some((v) => v.strokeHex !== undefined)).toBe(
+      true,
+    );
   });
 
   it('clips what an appearance paints to its /BBox (§8.10.1)', () => {
