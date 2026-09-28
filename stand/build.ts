@@ -123,7 +123,8 @@ export function stemOf(file: string): string {
 
 // ---- LibreOffice, one at a time ----
 
-const PROFILE = pathToFileURL(resolve(tmpdir(), 'ream-stand-lo')).href;
+const PROFILE_NAME = 'ream-stand-lo';
+const PROFILE = pathToFileURL(resolve(tmpdir(), PROFILE_NAME)).href;
 const LOCK = resolve(tmpdir(), 'ream-stand-lo.lock');
 
 /**
@@ -137,15 +138,30 @@ const LOCK = resolve(tmpdir(), 'ream-stand-lo.lock');
 function soffice(args: ReadonlyArray<string>): void {
   const held = lock();
   try {
-    execFileSync('soffice', [`-env:UserInstallation=${PROFILE}`, '--headless', ...args], {
+    execFileSync(SOFFICE, [`-env:UserInstallation=${PROFILE}`, '--headless', ...args], {
       stdio: 'ignore',
       timeout: SOFFICE_TIMEOUT_MS,
     });
+  } catch (e) {
+    // A conversion past its time leaves LibreOffice running on the profile,
+    // and every call after it hands its job to that instance and waits: one
+    // slow file stalled the whole pass. Only this bench's instances go.
+    try {
+      execFileSync('pkill', ['-f', PROFILE_NAME], { stdio: 'ignore' });
+    } catch {
+      // Nothing was left running.
+    }
+    throw e;
   } finally {
     closeSync(held);
     rmSync(LOCK, { force: true });
   }
 }
+
+/** LibreOffice itself rather than the shell script in front of it, so a timeout stops IT. */
+const SOFFICE = existsSync('/Applications/LibreOffice.app/Contents/MacOS/soffice')
+  ? '/Applications/LibreOffice.app/Contents/MacOS/soffice'
+  : 'soffice';
 
 function lock(): number {
   for (;;) {
@@ -181,8 +197,12 @@ function sleep(ms: number): void {
 
 /** A .docx drawn by LibreOffice: the pages as a PDF beside it. */
 function renderDocx(docx: string, work: string): string {
-  soffice(['--convert-to', 'pdf', '--outdir', work, docx]);
   const pdf = resolve(work, `${basename(docx).replace(/\.docx$/iu, '')}.pdf`);
+  // Once more when nothing came of it: an instance still closing down takes
+  // the job and drops it, and the file is not at fault.
+  for (let attempt = 0; attempt < 2 && !existsSync(pdf); attempt++) {
+    soffice(['--convert-to', 'pdf', '--outdir', work, docx]);
+  }
   if (!existsSync(pdf)) throw new Error(`LibreOffice would not open ${basename(docx)}`);
   return pdf;
 }
@@ -351,7 +371,14 @@ function goldSide(pdf: string, dir: string, hash: string): GoldStamp {
   }
   const errors: Array<string> = [];
   const source = pageCount(pdf);
-  const drawnSource = pages(pdf, dir, 'source').length;
+  let drawnSource = 0;
+  try {
+    drawnSource = pages(pdf, dir, 'source').length;
+  } catch (e) {
+    // poppler reads what it reads: a Brotli stream is beyond it, and the
+    // source side is then the one missing picture.
+    errors.push(`source: ${(e as Error).message.split('\n')[0] ?? ''}`);
+  }
   let goldPages = 0;
   let drawnGold = 0;
   const work = resolve(dir, '.work');
@@ -481,8 +508,18 @@ async function main(): Promise<void> {
           .filter((f) => /\.pdf$/iu.test(f))
           .sort()
           .map((f) => resolve(FILES_DIR, f));
+  // `--missing` builds only the files with no report yet: a pass over a corpus
+  // picks up where the last one stopped.
+  const missing = process.argv.includes('--missing');
   for (const file of files) {
-    const r = await build(file);
+    if (missing && existsSync(resolve(OUT_DIR, stemOf(file), 'report.json'))) continue;
+    let r: Report;
+    try {
+      r = await build(file);
+    } catch (e) {
+      process.stdout.write(`${stemOf(file).padEnd(40)} !! ${(e as Error).message}\n`);
+      continue;
+    }
     const worst = r.scores.reduce((m, s) => Math.max(m, s.missing, s.extra), 0);
     const pagesNote = `pages gold ${String(r.pages.gold)} ours ${String(r.pages.ours)}`;
     const errorsNote = r.errors.length > 0 ? `  !! ${r.errors.join(' | ')}` : '';
