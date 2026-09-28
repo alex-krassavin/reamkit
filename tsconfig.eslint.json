@@ -12,6 +12,7 @@
     "src/**/*.ts",
     "tests/**/*.ts",
     "scripts/**/*.ts",
+    "stand/**/*.ts",
     "*.config.ts",
     "eslint.config.js"
   ]
