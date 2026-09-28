@@ -671,6 +671,55 @@ describe('the measure a narrow column shows (§17.6.11)', () => {
   });
 });
 
+describe('a line the page set in one piece (§17.3.1.12)', () => {
+  /** A page 300 wide, in a face whose every glyph is half an em. */
+  const laidOut = (content: string): Array<{ text: string; right?: number }> => {
+    const widths = Array.from({ length: 91 }, () => 500).join(' ');
+    const doc = reconstructByLayout(
+      PdfFile.parse(
+        onePagePdf('/MediaBox [0 0 300 400] /Resources << /Font << /F0 5 0 R >> >>', content, [
+          '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /FirstChar 32 /LastChar 122 ' +
+            `/Widths [${widths}] >>`,
+        ]),
+      ),
+    ).doc;
+    return doc.body.flatMap((b) =>
+      b.kind === 'paragraph'
+        ? [
+            {
+              text: b.paragraph.runs.map((r) => r.text).join(''),
+              ...(b.paragraph.properties.indentRight !== undefined
+                ? { right: b.paragraph.properties.indentRight }
+                : {}),
+            },
+          ]
+        : [],
+    );
+  };
+
+  it('may run on into the margin rather than wrap when re-set', () => {
+    // bug1108301.pdf's one line ran nearly to the margin; re-set in a wider
+    // face its last word wrapped, and on a sheet fifty points tall it fell off
+    // the paper.
+    const [line] = laidOut(
+      'BT /F0 10 Tf 20 360 Td (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa) Tj ET',
+    );
+    expect(line?.right).toBeLessThan(0);
+    // …a sixth of its measure at most, and never past the edge of the sheet.
+    expect(line?.right).toBeGreaterThanOrEqual(-200 / 6 - 0.01);
+  });
+
+  it('keeps a paragraph the page wrapped, and a short line, to the measure', () => {
+    const content = [
+      'BT /F0 10 Tf 20 360 Td (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa) Tj ET',
+      'BT /F0 10 Tf 20 348 Td (bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb) Tj ET',
+      'BT /F0 10 Tf 20 336 Td (cccc) Tj ET',
+      'BT /F0 10 Tf 20 300 Td (dddd) Tj ET',
+    ].join('\n');
+    for (const para of laidOut(content)) expect(para.right ?? 0).toBeGreaterThanOrEqual(0);
+  });
+});
+
 describe('the spaces a line has are the ones the page shows, once each', () => {
   /**
    * The text of a page set in Helvetica, whose space is `space` thousandths of

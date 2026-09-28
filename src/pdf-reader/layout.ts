@@ -385,6 +385,7 @@ export function reconstructByLayout(
             // to the line the column came out a point wide.
             right: Math.max(measure.right, textEdges?.right ?? measure.right),
           },
+          pageWidth,
         )) {
           blocks.push({ band: bandAt(set.top), col, top: set.top, el: set.el });
         }
@@ -400,6 +401,7 @@ export function reconstructByLayout(
     const setParagraphs = (
       paras: ReturnType<typeof groupIntoParagraphs>,
       tableMeasure: { left: number; right: number } | undefined,
+      sheetWidth = 0,
     ): Array<{ top: number; el: BodyElement }> => {
       // §17.4.38 — consecutive lines set out on the SAME stops are a table:
       // "Description / Qty / Unit price / Tax / Amount" and the row under it.
@@ -414,6 +416,8 @@ export function reconstructByLayout(
           if (table !== null) out.push({ top: para.top, el: table });
           continue;
         }
+        // A cell's lines keep to the cell: there is no sheet for them to run on into.
+        const overflow = sheetWidth > 0 ? runOn(para, tableMeasure, sheetWidth) : 0;
         out.push({
           top: para.top,
           el: paragraphFromRuns(para.spans, headingLevel(para.fontSize, medianFont), {
@@ -432,6 +436,7 @@ export function reconstructByLayout(
             ...(para.indentFirstLine !== undefined
               ? { indentFirstLine: pt(para.indentFirstLine) }
               : {}),
+            ...(overflow > 0 ? { indentRight: pt(-overflow) } : {}),
           }),
         });
       }
@@ -1893,6 +1898,9 @@ function groupIntoParagraphs(
   lineHeight: number;
   stops?: Array<number>;
   pieces?: Array<Extent>;
+  /** How many lines the page set the paragraph in, and where the farthest of them ends. */
+  lineCount: number;
+  right: number;
 }> {
   const groups: Array<Array<Line>> = [];
   const gaps: Array<number> = [];
@@ -2007,6 +2015,8 @@ function groupIntoParagraphs(
       lineHeight,
       ...aligned,
       ...indentOf(g, columnLeft, aligned.alignment),
+      lineCount: g.length,
+      right: Math.max(...g.map((l) => l.x + l.width)),
     };
   });
 }
@@ -2115,6 +2125,47 @@ function indentOf(
     ...(Math.abs(first) >= enough ? { indentFirstLine: first } : {}),
   };
 }
+
+/**
+ * §17.3.1.12 — how far a line the page set in ONE piece may run on into the
+ * right margin, rather than wrap.
+ *
+ * The line is re-set in a face this reader has, and a face wider than the
+ * page's pushes the last word of a line that ran nearly to the measure onto a
+ * line of its own: bug1252420.pdf's one italic line came back with
+ * "Centuries" under it, and on bug1108301.pdf's sheet, fifty points tall, the
+ * word it pushed down fell off the paper altogether. A line the page did not
+ * break is not broken: it may run on — so far as a sixth of its measure, and
+ * never past the edge of the sheet. Only a line set flush, with nothing on
+ * stops: a centred one would move its centre, and a tabbed one its stops.
+ *
+ * @param para      The paragraph.
+ * @param measure   The column it was set in.
+ * @param pageWidth The sheet's width.
+ * @returns How far it may run past the measure, in points; 0 where it keeps to it.
+ */
+function runOn(
+  para: {
+    lineCount: number;
+    right: number;
+    alignment?: 'center' | 'right';
+    stops?: ReadonlyArray<number>;
+  },
+  measure: { left: number; right: number } | undefined,
+  pageWidth: number,
+): number {
+  if (measure === undefined || para.lineCount !== 1 || para.alignment !== undefined) return 0;
+  if ((para.stops?.length ?? 0) > 0) return 0;
+  const width = measure.right - measure.left;
+  if (!(width > 0) || para.right - measure.left < width * FULL_LINE_SHARE) return 0;
+  return Math.max(0, Math.min(width * RUN_ON_SHARE, pageWidth - measure.right));
+}
+
+/** How far across its measure a line runs before it is at risk of wrapping when re-set. */
+const FULL_LINE_SHARE = 0.85;
+
+/** How far past its measure, as a share of it, a one-piece line may run on. */
+const RUN_ON_SHARE = 1 / 6;
 
 /**
  * How far, in ems, a paragraph has to be set in before it is indented rather
