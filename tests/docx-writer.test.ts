@@ -1090,6 +1090,29 @@ describe('a document written for another program to read', () => {
     expect(xml).not.toContain('w:insideH');
   });
 
+  it('writes a foot whose run names no face at all', () => {
+    // A band's runs come with RAW properties, and a run the page set in a face
+    // with no name has no font map: ZapfDingbats.pdf's foot threw, and the
+    // whole package with it.
+    const { doc } = readDocx(buildDocxFromBody('<w:p><w:r><w:t>body</w:t></w:r></w:p>'));
+    const foot = {
+      kind: 'paragraph' as const,
+      paragraph: { properties: {}, runs: [{ text: 'Page 1', properties: {} }] },
+    };
+    const flow = {
+      ...doc,
+      sections: doc.sections.map((s) => ({
+        ...s,
+        properties: {
+          ...s.properties,
+          footers: [{ type: 'default' as const, relationshipId: 'rIdFoot' }],
+        },
+      })),
+      headersFooters: new Map([['rIdFoot', [foot]]]),
+    } as unknown as FlowDoc;
+    expect(() => writeDocx(flow)).not.toThrow();
+  });
+
   it('anchors a floating mark in a paragraph that takes no room (§17.3.1.33)', () => {
     // Every rule and fill a page draws is anchored where it was drawn. The
     // paragraph carrying it is on no page, and written bare it took a reader's

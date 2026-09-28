@@ -1799,7 +1799,11 @@ function spacingXml(p: ResolvedParagraphProperties): string {
 // §17.3.2.26 w:rFonts — only the slots that differ from the resolved default,
 // each named by its FAMILY where the source named a face (see FlowDoc
 // `faceFamilies`): a reader looks a font up by the name it was installed under.
-function rFontsXml(fonts: FontFamilyMap, state?: WriteState): string {
+function rFontsXml(fonts: FontFamilyMap | undefined, state?: WriteState): string {
+  // A band's runs come with RAW properties, and a run that names no face has
+  // no font map at all: ZapfDingbats.pdf's foot threw here, and the whole
+  // package with it.
+  if (fonts === undefined) return '';
   const d = DEFAULT_RUN.fontFamily;
   const family = (name: string): string => {
     const known = state?.faceFamilies?.get(name);
