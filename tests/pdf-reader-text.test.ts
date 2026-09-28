@@ -64,6 +64,23 @@ describe('/ToUnicode CMap parser (E-PDF EP2)', () => {
     expect(map.get(0x0441)).toBe('\u{1d454}'); // 𝑔, at the end of the range
   });
 
+  it('judges U+0000 code by code in a range that starts on it', () => {
+    // TCPDF maps every code to itself, 256 at a time, and the first range
+    // starts at U+0000. Only code 0 is the unknown character; the rest are
+    // the Latin letters its pages are written in.
+    const cmap = [
+      'begincmap',
+      '1 begincodespacerange <0000> <FFFF> endcodespacerange',
+      '2 beginbfrange <0000> <00ff> <0000> <0100> <01ff> <0100> endbfrange',
+      'endcmap',
+    ].join('\n');
+    const { map } = parseToUnicodeCMap(new TextEncoder().encode(cmap));
+    expect(map.has(0x0000)).toBe(false);
+    expect(map.get(0x0043)).toBe('C');
+    expect(map.get(0x0068)).toBe('h');
+    expect(map.get(0x0101)).toBe('ā');
+  });
+
   it('parses an array-form bfrange', () => {
     const cmap = '1 beginbfrange <0001> <0002> [<0058> <0059>] endbfrange';
     const { map } = parseToUnicodeCMap(new TextEncoder().encode(cmap));

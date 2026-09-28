@@ -64,10 +64,16 @@ export function parseToUnicodeCMap(bytes: Uint8Array): ToUnicode {
         const hiN = bytesToInt(hi.bytes);
         const dst = lexer.nextToken();
         if (dst.kind === 'hexstr') {
-          const base = stated(utf16be(dst.bytes));
-          if (base !== undefined)
-            for (let i = 0; loN + i <= hiN && i < MAX_RANGE; i++)
-              map.set(loN + i, incString(base, i));
+          // Each code's own character is judged, not the range's first: TCPDF
+          // maps every code to itself as `<0000> <00ff> <0000>`, and it is only
+          // code 0 that lands on U+0000. Judged by where it starts, the whole
+          // range was dropped with it, and basicapi.pdf's table of contents
+          // came back as leaders with no chapter names in front of them.
+          const base = utf16be(dst.bytes);
+          for (let i = 0; loN + i <= hiN && i < MAX_RANGE; i++) {
+            const text = stated(incString(base, i));
+            if (text !== undefined) map.set(loN + i, text);
+          }
         } else if (dst.kind === 'arrayOpen') {
           let i = 0;
           for (;;) {
