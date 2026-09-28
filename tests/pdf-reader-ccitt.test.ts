@@ -11,6 +11,7 @@ import { unzlibSync } from 'fflate';
 import { beforeAll, describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
+import type { BitmapContexts } from '@/pdf-reader/jbig2';
 import { prepareImage } from '@/core/images';
 import { Ream } from '@/core/converter/ream';
 import {
@@ -22,7 +23,12 @@ import {
   decodeCcittPlanes,
 } from '@/pdf-reader/ccitt';
 import { PdfFile } from '@/pdf-reader/document';
-import { standardTableCodes, symbolCodeLength } from '@/pdf-reader/jbig2';
+import {
+  newContexts,
+  standardTableCodes,
+  startingContexts,
+  symbolCodeLength,
+} from '@/pdf-reader/jbig2';
 import { decodePdfImage } from '@/pdf-reader/image-decode';
 import { dict, name, stream } from '@/pdf/objects';
 
@@ -444,5 +450,43 @@ describe('the standard Huffman tables (§B.5)', () => {
       const sum = standardTableCodes(n).reduce((s, l) => s + 2 ** -l.prefix.length, 0);
       expect(sum, `B.${String(n)}`).toBe(1);
     }
+  });
+});
+
+describe('the statistics a symbol dictionary starts from (§7.4.3.2)', () => {
+  const left = (state: number): BitmapContexts => {
+    const generic = newContexts(1 << 16);
+    const refine = newContexts(1 << 13);
+    generic.i[0] = state;
+    refine.i[0] = state;
+    return { generic, refine };
+  };
+
+  it('starts from nothing unless its flags say it uses the context', () => {
+    const kept = new Map([[1, left(7)]]);
+    expect(startingContexts(false, [1], kept).generic.i[0]).toBe(0);
+  });
+
+  it('starts from what the LAST dictionary it names was left with', () => {
+    // bitmap-symbol-context-reuse.pdf's last dictionary names the three before
+    // it, and it is the third's statistics its bitmaps were coded against.
+    const kept = new Map([
+      [1, left(7)],
+      [3, left(9)],
+    ]);
+    expect(startingContexts(true, [1, 2, 3], kept).generic.i[0]).toBe(9);
+    expect(startingContexts(true, [1, 2, 3], kept).refine.i[0]).toBe(9);
+    // A dictionary that kept nothing is passed over for one that did.
+    expect(startingContexts(true, [3, 2], kept).generic.i[0]).toBe(9);
+    expect(startingContexts(true, [2], kept).generic.i[0]).toBe(0);
+  });
+
+  it('starts from a copy, which the next to start there does not see', () => {
+    // Two dictionaries start from the first one's statistics; the first of
+    // them does not keep its own, and the second must not begin where it ended.
+    const kept = new Map([[1, left(7)]]);
+    const first = startingContexts(true, [1], kept);
+    first.generic.i[0] = 30;
+    expect(startingContexts(true, [1], kept).generic.i[0]).toBe(7);
   });
 });

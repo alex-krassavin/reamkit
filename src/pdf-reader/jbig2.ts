@@ -91,7 +91,7 @@ const QE: ReadonlyArray<readonly [number, number, number, number]> = [
 ];
 
 /** A context's state: the Table E.1 index and which symbol is currently more probable. */
-interface Cx {
+export interface Cx {
   i: Uint8Array;
   mps: Uint8Array;
 }
@@ -1138,6 +1138,7 @@ function decodeSymbolDictionary(
   refAgg: boolean,
   rTemplate: number,
   rAt: ReadonlyArray<At>,
+  contexts: BitmapContexts = freshBitmapContexts(),
 ): Array<Jbig2Bitmap> {
   const iadh = new IntDecoder(mq);
   const iadw = new IntDecoder(mq);
@@ -1145,8 +1146,8 @@ function decodeSymbolDictionary(
   const iaai = new IntDecoder(mq);
   const iardx = new IntDecoder(mq);
   const iardy = new IntDecoder(mq);
-  const genericCx = newContexts(1 << 16);
-  const refineCx = newContexts(1 << 13);
+  const genericCx = contexts.generic;
+  const refineCx = contexts.refine;
   const newSymbols: Array<Jbig2Bitmap> = [];
   const num = (v: number | typeof OOB): number => (v === OOB ? 0 : v);
   // §6.5.8.2.3 — a dictionary that refines names its symbols in as many bits as
@@ -1853,6 +1854,54 @@ interface PageInfo {
 }
 
 /**
+ * §7.4.3.1.1 — the statistics a symbol dictionary codes its bitmaps with: the
+ * generic region's contexts and the refinement's. A dictionary may keep them
+ * when it is done (bit 9) and a later one start from them (bit 8) instead of
+ * from nothing.
+ */
+export interface BitmapContexts {
+  readonly generic: Cx;
+  readonly refine: Cx;
+}
+
+function freshBitmapContexts(): BitmapContexts {
+  return { generic: newContexts(1 << 16), refine: newContexts(1 << 13) };
+}
+
+/**
+ * §7.4.3.2 step 3 — the statistics a symbol dictionary starts from.
+ *
+ * One that says it USES the coding context starts where the LAST dictionary it
+ * refers to was left, among those that kept theirs: the bitmaps it codes were
+ * coded against those. Started fresh, every shape of
+ * bitmap-symbol-context-reuse.pdf decoded to paper and the sheet came back
+ * blank. It starts from a copy — two dictionaries may start from the same
+ * one, and the second must not start where the first left off.
+ *
+ * @param used     Whether the dictionary's flags say it uses the context (bit 8).
+ * @param referred The segments it refers to, in the order it names them.
+ * @param kept     What each dictionary that retained its context was left with.
+ * @returns The contexts to decode with.
+ */
+export function startingContexts(
+  used: boolean,
+  referred: ReadonlyArray<number>,
+  kept: ReadonlyMap<number, BitmapContexts>,
+): BitmapContexts {
+  const last = used
+    ? referred
+        .map((n) => kept.get(n))
+        .filter((c): c is BitmapContexts => c !== undefined)
+        .at(-1)
+    : undefined;
+  if (last === undefined) return freshBitmapContexts();
+  return {
+    generic: { i: last.generic.i.slice(), mps: last.generic.mps.slice() },
+    refine: { i: last.refine.i.slice(), mps: last.refine.mps.slice() },
+  };
+}
+
+/**
  * Decode an embedded JBIG2 image.
  *
  * @param data    The `/JBIG2Decode` stream's own segments.
@@ -1895,6 +1944,9 @@ export function decodeJbig2(
   const patternsBySegment = new Map<number, ReadonlyArray<Jbig2Bitmap>>();
   // §7.4.13 — the custom Huffman tables a segment may refer to.
   const tablesBySegment = new Map<number, HuffTable>();
+  // §7.4.3.2 — the coding statistics a symbol dictionary kept when it was
+  // done, for the next one that asks to start from them.
+  const contextsBySegment = new Map<number, BitmapContexts>();
 
   const run = (bytes: Uint8Array): void => {
     for (const seg of parseSegments(bytes)) {
@@ -2027,6 +2079,7 @@ export function decodeJbig2(
           const template = (flags >> 10) & 3;
           const rTemplate = (flags >> 12) & 1;
           const ctxUsed = (flags & 0x0100) !== 0;
+          const ctxRetained = (flags & 0x0200) !== 0;
           const at: Array<At> = [];
           if (!huff) {
             const n = template === 0 ? 4 : 1;
@@ -2040,7 +2093,6 @@ export function decodeJbig2(
           const newCount = r.u32();
           if (newCount > 10000) continue;
           const inherited = seg.referred.flatMap((n) => symbolsBySegment.get(n) ?? []);
-          void ctxUsed;
           if (huff) {
             // §7.4.3.1.2 — which table each field is read through, chosen by
             // the flags; `3` means one the segment refers to.
@@ -2083,6 +2135,7 @@ export function decodeJbig2(
             );
             continue;
           }
+          const contexts = startingContexts(ctxUsed, seg.referred, contextsBySegment);
           symbolsBySegment.set(
             seg.number,
             decodeSymbolDictionary(
@@ -2095,8 +2148,11 @@ export function decodeJbig2(
               refAgg,
               rTemplate,
               rAt.length > 0 ? rAt : NOMINAL_AT_REFINE,
+              contexts,
             ),
           );
+          // …and one that says it RETAINS them keeps what it was left with.
+          if (ctxRetained) contextsBySegment.set(seg.number, contexts);
           continue;
         }
         // §7.4.4 text region — where each of those shapes goes.
