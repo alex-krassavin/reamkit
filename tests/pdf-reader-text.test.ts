@@ -1270,6 +1270,22 @@ describe('an annotation the file drew no appearance for (§12.5.5)', () => {
     expect(text).toBe('Załącznik');
   });
 
+  it('reads a right-to-left line with a full stop in it in reading order', () => {
+    // A line of Arabic painted glyph by glyph stands in visual order, and one
+    // with a full stop in it is MIXED: left as painted, every such line of
+    // freetext_no_appearance.pdf read back to front.
+    const file = PdfFile.parse(
+      annotated([
+        '<< /Type /Annot /Subtype /FreeText /Rect [20 150 180 170] /DA (/Helv 10 Tf 0 g) ' +
+          '/Contents <FEFF064506360649002E0020062506460647> >>',
+      ]),
+    );
+    const text = extractPageText(file, file.pages()[0]!)
+      .map((r) => r.text)
+      .join('');
+    expect(text).toBe('\u0645\u0636\u0649. \u0625\u0646\u0647');
+  });
+
   it('draws a ticked check box, and nothing for an unticked one', () => {
     // §12.7.4.2 — the state is `/AS`, or `/V` where the widget states none, and
     // `/Off` means nothing is drawn. checkbox_no_appearance.pdf is two boxes

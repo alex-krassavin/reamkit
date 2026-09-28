@@ -15,6 +15,7 @@ import type { ColorSpaceInfo, GsPaint } from './shading';
 import type { TextMarkup } from './annot-draw';
 import type { ShapeGradient } from '@/core/vector';
 import type { PdfDict, PdfStream, PdfValue } from '@/pdf/objects';
+import { analyzeString, bidiClass, hasBidiCharacters, reorderVisual } from '@/core/bidi';
 import { PDF_NULL, PdfHexString, PdfName } from '@/pdf/objects';
 
 /**
@@ -1235,12 +1236,29 @@ function strokesText(mode: number): boolean {
  * ArabicCIDTrueType.pdf came out mirrored for exactly that reason: the reader
  * passed visual order through and the layout reversed it a second time.
  *
- * A run is reversed only when it is wholly right-to-left. Anything mixed — a
- * number inside an Arabic sentence runs left to right — needs the full bidi
- * algorithm, and guessing at it would be worse than leaving it alone.
+ * A run wholly right-to-left is simply reversed. A MIXED one — a full stop or
+ * a number inside an Arabic sentence — is put through the bidi algorithm's
+ * reordering (UAX #9 L2), which for the runs a line holds undoes itself: the
+ * painted order reordered is the reading order. Left alone, a note of
+ * freetext_no_appearance.pdf came back with every line that held a full stop
+ * reading back to front. The direction it is reordered in is the one most of
+ * its letters run in — the painted order says nothing about which comes first.
  */
 function logicalOrder(text: string): string {
-  return isRightToLeft(text) ? [...text].reverse().join('') : text;
+  if (isRightToLeft(text)) return [...text].reverse().join('');
+  if (!hasBidiCharacters(text)) return text;
+  const chars = [...text];
+  let rtl = 0;
+  let strong = 0;
+  for (const ch of chars) {
+    const type = bidiClass(ch.codePointAt(0) ?? 0);
+    if (type === 'R' || type === 'AL') rtl++;
+    if (type === 'R' || type === 'AL' || type === 'L') strong++;
+  }
+  const { levels } = analyzeString(text, rtl * 2 >= strong ? 'rtl' : 'ltr');
+  return reorderVisual(levels)
+    .map((i) => chars[i] ?? '')
+    .join('');
 }
 
 /**
