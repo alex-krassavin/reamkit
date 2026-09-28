@@ -345,10 +345,14 @@ function parseParagraphBorders(node: unknown): CellBorders | undefined {
   const bottom = edge('w:bottom');
   const left = edge('w:left', 'w:start');
   const right = edge('w:right', 'w:end');
+  // §17.3.1.5 — the rule between two paragraphs of a set with the same
+  // borders, which is the set's INSIDE horizontal edge.
+  const between = edge('w:between');
   if (top) out.top = top;
   if (bottom) out.bottom = bottom;
   if (left) out.left = left;
   if (right) out.right = right;
+  if (between) out.insideH = between;
   return Object.keys(out).length > 0 ? out : undefined;
 }
 

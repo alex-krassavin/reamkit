@@ -2834,7 +2834,16 @@ function ruleBorders(
         properties: {
           ...paragraph.properties,
           ...room,
-          borders: { ...paragraph.properties.borders, [side.edge]: border },
+          borders: {
+            ...paragraph.properties.borders,
+            [side.edge]: border,
+            // §17.3.1.5 — paragraphs with the same borders are ONE bordered
+            // set, and a set is ruled on its outside only: an invoice's totals
+            // rule every line, and read as five tops Word and LibreOffice drew
+            // one rule over "Subtotal" and none under it. The rule between two
+            // members is the set's own edge, and it is this same rule.
+            ...(side.edge === 'top' ? { insideH: border } : {}),
+          },
         },
       },
     };

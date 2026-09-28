@@ -1039,6 +1039,24 @@ describe('a document written for another program to read', () => {
     );
   });
 
+  it('writes the rule between two ruled paragraphs as `w:between` (§17.3.1.5)', () => {
+    // §17.3.1.24 CT_PBdr has no inside edges; the rule between two members of
+    // a bordered set is `w:between`, and `w:insideH` there is a file Word turns
+    // away.
+    const para =
+      '<w:p><w:pPr><w:pBdr><w:top w:val="single" w:sz="6" w:color="EBEBEB"/>' +
+      '<w:between w:val="single" w:sz="6" w:color="EBEBEB"/></w:pBdr></w:pPr>' +
+      '<w:r><w:t>Subtotal</w:t></w:r></w:p>';
+    const { doc } = readDocx(buildDocxFromBody(para + para));
+    const first = doc.body[0];
+    expect(
+      first?.kind === 'paragraph' && first.paragraph.properties.borders?.insideH,
+    ).toMatchObject({ style: 'single', colorHex: 'EBEBEB' });
+    const xml = bodyOf(writeDocx(doc).bytes);
+    expect(xml).toContain('<w:between w:val="single" w:sz="6" w:color="EBEBEB"/>');
+    expect(xml).not.toContain('w:insideH');
+  });
+
   it('anchors a floating mark in a paragraph that takes no room (§17.3.1.33)', () => {
     // Every rule and fill a page draws is anchored where it was drawn. The
     // paragraph carrying it is on no page, and written bare it took a reader's

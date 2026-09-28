@@ -1226,4 +1226,28 @@ describe('a flowing reading re-sets the page where the page set it', () => {
     expect(table.table.properties).toMatchObject({ layout: 'fixed', widthType: 'dxa' });
     expect(table.table.rows[0]!.cells.every((c) => c.properties.width !== undefined)).toBe(true);
   });
+
+  it('rules EVERY member of a set of ruled lines, not only the first (§17.3.1.5)', () => {
+    // An invoice rules each line of its totals. Paragraphs with the same
+    // borders are one bordered set, ruled on its outside only, and read as
+    // five tops the totals came back with one rule over "Subtotal".
+    const doc = reconstructByLayout(
+      PdfFile.parse(
+        helvetica(
+          [
+            '0.92 0.92 0.92 RG 0.75 w 306 712 m 582 712 l S',
+            'BT /F1 9 Tf 1 0 0 1 306 700 Tm (Subtotal) Tj ET',
+            '0.92 0.92 0.92 RG 0.75 w 306 697.75 m 582 697.75 l S',
+            'BT /F1 9 Tf 1 0 0 1 306 685.75 Tm (Total) Tj ET',
+          ].join('\n'),
+        ),
+      ),
+    ).doc;
+    const ruled = paragraphs(doc).filter((p) => p.paragraph.properties.borders?.top !== undefined);
+    expect(ruled).toHaveLength(2);
+    for (const p of ruled) {
+      const borders = p.paragraph.properties.borders as Record<string, unknown>;
+      expect(borders.insideH).toEqual(borders.top);
+    }
+  });
 });

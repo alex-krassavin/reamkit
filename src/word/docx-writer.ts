@@ -1437,9 +1437,14 @@ function bordersXml(
   borders: CellBorders | undefined,
 ): string {
   if (!borders) return '';
-  const sides = BORDER_SIDES.map(([key, el]) => {
+  const sides = BORDER_SIDES.map(([key, name]) => {
     const b = borders[key];
     if (!b) return '';
+    // §17.3.1.24 CT_PBdr has no inside edges: the one between two paragraphs
+    // of a bordered set is §17.3.1.5 `w:between`, and a paragraph has no
+    // vertical inside edge at all. Written as `w:insideH` Word refuses the file.
+    if (tag === 'w:pBdr' && key === 'insideV') return '';
+    const el = tag === 'w:pBdr' && key === 'insideH' ? 'w:between' : name;
     // §17.4.x — w:sz in eighths of a point; the reader divides by 8.
     const sz = b.width !== undefined ? ` w:sz="${Math.round(b.width * 8)}"` : '';
     const color = b.colorHex !== undefined ? ` w:color="${b.colorHex}"` : '';
