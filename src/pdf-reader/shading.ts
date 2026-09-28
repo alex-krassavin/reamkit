@@ -20,7 +20,7 @@ import type { GradientStop, ShapeGradient } from '@/core/vector';
 import type { PdfDict, PdfValue } from '@/pdf/objects';
 
 import type { PdfFile } from './document';
-import { PDF_NULL, PdfName, PdfStream } from '@/pdf/objects';
+import { PDF_NULL, PdfHexString, PdfName, PdfStream } from '@/pdf/objects';
 
 /**
  * Resolve a page's `/Pattern` resources into gradient fills (E-PDF EP16c, ISO
@@ -299,6 +299,19 @@ function colorOf(c: ReadonlyArray<number>, space?: ColorSpaceInfo): string {
   return spaceColor(c, space) ?? spaceColor(c, undefined) ?? grayHex(c[0] ?? 0);
 }
 
+/** §8.6.6.3 — an Indexed space's table: a string, a hex string or a stream. */
+function lookupBytes(file: PdfFile, v: PdfValue | undefined): Uint8Array | undefined {
+  const r = file.resolve(v ?? PDF_NULL);
+  if (r instanceof PdfHexString) return r.bytes;
+  if (typeof r === 'string') {
+    const out = new Uint8Array(r.length);
+    for (let i = 0; i < r.length; i++) out[i] = r.charCodeAt(i) & 0xff;
+    return out;
+  }
+  if (r instanceof PdfStream) return file.streamData(r);
+  return undefined;
+}
+
 /**
  * §8.6.8 — the colour a run of `sc` / `scn` components comes to.
  *
@@ -572,10 +585,28 @@ function colorSpaceAt(file: PdfFile, cs: PdfValue, depth: number): ColorSpaceInf
     }
     return icc ? { ...base, icc } : base;
   }
-  if (head.value === 'Indexed') {
-    // §8.6.6.3 — one operand, an index into a table. Reading the table is the
-    // image path's business; a bare `sc` into one is rare and left alone.
-    return undefined;
+  if (head.value === 'Indexed' || head.value === 'I') {
+    // §8.6.6.3 — one operand, an index into a table of colours in the base
+    // space. Left unread, a fill set by `sc` kept whatever colour stood before
+    // it: IndexedCS_negative_and_high.pdf's eleven swatches all came back the
+    // pink the reference row above them ends on.
+    const base =
+      depth < MAX_ALTERNATE
+        ? colorSpaceAt(file, file.resolve(cs[1] ?? PDF_NULL), depth + 1)
+        : undefined;
+    const hival = file.resolve(cs[2] ?? PDF_NULL);
+    const table = lookupBytes(file, cs[3]);
+    if (!base || base.kind === 'tint' || typeof hival !== 'number' || !table) return undefined;
+    const transform: PdfFunction = ([index = 0]) => {
+      // An index is snapped to the table: below it to the first entry, past it
+      // — or between two, which only a whole number is not — to the nearest.
+      const at = Math.min(Math.max(0, Math.round(index)), Math.round(hival));
+      return Array.from(
+        { length: base.components },
+        (_, k) => (table[at * base.components + k] ?? 0) / 255,
+      );
+    };
+    return { kind: 'tint', components: 1, tint: { transform, alternate: base } };
   }
   if (head.value === 'CalRGB') {
     // §8.6.5.7 — three numbers through their gammas and the matrix into XYZ,
