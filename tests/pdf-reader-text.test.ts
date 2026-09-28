@@ -1255,6 +1255,21 @@ describe('an annotation the file drew no appearance for (§12.5.5)', () => {
     return collectPageVectors(file, file.pages()[0]!).vectors.length;
   };
 
+  it('sets a free-text note in the face its /DA names', () => {
+    // §12.5.6.6 — a free-text annotation IS its text. bug1865341.pdf's one
+    // note, "Załącznik", has no appearance, and the page came back blank.
+    const file = PdfFile.parse(
+      annotated([
+        '<< /Type /Annot /Subtype /FreeText /Rect [20 150 120 170] /DA (/Helv 10 Tf 0 g) ' +
+          '/Contents <FEFF005A0061014201050063007A006E0069006B> >>',
+      ]),
+    );
+    const text = extractPageText(file, file.pages()[0]!)
+      .map((r) => r.text)
+      .join('');
+    expect(text).toBe('Załącznik');
+  });
+
   it('draws a ticked check box, and nothing for an unticked one', () => {
     // §12.7.4.2 — the state is `/AS`, or `/V` where the widget states none, and
     // `/Off` means nothing is drawn. checkbox_no_appearance.pdf is two boxes
