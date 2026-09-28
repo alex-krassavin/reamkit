@@ -349,6 +349,37 @@ describe('the guard on how much a page may paint', () => {
   });
 });
 
+describe('the curves that name a control point by its neighbour (§8.5.2.2)', () => {
+  const curve = (stream: string) =>
+    interpretContent(new TextEncoder().encode(stream), NO_FONTS).vectors[0]?.segs[1];
+
+  it('starts a `v` curve at the current point', () => {
+    // bug1755507.pdf rounds its card's corners with `v`; passed over, the
+    // lines after them joined the wrong corners and the card came back skewed.
+    expect(curve('10 20 m 30 20 30 40 v S')).toEqual({
+      op: 'cubic',
+      x1: 10,
+      y1: 20,
+      x2: 30,
+      y2: 20,
+      x: 30,
+      y: 40,
+    });
+  });
+
+  it('ends a `y` curve at its own end', () => {
+    expect(curve('10 20 m 30 20 30 40 y S')).toEqual({
+      op: 'cubic',
+      x1: 30,
+      y1: 20,
+      x2: 30,
+      y2: 40,
+      x: 30,
+      y: 40,
+    });
+  });
+});
+
 describe('tiling patterns (§8.7.3)', () => {
   const fills = (stream: string) =>
     interpretContent(new TextEncoder().encode(stream), NO_FONTS).vectors;

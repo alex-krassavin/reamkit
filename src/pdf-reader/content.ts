@@ -622,6 +622,22 @@ export function interpretContent(
     const [x, y] = toPage(e, f);
     path.push({ op: 'cubic', x1, y1, x2, y2, x, y });
   };
+  // The point a path stands at, in page space: where its last segment ended,
+  // or — after a `h` — where the subpath it closed began.
+  const currentPoint = (): { x: number; y: number } | undefined => {
+    for (let i = path.length - 1; i >= 0; i--) {
+      const seg = path[i]!;
+      if (seg.op === 'close') {
+        for (let k = i - 1; k >= 0; k--) {
+          const start = path[k]!;
+          if (start.op === 'move') return { x: start.x, y: start.y };
+        }
+        return undefined;
+      }
+      return { x: seg.x, y: seg.y };
+    }
+    return undefined;
+  };
   const rectTo = (x: number, y: number, w: number, h: number): void => {
     moveTo(x, y);
     lineTo(x + w, y);
@@ -1039,6 +1055,23 @@ export function interpretContent(
         break;
       case 'c':
         curveTo(num(0), num(1), num(2), num(3), num(4), num(5));
+        break;
+      // §8.5.2.2 — the two curves that spell one control point by the point
+      // it coincides with: `v` starts at the current point, `y` ends at its
+      // own end. Passed over, the line after each joined the wrong corners:
+      // bug1755507.pdf draws its card's rounded corners with `v`, and the
+      // card came back as a skewed quadrilateral.
+      case 'v': {
+        const at = currentPoint();
+        if (at) {
+          const [x2, y2] = toPage(num(0), num(1));
+          const [x, y] = toPage(num(2), num(3));
+          path.push({ op: 'cubic', x1: at.x, y1: at.y, x2, y2, x, y });
+        }
+        break;
+      }
+      case 'y':
+        curveTo(num(0), num(1), num(2), num(3), num(2), num(3));
         break;
       case 're':
         rectTo(num(0), num(1), num(2), num(3));
