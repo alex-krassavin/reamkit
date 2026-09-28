@@ -35,11 +35,6 @@
   "aligned": false
  },
  {
-  "name": "bug_jpx.pdf",
-  "score": 97,
-  "aligned": false
- },
- {
   "name": "encrypted-attachment.pdf",
   "score": 97,
   "aligned": false
@@ -381,7 +376,7 @@
  },
  {
   "name": "bug911034.pdf",
-  "score": 0.017,
+  "score": 0.0169,
   "aligned": true
  },
  {
@@ -612,6 +607,11 @@
  {
   "name": "issue11279.pdf",
   "score": 0.0078,
+  "aligned": true
+ },
+ {
+  "name": "bug1027533.pdf",
+  "score": 0.0076,
   "aligned": true
  },
  {
@@ -1110,18 +1110,13 @@
   "aligned": true
  },
  {
-  "name": "bug1027533.pdf",
-  "score": 0.006,
-  "aligned": true
- },
- {
   "name": "bug1538111.pdf",
   "score": 0.006,
   "aligned": true
  },
  {
   "name": "complex_ttf_font.pdf",
-  "score": 0.0057,
+  "score": 0.0058,
   "aligned": true
  },
  {
@@ -1295,18 +1290,18 @@
   "aligned": true
  },
  {
-  "name": "ThuluthFeatures.pdf",
+  "name": "TrueType_without_cmap.pdf",
   "score": 0.0019,
+  "aligned": true
+ },
+ {
+  "name": "ThuluthFeatures.pdf",
+  "score": 0.0018,
   "aligned": true
  },
  {
   "name": "bug1743245.pdf",
   "score": 0.0018,
-  "aligned": true
- },
- {
-  "name": "TrueType_without_cmap.pdf",
-  "score": 0.0017,
   "aligned": true
  },
  {
@@ -1525,11 +1520,6 @@
   "aligned": true
  },
  {
-  "name": "bug1708041.pdf",
-  "score": 0.0005,
-  "aligned": false
- },
- {
   "name": "90ms_rksj_h_sample.pdf",
   "score": 0.0004,
   "aligned": true
@@ -1537,7 +1527,7 @@
  {
   "name": "firefox_stamp.pdf",
   "score": 0.0004,
-  "aligned": false
+  "aligned": true
  },
  {
   "name": "issue10900.pdf",
@@ -1691,6 +1681,11 @@
  },
  {
   "name": "doc_1_3_pages.pdf",
+  "score": 0.0001,
+  "aligned": true
+ },
+ {
+  "name": "bug1708041.pdf",
   "score": 0.0001,
   "aligned": true
  },
@@ -1935,6 +1930,11 @@
   "aligned": true
  },
  {
+  "name": "bug_jpx.pdf",
+  "score": 0,
+  "aligned": true
+ },
+ {
   "name": "ccitt_EndOfBlock_false.pdf",
   "score": 0,
   "aligned": true
@@ -1952,7 +1952,7 @@
  {
   "name": "doc_actions.pdf",
   "score": 0,
-  "aligned": false
+  "aligned": true
  },
  {
   "name": "empty#hash.pdf",

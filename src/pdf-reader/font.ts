@@ -102,10 +102,24 @@ export function buildContentFont(file: PdfFile, fontDict: PdfDict): ContentFont 
   // marked unreadable it would take the words away and put nothing in their
   // place, which is how bug1151216.pdf's three lines of prices vanished.
   const glyphs = isType0 ? undefined : simpleGlyphs(file, fontDict);
+  // §9.6.6.4 — a glyph NAMED by its index (`g18`, `glyph152`) says nothing
+  // itself, and the program it indexes still does: its `cmap` maps characters
+  // onto those very glyphs, and read backwards it says what each one is.
+  // TAMReview.pdf sets its body in a Cambria subset named that way, and seven
+  // thousand of its nine thousand characters were traced as drawings instead
+  // of read — forty thousand shapes where a page of text stands.
+  let byIndex: ReadonlyMap<number, string> | undefined | null = null;
+  const fromIndex = (name: string): string | undefined => {
+    const gid = numberedGlyph(name);
+    if (gid === undefined) return undefined;
+    byIndex ??= programCharacters(file, fontDict);
+    return byIndex?.get(gid);
+  };
   const fromNames = !isType0
     ? namedGlyphs(file, fontDict, toUnicode.size > 0, {
         draws: (name) => glyphs?.byName(name) !== undefined,
         blank: (name) => glyphs?.blank(name) === true,
+        character: fromIndex,
       })
     : undefined;
   // The names themselves, not what they come to: a name that is no character
@@ -283,7 +297,30 @@ const SURROGATE_LAST = 0xdfff;
  */
 function embeddedCmap(file: PdfFile, fontDict: PdfDict): Map<number, string> | undefined {
   const cidFont = descendantFont(file, fontDict);
-  const descriptor = file.resolve(cidFont.get('FontDescriptor') ?? PDF_NULL);
+  const byGlyph = programCharacters(file, cidFont);
+  if (byGlyph === undefined) return undefined;
+  const cidToGid = readCidToGid(file, cidFont);
+  if (!cidToGid) return byGlyph;
+  const out = new Map<number, string>();
+  cidToGid.forEach((gid, cid) => {
+    const text = byGlyph.get(gid);
+    if (text !== undefined) out.set(cid, text);
+  });
+  return out.size > 0 ? out : undefined;
+}
+
+/**
+ * The character each glyph of a font's embedded TrueType program stands for:
+ * its `cmap` read backwards.
+ *
+ * @param file  The document.
+ * @param owner The dictionary that holds the descriptor — the font itself, or
+ *              a composite font's descendant.
+ * @returns Glyph index → character, or `undefined` where there is no program
+ *          or it maps nothing.
+ */
+function programCharacters(file: PdfFile, owner: PdfDict): Map<number, string> | undefined {
+  const descriptor = file.resolve(owner.get('FontDescriptor') ?? PDF_NULL);
   if (!(descriptor instanceof Map)) return undefined;
   const program = file.resolve(descriptor.get('FontFile2') ?? PDF_NULL);
   if (!(program instanceof PdfStream)) return undefined;
@@ -306,15 +343,7 @@ function embeddedCmap(file: PdfFile, fontDict: PdfDict): Map<number, string> | u
     // (a non-breaking space onto the space), and the first is the plainer.
     if (gid > 0 && !byGlyph.has(gid)) byGlyph.set(gid, String.fromCodePoint(cp));
   }
-  if (byGlyph.size === 0) return undefined;
-  const cidToGid = readCidToGid(file, cidFont);
-  if (!cidToGid) return byGlyph;
-  const out = new Map<number, string>();
-  cidToGid.forEach((gid, cid) => {
-    const text = byGlyph.get(gid);
-    if (text !== undefined) out.set(cid, text);
-  });
-  return out.size > 0 ? out : undefined;
+  return byGlyph.size > 0 ? byGlyph : undefined;
 }
 
 /**
@@ -606,13 +635,17 @@ function namedGlyphs(
   file: PdfFile,
   fontDict: PdfDict,
   statesUnicode: boolean,
-  glyph: { draws: (name: string) => boolean; blank: (name: string) => boolean },
+  glyph: {
+    draws: (name: string) => boolean;
+    blank: (name: string) => boolean;
+    character: (name: string) => string | undefined;
+  },
 ): Map<number, string> | undefined {
   const names = differences(file, fontDict);
   if (names.size === 0) return undefined;
   const out = new Map<number, string>();
   for (const [code, name] of names) {
-    const text = textForGlyphName(name);
+    const text = textForGlyphName(name) ?? glyph.character(name);
     if (text !== undefined) {
       out.set(code, text);
       continue;
