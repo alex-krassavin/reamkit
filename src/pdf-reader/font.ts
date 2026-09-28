@@ -77,6 +77,12 @@ export function buildContentFont(file: PdfFile, fontDict: PdfDict): ContentFont 
   // Brotli-Prototype-FileA.pdf sets a floor plan's room names in one, and
   // "LIVING ROOM" and "DINING" never reached the page at all.
   const fromProgram = isType0 && toUnicode.size === 0 ? embeddedCmap(file, fontDict) : undefined;
+  // …and a program with no `cmap` still says, through the `/CIDToGIDMap`,
+  // whether its CIDs are CHARACTERS (see `unicodeCids`).
+  const fromCids =
+    isType0 && toUnicode.size === 0 && fromProgram === undefined
+      ? unicodeCids(file, fontDict)
+      : undefined;
   // …and a `/ToUnicode` that EXISTS may not cover the codes the page actually
   // shows. bug911034.pdf ships one describing 95 codes and then draws glyphs
   // 0x2000 upward out of a 222 KB Arial Unicode subset; every one of them
@@ -126,7 +132,8 @@ export function buildContentFont(file: PdfFile, fontDict: PdfDict): ContentFont 
   // The names themselves, not what they come to: a name that is no character
   // still selects a glyph, which is what the outline path draws.
   const glyphNames = isType0 ? new Map<number, string>() : differences(file, fontDict);
-  const unicode = fromProgram ?? (toUnicode.size > 0 ? toUnicode : (fromNames ?? toUnicode));
+  const unicode =
+    fromProgram ?? fromCids ?? (toUnicode.size > 0 ? toUnicode : (fromNames ?? toUnicode));
 
   const bytesPerCode = codeBytes;
   // §9.6.6.4 — a simple TrueType whose program has NO `cmap`, and which names
@@ -309,6 +316,56 @@ function embeddedCmap(file: PdfFile, fontDict: PdfDict): Map<number, string> | u
   });
   return out.size > 0 ? out : undefined;
 }
+
+/**
+ * §9.7.4.2 — the CIDs of a composite font that ARE characters.
+ *
+ * A `/CIDToGIDMap` stream says the CID is not the glyph index, and TCPDF —
+ * with tFPDF and mPDF after it — makes it the character's own Unicode value,
+ * mapping every character of the face to its glyph whether the subset kept
+ * the glyph or not. Without a `/ToUnicode`, and with a subset that carries no
+ * `cmap`, that was the only statement of what the glyphs are and it went
+ * unread: bug1650302_reduced.pdf's "Výbava na přání" came back as drawings,
+ * the `ř` missing from them. Read as characters, the words come back.
+ *
+ * Only where the map itself says so. A producer that keeps the ORIGINAL
+ * glyph index as the CID routes it through a stream too, and read as Unicode
+ * complex_ttf_font.pdf's Arabic would come back as `$&')`. What tells the two
+ * apart is the space: a map of characters sends U+0020 to a glyph that draws
+ * nothing and no control character anywhere, where a map of indices sends 3 —
+ * the space in the fonts they come from — and 32 to a glyph with ink on it.
+ */
+function unicodeCids(file: PdfFile, fontDict: PdfDict): Map<number, string> | undefined {
+  const encoding = asName(file.resolve(fontDict.get('Encoding') ?? PDF_NULL));
+  if (encoding !== 'Identity-H' && encoding !== 'Identity-V') return undefined;
+  const cidFont = descendantFont(file, fontDict);
+  const cidToGid = readCidToGid(file, cidFont);
+  if (!cidToGid || cidToGid.slice(0, SPACE).some((gid) => gid !== 0)) return undefined;
+  const space = cidToGid[SPACE];
+  if (space === undefined || space === 0) return undefined;
+  const descriptor = file.resolve(cidFont.get('FontDescriptor') ?? PDF_NULL);
+  if (!(descriptor instanceof Map)) return undefined;
+  const program = file.resolve(descriptor.get('FontFile2') ?? PDF_NULL);
+  if (!(program instanceof PdfStream)) return undefined;
+  let blank: boolean;
+  try {
+    const glyf = outlineSource(file.streamData(program));
+    blank = glyf !== undefined && space < glyf.count && glyf.path(space) === undefined;
+  } catch {
+    return undefined;
+  }
+  if (!blank) return undefined;
+  const out = new Map<number, string>();
+  cidToGid.forEach((gid, cid) => {
+    if (gid !== 0 && !(cid >= SURROGATE_FIRST && cid <= SURROGATE_LAST)) {
+      out.set(cid, String.fromCharCode(cid));
+    }
+  });
+  return out;
+}
+
+/** U+0020, the one character whose glyph every text face leaves blank. */
+const SPACE = 0x20;
 
 /**
  * The character each glyph of a font's embedded TrueType program stands for:

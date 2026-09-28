@@ -14,6 +14,7 @@ import type { PdfDict } from '@/pdf/objects';
 import { Ream } from '@/core/converter/ream';
 import { PdfFile } from '@/pdf-reader/document';
 import { buildContentFont } from '@/pdf-reader/font';
+import { extractPageText } from '@/pdf-reader/text';
 import { cffOutlineSource } from '@/pdf-reader/cff-outline';
 import { type1Font } from '@/pdf-reader/type1-outline';
 import { outlineSource, postGlyphNames } from '@/pdf-reader/glyf-outline';
@@ -504,5 +505,62 @@ describe('a TrueType program whose subsetter zeroed the glyphs it dropped', () =
     const gid = glyphFor('A');
     const whole = outlineSource(ROBOTO)?.path(gid);
     expect(outlineSource(zeroedAfter(gid))?.path(gid)).toEqual(whole);
+  });
+});
+
+describe('a composite font whose CIDs are characters (§9.7.4.2)', () => {
+  /**
+   * "AB A" set as CIDs `cid(ch)`, which a `/CIDToGIDMap` stream routes onto
+   * Roboto's glyphs — the program's own `cmap` removed, as a subset leaves it.
+   */
+  const routed = (cid: (ch: string) => number): Uint8Array => {
+    const text = 'AB A';
+    const cids = [...text].map(cid);
+    const map = new Uint8Array((Math.max(...cids) + 1) * 2);
+    for (const ch of new Set(text)) {
+      const gid = glyphFor(ch);
+      map[cid(ch) * 2] = gid >> 8;
+      map[cid(ch) * 2 + 1] = gid & 0xff;
+    }
+    const shown = cids.map((c) => c.toString(16).padStart(4, '0')).join('');
+    const content = `BT /F0 12 Tf 20 40 Td <${shown}> Tj ET`;
+    const head = new TextEncoder().encode(`<< /Length ${String(map.length)} >>\nstream\n`);
+    const tail = new TextEncoder().encode('\nendstream');
+    const mapObject = new Uint8Array(head.length + map.length + tail.length);
+    mapObject.set(head, 0);
+    mapObject.set(map, head.length);
+    mapObject.set(tail, head.length + map.length);
+    return assemble([
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Contents 4 0 R ' +
+        '/Resources << /Font << /F0 5 0 R >> >> >>',
+      `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+      '<< /Type /Font /Subtype /Type0 /BaseFont /Roboto /Encoding /Identity-H /DescendantFonts [6 0 R] >>',
+      '<< /Type /Font /Subtype /CIDFontType2 /BaseFont /Roboto /DW 600 ' +
+        '/CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> ' +
+        '/FontDescriptor 7 0 R /CIDToGIDMap 9 0 R >>',
+      '<< /Type /FontDescriptor /FontName /Roboto /Flags 4 /FontFile2 8 0 R >>',
+      fontStreamObject(withoutCmap()),
+      mapObject,
+    ]);
+  };
+  const text = (pdf: Uint8Array): string => {
+    const file = PdfFile.parse(pdf);
+    return extractPageText(file, file.pages()[0]!)
+      .map((r) => r.text)
+      .join('');
+  };
+
+  it('reads them as the characters they are where U+0020 is the blank glyph', () => {
+    // TCPDF makes the CID the character's own Unicode value, and
+    // bug1650302_reduced.pdf's "Výbava na přání" came back as drawings.
+    expect(text(routed((ch) => ch.codePointAt(0)!))).toBe('AB A');
+  });
+
+  it('leaves them unread where the CIDs are glyph indices', () => {
+    // The space at 3, as the fonts such a producer subsets place it: read as
+    // characters, complex_ttf_font.pdf's Arabic would come back as `$&')`.
+    expect(text(routed((ch) => (ch === ' ' ? 3 : glyphFor(ch))))).toContain('\uFFFD');
   });
 });
