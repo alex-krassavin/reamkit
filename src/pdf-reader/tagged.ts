@@ -134,13 +134,23 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
         .join(' '),
     );
 
-  // The node's own runs as link-carrying spans, with a space between MCIDs.
+  // The node's own runs as link-carrying spans. Between two MCIDs stands the
+  // space the page shows there: one where the second starts a line or stands
+  // clear of the first, none where it closes up on it. A space every time put
+  // one before the full stop that ends a formula — bug1937438_mml_from_latex.pdf
+  // read "𝑥 ∈ ℝ ." — and doubled the one a phrase already ended with.
   const spansOf = (node: StructNode): Array<TextSpan> => {
     const spans: Array<TextSpan> = [];
-    node.mcids.forEach(({ page, mcid }, i) => {
-      if (i > 0) spans.push({ text: ' ' });
-      for (const run of runsOfMcid(page, mcid)) spans.push(spanOf(run));
-    });
+    let last: TextRun | undefined;
+    for (const { page, mcid } of node.mcids) {
+      const runs = runsOfMcid(page, mcid);
+      const first = runs[0];
+      if (last !== undefined && first !== undefined && spacedApart(last, first)) {
+        spans.push({ text: ' ' });
+      }
+      for (const run of runs) spans.push(spanOf(run));
+      last = runs[runs.length - 1] ?? last;
+    }
     return spans;
   };
 
@@ -225,8 +235,17 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
       groups[groups.length - 1]!.push(line);
       prev = line;
     }
+    // A line the page ended with a space has its break written already, and
+    // joined with a second one chrome-text-selection-markedContent.pdf read
+    // "in the  range of".
+    const ends = (spans: ReadonlyArray<TextSpan>): boolean => /\s$/u.test(spans.at(-1)?.text ?? '');
+    const opens = (spans: ReadonlyArray<TextSpan>): boolean => /^\s/u.test(spans[0]?.text ?? '');
     return groups.map((g) => ({
-      spans: g.flatMap((l, i) => (i > 0 ? [{ text: ' ' }, ...l.spans] : [...l.spans])),
+      spans: g.flatMap((l, i) =>
+        i > 0 && !ends(g[i - 1]!.spans) && !opens(l.spans)
+          ? [{ text: ' ' }, ...l.spans]
+          : [...l.spans],
+      ),
       set: {
         top: g[0]!.y,
         bottom: g[g.length - 1]!.y,
@@ -568,6 +587,21 @@ function equalGrid(raw: ReadonlyArray<RawRow>): { rows: Array<TableRow>; grid: A
   const w = pt(Math.max(1, ASSUMED_CONTENT_WIDTH_PT / numCols));
   return { rows, grid: Array.from({ length: numCols }, () => w) };
 }
+
+/**
+ * Whether the page shows a space between one run and the next: the second
+ * starts another line, or stands clear of the first by more than a kern —
+ * and neither already carries the space.
+ */
+function spacedApart(prev: TextRun, next: TextRun): boolean {
+  if (/\s$/u.test(prev.text) || /^\s/u.test(next.text)) return false;
+  const size = Math.max(prev.fontSizePt, next.fontSizePt, 1);
+  if (Math.abs(prev.y - next.y) > size * 0.5) return true;
+  return next.x - prev.endX > size * MCID_SPACE_EM;
+}
+
+/** A gap between two stretches of marked content this wide, in ems, is a word space. */
+const MCID_SPACE_EM = 0.15;
 
 function squash(text: string): string {
   return text.replace(/\s+/g, ' ').trim();

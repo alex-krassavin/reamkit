@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import type { StructNode } from '@/pdf-reader/struct-tree';
 import { PdfFile } from '@/pdf-reader/document';
 import { readStructTree } from '@/pdf-reader/struct-tree';
+import { reconstructTaggedPdf } from '@/pdf-reader/tagged';
 
 /**
  * One page whose content marks six stretches, MCIDs 0 to 5, under the tree the
@@ -97,5 +98,44 @@ describe('a structure tree read the way its document means it (§14.8)', () => {
     ]);
     const root = readStructTree(PdfFile.parse(figure));
     expect(root?.children[0] ? shape(root.children[0]) : '').toBe('Figure[0]{Caption[1]}');
+  });
+});
+
+describe('the space between two stretches of a tagged paragraph', () => {
+  it('stands where the page leaves one, and nowhere else', () => {
+    // A space every time put one before the full stop that closes a formula —
+    // bug1937438_mml_from_latex.pdf read "𝑥 ∈ ℝ ." — and doubled one a phrase
+    // already ended with. "Hello" ends at 47.34 and "world" starts at 60; the
+    // full stop starts where "world" ends, at 88.67.
+    const content = [
+      '/P <</MCID 0>> BDC BT /F1 12 Tf 20 100 Td (Hello) Tj ET EMC',
+      '/P <</MCID 1>> BDC BT /F1 12 Tf 60 100 Td (world) Tj ET EMC',
+      '/P <</MCID 2>> BDC BT /F1 12 Tf 88.668 100 Td (.) Tj ET EMC',
+    ].join('\n');
+    const objects = [
+      '<< /Type /Catalog /Pages 2 0 R /StructTreeRoot 5 0 R /MarkInfo << /Marked true >> >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R ' +
+        '/Resources << /Font << /F1 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> >> >> >>',
+      `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+      '<< /Type /StructTreeRoot /K 6 0 R >>',
+      '<< /Type /StructElem /S /Document /K [7 0 R] >>',
+      '<< /Type /StructElem /S /P /Pg 3 0 R /K [0 1 2] >>',
+    ];
+    let pdf = '%PDF-1.7\n';
+    const offsets: Array<number> = [];
+    objects.forEach((body, i) => {
+      offsets.push(pdf.length);
+      pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+    });
+    const xref = pdf.length;
+    pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+    for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+    pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`;
+    const doc = reconstructTaggedPdf(PdfFile.parse(new TextEncoder().encode(pdf)))?.doc;
+    const text = doc?.body
+      .flatMap((b) => (b.kind === 'paragraph' ? b.paragraph.runs.map((r) => r.text) : []))
+      .join('');
+    expect(text).toBe('Hello world.');
   });
 });
