@@ -640,6 +640,49 @@ describe('a running foot is a foot, not a paragraph (§17.6.13)', () => {
   });
 });
 
+describe('the spaces a line has are the ones the page shows, once each', () => {
+  /**
+   * The text of a page set in Helvetica, whose space is `space` thousandths of
+   * an em and every other glyph half an em.
+   */
+  const line = (content: string, space = 0): string => {
+    const widths = Array.from({ length: 91 }, (_, i) => (i === 0 ? space : 500)).join(' ');
+    const doc = reconstructByLayout(
+      PdfFile.parse(
+        onePagePdf(
+          '/MediaBox [0 0 300 100] /Resources << /Font << /F0 5 0 R >> >>',
+          `BT /F0 20 Tf 10 60 Td ${content} ET`,
+          [
+            '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /FirstChar 32 /LastChar 122 ' +
+              `/Widths [${widths}] >>`,
+          ],
+        ),
+      ),
+    ).doc;
+    return doc.body
+      .flatMap((b) => (b.kind === 'paragraph' ? b.paragraph.runs.map((r) => r.text) : []))
+      .join('');
+  };
+
+  it('is no word space where the ink on either side of it closes up', () => {
+    // bug1046314.pdf maps a Thai mark of no width to U+0020, and "(คำแปล)" —
+    // one word — came back "(คำ แปล)".
+    expect(line('(ab) Tj ( ) Tj (cd) Tj')).toBe('abcd');
+  });
+
+  it('is a word space where it stands in a gap the page steps across', () => {
+    expect(line('[(ab) ( ) -200 (cd)] TJ')).toBe('ab cd');
+  });
+
+  it('joins a line the page ended with a space without a second one', () => {
+    // Twenty glyphs of a full first line, and a word too long for the room
+    // left on it: one paragraph, broken where the page broke it.
+    expect(line('(aaaa bbbb cccc dddd ) Tj 0 -24 Td (eeeeeeee) Tj', 250)).toBe(
+      'aaaa bbbb cccc dddd eeeeeeee',
+    );
+  });
+});
+
 describe('type too small to read is a mark on the sheet, not a line of it', () => {
   // TCPDF signs the last page of everything it makes in one-point type, three
   // points from the corner of the paper.

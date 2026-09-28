@@ -1732,7 +1732,17 @@ function lineSpans(
   // Where the last run that MARKS anything ends: a stop is reached across the
   // blanks before it, not from them.
   let inked: number | undefined;
-  for (const run of runs) {
+  for (const [i, run] of runs.entries()) {
+    // A space that steps nowhere, with the ink on either side of it closed up,
+    // is no word space: the page shows no gap for it to stand in. The file
+    // named a glyph a space that is not one — bug1046314.pdf maps a Thai
+    // mark of no width to U+0020, and "(คำแปล)" came back "(คำ แปล)", a word
+    // broken in two. A space of no width that DOES stand in a gap is a word
+    // space set by its gap, and stays.
+    if (run.text.trim() === '' && run.endX - run.x <= 0 && inked !== undefined) {
+      const next = runs.slice(i + 1).find((r) => r.text.trim() !== '');
+      if (next !== undefined && next.x - inked < spaceGap(next, fontSize, true)) continue;
+    }
     // §9.10.2 — a glyph the file names no character for is a character this
     // reader cannot write, and dropped it takes its place on the line with it:
     // "6VOBWUGP-0010" came back "6VOBWUGP0010" and "Aug 11 – Sep 11" came back
@@ -2043,7 +2053,11 @@ function joinLines(lines: ReadonlyArray<Line>): Array<TextSpan> {
       const soft = ends.endsWith(SOFT_HYPHEN);
       const hard = HYPHENS.has(ends.slice(-1));
       if (soft && prev) out[out.length - 1] = { ...prev, text: ends.slice(0, -1) };
-      else if (!hard) out.push({ text: ' ' });
+      // A line the page ended with a space has its break written already:
+      // joined with another, bug1057544.pdf's column came back "marks the  end
+      // of a year's work", a gap twice as wide at every line it had broken.
+      else if (!hard && !/\s$/u.test(ends) && !/^\s/u.test(line.spans[0]?.text ?? ''))
+        out.push({ text: ' ' });
     }
     out.push(...line.spans);
   });
