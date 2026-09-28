@@ -68,6 +68,13 @@ const SOFFICE_TIMEOUT_MS = 180_000;
 /** Bumped when the gold side is made differently, so a kept one is redone. */
 const GOLD_RECIPE = 3;
 /**
+ * Bumped when the SOURCE page is drawn differently — redone on its own,
+ * without asking LibreOffice again. 2: drawn to the crop box, which is what a
+ * viewer shows (§14.11.2); drawn to the media box, a file cropped to a corner
+ * of its sheet showed the whole sheet beside our page of the corner.
+ */
+const SOURCE_RECIPE = 2;
+/**
  * How many pages of each side are DRAWN. Every page is counted — a page too
  * many or too few is the first thing to know — but a corpus file can run to a
  * hundred pages, and the look of the first few is what a pass over the corpus
@@ -108,6 +115,8 @@ export interface Report {
 interface GoldStamp {
   readonly hash: string;
   readonly recipe: number;
+  /** How the source page was drawn (see {@link SOURCE_RECIPE}); absent before there was a choice. */
+  readonly sourceRecipe?: number;
   /** Pages counted, and pages drawn. */
   readonly source: number;
   readonly gold: number;
@@ -221,10 +230,11 @@ function pageCount(pdf: string): number {
 }
 
 function rasterize(pdf: string, prefix: string): Array<string> {
-  execFileSync('pdftoppm', ['-r', String(DPI), '-f', '1', '-l', String(MAX_PAGES), pdf, prefix], {
-    stdio: 'ignore',
-    timeout: 120_000,
-  });
+  execFileSync(
+    'pdftoppm',
+    ['-cropbox', '-r', String(DPI), '-f', '1', '-l', String(MAX_PAGES), pdf, prefix],
+    { stdio: 'ignore', timeout: 120_000 },
+  );
   const dir = dirname(prefix);
   const stem = basename(prefix);
   const number = (f: string): number => Number(/-(\d+)\.ppm$/u.exec(f)?.[1] ?? 0);
@@ -367,7 +377,18 @@ function goldSide(pdf: string, dir: string, hash: string): GoldStamp {
   const stampFile = resolve(dir, 'gold.json');
   if (existsSync(stampFile)) {
     const kept = JSON.parse(readFileSync(stampFile, 'utf8')) as GoldStamp;
-    if (kept.hash === hash && kept.recipe === GOLD_RECIPE) return kept;
+    if (kept.hash === hash && kept.recipe === GOLD_RECIPE) {
+      if (kept.sourceRecipe === SOURCE_RECIPE) return kept;
+      let drawnSource = 0;
+      try {
+        drawnSource = pages(pdf, dir, 'source').length;
+      } catch {
+        drawnSource = 0;
+      }
+      const redrawn: GoldStamp = { ...kept, drawnSource, sourceRecipe: SOURCE_RECIPE };
+      writeFileSync(stampFile, `${JSON.stringify(redrawn, null, 1)}\n`);
+      return redrawn;
+    }
   }
   const errors: Array<string> = [];
   const source = pageCount(pdf);
@@ -410,6 +431,7 @@ function goldSide(pdf: string, dir: string, hash: string): GoldStamp {
   const stamp: GoldStamp = {
     hash,
     recipe: GOLD_RECIPE,
+    sourceRecipe: SOURCE_RECIPE,
     source,
     gold: goldPages,
     drawnSource,
