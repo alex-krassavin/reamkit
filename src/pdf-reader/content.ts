@@ -1356,8 +1356,8 @@ function readValue(lexer: Lexer): PdfValue {
  * The bytes are binary and may hold `EI` themselves, so the end is found by
  * MEASURING where the dictionary says how much there is — an unfiltered image
  * is exactly `ceil(W · BPC · components / 8) · H` bytes — and only searched for
- * where a filter makes the length unknowable. images_1bit_grayscale.pdf draws
- * two of them and both were skipped over.
+ * where a filter makes the length unknowable (see {@link filteredEnd}).
+ * images_1bit_grayscale.pdf draws two of them and both were skipped over.
  */
 function readInlineImage(lexer: Lexer): InlineImage | undefined {
   const dict: PdfDict = new Map<string, PdfValue>();
@@ -1367,21 +1367,90 @@ function readInlineImage(lexer: Lexer): InlineImage | undefined {
     if (tok.kind === 'keyword' && tok.value === 'ID') break;
     if (tok.kind === 'name') dict.set(tok.value, readValue(lexer));
   }
-  // §8.9.7 — exactly ONE whitespace byte separates `ID` from the data.
-  const start = lexer.pos + 1;
+  // §8.9.7 — exactly ONE whitespace byte separates `ID` from the data, and
+  // §7.2.3 counts CR LF as one end of line. A filtered image is read by its
+  // own decoder from its first byte, and bug1065245.pdf writes `ID` CR LF:
+  // taken as one byte and data, the LF went in front of each JPEG's start
+  // marker and none of its three banners would decode. An unfiltered one is
+  // measured, and keeps the one byte the spec says.
   const measured = inlineLength(dict);
+  const crlf = lexer.byteAt(lexer.pos) === 0x0d && lexer.byteAt(lexer.pos + 1) === 0x0a;
+  const start = lexer.pos + (crlf && measured === undefined ? 2 : 1);
   let end = measured !== undefined ? start + measured : -1;
   if (end < 0 || end > lexer.length) {
-    end = lexer.indexOfAscii('EI', start);
+    end = filteredEnd(lexer, start, dict);
     if (end < 0) {
       lexer.pos = lexer.length;
       return undefined;
     }
   }
   const data = lexer.slice(start, Math.min(end, lexer.length));
-  const ei = lexer.indexOfAscii('EI', end);
+  const ei = lexer.indexOfKeyword('EI', end);
   lexer.pos = ei < 0 ? lexer.length : ei + 2;
   return { dict, data };
+}
+
+/**
+ * §8.9.7 — where a FILTERED inline image's bytes end, which the dictionary
+ * cannot say.
+ *
+ * Searched for as the first two bytes `EI`, the end fell inside the picture
+ * wherever its own bytes spelled them: a JPEG is dense with them, and
+ * bug1065245.pdf's three banners were each cut off a few hundred bytes in,
+ * would not decode, and were dropped — a blank sheet. So the data is read to
+ * where its OWN encoding ends: a JPEG at its end-of-image marker, hex text at
+ * `>`, base-85 at `~>`. Anything else ends at the first `EI` standing as a
+ * word of its own.
+ */
+function filteredEnd(lexer: Lexer, start: number, dict: PdfDict): number {
+  const f = dict.get('F') ?? dict.get('Filter');
+  const first = Array.isArray(f) ? f[0] : f;
+  const filter = first instanceof PdfName ? first.value : '';
+  if (filter === 'DCT' || filter === 'DCTDecode') {
+    const eoi = jpegEnd(lexer, start);
+    if (eoi !== undefined) return eoi;
+  } else if (filter === 'AHx' || filter === 'ASCIIHexDecode') {
+    const gt = lexer.indexOfAscii('>', start);
+    if (gt >= 0) return gt + 1;
+  } else if (filter === 'A85' || filter === 'ASCII85Decode') {
+    const tilde = lexer.indexOfAscii('~>', start);
+    if (tilde >= 0) return tilde + 2;
+  }
+  return lexer.indexOfKeyword('EI', start);
+}
+
+/**
+ * Where a JPEG that starts at `start` ends: past its end-of-image marker,
+ * found by walking its segments — a length-prefixed marker segment is stepped
+ * over whole, and the coded data after a start-of-scan is read to the next
+ * marker, where `FF` stands before anything but a stuffed `00` or a restart.
+ */
+function jpegEnd(lexer: Lexer, start: number): number | undefined {
+  if (lexer.byteAt(start) !== 0xff || lexer.byteAt(start + 1) !== 0xd8) return undefined;
+  let i = start + 2;
+  for (;;) {
+    if (lexer.byteAt(i) !== 0xff) return undefined;
+    let marker = lexer.byteAt(i + 1);
+    while (marker === 0xff) marker = lexer.byteAt(++i + 1);
+    if (marker < 0) return undefined;
+    if (marker === 0xd9) return i + 2;
+    if ((marker >= 0xd0 && marker <= 0xd7) || marker === 0x01) {
+      i += 2;
+      continue;
+    }
+    const hi = lexer.byteAt(i + 2);
+    const lo = lexer.byteAt(i + 3);
+    if (hi < 0 || lo < 0 || (hi << 8) + lo < 2) return undefined;
+    i += 2 + (hi << 8) + lo;
+    if (marker !== 0xda) continue;
+    for (;;) {
+      const b = lexer.byteAt(i);
+      if (b < 0) return undefined;
+      const next = lexer.byteAt(i + 1);
+      if (b === 0xff && next !== 0x00 && !(next >= 0xd0 && next <= 0xd7)) break;
+      i++;
+    }
+  }
 }
 
 /** How many bytes an UNFILTERED inline image's samples take, if that is known. */
