@@ -398,6 +398,9 @@ export function reconstructByLayout(
      * stand on the same stops as a table (§17.4.38), the rest as paragraphs
      * placed and spaced the way the page placed and spaced them.
      */
+    // The paragraphs set farther below the text above them than spacing may
+    // say, with their lines (see `setOff`).
+    const far = new WeakMap<BodyElement, ReadonlyArray<Line>>();
     const setParagraphs = (
       paras: ReturnType<typeof groupIntoParagraphs>,
       tableMeasure: { left: number; right: number } | undefined,
@@ -418,27 +421,26 @@ export function reconstructByLayout(
         }
         // A cell's lines keep to the cell: there is no sheet for them to run on into.
         const overflow = sheetWidth > 0 ? runOn(para, tableMeasure, sheetWidth) : 0;
-        out.push({
-          top: para.top,
-          el: paragraphFromRuns(para.spans, headingLevel(para.fontSize, medianFont), {
-            ...(para.stops !== undefined && para.stops.length > 0
-              ? {
-                  tabs: para.stops
-                    .filter((x) => x > 0)
-                    .map((x) => ({ positionPt: pt(x), alignment: 'left' as const })),
-                }
-              : {}),
-            ...(para.alignment !== undefined ? { alignment: para.alignment } : {}),
-            ...(para.spacingBefore !== undefined ? { spacingBefore: pt(para.spacingBefore) } : {}),
-            spacingLine: pt(para.lineHeight),
-            spacingLineRule: 'exact',
-            ...(para.indentLeft !== undefined ? { indentLeft: pt(para.indentLeft) } : {}),
-            ...(para.indentFirstLine !== undefined
-              ? { indentFirstLine: pt(para.indentFirstLine) }
-              : {}),
-            ...(overflow > 0 ? { indentRight: pt(-overflow) } : {}),
-          }),
+        const el = paragraphFromRuns(para.spans, headingLevel(para.fontSize, medianFont), {
+          ...(para.stops !== undefined && para.stops.length > 0
+            ? {
+                tabs: para.stops
+                  .filter((x) => x > 0)
+                  .map((x) => ({ positionPt: pt(x), alignment: 'left' as const })),
+              }
+            : {}),
+          ...(para.alignment !== undefined ? { alignment: para.alignment } : {}),
+          ...(para.spacingBefore !== undefined ? { spacingBefore: pt(para.spacingBefore) } : {}),
+          spacingLine: pt(para.lineHeight),
+          spacingLineRule: 'exact',
+          ...(para.indentLeft !== undefined ? { indentLeft: pt(para.indentLeft) } : {}),
+          ...(para.indentFirstLine !== undefined
+            ? { indentFirstLine: pt(para.indentFirstLine) }
+            : {}),
+          ...(overflow > 0 ? { indentRight: pt(-overflow) } : {}),
         });
+        if (sheetWidth > 0 && para.far !== undefined) far.set(el, para.far);
+        out.push({ top: para.top, el });
       }
       return out;
     };
@@ -635,6 +637,11 @@ export function reconstructByLayout(
     // through "Payment history". Given to the paragraph it separates it moves
     // with it (§17.3.1.24). A placed reading keeps its anchor: nothing moves
     // there.
+    // Before the rules are given to the paragraphs they separate: a line that
+    // is placed keeps the rule over it where the page drew it.
+    setOff(blocks, far, (line, k) =>
+      positionedText(line.spans, turnedBox(line, 0, pageWidth), frame, FAR_Z + k),
+    );
     const givenAway =
       mode !== 'positional' ? ruleBorders(vectors, blocks, display.width) : undefined;
     const marks = [
@@ -1901,6 +1908,8 @@ function groupIntoParagraphs(
   /** How many lines the page set the paragraph in, and where the farthest of them ends. */
   lineCount: number;
   right: number;
+  /** Its lines, where the white above it was more than the spacing may say (see `setOff`). */
+  far?: ReadonlyArray<Line>;
 }> {
   const groups: Array<Array<Line>> = [];
   const gaps: Array<number> = [];
@@ -2017,6 +2026,7 @@ function groupIntoParagraphs(
       ...indentOf(g, columnLeft, aligned.alignment),
       lineCount: g.length,
       right: Math.max(...g.map((l) => l.x + l.width)),
+      ...(opened > most ? { far: g } : {}),
     };
   });
 }
@@ -2160,6 +2170,53 @@ function runOn(
   if (!(width > 0) || para.right - measure.left < width * FULL_LINE_SHARE) return 0;
   return Math.max(0, Math.min(width * RUN_ON_SHARE, pageWidth - measure.right));
 }
+
+/**
+ * §17.3.1.33 — the last text of a sheet, set farther below everything above it
+ * than a paragraph's spacing may say, stands where the page set it.
+ *
+ * The spacing before a paragraph is held to a third of the sheet, so that a
+ * gap misread cannot throw everything after it off the page. The last text on
+ * the sheet has nothing after it to throw, and held to a third it came back
+ * half way up the paper: bug1989304.pdf signs its sheet "World" at the foot
+ * and we set it in the middle. Its lines are placed instead, each where the
+ * page drew it.
+ *
+ * @param blocks The sheet's blocks, in the order they are read.
+ * @param far    The paragraphs whose spacing was held, with their lines.
+ * @param place  A line as the box that places it, `k` counting them.
+ */
+function setOff(
+  blocks: Array<{ band: number; col: number; top: number; el: BodyElement }>,
+  far: WeakMap<BodyElement, ReadonlyArray<Line>>,
+  place: (line: Line, k: number) => BodyElement,
+): void {
+  // The last of them as they will be read — the order the page's blocks are
+  // sorted into, which they are not in yet.
+  const after = (a: (typeof blocks)[number], b: (typeof blocks)[number]): boolean =>
+    (a.band - b.band || columnOrder(a.col) - columnOrder(b.col) || b.top - a.top) > 0;
+  let at = -1;
+  blocks.forEach((b, k) => {
+    if (b.el.kind !== 'paragraph' && b.el.kind !== 'table') return;
+    if (at < 0 || after(b, blocks[at]!)) at = k;
+  });
+  const block = at >= 0 ? blocks[at] : undefined;
+  const lines = block ? far.get(block.el) : undefined;
+  if (!block || !lines) return;
+  blocks.splice(
+    at,
+    1,
+    ...lines.map((line, k) => ({
+      band: block.band,
+      col: block.col,
+      top: line.y,
+      el: place(line, k),
+    })),
+  );
+}
+
+/** Where the placed last text stands in the page's painting order: over it all. */
+const FAR_Z = 1_000_000;
 
 /** How far across its measure a line runs before it is at risk of wrapping when re-set. */
 const FULL_LINE_SHARE = 0.85;

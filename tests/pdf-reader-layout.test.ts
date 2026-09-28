@@ -671,6 +671,52 @@ describe('the measure a narrow column shows (§17.6.11)', () => {
   });
 });
 
+describe('the last text of a sheet, set far below the rest (§17.3.1.33)', () => {
+  const sheet = (lines: ReadonlyArray<[number, string]>): ReturnType<typeof reconstructByLayout> =>
+    reconstructByLayout(
+      PdfFile.parse(
+        onePagePdf(
+          '/MediaBox [0 0 300 400] /Resources << /Font << /F0 5 0 R >> >>',
+          lines
+            .map(([y, text]) => `BT /F0 10 Tf 1 0 0 1 40 ${String(y)} Tm (${text}) Tj ET`)
+            .join('\n'),
+          ['<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'],
+        ),
+      ),
+    );
+  const words = (els: ReadonlyArray<BodyElement>): string =>
+    els
+      .flatMap((b) => (b.kind === 'paragraph' ? b.paragraph.runs.map((r) => r.text) : []))
+      .join(' ');
+
+  it('stands where the page set it, not a third of the sheet below the rest', () => {
+    // bug1989304.pdf signs its sheet "World" at the foot; held to the third of
+    // the sheet a paragraph's spacing may say, it came back half way up.
+    const { doc } = sheet([
+      [360, 'first line'],
+      [346, 'second line'],
+      [20, 'signed at the foot'],
+    ]);
+    expect(words(doc.body)).not.toContain('signed');
+    const placed = doc.body.find(
+      (b) =>
+        b.kind === 'shape' && words(b.shape.text?.content ?? []).includes('signed at the foot'),
+    );
+    if (placed?.kind !== 'shape') throw new Error('the last line is placed');
+    // Its box stands on the baseline at 20, a quarter of the size below it.
+    expect(placed.shape.float?.posV?.offsetPt).toBeCloseTo(400 - 17.5 - 12.5, 0);
+  });
+
+  it('keeps text that has more after it in the flow', () => {
+    const { doc } = sheet([
+      [360, 'first line'],
+      [100, 'far below'],
+      [86, 'and more after it'],
+    ]);
+    expect(words(doc.body)).toContain('far below');
+  });
+});
+
 describe('a line the page set in one piece (§17.3.1.12)', () => {
   /** A page 300 wide, in a face whose every glyph is half an em. */
   const laidOut = (content: string): Array<{ text: string; right?: number }> => {
