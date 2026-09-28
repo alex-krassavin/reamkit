@@ -162,6 +162,10 @@ const SANS = new Set([
 ]);
 
 const MONO = new Set([
+  // The word a family is named for its fixed pitch by, standing last:
+  // `Roboto Mono`, `IBM Plex Mono`, `Arial Monospaced`.
+  'mono',
+  'monospaced',
   'consolas',
   'monaco',
   'menlo',
@@ -221,7 +225,9 @@ const STEMS: ReadonlyArray<readonly [string, FamilyKey]> = [
   ['charter', 'tinos'],
   ['baskerville', 'tinos'],
   ['caslon', 'tinos'],
-  ['minionpro', 'tinos'],
+  // `Minion Pro` loses its `Pro` as a face word, so the stem is the family's.
+  ['minion', 'tinos'],
+  ['stix', 'tinos'],
   ['stoneserif', 'tinos'],
   // The sans families a producer names, which a descriptor can mislabel:
   // bug898853.pdf flags its FrutigerLTStd-Light Serif, and read off the flag
@@ -263,6 +269,11 @@ const STEMS: ReadonlyArray<readonly [string, FamilyKey]> = [
   ['microsoftsansserif', 'arimo'],
   ['dinpro', 'arimo'],
   ['dinnext', 'arimo'],
+  // Typewriter faces whose name runs the fixed pitch into the family's:
+  // `Monospace821BT`, `LucidaTypewriter`, `LucidaSans-Typewriter`.
+  ['monospace', 'cousine'],
+  ['lucidatypewriter', 'cousine'],
+  ['lucidasanstypewriter', 'cousine'],
 ];
 
 /** The family a name STARTS with, for the families named by stem and size. */
@@ -270,15 +281,16 @@ function familyFromStem(name: string): FamilyKey | undefined {
   for (const [stem, key] of STEMS) {
     if (!name.startsWith(stem)) continue;
     // A sans family's cut that names another class is that class's: Arial
-    // Monospaced is a typewriter face and Roboto Slab a serif one.
-    if (key === 'arimo' && OTHER_CLASS.test(name.slice(stem.length))) return undefined;
+    // Monospaced is a typewriter face and Fira Sans Slab a serif one.
+    if (key === 'arimo') {
+      const cut = name.slice(stem.length);
+      if (/mono|typewriter/u.test(cut)) return 'cousine';
+      if (/serif|slab/u.test(cut)) return 'tinos';
+    }
     return key;
   }
   return undefined;
 }
-
-/** The words that make a sans family's cut some other class of face. */
-const OTHER_CLASS = /mono|typewriter|serif|slab/u;
 
 // The words a family name ends with to say which MEMBER of the family it is —
 // a weight, a width or a slant. Each maps to what the substitute can do about

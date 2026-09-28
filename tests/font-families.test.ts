@@ -102,12 +102,25 @@ describe('the sans families a PDF names (E-FONT F3)', () => {
     expect(knowsFamily('SomeFoundryFace')).toBe(false);
   });
 
-  it('does not take a sans family’s mono or slab cut for the sans', () => {
-    expect(knowsFamily('ArialMonospacedMT')).toBe(false);
-    expect(knowsFamily('Roboto Mono')).toBe(false);
+  it('takes a sans family’s mono or slab cut for the class it names', () => {
+    expect(resolveFamilyStyle('ArialMonospacedMT').key).toBe('cousine');
+    expect(resolveFamilyStyle('FiraSansSlab-Regular').key).toBe('tinos');
+    // A family named for its fixed pitch is a typewriter face, whatever the
+    // descriptor says: bug1539074.pdf's LucidaTypewriter came back a sans.
+    expect(resolveFamilyStyle('Roboto Mono').key).toBe('cousine');
+    expect(resolveFamilyStyle('IBM Plex Mono').key).toBe('cousine');
+    expect(resolveFamilyStyle('LucidaTypewriter-Extend_850').key).toBe('cousine');
+    expect(resolveFamilyStyle('Monospace821BT').key).toBe('cousine');
+    // A whole-name sans is not its slab: that leaves the descriptor its say.
     expect(knowsFamily('RobotoSlab-Regular')).toBe(false);
-    // …which leaves the descriptor's FixedPitch flag its say.
-    expect(knowsFamily('DejaVuSansMono')).toBe(false);
+  });
+
+  it('knows the serif families a producer names by stem', () => {
+    // bug1937438_af_from_latex.pdf's STIXTwoText came back a sans, and
+    // bug1811668_reduced.pdf's `Minion Pro` lost the stem it was known by
+    // with its `Pro`.
+    expect(resolveFamilyStyle('STIXTwoText-Bold').key).toBe('tinos');
+    expect(resolveFamilyStyle('Minion Pro').key).toBe('tinos');
   });
 });
 
