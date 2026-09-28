@@ -2821,8 +2821,14 @@ function ruleBorders(
   const given = new Set<PdfVector>();
   const paragraphs = blocks.filter((b) => b.el.kind === 'paragraph');
   if (paragraphs.length === 0) return given;
-  for (const v of vectors) {
-    if (!separatorRule(v, width)) continue;
+  // A rule drawn in PIECES is one rule. An invoice draws the rule under its
+  // headings cell by cell — five bars on one baseline, one under each column —
+  // and measured apart only the widest was long enough to be a rule: it became
+  // the row's border and moved with the words, and the other four stayed
+  // where the page drew them, struck through the figures when the row moved.
+  for (const band of collinear(vectors.filter((v) => flatBar(v)))) {
+    const v = band.pieces[0]!;
+    if (band.to - band.from < width * RULE_SHARE) continue;
     const y = (v.minY + v.maxY) / 2;
     // The block the rule introduces: the nearest one under it. Failing that,
     // the one it closes off above.
@@ -2869,7 +2875,7 @@ function ruleBorders(
         },
       },
     };
-    given.add(v);
+    for (const piece of band.pieces) given.add(piece);
   }
   return given;
 }
@@ -2881,22 +2887,60 @@ const RULE_REACH_PT = 14;
 const RULE_MIN_PT = 0.5;
 
 /**
- * Whether a painted path is a RULE — a line drawn to separate one block from
- * the next, rather than a piece of the page's artwork.
+ * Whether a painted path is flat and thin enough to be a piece of a RULE — a
+ * line drawn to separate one block from the next, rather than a piece of the
+ * page's artwork. How LONG the rule is is a question for the whole of it (see
+ * {@link collinear}): a hairline the width of a column under a table's
+ * headings, or the line a total is written over. Everything else — boxes,
+ * panels, drawings — keeps the place on the page it was drawn at.
  *
- * Flat and long: a hairline the width of a column under a table's headings, or
- * the line a total is written over. Everything else — boxes, panels, drawings —
- * keeps the place on the page it was drawn at.
- *
- * @param v     The painted path.
- * @param width The page's width, which the rule is long RELATIVE to.
- * @returns Whether it separates blocks rather than drawing something.
+ * @param v The painted path.
+ * @returns Whether it could be a rule, or a piece of one.
  */
-function separatorRule(v: PdfVector, width: number): boolean {
+function flatBar(v: PdfVector): boolean {
   const w = v.maxX - v.minX;
   const h = v.maxY - v.minY;
-  return h <= RULE_THICK_PT && w >= width * RULE_SHARE && w > h * RULE_RATIO;
+  return h <= RULE_THICK_PT && w > h * RULE_RATIO;
 }
+
+/**
+ * The flat bars of a page gathered into the rules they draw: pieces on one
+ * baseline, end to end, are one rule from the first's left edge to the last's
+ * right.
+ *
+ * @param bars The page's flat bars.
+ * @returns One band per rule, with the pieces it was drawn in.
+ */
+function collinear(
+  bars: ReadonlyArray<PdfVector>,
+): Array<{ from: number; to: number; pieces: Array<PdfVector> }> {
+  const out: Array<{ from: number; to: number; pieces: Array<PdfVector> }> = [];
+  for (const bar of [...bars].sort((a, b) => b.maxY - a.maxY || a.minX - b.minX)) {
+    const y = (bar.minY + bar.maxY) / 2;
+    const band = out.find(
+      (b) =>
+        Math.abs((b.pieces[0]!.minY + b.pieces[0]!.maxY) / 2 - y) <= RULE_SAME_LINE_PT &&
+        bar.minX <= b.to + RULE_JOIN_PT &&
+        (bar.strokeHex ?? bar.fillHex) === (b.pieces[0]!.strokeHex ?? b.pieces[0]!.fillHex),
+    );
+    if (band) {
+      band.from = Math.min(band.from, bar.minX);
+      band.to = Math.max(band.to, bar.maxX);
+      band.pieces.push(bar);
+    } else out.push({ from: bar.minX, to: bar.maxX, pieces: [bar] });
+  }
+  return out;
+}
+
+/** How far apart two bars' baselines may be and still be one rule. */
+const RULE_SAME_LINE_PT = 1.5;
+
+/**
+ * …and how wide a gap between two pieces of it the page may leave: an invoice
+ * draws the rule under its item row cell by cell and skips the thirteen points
+ * of gutter between two of them.
+ */
+const RULE_JOIN_PT = 18;
 
 /** How thick a mark may be and still be a rule. */
 const RULE_THICK_PT = 2;

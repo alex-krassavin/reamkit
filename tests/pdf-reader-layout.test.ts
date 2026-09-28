@@ -1248,6 +1248,28 @@ describe('a flowing reading re-sets the page where the page set it', () => {
     expect(table.table.rows[0]!.cells.every((c) => c.properties.width !== undefined)).toBe(true);
   });
 
+  it('takes a rule drawn in pieces as one rule (§17.3.1.24)', () => {
+    // An invoice draws the rule under its headings cell by cell. Measured apart
+    // only the widest piece was long enough to be a rule: it moved with the
+    // row, and the rest stayed where the page drew them, through the figures.
+    const doc = reconstructByLayout(
+      PdfFile.parse(
+        helvetica(
+          [
+            'BT /F1 9 Tf 1 0 0 1 30 700 Tm (Description) Tj ET',
+            '0 0 0 RG 0.75 w 28 690 m 270 690 l S',
+            '0 0 0 RG 0.75 w 270 690 m 350 690 l S',
+            '0 0 0 RG 0.75 w 350 690 m 430 690 l S',
+            'BT /F1 9 Tf 1 0 0 1 30 677 Tm (Project management) Tj ET',
+          ].join('\n'),
+        ),
+      ),
+    ).doc;
+    const ruled = paragraphs(doc).find((p) => textOf(p) === 'Project management');
+    expect(ruled?.paragraph.properties.borders?.top?.style).toBe('single');
+    expect(doc.body.some((b) => b.kind === 'shape')).toBe(false);
+  });
+
   it('rules EVERY member of a set of ruled lines, not only the first (§17.3.1.5)', () => {
     // An invoice rules each line of its totals. Paragraphs with the same
     // borders are one bordered set, ruled on its outside only, and read as
