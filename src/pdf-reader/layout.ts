@@ -1959,20 +1959,31 @@ const INDENT_EM = 0.5;
  * placed rather than set — a centred title's every line is short of the measure
  * and none of them ends anything.
  *
- * @param prev   The line before: where it starts, how wide it is, its face.
- * @param next   The line after — only where it starts matters.
+ * A line of a right-to-left script starts at the RIGHT and ends at the left,
+ * and is read the other way round: ArabicCIDTrueType.pdf sets four lines, each
+ * flush right and shorter than the one before, and read as a left-to-right
+ * setting every pair of them ran together as one paragraph.
+ *
+ * @param prev   The line before: where it starts, how wide it is, its face,
+ *               and its text when it has any.
+ * @param next   The line after — where it starts, and how wide it is.
  * @param column The measure both were set in, when it is known.
  * @returns Whether the first line ended a paragraph.
  */
 export function endedParagraph(
-  prev: { x: number; width: number; fontSize: number },
-  next: { x: number },
+  prev: { x: number; width: number; fontSize: number; text?: string },
+  next: { x: number; width?: number },
   column: { left: number; right: number } | undefined,
 ): boolean {
   if (!column) return false;
   const width = column.right - column.left;
   if (!(width > 0)) return false;
   const step = Math.max(prev.fontSize, 4);
+  if (prev.text !== undefined && next.width !== undefined && isRightToLeft(prev.text)) {
+    const indent = prev.x + prev.width - (next.x + next.width);
+    if (indent < -step || indent > step * INDENT_LINES) return false;
+    return prev.x - column.left > width * 0.25;
+  }
   const shift = next.x - prev.x;
   // A line that begins LEFT of the one before it, or a whole measure to the
   // right of it, is not part of the same setting — the block is placed.

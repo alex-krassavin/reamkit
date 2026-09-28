@@ -940,11 +940,14 @@ describe('what a reader can actually draw', () => {
         'w:rStyle',
         'w:rFonts',
         'w:b',
+        'w:bCs',
         'w:i',
+        'w:iCs',
         'w:strike',
         'w:color',
         'w:spacing',
         'w:sz',
+        'w:szCs',
         'w:highlight',
         'w:u',
         'w:shd',
@@ -1031,7 +1034,9 @@ describe('a document written for another program to read', () => {
       faceFamilies: new Map([['inter-semibold', { family: 'Inter', generic: 'swiss' as const }]]),
     };
     const bytes = writeDocx(flow).bytes;
-    expect(bodyOf(bytes)).toContain('<w:rFonts w:ascii="Inter" w:hAnsi="Inter"/>');
+    expect(bodyOf(bytes)).toContain(
+      '<w:rFonts w:ascii="Inter" w:hAnsi="Inter" w:eastAsia="Inter" w:cs="Inter"/>',
+    );
     const table = OpcPackage.open(bytes).getPart('word/fontTable.xml');
     expect(table).toBeDefined();
     expect(decode(table!)).toContain(
@@ -1058,7 +1063,7 @@ describe('a document written for another program to read', () => {
       '<w:fldChar w:fldCharType="separate"/>',
       '<w:fldChar w:fldCharType="end"/>',
     ]) {
-      expect(xml).toContain(`<w:rPr><w:sz w:val="15"/></w:rPr>${piece}`);
+      expect(xml).toContain(`<w:rPr><w:sz w:val="15"/><w:szCs w:val="15"/></w:rPr>${piece}`);
     }
     // …and it reads back as the page number it is.
     const runs = readDocx(bytes).doc.body.flatMap((b) =>

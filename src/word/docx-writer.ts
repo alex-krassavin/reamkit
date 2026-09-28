@@ -1633,13 +1633,18 @@ function rPrXml(r: ResolvedRunProperties, state?: WriteState): string {
     r[key] !== undefined && r[key] !== DEFAULT_RUN[key];
   const fonts = rFontsXml(r.fontFamily, state);
   if (fonts) out.push(fonts);
-  if (states('bold')) out.push(toggle('w:b', r.bold));
-  if (states('italic')) out.push(toggle('w:i', r.italic));
+  // §17.3.2.2/§17.3.2.17/§17.3.2.39 — Word sets a complex script (Arabic,
+  // Hebrew, Thai) by its OWN weight, slant and size, and the run has one of
+  // each: stated for Latin text alone, ArabicCIDTrueType.pdf's 36pt lines came
+  // back at the reader's default ten.
+  if (states('bold')) out.push(toggle('w:b', r.bold), toggle('w:bCs', r.bold));
+  if (states('italic')) out.push(toggle('w:i', r.italic), toggle('w:iCs', r.italic));
   if (states('strike')) out.push(toggle('w:strike', r.strike));
   if (states('colorHex')) out.push(`<w:color w:val="${r.colorHex}"/>`);
   if (states('fontSizePt')) {
     // §17.3.2.38 w:sz — half-points.
-    out.push(`<w:sz w:val="${Math.round(r.fontSizePt * 2)}"/>`);
+    const half = Math.round(r.fontSizePt * 2);
+    out.push(`<w:sz w:val="${half}"/>`, `<w:szCs w:val="${half}"/>`);
   }
   // §17.3.2.40 — `w:u @w:color`, the rule's own colour where it has one: a
   // PDF's `/Underline` annotation states its colour and nothing else does.
@@ -1807,7 +1812,17 @@ function rFontsXml(fonts: FontFamilyMap, state?: WriteState): string {
     attrs.push(`w:ascii="${escapeAttr(family(fonts.ascii))}"`);
   if (fonts.hAnsi && fonts.hAnsi !== d.hAnsi)
     attrs.push(`w:hAnsi="${escapeAttr(family(fonts.hAnsi))}"`);
+  // A face a PDF drew in drew EVERY character of the run — the Arabic and the
+  // Han as well as the Latin — so every slot a reader picks by script names it.
+  const face =
+    fonts.ascii !== undefined && state?.faceFamilies?.has(fonts.ascii) === true
+      ? family(fonts.ascii)
+      : undefined;
+  if (face !== undefined && fonts.eastAsia === undefined) {
+    attrs.push(`w:eastAsia="${escapeAttr(face)}"`);
+  }
   if (fonts.cs && fonts.cs !== d.cs) attrs.push(`w:cs="${escapeAttr(family(fonts.cs))}"`);
+  else if (face !== undefined) attrs.push(`w:cs="${escapeAttr(face)}"`);
   return attrs.length > 0 ? `<w:rFonts ${attrs.join(' ')}/>` : '';
 }
 

@@ -11,7 +11,7 @@ import { buildDocxFromBody } from './fixtures/build-docx';
 import { Ream } from '@/core/converter/ream';
 import { PdfFile } from '@/pdf-reader/document';
 import { BASELINE_AT } from '@/pdf-reader/flow-build';
-import { reconstructByLayout } from '@/pdf-reader/layout';
+import { endedParagraph, reconstructByLayout } from '@/pdf-reader/layout';
 
 const FONTS = {
   regular: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Regular.ttf')),
@@ -1270,5 +1270,18 @@ describe('a flowing reading re-sets the page where the page set it', () => {
       const borders = p.paragraph.properties.borders as Record<string, unknown>;
       expect(borders.insideH).toEqual(borders.top);
     }
+  });
+});
+
+describe('a right-to-left line ends on its left (§17.3.1.13)', () => {
+  it('reads a line short of the measure on the LEFT as the end of a paragraph', () => {
+    // ArabicCIDTrueType.pdf sets four lines flush right, each shorter than the
+    // one before. Read as left-to-right they all reached the measure — their
+    // right ends are where they start — and every pair ran together.
+    const measure = { left: 160, right: 510 };
+    const full = { x: 160, width: 350, fontSize: 36, text: 'انواع الخطوط العربية' };
+    const short = { x: 270, width: 240, fontSize: 36, text: 'انواع الخطوط العربية' };
+    expect(endedParagraph(short, { x: 258, width: 252 }, measure)).toBe(true);
+    expect(endedParagraph(full, { x: 270, width: 240 }, measure)).toBe(false);
   });
 });
