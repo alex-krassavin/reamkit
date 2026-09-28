@@ -22,7 +22,7 @@ import {
   decodeCcittPlanes,
 } from '@/pdf-reader/ccitt';
 import { PdfFile } from '@/pdf-reader/document';
-import { symbolCodeLength } from '@/pdf-reader/jbig2';
+import { standardTableCodes, symbolCodeLength } from '@/pdf-reader/jbig2';
 import { decodePdfImage } from '@/pdf-reader/image-decode';
 import { dict, name, stream } from '@/pdf/objects';
 
@@ -408,5 +408,41 @@ describe('how a text region names one of its symbols (§6.4.5)', () => {
     expect(symbolCodeLength(256)).toBe(8);
     // A region with no symbols reads nothing either.
     expect(symbolCodeLength(0)).toBe(0);
+  });
+});
+
+describe('the standard Huffman tables (§B.5)', () => {
+  const line = (n: number, low: number): { prefix: string; rangeLen: number } | undefined =>
+    standardTableCodes(n).find((l) => l.rangeLow === low && l.kind !== 'lower');
+
+  it('writes every line of B.7 with the prefix the spec prints for it', () => {
+    // A text region reads its first S through B.7. Transcribed with four of
+    // its lines missing, every value past 31 decoded as another, and
+    // bitmap-symbol-symhuffB5B3-texthuffB7B9B12.pdf set its shapes all over
+    // the sheet.
+    expect(line(7, -512)).toEqual({ prefix: '000', rangeLen: 8, rangeLow: -512 });
+    expect(line(7, 0)).toMatchObject({ prefix: '1011', rangeLen: 5 });
+    expect(line(7, 32)).toMatchObject({ prefix: '11100', rangeLen: 5 });
+    expect(line(7, 64)).toMatchObject({ prefix: '11101', rangeLen: 6 });
+    expect(line(7, 128)).toMatchObject({ prefix: '1100', rangeLen: 7 });
+    expect(line(7, 256)).toMatchObject({ prefix: '001', rangeLen: 8 });
+    expect(line(7, 1024)).toMatchObject({ prefix: '011', rangeLen: 10 });
+    expect(line(7, 2048)).toMatchObject({ prefix: '11111', rangeLen: 32 });
+  });
+
+  it('writes the long lines of B.10 in six bits', () => {
+    expect(line(10, 134)).toMatchObject({ prefix: '111000', rangeLen: 6 });
+    expect(line(10, 1094)).toMatchObject({ prefix: '111100', rangeLen: 10 });
+    expect(line(10, 2118)).toMatchObject({ prefix: '1111101', rangeLen: 11 });
+  });
+
+  it('leaves no string of bits unread in any of the fifteen', () => {
+    // A prefix code the tables fill completely: its lengths sum to exactly one
+    // by Kraft. A line missing or a length wrong leaves a hole, which is how
+    // both of the broken tables above could have been found.
+    for (let n = 1; n <= 15; n++) {
+      const sum = standardTableCodes(n).reduce((s, l) => s + 2 ** -l.prefix.length, 0);
+      expect(sum, `B.${String(n)}`).toBe(1);
+    }
   });
 });

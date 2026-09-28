@@ -576,8 +576,11 @@ function huffDecode(r: BitReader, t: HuffTable): number | typeof OOB {
  * §B.5 Tables B.1–B.15 — the standard tables, as `[prefLen, rangeLen,
  * rangeLow]` with `'lower'` and `'oob'` on the two lines that need them.
  *
- * They are transcribed rather than derived, and the corpus is what checks
- * them: a table off by one line decodes rubble, and the suite says so at once.
+ * They are transcribed rather than derived, and a transcription can lose a
+ * line without a sound: B.7 came over four lines short and B.10 with five
+ * prefixes a bit or two long, and only the files that read through those two
+ * ever noticed. Every table is a complete prefix code — its lengths sum to
+ * exactly one, by Kraft — and that is what the tests hold each of them to.
  */
 const STANDARD_TABLES: ReadonlyArray<ReadonlyArray<HuffLine>> = [
   // B.1
@@ -654,11 +657,15 @@ const STANDARD_TABLES: ReadonlyArray<ReadonlyArray<HuffLine>> = [
     { prefLen: 5, rangeLen: 6, rangeLow: -128 },
     { prefLen: 5, rangeLen: 5, rangeLow: -64 },
     { prefLen: 4, rangeLen: 5, rangeLow: -32 },
-    { prefLen: 4, rangeLen: 9, rangeLow: 0 },
-    { prefLen: 5, rangeLen: 10, rangeLow: 512 },
-    { prefLen: 3, rangeLen: 10, rangeLow: 1536 },
+    { prefLen: 4, rangeLen: 5, rangeLow: 0 },
+    { prefLen: 5, rangeLen: 5, rangeLow: 32 },
+    { prefLen: 5, rangeLen: 6, rangeLow: 64 },
+    { prefLen: 4, rangeLen: 7, rangeLow: 128 },
+    { prefLen: 3, rangeLen: 8, rangeLow: 256 },
+    { prefLen: 3, rangeLen: 9, rangeLow: 512 },
+    { prefLen: 3, rangeLen: 10, rangeLow: 1024 },
     { prefLen: 5, rangeLen: 32, rangeLow: -1025, kind: 'lower' },
-    { prefLen: 5, rangeLen: 32, rangeLow: 2560 },
+    { prefLen: 5, rangeLen: 32, rangeLow: 2048 },
   ],
   // B.8
   [
@@ -723,11 +730,11 @@ const STANDARD_TABLES: ReadonlyArray<ReadonlyArray<HuffLine>> = [
     { prefLen: 2, rangeLen: 6, rangeLow: 6 },
     { prefLen: 5, rangeLen: 5, rangeLow: 70 },
     { prefLen: 6, rangeLen: 5, rangeLow: 102 },
-    { prefLen: 7, rangeLen: 6, rangeLow: 134 },
-    { prefLen: 8, rangeLen: 7, rangeLow: 198 },
-    { prefLen: 8, rangeLen: 8, rangeLow: 326 },
-    { prefLen: 8, rangeLen: 9, rangeLow: 582 },
-    { prefLen: 8, rangeLen: 10, rangeLow: 1094 },
+    { prefLen: 6, rangeLen: 6, rangeLow: 134 },
+    { prefLen: 6, rangeLen: 7, rangeLow: 198 },
+    { prefLen: 6, rangeLen: 8, rangeLow: 326 },
+    { prefLen: 6, rangeLen: 9, rangeLow: 582 },
+    { prefLen: 6, rangeLen: 10, rangeLow: 1094 },
     { prefLen: 7, rangeLen: 11, rangeLow: 2118 },
     { prefLen: 8, rangeLen: 32, rangeLow: -22, kind: 'lower' },
     { prefLen: 8, rangeLen: 32, rangeLow: 4166 },
@@ -810,6 +817,24 @@ const STANDARD_TABLES: ReadonlyArray<ReadonlyArray<HuffLine>> = [
 /** Table B.n, ready to read with. */
 function standardTable(n: number): HuffTable {
   return buildHuffTable(STANDARD_TABLES[n - 1] ?? STANDARD_TABLES[0]!);
+}
+
+/**
+ * §B.5 — the prefix every line of standard table B.`n` is written with, the
+ * way the spec prints it: a string of bits beside the values the line covers.
+ *
+ * @param n The table's number, 1–15.
+ * @returns Its lines, shortest prefix first, each with its prefix.
+ */
+export function standardTableCodes(
+  n: number,
+): Array<{ prefix: string; rangeLow: number; rangeLen: number; kind?: 'lower' | 'oob' }> {
+  return standardTable(n).lines.map((l) => ({
+    prefix: l.code.toString(2).padStart(l.prefLen, '0'),
+    rangeLow: l.rangeLow,
+    rangeLen: l.rangeLen,
+    ...(l.kind !== undefined ? { kind: l.kind } : {}),
+  }));
 }
 
 /** §B.2 — a custom table, from a type-53 segment. */
