@@ -931,6 +931,27 @@ describe('the CIE-based RGB space (§8.6.5.7)', () => {
   });
 });
 
+describe('a line stroked with a shading pattern (§8.6.6.2)', () => {
+  it('takes the middle of the sweep, not the black a stroke starts on', () => {
+    // bug1019475_1.pdf rules the head of its page with lines that fade from
+    // white to a pale blue-grey; with the pattern's name passed over they were
+    // drawn black, a solid block across the letterhead.
+    const content = '/Pattern CS /P1 SCN 4 w 10 50 m 90 50 l S';
+    const file = PdfFile.parse(
+      assemble([
+        '<< /Type /Catalog /Pages 2 0 R >>',
+        '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+        '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Contents 4 0 R ' +
+          '/Resources << /Pattern << /P1 5 0 R >> >> >>',
+        `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+        '<< /Type /Pattern /PatternType 2 /Shading << /ShadingType 2 /ColorSpace /DeviceRGB ' +
+          '/Coords [0 0 100 0] /Function << /FunctionType 2 /Domain [0 1] /C0 [1 0 0] /C1 [0 0 1] /N 1 >> >> >>',
+      ]),
+    );
+    expect(collectPageVectors(file, file.pages()[0]!).vectors[0]?.strokeHex).toBe('800080');
+  });
+});
+
 describe('a shading stitched out of shadings (§7.10.4)', () => {
   /** A page filling one square with pattern `/P1`, whose function is `fn`. */
   const shaded = (fn: string): Uint8Array => {

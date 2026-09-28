@@ -1001,8 +1001,18 @@ export function interpretContent(
       }
       case 'SCN':
       case 'SC': {
+        // §8.6.6.2 — a stroke in a Pattern space names its pattern too. A line
+        // takes one colour here, so a shading pattern gives the middle of its
+        // sweep, as it does to type: bug1019475_1.pdf rules the head of its
+        // page with twelve lines that fade from white to a pale blue-grey, and
+        // with the name passed over they kept the black a stroke starts on —
+        // a solid black block across the letterhead.
         const last = operands[operands.length - 1];
-        if (last instanceof PdfName) break;
+        if (last instanceof PdfName) {
+          const sweep = shadings.get(last.value);
+          if (sweep) state.strokeColor = midGradient(sweep);
+          break;
+        }
         const hex = colorOfOperands(operands, state.strokeSpace);
         if (hex !== undefined) state.strokeColor = hex;
         break;
