@@ -59,7 +59,7 @@ import type {
 import type { ResolvedParagraphProperties, ResolvedRunProperties } from '@/core/style-cascade';
 import type { ShapeGradient } from '@/core/vector';
 import type { DocumentWriter, WriteResult } from '@/core/ir/adapters';
-import type { FlowDoc } from '@/core/ir/flow';
+import type { FaceFamily, FlowDoc } from '@/core/ir/flow';
 import type { Loss, ResourceId, ResourceStore } from '@/core/ir';
 import type { OpcPart, Relationship } from '@/core/opc';
 
@@ -95,6 +95,11 @@ const REL_HYPERLINK =
   'http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink';
 const REL_IMAGE = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/image';
 const NUMBERING_PART = 'word/numbering.xml';
+const REL_FONT_TABLE =
+  'http://schemas.openxmlformats.org/officeDocument/2006/relationships/fontTable';
+const FONT_TABLE_CONTENT_TYPE =
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.fontTable+xml';
+const FONT_TABLE_PART = 'word/fontTable.xml';
 const REL_FOOTNOTES =
   'http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes';
 const REL_ENDNOTES = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/endnotes';
@@ -221,6 +226,10 @@ interface WriteState {
   readonly charts?: ReadonlyMap<string, Chart>;
   readonly chartParts: Array<OpcPart>;
   chartSeq: number;
+  // The family each face a run names belongs to (a PDF's `Inter-SemiBold` is
+  // Word's `Inter`), and the families written, for the font table.
+  readonly faceFamilies?: ReadonlyMap<string, FaceFamily>;
+  readonly familiesUsed: Map<string, FaceFamily>;
 }
 
 // Per-PART relationship scope (OPC §9.3 — rIds are scoped to their owning
@@ -264,6 +273,8 @@ export function writeDocx(flow: FlowDoc): WriteResult {
     chartParts: [],
     chartSeq: 0,
     ...(flow.charts ? { charts: flow.charts } : {}),
+    ...(flow.faceFamilies ? { faceFamilies: flow.faceFamilies } : {}),
+    familiesUsed: new Map(),
   };
   const docScope = newScope();
   const extraParts: Array<OpcPart> = [];
@@ -381,6 +392,26 @@ export function writeDocx(flow: FlowDoc): WriteResult {
   );
   emitCommentsExtended(flow.comments, commentParaIds, docScope, extraParts);
 
+  // §17.8.3 — the font table: every family the runs name, with the kind of
+  // face it is (§17.8.3.10), so a reader without it substitutes a face of the
+  // same kind instead of its default serif.
+  const fontTablePart =
+    state.familiesUsed.size > 0
+      ? {
+          path: FONT_TABLE_PART,
+          data: encoder.encode(fontTableXml(state.familiesUsed)),
+          contentType: FONT_TABLE_CONTENT_TYPE,
+        }
+      : undefined;
+  if (fontTablePart) {
+    docScope.rels.push({
+      id: `rId${++docScope.relSeq}`,
+      type: REL_FONT_TABLE,
+      target: 'fontTable.xml',
+      targetMode: 'Internal',
+    });
+  }
+
   const partRelationships = [
     ...(docScope.rels.length > 0
       ? [{ sourcePart: 'word/document.xml', relationships: docScope.rels }]
@@ -396,6 +427,7 @@ export function writeDocx(flow: FlowDoc): WriteResult {
         contentType: DOC_CONTENT_TYPE,
       },
       ...(numberingPart ? [numberingPart] : []),
+      ...(fontTablePart ? [fontTablePart] : []),
       ...extraParts,
       ...state.chartParts,
       ...state.mediaParts,
@@ -412,6 +444,22 @@ export function writeDocx(flow: FlowDoc): WriteResult {
   });
 
   return { bytes, losses };
+}
+
+// §17.8.3.9 CT_Font — family (§17.8.3.10) before pitch (§17.8.3.13), the
+// schema's order.
+function fontTableXml(families: ReadonlyMap<string, FaceFamily>): string {
+  const fonts = [...families.values()]
+    .map(
+      (f) =>
+        `<w:font w:name="${escapeAttr(f.family)}"><w:family w:val="${f.generic}"/>` +
+        `<w:pitch w:val="${f.generic === 'modern' ? 'fixed' : 'variable'}"/></w:font>`,
+    )
+    .join('');
+  return (
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    `<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">${fonts}</w:fonts>`
+  );
 }
 
 interface NoteConfig {
@@ -1489,7 +1537,7 @@ function runXml(run: Run, state: WriteState, scope: PartScope): string {
   if (run.math !== undefined) {
     return `<m:oMath xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math">${omathXml(run.math)}</m:oMath>`;
   }
-  const rPr = rPrXml(run.properties as ResolvedRunProperties);
+  const rPr = rPrXml(run.properties as ResolvedRunProperties, state);
   if (run.inlineImage !== undefined) {
     const img = run.inlineImage;
     const drawing = drawingXml(img.resource, img.width, img.height, undefined, state, scope);
@@ -1535,7 +1583,7 @@ function runXml(run: Run, state: WriteState, scope: PartScope): string {
 }
 
 // §17.3.2 — run properties as a delta from the resolved defaults.
-function rPrXml(r: ResolvedRunProperties): string {
+function rPrXml(r: ResolvedRunProperties, state?: WriteState): string {
   // §17.3.2.28 CT_RPr is a SEQUENCE, and a reader may drop what arrives out of
   // it: rFonts, b, i, strike, color, sz, u, shd, vertAlign, rtl, lang. Written
   // in the old order — `w:u` ahead of `w:rFonts` — LibreOffice ignored the
@@ -1550,7 +1598,7 @@ function rPrXml(r: ResolvedRunProperties): string {
   const states = <TKey extends keyof ResolvedRunProperties>(key: TKey): boolean =>
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
     r[key] !== undefined && r[key] !== DEFAULT_RUN[key];
-  const fonts = rFontsXml(r.fontFamily);
+  const fonts = rFontsXml(r.fontFamily, state);
   if (fonts) out.push(fonts);
   if (states('bold')) out.push(toggle('w:b', r.bold));
   if (states('italic')) out.push(toggle('w:i', r.italic));
@@ -1707,13 +1755,23 @@ function spacingXml(p: ResolvedParagraphProperties): string {
   return attrs.length > 0 ? `<w:spacing ${attrs.join(' ')}/>` : '';
 }
 
-// §17.3.2.26 w:rFonts — only the slots that differ from the resolved default.
-function rFontsXml(fonts: FontFamilyMap): string {
+// §17.3.2.26 w:rFonts — only the slots that differ from the resolved default,
+// each named by its FAMILY where the source named a face (see FlowDoc
+// `faceFamilies`): a reader looks a font up by the name it was installed under.
+function rFontsXml(fonts: FontFamilyMap, state?: WriteState): string {
   const d = DEFAULT_RUN.fontFamily;
+  const family = (name: string): string => {
+    const known = state?.faceFamilies?.get(name);
+    if (known === undefined) return name;
+    state?.familiesUsed.set(known.family, known);
+    return known.family;
+  };
   const attrs: Array<string> = [];
-  if (fonts.ascii && fonts.ascii !== d.ascii) attrs.push(`w:ascii="${escapeAttr(fonts.ascii)}"`);
-  if (fonts.hAnsi && fonts.hAnsi !== d.hAnsi) attrs.push(`w:hAnsi="${escapeAttr(fonts.hAnsi)}"`);
-  if (fonts.cs && fonts.cs !== d.cs) attrs.push(`w:cs="${escapeAttr(fonts.cs)}"`);
+  if (fonts.ascii && fonts.ascii !== d.ascii)
+    attrs.push(`w:ascii="${escapeAttr(family(fonts.ascii))}"`);
+  if (fonts.hAnsi && fonts.hAnsi !== d.hAnsi)
+    attrs.push(`w:hAnsi="${escapeAttr(family(fonts.hAnsi))}"`);
+  if (fonts.cs && fonts.cs !== d.cs) attrs.push(`w:cs="${escapeAttr(family(fonts.cs))}"`);
   return attrs.length > 0 ? `<w:rFonts ${attrs.join(' ')}/>` : '';
 }
 

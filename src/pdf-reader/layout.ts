@@ -22,6 +22,7 @@ import {
 } from './flow-build';
 import { displayOf, placeImages, placeRuns, placeVectors } from './display';
 import { collectEmbeddedFonts } from './embedded-fonts';
+import { collectFaceFamilies } from './font';
 import { collectPageImages } from './images';
 import { extractPageText } from './text';
 import { collectPageVectors } from './vector';
@@ -628,6 +629,7 @@ export function reconstructByLayout(
             ...(headBand.length > 0 ? ([[HEADER_PART, headBand]] as const) : []),
           ])
         : undefined,
+      collectFaceFamilies(file, pages),
     ),
     losses: dedupeLosses(losses),
   };

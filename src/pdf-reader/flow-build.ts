@@ -15,7 +15,7 @@ import type {
   ShapeLine,
   TextOutline,
 } from '@/core/document-model';
-import type { FlowDoc } from '@/core/ir/flow';
+import type { FaceFamily, FlowDoc } from '@/core/ir/flow';
 import type { FontRegistry } from '@/core/font';
 import type { Loss, Pt } from '@/core/ir';
 
@@ -182,8 +182,13 @@ export function paragraphFromRuns(
             ...(r.sizePt !== undefined ? { fontSizePt: pt(r.sizePt) } : {}),
             ...(r.colorHex !== undefined ? { colorHex: r.colorHex } : {}),
             // §17.3.2.26 `w:rFonts` — the face by name, which is how the layout
-            // finds a program the document itself carries.
-            ...(r.fontName !== undefined ? { fontFamily: { ascii: r.fontName } } : {}),
+            // finds a program the document itself carries. Every character the
+            // page drew in it, not only the ASCII ones: an accent or a curly
+            // quote reads the `hAnsi` slot, and left empty it went to the
+            // reader's default face mid-word.
+            ...(r.fontName !== undefined
+              ? { fontFamily: { ascii: r.fontName, hAnsi: r.fontName } }
+              : {}),
             // §9.3.6 / §21.1.2.3.9 — the page drew a line round these glyphs.
             ...(r.outline !== undefined ? { textOutline: r.outline } : {}),
             ...(r.bold ? { bold: true } : {}),
@@ -661,6 +666,7 @@ export function buildFlowDoc(
   embeddedFonts?: ReadonlyMap<string, FontRegistry>,
   sections: ReadonlyArray<Section> = [],
   headersFooters?: ReadonlyMap<string, ReadonlyArray<BodyElement>>,
+  faceFamilies?: ReadonlyMap<string, FaceFamily>,
 ): FlowDoc {
   return {
     kind: 'flow',
@@ -671,6 +677,7 @@ export function buildFlowDoc(
     ...(headersFooters && headersFooters.size > 0 ? { headersFooters } : {}),
     ...(section ? { section } : {}),
     ...(embeddedFonts && embeddedFonts.size > 0 ? { embeddedFonts } : {}),
+    ...(faceFamilies && faceFamilies.size > 0 ? { faceFamilies } : {}),
     styles: EMPTY_STYLE_SHEET,
     resources,
   };

@@ -1009,3 +1009,31 @@ describe('what a reader can actually draw', () => {
     }
   });
 });
+
+describe('a document written for another program to read', () => {
+  const bodyOf = (bytes: Uint8Array): string =>
+    decode(OpcPackage.open(bytes).getMainDocument().data);
+
+  it('names the FAMILY a face belongs to, and lists it in the font table (§17.8.3)', () => {
+    // A PDF names a face — `Inter-SemiBold` — and a reader looks a font up by
+    // the family it was installed under. Written as the face, an invoice set in
+    // Inter came back in LibreOffice's default serif.
+    const { doc } = readDocx(
+      buildDocxFromBody(
+        '<w:p><w:r><w:rPr><w:rFonts w:ascii="inter-semibold" w:hAnsi="inter-semibold"/><w:b/></w:rPr>' +
+          '<w:t>Invoice</w:t></w:r></w:p>',
+      ),
+    );
+    const flow: FlowDoc = {
+      ...doc,
+      faceFamilies: new Map([['inter-semibold', { family: 'Inter', generic: 'swiss' as const }]]),
+    };
+    const bytes = writeDocx(flow).bytes;
+    expect(bodyOf(bytes)).toContain('<w:rFonts w:ascii="Inter" w:hAnsi="Inter"/>');
+    const table = OpcPackage.open(bytes).getPart('word/fontTable.xml');
+    expect(table).toBeDefined();
+    expect(decode(table!)).toContain(
+      '<w:font w:name="Inter"><w:family w:val="swiss"/><w:pitch w:val="variable"/></w:font>',
+    );
+  });
+});

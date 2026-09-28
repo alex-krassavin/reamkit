@@ -76,7 +76,7 @@ export {
   inchToPt,
   mmToPt,
 } from '@/core/ir';
-export type { FlowDoc } from '@/core/ir/flow';
+export type { FaceFamily, FlowDoc } from '@/core/ir/flow';
 export type {
   DocumentReader,
   DocumentWriter,

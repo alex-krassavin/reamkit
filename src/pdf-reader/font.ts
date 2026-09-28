@@ -9,12 +9,13 @@ import { cffCidToGid, cffNameToGid, cffOutlineSource, openTypeCff } from './cff-
 import { type1Font } from './type1-outline';
 import { outlineSource, postGlyphNames } from './glyf-outline';
 import { standardFace, standardWidth } from './standard-widths';
-import { embeddedFontName, hasLiftableProgram } from './embedded-fonts';
+import { eachPageFont, embeddedFontName, hasLiftableProgram } from './embedded-fonts';
 import { isZapfDingbats, zapfDingbatsChar } from './dingbats';
 import { baseEncodingTable, isStandardLatinFace, standardEncodingTable } from './encodings';
 import type { PdfDict, PdfValue } from '@/pdf/objects';
 import type { ContentFont, GlyphOutline, Matrix, PathSeg, Type3Face } from './content';
-import type { PdfFile } from './document';
+import type { PdfFile, PdfPage } from './document';
+import type { FaceFamily } from '@/core/ir/flow';
 import { resolveFamilyStyle } from '@/core/fonts';
 import { PDF_NULL, PdfName, PdfStream } from '@/pdf/objects';
 import { parseTtf } from '@/core/font/ttf-parser';
@@ -781,6 +782,82 @@ function runFontName(file: PdfFile, fontDict: PdfDict, isType0: boolean): string
   if ((flags & FLAG_FIXED_PITCH) !== 0) return `${name} monospace`;
   if ((flags & FLAG_SERIF) !== 0) return `${name} serif`;
   return name;
+}
+
+/**
+ * For every face a run may name, the family a word processor knows it by —
+ * keyed by the name the run carries (see {@link FaceFamily}).
+ *
+ * A PDF names the FACE and a .docx names a family: written as the face,
+ * `inter-semibold` was a font no reader has, and LibreOffice set the whole of
+ * an invoice drawn in Inter in its default serif. The family is the one the
+ * descriptor states (§9.8.1 `/FontFamily`) or, where it states none, the one
+ * the PostScript name is made of.
+ *
+ * @param file  The document.
+ * @param pages The pages whose faces are wanted.
+ * @returns Run font name → its family.
+ */
+export function collectFaceFamilies(
+  file: PdfFile,
+  pages: ReadonlyArray<PdfPage>,
+): Map<string, FaceFamily> {
+  const out = new Map<string, FaceFamily>();
+  eachPageFont(file, pages, (fontDict) => {
+    const isType0 = asName(file.resolve(fontDict.get('Subtype') ?? PDF_NULL)) === 'Type0';
+    const key = runFontName(file, fontDict, isType0);
+    if (key === undefined || out.has(key)) return;
+    const owner = isType0 ? descendantFont(file, fontDict) : fontDict;
+    const descriptor = file.resolve(owner.get('FontDescriptor') ?? PDF_NULL);
+    const stated =
+      descriptor instanceof Map ? file.resolve(descriptor.get('FontFamily') ?? PDF_NULL) : PDF_NULL;
+    const family =
+      typeof stated === 'string' && /^[\x20-\x7e]+$/u.test(stated.trim())
+        ? stated.trim()
+        : familyOfFace(asName(file.resolve(fontDict.get('BaseFont') ?? PDF_NULL)));
+    if (family.length === 0) return;
+    const flags =
+      descriptor instanceof Map
+        ? asNumber(file.resolve(descriptor.get('Flags') ?? PDF_NULL), 0)
+        : 0;
+    out.set(key, { family, generic: genericOf(family, flags) });
+  });
+  return out;
+}
+
+/**
+ * The family a PostScript face name is made of: `Inter-SemiBold` → `Inter`,
+ * `ArialMT` → `Arial`, `TimesNewRomanPS-BoldMT` → `Times New Roman`.
+ *
+ * §9.6.2.1 names a face `Family-Style` (Word writes `Family,Style`), with the
+ * family's words run together. What follows the separator is a style only if
+ * it is made of style words — `MS-Mincho` is a family of its own — and the
+ * words come apart where the capitals say they do.
+ */
+export function familyOfFace(baseFont: string): string {
+  const name = baseFont.replace(/^[A-Z]{6}\+/u, '').trim();
+  const cut = /^(.+?)[-,]([^-,]+)$/u.exec(name);
+  const whole = cut && STYLE_WORDS.test(cut[2]!) ? cut[1]! : name.replace(/-/gu, ' ');
+  const family = whole.replace(/(?:PSMT|PS|MT)$/u, '') || whole;
+  return family
+    .replace(/([a-z])([A-Z])/gu, '$1 $2')
+    .replace(/([A-Z]+)([A-Z][a-z])/gu, '$1 $2')
+    .replace(/\bDeja Vu\b/u, 'DejaVu')
+    .replace(/\s+/gu, ' ')
+    .trim();
+}
+
+/** A PostScript style part, made of nothing but style words (`SemiBoldItalic`, `BoldMT`, `Regu`). */
+const STYLE_WORDS =
+  /^(?:regular|regu|roman|book|normal|plain|medium|medi|light|thin|hairline|extra|ultra|semi|demi|bold|bd|black|heavy|italic|ital|it|oblique|obl|condensed|cond|narrow|compressed|extended|mt|ps)+$/iu;
+
+/** §17.8.3.10 — the kind of face a family is, from the descriptor or, failing that, its name. */
+function genericOf(family: string, flags: number): FaceFamily['generic'] {
+  if ((flags & FLAG_FIXED_PITCH) !== 0) return 'modern';
+  if ((flags & FLAG_SERIF) !== 0) return 'roman';
+  const key = resolveFamilyStyle(family).key;
+  if (key === 'cousine') return 'modern';
+  return key === 'tinos' || key === 'caladea' ? 'roman' : 'swiss';
 }
 
 /** §9.8.2 `/Flags` — bit 1 is FixedPitch, bit 2 Serif (bits numbered from 1). */

@@ -18,6 +18,7 @@ import {
 } from './flow-build';
 import { displayOf, placeRuns, placeVectors } from './display';
 import { collectEmbeddedFonts } from './embedded-fonts';
+import { collectFaceFamilies } from './font';
 import { collectPageImages } from './images';
 import { collectPageVectors } from './vector';
 import { UNMAPPED, endedParagraph } from './layout';
@@ -443,6 +444,9 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
         pageImages.map((p) => p.images),
       ),
       collectEmbeddedFonts(file, pages, imageLosses),
+      [],
+      undefined,
+      collectFaceFamilies(file, pages),
     ),
     losses: imageLosses,
   };

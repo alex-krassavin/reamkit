@@ -53,12 +53,7 @@ export function collectEmbeddedFonts(
   losses?: Array<Loss>,
 ): Map<string, FontRegistry> {
   const out = new Map<string, FontRegistry>();
-  const seen = new Set<PdfDict>();
-  const visiting = new Set<PdfStream>();
-
-  const addFont = (fontDict: PdfDict): void => {
-    if (seen.has(fontDict)) return;
-    seen.add(fontDict);
+  eachPageFont(file, pages, (fontDict) => {
     const name = embeddedFontName(file, fontDict);
     if (name === undefined || out.has(name)) return;
     const program = fontProgram(file, fontDict);
@@ -78,7 +73,26 @@ export function collectEmbeddedFonts(
       // A program the parser will not take is a program the page keeps to
       // itself; the writer substitutes, as it did before any of this.
     }
-  };
+  });
+  return out;
+}
+
+/**
+ * Every `/Font` dictionary the pages draw with, each once: the page's own
+ * resources and those of every form it paints (§8.8 — a drawing keeps most of
+ * its lettering inside them).
+ *
+ * @param file  The owning file.
+ * @param pages The pages whose fonts are wanted.
+ * @param visit Called once per font dictionary.
+ */
+export function eachPageFont(
+  file: PdfFile,
+  pages: ReadonlyArray<PdfPage>,
+  visit: (fontDict: PdfDict) => void,
+): void {
+  const seen = new Set<PdfDict>();
+  const visiting = new Set<PdfStream>();
 
   const walk = (resources: PdfDict | undefined, depth: number): void => {
     if (!resources) return;
@@ -86,12 +100,12 @@ export function collectEmbeddedFonts(
     if (fonts instanceof Map) {
       for (const value of fonts.values()) {
         const dict = file.resolve(value);
-        if (dict instanceof Map) addFont(dict);
+        if (!(dict instanceof Map) || seen.has(dict)) continue;
+        seen.add(dict);
+        visit(dict);
       }
     }
     if (depth >= MAX_FORM_DEPTH) return;
-    // §8.8 — a form draws with resources of its own, and a drawing keeps most
-    // of its lettering inside them.
     const xobjects = file.get(resources, 'XObject');
     if (!(xobjects instanceof Map)) return;
     for (const value of xobjects.values()) {
@@ -107,7 +121,6 @@ export function collectEmbeddedFonts(
   };
 
   for (const page of pages) walk(page.resources, 0);
-  return out;
 }
 
 /**
