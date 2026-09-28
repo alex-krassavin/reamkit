@@ -1339,3 +1339,34 @@ describe('a right-to-left line ends on its left (§17.3.1.13)', () => {
     expect(endedParagraph(full, { x: 270, width: 240 }, measure)).toBe(false);
   });
 });
+
+describe('a blank page is still a page', () => {
+  it('keeps every sheet of a document that draws nothing on them', () => {
+    // doc_actions.pdf is three blank sheets, and came back as one.
+    const kids = [3, 4, 5];
+    const objects = [
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      `<< /Type /Pages /Kids [${kids.map((k) => `${String(k)} 0 R`).join(' ')}] /Count 3 >>`,
+      ...kids.map(() => '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>'),
+    ];
+    let pdf = '%PDF-1.7\n';
+    const offsets: Array<number> = [];
+    objects.forEach((body, i) => {
+      offsets.push(pdf.length);
+      pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+    });
+    const xref = pdf.length;
+    pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+    for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+    pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`;
+    const doc = reconstructByLayout(PdfFile.parse(new TextEncoder().encode(pdf))).doc;
+    const breaks = doc.body.filter(
+      (b) => b.kind === 'paragraph' && b.paragraph.properties.pageBreakBefore === true,
+    );
+    expect(breaks).toHaveLength(2);
+    // …and the first sheet holds a line of its own, so the second begins after it.
+    expect(
+      doc.body[0]?.kind === 'paragraph' && doc.body[0].paragraph.properties.pageBreakBefore,
+    ).not.toBe(true);
+  });
+});

@@ -662,7 +662,10 @@ export function reconstructByLayout(
     // the layout repaginates and this hardly shows; PLACED, every mark is
     // anchored to "the page", so without it all twenty-five pages of
     // Brotli-Prototype-FileA.pdf stack onto one.
-    if (i > 0 && !opensSection && blocks.length > 0) {
+    //
+    // …and so does a page with nothing on it to read. A blank sheet is still a
+    // sheet: doc_actions.pdf is three of them, and came back as one.
+    if (i > 0 && !opensSection) {
       body.push({
         kind: 'paragraph',
         paragraph: {
@@ -671,6 +674,17 @@ export function reconstructByLayout(
             spacingLine: CARRIER_LINE_PT,
             spacingLineRule: 'exact',
           },
+          runs: [],
+        },
+      });
+    } else if (i === 0 && blocks.length === 0) {
+      // A break is before the paragraph that carries it, and the first
+      // paragraph of a document breaks from nothing: a blank first sheet has
+      // to hold something of its own for the second to begin after it.
+      body.push({
+        kind: 'paragraph',
+        paragraph: {
+          properties: { spacingLine: CARRIER_LINE_PT, spacingLineRule: 'exact' },
           runs: [],
         },
       });
