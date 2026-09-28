@@ -519,26 +519,6 @@ export function sectionFromPdfPages(pages: ReadonlyArray<PdfPage>): SectionPrope
   };
 }
 
-/**
- * The margins the SOURCE used, measured off where its words actually sit.
- *
- * A PDF states none — text is placed anywhere on the MediaBox — so the reader
- * used to leave them at zero rather than invent an inch. But the words
- * themselves say where the margin was: the leftmost glyph on the page is the
- * left margin, and reflowing inside it keeps the measure the author set instead
- * of running the text from edge to edge.
- *
- * Measured on the MEDIAN page rather than the extreme one, so a single full-
- * bleed rule or a page number in the corner does not collapse the margin for
- * the whole document, and clamped so a strange page cannot leave no text area
- * at all.
- *
- * @param section  The section the page box gave, or `undefined`.
- * @param shown    Each page as it is shown, for its own width and height.
- * @param pageRuns Each page's runs, already placed on the shown page.
- * @returns The section with measured margins, or `section` when nothing is
- *          measurable.
- */
 /** What the measure gives back, so the widest line still fits when re-set. */
 const SLACK = 0.01;
 
@@ -572,6 +552,67 @@ const ASCENDER = BASELINE_AT * NATURAL_LINE_EM;
  */
 const DESCENDER = (1 - BASELINE_AT) * 1.5;
 
+/**
+ * How small, against the document's own text, type may be set and still be
+ * read as text rather than as a mark the producer left on the sheet.
+ */
+const LEGIBLE_SHARE = 0.25;
+
+/**
+ * The size a document's text is set in: the middle of every size its runs
+ * carry.
+ *
+ * @param pageRuns Each page's runs.
+ * @returns The size, in points; 0 where no run states one.
+ */
+export function textSizeOf(pageRuns: ReadonlyArray<ReadonlyArray<TextRun>>): number {
+  const sizes = pageRuns
+    .flat()
+    .map((r) => r.fontSizePt)
+    .filter((s) => s > 0)
+    .sort((a, b) => a - b);
+  return sizes[Math.floor(sizes.length / 2)] ?? 0;
+}
+
+/**
+ * Whether a run is set too small to be read, beside the text of its document —
+ * a mark the producer leaves on the sheet, not a line of the page.
+ *
+ * TCPDF signs the last page of everything it makes "Powered by TCPDF
+ * (www.tcpdf.org)" in type one point high, three points from the corner of the
+ * paper. Taken for text it was the leftmost and the lowest thing on the page:
+ * the margins came in at the edge of the sheet and every line of basicapi.pdf
+ * and alphatrans.pdf was set against it.
+ *
+ * @param run      The run.
+ * @param textSize The size the document's text is set in (see {@link textSizeOf}).
+ * @returns `true` where the run is a mark rather than text.
+ */
+export function tooSmallToRead(run: TextRun, textSize: number): boolean {
+  return run.fontSizePt > 0 && run.fontSizePt < textSize * LEGIBLE_SHARE;
+}
+
+/**
+ * The margins the SOURCE used, measured off where its words actually sit.
+ *
+ * A PDF states none — text is placed anywhere on the MediaBox — so the reader
+ * used to leave them at zero rather than invent an inch. But the words
+ * themselves say where the margin was: the leftmost glyph on the page is the
+ * left margin, and reflowing inside it keeps the measure the author set instead
+ * of running the text from edge to edge.
+ *
+ * Measured on the MEDIAN page rather than the extreme one, so a single full-
+ * bleed rule or a page number in the corner does not collapse the margin for
+ * the whole document, and clamped so a strange page cannot leave no text area
+ * at all.
+ *
+ * @param section  The section the page box gave, or `undefined`.
+ * @param shown    Each page as it is shown, for its own width and height.
+ * @param pageRuns Each page's runs, already placed on the shown page.
+ * @param pageMarks Each page's pictures, which the measure has to hold.
+ * @returns The section with measured margins, or `section` when nothing is
+ *          measurable.
+ */
 export function withMeasuredMargins(
   section: SectionProperties | undefined,
   shown: ReadonlyArray<{ width: number; height: number }>,
@@ -587,8 +628,10 @@ export function withMeasuredMargins(
   const rights: Array<number> = [];
   const tops: Array<number> = [];
   const bottoms: Array<number> = [];
-  pageRuns.forEach((runs, i) => {
+  const textSize = textSizeOf(pageRuns);
+  pageRuns.forEach((all, i) => {
     const page = shown[i];
+    const runs = all.filter((r) => !tooSmallToRead(r, textSize));
     if (!page || runs.length === 0) return;
     let minX = Infinity;
     let maxX = -Infinity;

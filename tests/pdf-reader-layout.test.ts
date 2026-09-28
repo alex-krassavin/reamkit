@@ -8,6 +8,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
+import type { BodyElement } from '@/core/document-model';
 import { Ream } from '@/core/converter/ream';
 import { PdfFile } from '@/pdf-reader/document';
 import { BASELINE_AT } from '@/pdf-reader/flow-build';
@@ -591,6 +592,45 @@ describe('a running foot is a foot, not a paragraph (§17.6.13)', () => {
       .flatMap((b) => (b.kind === 'paragraph' ? b.paragraph.runs.map((r) => r.text) : []))
       .join(' ');
     expect(body).toContain('line 8');
+  });
+});
+
+describe('type too small to read is a mark on the sheet, not a line of it', () => {
+  // TCPDF signs the last page of everything it makes in one-point type, three
+  // points from the corner of the paper.
+  const signed = (): Uint8Array =>
+    onePagePdf(
+      '/MediaBox [0 0 300 400] /Resources << /Font << /F0 5 0 R >> >>',
+      [
+        ...Array.from(
+          { length: 8 },
+          (_, i) => `BT /F0 10 Tf 1 0 0 1 40 ${String(360 - i * 14)} Tm (line ${String(i)}) Tj ET`,
+        ),
+        'BT /F0 1 Tf 1 0 0 1 3 1 Tm (Powered by TCPDF) Tj ET',
+      ].join('\n'),
+      ['<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'],
+    );
+
+  it('measures the margins without it', () => {
+    // Taken for text it was the leftmost and lowest thing on the page, and
+    // every line of basicapi.pdf was set against the edge of the paper.
+    const margins = reconstructByLayout(PdfFile.parse(signed())).doc.section?.margins;
+    expect(margins?.left).toBeCloseTo(40, 0);
+    expect(margins?.bottom).toBeGreaterThan(100);
+  });
+
+  it('keeps it where the page put it, out of the flow', () => {
+    const doc = reconstructByLayout(PdfFile.parse(signed())).doc;
+    const text = (els: ReadonlyArray<BodyElement>): string =>
+      els
+        .flatMap((b) => (b.kind === 'paragraph' ? b.paragraph.runs.map((r) => r.text) : []))
+        .join('');
+    expect(text(doc.body)).not.toContain('Powered');
+    const stamp = doc.body.find(
+      (b) => b.kind === 'shape' && text(b.shape.text?.content ?? []).includes('Powered by TCPDF'),
+    );
+    if (stamp?.kind !== 'shape') throw new Error('the stamp is placed');
+    expect(stamp.shape.float?.posH?.offsetPt).toBeCloseTo(3, 0);
   });
 });
 

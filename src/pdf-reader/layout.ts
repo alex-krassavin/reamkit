@@ -21,6 +21,8 @@ import {
   positionedText,
   sectionFromPdfPages,
   shapeBlock,
+  textSizeOf,
+  tooSmallToRead,
   withMeasuredMargins,
 } from './flow-build';
 import { displayOf, placeImages, placeRuns, placeVectors } from './display';
@@ -130,10 +132,21 @@ export function reconstructByLayout(
   // text block is a page number in the wrong place.
   const foot = mode === 'positional' ? undefined : runningFoot(allRuns, shown, 'foot');
   const head = mode === 'positional' ? undefined : runningFoot(allRuns, shown, 'head');
+  // …and what is set too small to read is a mark the producer left on the
+  // sheet, not a line of it: TCPDF signs the last page of everything it makes
+  // in one-point type in the very corner of the paper. Read as text it was the
+  // page's leftmost and lowest line — the margins, the measure and every
+  // indent were taken from it. It is put back where the page had it, a box of
+  // its own that nothing else is measured against.
+  const textSize = textSizeOf(allRuns);
+  const stamp = (r: TextRun): boolean => mode !== 'positional' && tooSmallToRead(r, textSize);
+  const stamps = allRuns.map((runs) => runs.filter(stamp));
   const pageRuns =
-    foot || head
+    foot || head || stamps.some((s) => s.length > 0)
       ? allRuns.map((runs, i) =>
-          runs.filter((r) => foot?.lift[i]?.has(r) !== true && head?.lift[i]?.has(r) !== true),
+          runs.filter(
+            (r) => foot?.lift[i]?.has(r) !== true && head?.lift[i]?.has(r) !== true && !stamp(r),
+          ),
         )
       : allRuns;
 
@@ -514,6 +527,16 @@ export function reconstructByLayout(
     // The shown page has its own corner: the turn has already been applied, so
     // what is left is a box that starts at the origin.
     const frame = { left: 0, top: display.height };
+    for (const line of groupIntoLines(stamps[i] ?? [], true, stepped)) {
+      if (line.text.length === 0) continue;
+      const box = turnedBox(line, 0, pageWidth);
+      placed.push({
+        key: [Number.MAX_SAFE_INTEGER, placed.length],
+        col: colOf(box.x + box.width / 2),
+        top: box.y + box.height,
+        make: (z: number): BodyElement => positionedText(line.spans, box, frame, z),
+      });
+    }
     const raw = collectPageImages(file, page);
     const imgs = { images: placeImages(raw.images, display), losses: raw.losses };
     losses.push(...imgs.losses);
@@ -2249,7 +2272,14 @@ function runningFoot(
       numbered: boolean;
     }
   | undefined {
-  const feet = pageRuns.map((runs, i) => edgeLine(runs, shown[i]?.height ?? 0, where));
+  const textSize = textSizeOf(pageRuns);
+  const feet = pageRuns.map((runs, i) =>
+    edgeLine(
+      runs.filter((r) => !tooSmallToRead(r, textSize)),
+      shown[i]?.height ?? 0,
+      where,
+    ),
+  );
   const found = feet.filter((f) => f !== undefined);
   if (found.length < 2 || found.length < pageRuns.length * FOOT_SHARE) return undefined;
   // The same place on every page: a foot that wanders is a last paragraph.
