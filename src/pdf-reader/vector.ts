@@ -14,7 +14,7 @@ import {
   gradientShading,
   shadingTypeOf,
 } from './shading';
-import { collectPageAppearances } from './annots';
+import { appearanceContent, collectPageAppearances } from './annots';
 import { hiddenProperties, hiddenXObject } from './optional-content';
 import { buildFonts } from './text';
 import type { ColorSpaceInfo, GsPaint } from './shading';
@@ -208,7 +208,7 @@ function paintedVectors(
   collectPageAppearances(file, page).forEach((appearance, index) => {
     walk(
       appearance.resources ?? page.resources,
-      file.streamData(appearance.stream),
+      appearanceContent(file, appearance),
       appearance.ctm,
       1,
       [Number.MAX_SAFE_INTEGER, index],

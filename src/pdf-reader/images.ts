@@ -9,7 +9,7 @@
 
 import { interpretContent, multiply } from './content';
 import { decodePdfImage } from './image-decode';
-import { collectPageAppearances } from './annots';
+import { appearanceContent, collectPageAppearances } from './annots';
 import { buildFonts } from './text';
 import { hiddenProperties, hiddenXObject } from './optional-content';
 import { buildAlphaMap, sampledShading } from './shading';
@@ -310,7 +310,7 @@ export function collectPageImages(file: PdfFile, page: PdfPage): PageImages {
   collectPageAppearances(file, page).forEach((appearance, index) => {
     walk(
       appearance.resources ?? page.resources,
-      file.streamData(appearance.stream),
+      appearanceContent(file, appearance),
       appearance.ctm,
       1,
       undefined,

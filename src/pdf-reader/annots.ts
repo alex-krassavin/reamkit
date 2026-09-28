@@ -26,6 +26,37 @@ export interface Appearance {
   readonly ctm: Matrix;
   /** The appearance's `/Resources`, when it states its own. */
   readonly resources: PdfDict | undefined;
+  /** §8.10.1 — the form's `/BBox`, in its own space, which clips what it paints. */
+  readonly bbox?: readonly [number, number, number, number];
+}
+
+/**
+ * §8.10.1 — an appearance's content as it paints: clipped to its `/BBox`.
+ *
+ * The box is the form's clip, not a hint. A form-filling tool that wrote its
+ * field backgrounds in PAGE coordinates inside a box forty points wide paints
+ * them nowhere any viewer shows — and painted anyway, with the fill colour it
+ * never set, bug1669099.pdf's form came back with three black slabs over its
+ * letterhead and its terms of payment, each twice as far across the sheet as
+ * the field it belonged to. The clip is installed the way the content would
+ * install one, so every pass that reads the appearance sees the same page.
+ *
+ * @param file       The owning file.
+ * @param appearance The appearance.
+ * @returns Its content, preceded by the clip to its box where it has one.
+ */
+export function appearanceContent(file: PdfFile, appearance: Appearance): Uint8Array {
+  const data = file.streamData(appearance.stream);
+  const box = appearance.bbox;
+  if (!box) return data;
+  const [x0, y0, x1, y1] = box;
+  const clip = new TextEncoder().encode(
+    `${String(x0)} ${String(y0)} ${String(x1 - x0)} ${String(y1 - y0)} re W n\n`,
+  );
+  const out = new Uint8Array(clip.length + data.length);
+  out.set(clip, 0);
+  out.set(data, clip.length);
+  return out;
 }
 
 /** §12.5.3 `/F` — the annotation is not painted at all. */
@@ -103,6 +134,7 @@ export function collectPageAppearances(file: PdfFile, page: PdfPage): Array<Appe
       stream,
       ctm: multiply(matrix, fitToRect(bbox, matrix, rect)),
       resources: resources instanceof Map ? resources : undefined,
+      ...(bbox ? { bbox } : {}),
     });
   }
   return out;

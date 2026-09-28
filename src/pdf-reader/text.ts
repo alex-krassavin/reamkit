@@ -5,7 +5,7 @@
 
 import { IDENTITY, interpretContent, multiply } from './content';
 import { buildContentFont } from './font';
-import { collectPageAppearances } from './annots';
+import { appearanceContent, collectPageAppearances } from './annots';
 import { textMarkupOf } from './annot-draw';
 import { patternTint } from './pattern-tint';
 import { hiddenProperties, hiddenXObject } from './optional-content';
@@ -41,7 +41,7 @@ export function extractPageText(file: PdfFile, page: PdfPage): Array<TextRun> {
     collectRuns(
       file,
       appearance.resources ?? page.resources,
-      file.streamData(appearance.stream),
+      appearanceContent(file, appearance),
       appearance.ctm,
       1,
       new Set([appearance.stream]),

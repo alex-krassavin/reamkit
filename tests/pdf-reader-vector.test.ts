@@ -156,8 +156,7 @@ function assemble(objects: ReadonlyArray<string>): Uint8Array {
  * A page whose only mark is a WIDGET annotation: nothing in its content stream,
  * a filled rectangle in the annotation's `/AP` `/N`.
  */
-function widgetOnlyPdf(): Uint8Array {
-  const ap = '0 0 1 rg 0 0 40 20 re f';
+function widgetOnlyPdf(ap = '0 0 1 rg 0 0 40 20 re f'): Uint8Array {
   const objects = [
     '<< /Type /Catalog /Pages 2 0 R >>',
     '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
@@ -251,6 +250,17 @@ describe('annotation appearances (§12.5.5)', () => {
     expect(box!.minY).toBeCloseTo(60, 1);
     expect(box!.maxX).toBeCloseTo(90, 1);
     expect(box!.maxY).toBeCloseTo(80, 1);
+  });
+
+  it('clips what an appearance paints to its /BBox (§8.10.1)', () => {
+    // bug1669099.pdf's form tool wrote each field's background in PAGE
+    // coordinates, far outside the forty-point box it paints in, and with a
+    // fill colour it never set: no viewer shows it, and painted anyway it came
+    // back as black slabs over the letterhead and the terms of payment.
+    const file = PdfFile.parse(widgetOnlyPdf('0 0 1 rg 0 0 40 20 re f 50 60 40 20 re f'));
+    const { vectors } = collectPageVectors(file, file.pages()[0]!);
+    expect(vectors).toHaveLength(1);
+    expect(vectors[0]!.maxX).toBeCloseTo(90, 1);
   });
 
   it('paints no annotation the file marks hidden', () => {
