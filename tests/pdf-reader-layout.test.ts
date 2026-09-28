@@ -640,6 +640,37 @@ describe('a running foot is a foot, not a paragraph (§17.6.13)', () => {
   });
 });
 
+describe('the measure a narrow column shows (§17.6.11)', () => {
+  /** One page, 300 wide, in a face whose every glyph is half an em. */
+  const page = (lines: ReadonlyArray<string>): Uint8Array => {
+    const widths = Array.from({ length: 91 }, () => 500).join(' ');
+    const shown = lines
+      .map((text, i) => `BT /F0 10 Tf 20 ${String(360 - i * 12)} Td (${text}) Tj ET`)
+      .join('\n');
+    return onePagePdf('/MediaBox [0 0 300 400] /Resources << /Font << /F0 5 0 R >> >>', shown, [
+      '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /FirstChar 32 /LastChar 122 ' +
+        `/Widths [${widths}] >>`,
+    ]);
+  };
+  const right = (lines: ReadonlyArray<string>): number | undefined =>
+    reconstructByLayout(PdfFile.parse(page(lines))).doc.section?.margins?.right;
+
+  it('takes a column’s measure where its lines run to one edge', () => {
+    // bug1057544.pdf sets a paragraph in a column a quarter of the sheet wide;
+    // held to a third of the sheet, it came back in two lines where the page
+    // has four. Three lines here run to x = 120, a hundred points in.
+    const column = ['aaaaaaaaaaaaaaaaaaaa', 'bbbbbbbbbbbbbbbbbbbb', 'cccccccccccccccccccc', 'ddd'];
+    expect(right(column)).toBeGreaterThan(150);
+  });
+
+  it('keeps to a third of the sheet where one line alone reaches that far', () => {
+    // issue10529.pdf's one long line, measured to, wrapped in the wider face
+    // it is re-set in: a line no other runs to is no measure.
+    const loose = ['aaaaaaaaaaaaaaaaaaaa', 'bbb', 'ccc', 'ddd'];
+    expect(right(loose)).toBeLessThanOrEqual(100);
+  });
+});
+
 describe('the spaces a line has are the ones the page shows, once each', () => {
   /**
    * The text of a page set in Helvetica, whose space is `space` thousandths of

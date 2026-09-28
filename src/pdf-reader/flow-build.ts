@@ -528,22 +528,33 @@ const DEEPEST_MARGIN = 0.5;
 /** How many lines a sheet must hold before where they end says where its measure does. */
 const MEASURE_LINES = 3;
 
+/** The narrowest measure a sheet's own lines may leave, as a share of the sheet. */
+const NARROWEST_MEASURE = 0.2;
+
 /**
- * How many lines a sheet's runs stand on: baselines further apart than half
- * the size of the type on them.
+ * The lines a sheet's runs stand on — baselines further apart than half the
+ * size of the type on them — and how many of them END at the sheet's right
+ * edge, within an em of the farthest: the lines a measure broke, or a margin
+ * justified, rather than the ones their author stopped.
  */
-function linesOf(runs: ReadonlyArray<TextRun>): number {
-  const ys = runs
+function linesOf(runs: ReadonlyArray<TextRun>): { count: number; atEdge: number } {
+  const ink = runs
     .filter((r) => r.text.trim() !== '')
-    .map((r) => ({ y: r.y, size: r.fontSizePt || 10 }))
+    .map((r) => ({ y: r.y, end: r.endX, size: r.fontSizePt || 10 }))
     .sort((a, b) => b.y - a.y);
-  let count = 0;
-  let last: { y: number; size: number } | undefined;
-  for (const at of ys) {
-    if (last === undefined || last.y - at.y > Math.max(last.size, at.size) / 2) count++;
-    last = at;
+  const lines: Array<{ y: number; end: number; size: number }> = [];
+  for (const at of ink) {
+    const last = lines[lines.length - 1];
+    if (last !== undefined && last.y - at.y <= Math.max(last.size, at.size) / 2) {
+      last.end = Math.max(last.end, at.end);
+      last.size = Math.max(last.size, at.size);
+    } else lines.push({ ...at });
   }
-  return count;
+  const edge = Math.max(...lines.map((l) => l.end));
+  return {
+    count: lines.length,
+    atEdge: lines.filter((l) => edge - l.end <= l.size).length,
+  };
 }
 
 /**
@@ -655,7 +666,7 @@ export function withMeasuredMargins(
   const width = section.pageSize.width as number;
   const height = section.pageSize.height as number;
   const lefts: Array<number> = [];
-  const rights: Array<{ value: number; full: boolean }> = [];
+  const rights: Array<{ value: number; full: boolean; edged: boolean }> = [];
   const tops: Array<number> = [];
   const bottoms: Array<number> = [];
   const textSize = textSizeOf(pageRuns);
@@ -715,6 +726,7 @@ export function withMeasuredMargins(
     }
     if (!Number.isFinite(minX) || !Number.isFinite(minY)) return;
     lefts.push(minX);
+    const lines = linesOf(runs);
     rights.push({
       value: page.width - maxX,
       // A sheet of a line or two says where THOSE lines end, not where the
@@ -722,7 +734,9 @@ export function withMeasuredMargins(
       // two headings of a sheet each voted the right margin in to a third of
       // the paper, where its contents line — 504 points across — could not be
       // set. What a sheet's pictures reach it still says.
-      full: linesOf(runs) >= MEASURE_LINES || maxX > textEnd,
+      full: lines.count >= MEASURE_LINES || maxX > textEnd,
+      // …and a measure is only SEEN where more than one line runs to it.
+      edged: lines.atEdge >= 2 && maxX <= textEnd,
     });
     // Runs carry a BASELINE, and a margin is to the top of the LINE.
     //
@@ -759,28 +773,45 @@ export function withMeasuredMargins(
   const footTop = Math.max(...inked.map((r) => r.y + r.fontSizePt * ASCENDER));
   const footBottom = Math.min(...inked.map((r) => r.y - r.fontSizePt * DESCENDER));
   const floor = inked.length > 0 ? footTop + textSize * FOOT_CLEAR_EM : Infinity;
+  // Across the sheet the LEFTMOST page decides, the way the tightest page
+  // decides down it: a margin is a wall the text may not cross, and a page
+  // that happens to set its last lines on the right — a receipt's payment
+  // history, ending in a right-hand column — has no left edge to speak of.
+  // Taking the middle of two put the wall three hundred points in and threw
+  // the whole receipt off the right edge of the sheet.
+  const left = clamp(Math.min(...lefts), width);
+  // A third of the sheet is as far in as a GUESS may bring the right margin.
+  // Sheets whose lines run to one edge are not guessing — the measure broke
+  // them there — and may bring it in as far as that, so long as a fifth of
+  // the sheet is left to set in. bug1057544.pdf sets its paragraph in a
+  // column a quarter of the sheet wide, and held to a third the column came
+  // back twice as wide, in two lines where the page has four. A sheet whose
+  // widest line is the only one that long has shown no measure at all:
+  // issue10529.pdf's one long line, measured to, wrapped in the wider face
+  // it is re-set in.
+  const voters = rights.filter((r) => r.full);
+  const farthest =
+    voters.length > 0 && voters.every((r) => r.edged)
+      ? Math.max(width / 3, width * (1 - NARROWEST_MEASURE) - left)
+      : width / 3;
   return {
     ...section,
     margins: {
-      // Across the sheet the LEFTMOST page decides, the way the tightest page
-      // decides down it: a margin is a wall the text may not cross, and a page
-      // that happens to set its last lines on the right — a receipt's payment
-      // history, ending in a right-hand column — has no left edge to speak of.
-      // Taking the middle of two put the wall three hundred points in and threw
-      // the whole receipt off the right edge of the sheet.
-      left: clamp(Math.min(...lefts), width),
+      left,
       // The right margin gives back a little of what it measured. The page was
       // set in faces this reader does not have, and re-setting it in
       // substitutes cannot come out narrower everywhere — so a measure exactly
       // as wide as the widest line wraps that line's last word onto the next.
       // basicapi.pdf's contents line runs 504.5pt across a 504.5pt measure, and
       // its page number came back at the head of the line below.
-      right: clamp(
-        median(
-          (rights.some((r) => r.full) ? rights.filter((r) => r.full) : rights).map((r) => r.value),
-        ) -
-          width * SLACK,
-        width,
+      right: pt(
+        Math.max(
+          0,
+          Math.min(
+            median((voters.length > 0 ? voters : rights).map((r) => r.value)) - width * SLACK,
+            farthest,
+          ),
+        ),
       ),
       // Down the page the TIGHTEST page decides, not the middle one. A margin
       // is a wall the text may not cross, and the pages differ: the last one
