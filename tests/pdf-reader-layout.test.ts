@@ -11,7 +11,7 @@ import { buildDocxFromBody } from './fixtures/build-docx';
 import { Ream } from '@/core/converter/ream';
 import { PdfFile } from '@/pdf-reader/document';
 import { BASELINE_AT } from '@/pdf-reader/flow-build';
-import { endedParagraph, reconstructByLayout } from '@/pdf-reader/layout';
+import { drawnWords, endedParagraph, reconstructByLayout } from '@/pdf-reader/layout';
 
 const FONTS = {
   regular: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Regular.ttf')),
@@ -1337,6 +1337,42 @@ describe('a right-to-left line ends on its left (§17.3.1.13)', () => {
     const short = { x: 270, width: 240, fontSize: 36, text: 'انواع الخطوط العربية' };
     expect(endedParagraph(short, { x: 258, width: 252 }, measure)).toBe(true);
     expect(endedParagraph(full, { x: 270, width: 240 }, measure)).toBe(false);
+  });
+});
+
+describe('what a page draws for want of characters', () => {
+  /** A traced glyph: a box at (x, y), `w` wide and 7 tall. */
+  const glyph = (x: number, y: number, w = 4) => ({
+    orderKey: [x],
+    segs: [
+      { op: 'move' as const, x, y },
+      { op: 'line' as const, x: x + w, y },
+      { op: 'line' as const, x: x + w, y: y + 7 },
+      { op: 'close' as const },
+    ],
+    minX: x,
+    minY: y,
+    maxX: x + w,
+    maxY: y + 7,
+    fillHex: '231F20',
+    glyph: true,
+  });
+
+  it('draws a word of traced glyphs as one shape, and the next word as another', () => {
+    // TAMReview.pdf sets its body in a subset whose glyphs name nothing, and
+    // traced one glyph at a time it came back as forty-two thousand shapes —
+    // a package no reader opened in under three minutes.
+    const words = drawnWords([
+      glyph(10, 100),
+      glyph(14.5, 100),
+      glyph(19, 100),
+      glyph(40, 100),
+      glyph(44.5, 100),
+      glyph(10, 80),
+    ]);
+    expect(words).toHaveLength(3);
+    expect(words[0]).toMatchObject({ minX: 10, maxX: 23 });
+    expect(words[0]!.segs).toHaveLength(12);
   });
 });
 

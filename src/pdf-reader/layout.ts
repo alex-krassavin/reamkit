@@ -562,6 +562,8 @@ export function reconstructByLayout(
       // …in the FLOWING reading only. A placed one anchors every mark to the
       // page, so a drawn glyph lands exactly where the file draws it.
       .filter((v) => !(mode !== 'positional' && strayGlyphs.has(v)));
+    // …and what is left of the traced glyphs is drawn a word at a time.
+    const drawn = drawnWords(vectors);
     // A page RULED into columns is a table, and its ROWS are what it says; a
     // page SET in columns is prose, and its columns are. Read by column, a
     // table comes back one column at a time with every row torn up.
@@ -614,7 +616,7 @@ export function reconstructByLayout(
         top: img.y + img.heightPt,
         make: (z: number): BodyElement => imageBlock(img, resources, undefined, frame, z, under),
       })),
-      ...vectors
+      ...drawn
         .filter((v) => givenAway?.has(v) !== true)
         .map((v) => ({
           key: v.orderKey,
@@ -2751,6 +2753,56 @@ function readDrawnMarks(
     return read === undefined ? run : { ...run, text: run.text.replaceAll(UNMAPPED, read) };
   });
 }
+
+/**
+ * §9.6.6 — the glyphs a page draws for want of characters, gathered into the
+ * WORDS they stand in: a traced glyph that stands against the one before it,
+ * on its line and in its colour, is drawn as one shape with it.
+ *
+ * Every mark kept apart is a shape of its own in the document, anchored to
+ * the page — and a paper set in a subset whose glyphs name nothing is nothing
+ * but such marks: TAMReview.pdf came back as forty-two thousand shapes, a
+ * package no reader would open in under three minutes. The picture is the
+ * same either way.
+ *
+ * @param vectors The page's painted paths, in painting order.
+ * @returns The same paths, each run of traced glyphs made one.
+ */
+export function drawnWords(vectors: ReadonlyArray<PdfVector>): Array<PdfVector> {
+  const out: Array<PdfVector> = [];
+  for (const v of vectors) {
+    const last = out[out.length - 1];
+    const size = v.maxY - v.minY;
+    if (
+      v.glyph === true &&
+      last?.glyph === true &&
+      last.fillHex === v.fillHex &&
+      last.strokeHex === v.strokeHex &&
+      last.alpha === v.alpha &&
+      // On one line: the two overlap across most of the shorter one's height.
+      Math.min(last.maxY, v.maxY) - Math.max(last.minY, v.minY) >
+        Math.min(size, last.maxY - last.minY) * 0.3 &&
+      // …and next to each other, a word space at the most apart.
+      v.minX >= last.minX &&
+      v.minX - last.maxX <= Math.max(size, last.maxY - last.minY) * WORD_GAP_EM
+    ) {
+      out[out.length - 1] = {
+        ...last,
+        segs: [...last.segs, ...v.segs],
+        minX: Math.min(last.minX, v.minX),
+        minY: Math.min(last.minY, v.minY),
+        maxX: Math.max(last.maxX, v.maxX),
+        maxY: Math.max(last.maxY, v.maxY),
+      };
+      continue;
+    }
+    out.push(v);
+  }
+  return out;
+}
+
+/** How far apart, in heights of the taller glyph, two drawn glyphs may stand and be one word. */
+const WORD_GAP_EM = 0.6;
 
 /** How few drawn glyphs a line may hold before they are its text, not marks in it. */
 const MOST_STRAY_MARKS = 2;

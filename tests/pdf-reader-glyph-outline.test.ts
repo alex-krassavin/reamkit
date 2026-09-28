@@ -22,6 +22,23 @@ import { parseTtf } from '@/core/font';
 
 const ROBOTO = new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Regular.ttf'));
 
+/** How many contours a letter of the face is drawn in. */
+const contoursOf = (letter: string): number =>
+  (
+    outlineSource(ROBOTO)?.path(parseTtf(ROBOTO).glyphForCodepoint(letter.codePointAt(0)!)) ?? []
+  ).filter((seg) => seg.op === 'move').length;
+
+/** How many contours the page's traced shapes hold between them. */
+const contours = (blocks: ReadonlyArray<{ kind: string }>): number =>
+  blocks
+    .flatMap((b) => {
+      const shape = (
+        b as { shape?: { geometry?: { custom?: { commands: Array<{ cmd: string }> } } } }
+      ).shape;
+      return shape?.geometry?.custom?.commands ?? [];
+    })
+    .filter((c) => c.cmd === 'move').length;
+
 /**
  * The same program with its `cmap` renamed out of reach — which is what a
  * subsetter leaves behind, and the whole reason a code can reach no character.
@@ -80,7 +97,8 @@ describe('glyph outlines (§9.6.6)', () => {
     const pdf = identityPdf(`<${hex4(glyphFor('A'))}${hex4(glyphFor('B'))}> Tj`);
     const doc = Ream.parse(pdf);
     const shapes = doc.flow.body.filter((b) => b.kind === 'shape');
-    expect(shapes).toHaveLength(2);
+    // Both glyphs, every contour of each — drawn as the one word they stand in.
+    expect(contours(shapes)).toBe(contoursOf('A') + contoursOf('B'));
     // Set at 40pt, a capital stands around 28pt tall.
     for (const shape of shapes) {
       expect(shape.shape.height).toBeGreaterThan(20);
@@ -212,7 +230,9 @@ describe('glyph outlines (§9.6.6)', () => {
     const pdf = identityPdf(`<${hex4(glyphFor('A'))}${hex4(glyphFor('B'))}> Tj`, toUnicode);
     const doc = Ream.parse(pdf);
     // Two codes, so two glyphs — not four, and no `.notdef` among them.
-    expect(doc.flow.body.filter((b) => b.kind === 'shape')).toHaveLength(2);
+    expect(contours(doc.flow.body.filter((b) => b.kind === 'shape'))).toBe(
+      contoursOf('A') + contoursOf('B'),
+    );
   });
 });
 
