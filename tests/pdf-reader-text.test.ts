@@ -364,6 +364,19 @@ describe('the face a run was shown in (§9.8.1)', () => {
     expect(styleOf('NewBasrahBold', '/Flags 4 /ItalicAngle 0').bold).toBeUndefined();
   });
 
+  it('takes the weight from the embedded program where the descriptor states none', () => {
+    // bigboundingbox.pdf names its faces `CalibriBold` and `Calibri` — no
+    // separator, no /FontWeight, no ForceBold — and every heading of its
+    // invoice came back light. The program's own header says which is bold.
+    const run = (program: string): boolean | undefined => {
+      const file = PdfFile.parse(identityHNoToUnicodePdf('Hi', program, 'SUBSET+RobotoBold'));
+      return extractPageText(file, file.pages()[0]!)[0]?.bold;
+    };
+    expect(run('Roboto-Bold.ttf')).toBe(true);
+    // …and a family whose program says Regular is regular, whatever it is called.
+    expect(run('Roboto-Regular.ttf')).toBeUndefined();
+  });
+
   it('falls back to the name only where there is no descriptor at all', () => {
     // §9.6.2.2 — a standard-14 font carries none, so the name is all there is.
     expect(styleOf('Helvetica-BoldOblique')).toEqual({ bold: true, italic: true });
@@ -378,8 +391,12 @@ describe('the face a run was shown in (§9.8.1)', () => {
  * TrueType: the codes are glyph indices, and the only place their Unicode is
  * written down is the font program's own `cmap`.
  */
-function identityHNoToUnicodePdf(word: string): Uint8Array {
-  const face = new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Regular.ttf'));
+function identityHNoToUnicodePdf(
+  word: string,
+  program = 'Roboto-Regular.ttf',
+  baseFont = 'Roboto',
+): Uint8Array {
+  const face = new Uint8Array(readFileSync(`tests/fixtures/fonts/${program}`));
   const gidOf = parseTtf(face).glyphForCodepoint;
   const codes = [...word].map((c) => gidOf(c.codePointAt(0)!));
   const hex = codes.map((g) => g.toString(16).padStart(4, '0')).join('');
@@ -390,9 +407,9 @@ function identityHNoToUnicodePdf(word: string): Uint8Array {
     '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] ' +
       '/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>',
     `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
-    '<< /Type /Font /Subtype /Type0 /BaseFont /Roboto /Encoding /Identity-H ' +
+    `<< /Type /Font /Subtype /Type0 /BaseFont /${baseFont} /Encoding /Identity-H ` +
       '/DescendantFonts [6 0 R] >>',
-    '<< /Type /Font /Subtype /CIDFontType2 /BaseFont /Roboto /DW 500 ' +
+    `<< /Type /Font /Subtype /CIDFontType2 /BaseFont /${baseFont} /DW 500 ` +
       '/CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> ' +
       '/FontDescriptor 7 0 R >>',
     `<< /Type /FontDescriptor /FontName /Roboto /Flags 4 /FontFile2 8 0 R >>`,

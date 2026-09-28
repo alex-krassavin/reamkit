@@ -152,6 +152,37 @@ export function hasLiftableProgram(file: PdfFile, fontDict: PdfDict): boolean {
   return fontProgram(file, fontDict) !== undefined;
 }
 
+/**
+ * The style a font's embedded program states for itself — the `head` table's
+ * macStyle, bit 0 bold and bit 1 italic — where the file carries a TrueType
+ * program to read it from.
+ *
+ * @param file     The document.
+ * @param fontDict The font dictionary.
+ * @returns The program's own style, or `undefined` where there is no program
+ *          or it has no header.
+ */
+export function programStyle(
+  file: PdfFile,
+  fontDict: PdfDict,
+): { bold: boolean; italic: boolean } | undefined {
+  const program = fontProgram(file, fontDict);
+  if (!program || program.length < 12) return undefined;
+  const view = new DataView(program.buffer, program.byteOffset, program.byteLength);
+  const tables = view.getUint16(4);
+  for (let i = 0; i < tables; i++) {
+    const at = 12 + i * 16;
+    if (at + 16 > program.length) return undefined;
+    const tag = String.fromCharCode(...program.subarray(at, at + 4));
+    if (tag !== 'head') continue;
+    const offset = view.getUint32(at + 8);
+    if (offset + 46 > program.length) return undefined;
+    const macStyle = view.getUint16(offset + 44);
+    return { bold: (macStyle & 1) !== 0, italic: (macStyle & 2) !== 0 };
+  }
+  return undefined;
+}
+
 /** §9.9 `/FontFile2` — the TrueType program, off the font or its descendant. */
 function fontProgram(file: PdfFile, fontDict: PdfDict): Uint8Array | undefined {
   const owner = descendant(file, fontDict) ?? fontDict;

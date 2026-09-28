@@ -26,6 +26,11 @@ describe('the family a PDF face belongs to', () => {
     expect(familyOfFace('DejaVuSans-Bold')).toBe('DejaVu Sans');
   });
 
+  it('takes off a style run on to the family with no separator', () => {
+    expect(familyOfFace('SUBSET+CalibriBold')).toBe('Calibri');
+    expect(familyOfFace('ArialBoldItalic')).toBe('Arial');
+  });
+
   it('keeps a hyphen that is part of the family, not a style after it', () => {
     // `MS-Mincho` is a family of its own; "Mincho" is no weight.
     expect(familyOfFace('MS-Mincho')).toBe('MS Mincho');

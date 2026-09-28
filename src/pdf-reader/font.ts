@@ -9,7 +9,7 @@ import { cffCidToGid, cffNameToGid, cffOutlineSource, openTypeCff } from './cff-
 import { type1Font } from './type1-outline';
 import { outlineSource, postGlyphNames } from './glyf-outline';
 import { standardFace, standardWidth } from './standard-widths';
-import { eachPageFont, embeddedFontName, hasLiftableProgram } from './embedded-fonts';
+import { eachPageFont, embeddedFontName, hasLiftableProgram, programStyle } from './embedded-fonts';
 import { isZapfDingbats, zapfDingbatsChar } from './dingbats';
 import { baseEncodingTable, isStandardLatinFace, standardEncodingTable } from './encodings';
 import type { PdfDict, PdfValue } from '@/pdf/objects';
@@ -837,7 +837,12 @@ export function collectFaceFamilies(
 export function familyOfFace(baseFont: string): string {
   const name = baseFont.replace(/^[A-Z]{6}\+/u, '').trim();
   const cut = /^(.+?)[-,]([^-,]+)$/u.exec(name);
-  const whole = cut && STYLE_WORDS.test(cut[2]!) ? cut[1]! : name.replace(/-/gu, ' ');
+  const whole =
+    cut && STYLE_WORDS.test(cut[2]!)
+      ? cut[1]!
+      : cut
+        ? name.replace(/-/gu, ' ')
+        : (GLUED_STYLE.exec(name)?.[1] ?? name);
   const family = whole.replace(/(?:PSMT|PS|MT)$/u, '') || whole;
   return family
     .replace(/([a-z])([A-Z])/gu, '$1 $2')
@@ -846,6 +851,14 @@ export function familyOfFace(baseFont: string): string {
     .replace(/\s+/gu, ' ')
     .trim();
 }
+
+/**
+ * A style run on to a family with no separator — `CalibriBold` — which is the
+ * family's name only with the style taken off. Whether the face IS bold is the
+ * program's to say (see `faceStyle`): `NewBasrahBold` is a family of its own.
+ */
+const GLUED_STYLE =
+  /^(.*?[a-z])((?:Semi|Demi|Extra|Ultra)?(?:Bold|Black|Heavy)(?:Italic|Oblique)?|Italic|Oblique)$/u;
 
 /** A PostScript style part, made of nothing but style words (`SemiBoldItalic`, `BoldMT`, `Regu`). */
 const STYLE_WORDS =
@@ -919,12 +932,21 @@ function faceStyle(
     // issue10519_reduced.pdf states `/FontWeight 0` on a face called
     // "Calibri,Bold", and taken at its word every bold word went light.
     const stated = typeof weightVal === 'number' && weightVal >= LIGHTEST_WEIGHT;
+    // §9.9 — where the descriptor is silent the PROGRAM is a witness too: its
+    // header states its own style (the `head` table's macStyle).
+    // bigboundingbox.pdf names its faces `CalibriBold` and `Calibri`, states
+    // no weight for either, and only the program says which is the bold cut.
+    // It says so for the Bold of a family and not for its SemiBold, which is
+    // a family of its own there — so the name `Inter-SemiBold` still counts,
+    // and `NewBasrahBold`, a family whose program says Regular, still does not.
+    const own = programStyle(file, fontDict);
     const bold = stated
       ? asNumber(weightVal, 0) >= BOLD_WEIGHT
-      : (flags & FLAG_FORCE_BOLD) !== 0 || named.bold;
+      : (flags & FLAG_FORCE_BOLD) !== 0 || own?.bold === true || named.bold;
     // The slant and the flag each state italic outright; where neither does,
-    // the name is the only witness left.
-    const italic = slant !== 0 || (flags & FLAG_ITALIC) !== 0 || named.italic;
+    // the program and the name are the witnesses left.
+    const italic =
+      slant !== 0 || (flags & FLAG_ITALIC) !== 0 || own?.italic === true || named.italic;
     return { ...(bold ? { bold: true } : {}), ...(italic ? { italic: true } : {}) };
   }
   return { ...(named.bold ? { bold: true } : {}), ...(named.italic ? { italic: true } : {}) };
