@@ -1039,6 +1039,34 @@ describe('a document written for another program to read', () => {
     );
   });
 
+  it('writes a page number as a COMPLEX field, in the run’s own properties (§17.16.18)', () => {
+    // Inside `w:fldSimple` LibreOffice sets the result in the paragraph's
+    // default size: a receipt's "Page 1 of 2" came back with both numbers half
+    // as large again as the words around them.
+    const { doc } = readDocx(
+      buildDocxFromBody(
+        '<w:p><w:r><w:rPr><w:sz w:val="15"/></w:rPr><w:t xml:space="preserve">Page </w:t></w:r>' +
+          '<w:fldSimple w:instr=" PAGE "><w:r><w:rPr><w:sz w:val="15"/></w:rPr><w:t>1</w:t></w:r></w:fldSimple></w:p>',
+      ),
+    );
+    const bytes = writeDocx(doc).bytes;
+    const xml = bodyOf(bytes);
+    expect(xml).not.toContain('w:fldSimple');
+    for (const piece of [
+      '<w:fldChar w:fldCharType="begin"/>',
+      '<w:instrText xml:space="preserve"> PAGE </w:instrText>',
+      '<w:fldChar w:fldCharType="separate"/>',
+      '<w:fldChar w:fldCharType="end"/>',
+    ]) {
+      expect(xml).toContain(`<w:rPr><w:sz w:val="15"/></w:rPr>${piece}`);
+    }
+    // …and it reads back as the page number it is.
+    const runs = readDocx(bytes).doc.body.flatMap((b) =>
+      b.kind === 'paragraph' ? b.paragraph.runs : [],
+    );
+    expect(runs.some((r) => r.field === 'PAGE')).toBe(true);
+  });
+
   it('writes the rule between two ruled paragraphs as `w:between` (§17.3.1.5)', () => {
     // §17.3.1.24 CT_PBdr has no inside edges; the rule between two members of
     // a bordered set is `w:between`, and `w:insideH` there is a file Word turns

@@ -1586,9 +1586,21 @@ function runXml(run: Run, state: WriteState, scope: PartScope): string {
   // §17.16.19 `w:fldSimple` — a page number is not the text "1", it is the
   // number of the sheet it stands on. Written as text, the foot a PDF's every
   // page shares came back saying "Page 1 of 2" on the second page as well.
+  //
+  // §17.16.18 — written as a COMPLEX field, every piece of it a run in the
+  // run's own properties. Inside `w:fldSimple` LibreOffice sets the result in
+  // the paragraph's default size, and a receipt's "Page 1 of 2" came back with
+  // its two numbers half as large again as the words around them.
   if (run.field !== undefined && run.text !== '') {
-    const inner = `<w:r>${rPr}<w:t xml:space="preserve">${escapeXml(run.text)}</w:t></w:r>`;
-    return `<w:fldSimple w:instr=" ${run.field} ">${inner}</w:fldSimple>${brk}`;
+    const piece = (inner: string): string => `<w:r>${rPr}${inner}</w:r>`;
+    return (
+      piece('<w:fldChar w:fldCharType="begin"/>') +
+      piece(`<w:instrText xml:space="preserve"> ${run.field} </w:instrText>`) +
+      piece('<w:fldChar w:fldCharType="separate"/>') +
+      piece(`<w:t xml:space="preserve">${escapeXml(run.text)}</w:t>`) +
+      piece('<w:fldChar w:fldCharType="end"/>') +
+      brk
+    );
   }
   if (run.text === '') return brk ? `<w:r>${rPr}${brk}</w:r>` : '';
   // §17.3.3.30 — a TAB is an ELEMENT, not a character: written inside `w:t` it

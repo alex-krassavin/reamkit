@@ -2352,7 +2352,18 @@ function bandLine(
   if (lines.length === 0) return undefined;
   // One region is a line of its own, placed the way the page placed it.
   if (lines.length === 1 || lines.length > BAND_REGIONS || !measure) {
-    const { alignment } = alignmentOf(lines.slice(0, 1), measure);
+    // A single line is set against the far edge when that is where it ends
+    // and it does not start at the near one: "Page 1 of 2" at the foot of a
+    // receipt. A paragraph's test wants a RAGGED left, which one line has not,
+    // and the foot came back at the left margin.
+    const only = lines.length === 1 ? lines[0] : undefined;
+    const width = measure ? measure.right - measure.left : 0;
+    const flushRight =
+      only !== undefined &&
+      measure !== undefined &&
+      measure.right - (only.x + only.width) <= width * BAND_RIGHT_SHARE &&
+      only.x - measure.left >= width * BAND_RIGHT_SHARE;
+    const alignment = flushRight ? 'right' : alignmentOf(lines.slice(0, 1), measure).alignment;
     const spans = lines.flatMap((line, i) =>
       i === 0 ? line.spans : [{ text: ' ' }, ...line.spans],
     );

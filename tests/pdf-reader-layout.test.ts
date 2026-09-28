@@ -528,6 +528,27 @@ describe('a running foot is a foot, not a paragraph (§17.6.13)', () => {
     expect(line.paragraph.properties.tabs?.[0]).toMatchObject({ relativeTo: 'right' });
   });
 
+  it('sets a one-line foot against the far edge, where the page set it', () => {
+    // "Page 1 of 2" stands at the right margin of every page of a receipt. A
+    // paragraph is read as set to the right only when its left edge is ragged,
+    // which one line's is not, and the foot came back at the left margin.
+    const page = (n: number): string =>
+      [
+        ...Array.from(
+          { length: 8 },
+          (_, i) =>
+            `BT /F0 10 Tf 1 0 0 1 40 ${String(360 - i * 14)} Tm (body line ${String(i)}) Tj ET`,
+        ),
+        `BT /F0 8 Tf 1 0 0 1 220 20 Tm (Page ${String(n)} of 3) Tj ET`,
+      ].join('\n');
+    const doc = reconstructByLayout(PdfFile.parse(pages([page(1), page(2), page(3)]))).doc;
+    const part = doc.section?.footers[0]?.relationshipId;
+    const band = part !== undefined ? doc.headersFooters?.get(part) : undefined;
+    const line = band?.[0];
+    if (line?.kind !== 'paragraph') throw new Error('the band has a line');
+    expect(line.paragraph.properties.alignment).toBe('right');
+  });
+
   it('leaves the number alone where the foot says the SAME thing on every page', () => {
     // A page number is a number that CHANGES from page to page. ZapfDingbats.pdf
     // signs each sheet "© RenderX 2000", and read as a page number the year came
