@@ -154,7 +154,21 @@ export function buildContentFont(file: PdfFile, fontDict: PdfDict): ContentFont 
   // Annex D.2 — the encoding the codes are read through under /Differences.
   // Annex D.2 — the base encoding as glyph NAMES, which serve twice: the text a
   // code stands for, and the glyph it selects in a program addressed by name.
-  const baseNames = isType0 ? undefined : baseEncoding(file, fontDict);
+  //
+  // §9.6.6.1 — and a font that states no encoding is read through the one its
+  // program is built with. A NAME that is none of the encodings there are
+  // states nothing: bug859204.pdf embeds a Type 1 News Gothic under
+  // `/Encoding /NULL`, whose code 0x95 its program names `bullet` — read as
+  // Latin-1 it was a control character, and the list lost its bullet.
+  const stated = file.resolve(fontDict.get('Encoding') ?? PDF_NULL);
+  const statesEncoding =
+    stated instanceof Map ||
+    (stated instanceof PdfName && baseEncodingTable(stated.value) !== undefined);
+  const baseNames = isType0
+    ? undefined
+    : statesEncoding
+      ? baseEncoding(file, fontDict)
+      : (glyphs?.builtIn ?? baseEncoding(file, fontDict));
   const fromBase = new Map<number, string>();
   for (const [code, glyph] of baseNames ?? []) {
     const text = textForGlyphName(glyph);

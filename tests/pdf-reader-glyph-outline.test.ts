@@ -161,6 +161,16 @@ describe('glyph outlines (§9.6.6)', () => {
     expect(face?.encoding?.get(65)).toBe('square');
   });
 
+  it('reads a code through the program’s own encoding where the font states none', () => {
+    // §9.6.6.1 — bug859204.pdf embeds a Type 1 News Gothic under
+    // `/Encoding /NULL`, which is no encoding there is, and its program puts
+    // `bullet` at 0x95. Read as Latin-1 that code was a control character, and
+    // every item of the page's list lost its bullet.
+    expect(type1Code('/Encoding /NULL', 0x95, squareType1('bullet', 0x95))).toBe('•');
+    // An encoding the font DOES state still has the say over the program's.
+    expect(type1Code('/Encoding /WinAnsiEncoding', 0x41, squareType1('bullet', 0x41))).toBe('A');
+  });
+
   it('takes the glyph index out of a name that carries one', () => {
     // A subsetter that drops a font's `cmap` renames its glyphs after their
     // INDEX. bug1151216.pdf writes them `g24` and bug1027533.pdf `g0024`, which
@@ -246,6 +256,27 @@ describe('glyph outlines (§9.6.6)', () => {
 });
 
 /**
+ * What `code` reads as in a simple Type 1 font whose dictionary carries
+ * `encoding` and whose `/FontFile` is `program`.
+ */
+function type1Code(encoding: string, code: number, program: Uint8Array): string {
+  const file = PdfFile.parse(
+    assemble([
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Resources << /Font << /F0 4 0 R >> >> >>',
+      `<< /Type /Font /Subtype /Type1 /BaseFont /NewsGothicStd-Bold ${encoding} /FontDescriptor 5 0 R >>`,
+      '<< /Type /FontDescriptor /FontName /NewsGothicStd-Bold /Flags 32 /ItalicAngle 0 /StemV 80 ' +
+        '/Ascent 900 /Descent -200 /CapHeight 700 /FontBBox [0 0 1000 1000] /FontFile 6 0 R >>',
+      fontStreamObject(program),
+    ]),
+  );
+  const fonts = file.get(file.pages()[0]!.resources!, 'Font');
+  if (!(fonts instanceof Map)) throw new Error('the page has a font');
+  return buildContentFont(file, file.resolve(fonts.get('F0')!) as PdfDict).decode([code]);
+}
+
+/**
  * A one-page PDF setting code 65 in a SIMPLE TrueType font whose `/Differences`
  * name that code `name` — the shape of a subset whose `cmap` was dropped.
  */
@@ -287,10 +318,11 @@ function legacyTruetypePdf(): Uint8Array {
 }
 
 /**
- * A Type 1 program of one glyph, `square`, drawing a 500-unit box — the
- * smallest thing the charstring interpreter can be asked to run.
+ * A Type 1 program of one glyph, `name`, drawing a 500-unit box — the smallest
+ * thing the charstring interpreter can be asked to run. Its own `/Encoding`
+ * puts the glyph at `code`.
  */
-function squareType1(): Uint8Array {
+function squareType1(name = 'square', code = 65): Uint8Array {
   const encrypt = (data: Uint8Array, key: number, lead: number): Uint8Array => {
     let r = key;
     const out = new Uint8Array(data.length + lead);
@@ -328,7 +360,7 @@ function squareType1(): Uint8Array {
   const encoder = new TextEncoder();
   const priv = [
     ...encoder.encode('XXXXdup /Private 8 dict dup begin\n/lenIV 4 def\n/Subrs 0 array ND\n'),
-    ...encoder.encode(`/CharStrings 1 dict dup begin\n/square ${String(glyph.length)} RD `),
+    ...encoder.encode(`/CharStrings 1 dict dup begin\n/${name} ${String(glyph.length)} RD `),
     ...glyph,
     ...encoder.encode(' ND\nend end\n'),
   ];
@@ -336,7 +368,7 @@ function squareType1(): Uint8Array {
   const body = encrypt(Uint8Array.from(priv.slice(4)), 55665, 4);
   const head = encoder.encode(
     '%!PS-AdobeFont-1.0: Square\n/FontMatrix [0.001 0 0 0.001 0 0] readonly def\n' +
-      '/Encoding 256 array\ndup 65 /square put\nreadonly def\ncurrentdict end\ncurrentfile eexec\n',
+      `/Encoding 256 array\ndup ${String(code)} /${name} put\nreadonly def\ncurrentdict end\ncurrentfile eexec\n`,
   );
   const out = new Uint8Array(head.length + body.length);
   out.set(head, 0);
