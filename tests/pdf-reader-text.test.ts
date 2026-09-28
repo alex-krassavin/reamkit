@@ -862,9 +862,10 @@ describe('the margins a page\u2019s words say it had', () => {
     const small = withMeasuredMargins(section, page, [[runAt(700, 10)]]);
     const large = withMeasuredMargins(section, page, [[runAt(700, 30)]]);
     // The same baseline in a bigger face starts higher up the page, so less
-    // paper is left above it.
-    expect((small?.margins?.top ?? 0) as number).toBeCloseTo(792 - 700 - 8, 3);
-    expect((large?.margins?.top ?? 0) as number).toBeCloseTo(792 - 700 - 24, 3);
+    // paper is left above it — as much as the exact box the line is set in
+    // reaches above its baseline: four fifths of a single-spaced line.
+    expect((small?.margins?.top ?? 0) as number).toBeCloseTo(792 - 700 - 9.6, 3);
+    expect((large?.margins?.top ?? 0) as number).toBeCloseTo(792 - 700 - 28.8, 3);
   });
 });
 

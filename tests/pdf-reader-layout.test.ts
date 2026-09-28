@@ -10,6 +10,7 @@ import { describe, expect, it } from 'vitest';
 import { buildDocxFromBody } from './fixtures/build-docx';
 import { Ream } from '@/core/converter/ream';
 import { PdfFile } from '@/pdf-reader/document';
+import { BASELINE_AT } from '@/pdf-reader/flow-build';
 import { reconstructByLayout } from '@/pdf-reader/layout';
 
 const FONTS = {
@@ -1090,6 +1091,67 @@ describe('heuristic layout reconstruction (E-PDF EP4)', () => {
     // no longer fits the measure it is set across.
     expect((section?.margins?.right as number) + (section?.margins?.left as number)).toBeLessThan(
       612 - 384,
+    );
+  });
+});
+
+describe('a flowing reading re-sets the page where the page set it', () => {
+  /** A one-page letter-size sheet drawn in Helvetica, whose metrics every reader knows. */
+  const helvetica = (content: string): Uint8Array =>
+    onePagePdf('/MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >>', content, [
+      '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+    ]);
+  const textOf = (p: { paragraph: { runs: ReadonlyArray<{ text: string }> } }): string =>
+    p.paragraph.runs.map((r) => r.text).join('');
+
+  it('stands its lines EXACTLY as far apart as the page stood them (§17.3.1.33)', () => {
+    // An invoice sets its 9pt lines 13.5 apart. Left to a reader's single
+    // spacing they closed up to the substitute face's own leading, and every
+    // block of the page rose a little further than the one above it.
+    const doc = reconstructByLayout(
+      PdfFile.parse(
+        helvetica(
+          [
+            'BT /F1 9 Tf 1 0 0 1 45 700 Tm (Date due) Tj 1 0 0 1 108 700 Tm (August 12, 2026) Tj ET',
+            'BT /F1 9 Tf 1 0 0 1 45 686.5 Tm (Date paid) Tj 1 0 0 1 108 686.5 Tm (August 12, 2026) Tj ET',
+            'BT /F1 9 Tf 1 0 0 1 45 673 Tm (Receipt) Tj 1 0 0 1 108 673 Tm (2411) Tj ET',
+          ].join('\n'),
+        ),
+      ),
+    ).doc;
+    const paras = paragraphs(doc);
+    expect(paras).toHaveLength(3);
+    for (const p of paras)
+      expect(p.paragraph.properties).toMatchObject({ spacingLineRule: 'exact' });
+    // Baseline to baseline: what the box above leaves below its baseline, the
+    // white put before the next, and how far down its own box it stands.
+    const [a, b] = paras.map((p) => p.paragraph.properties as Record<string, number | undefined>);
+    const pitch =
+      (1 - BASELINE_AT) * a!.spacingLine! + (b!.spacingBefore ?? 0) + BASELINE_AT * b!.spacingLine!;
+    expect(pitch).toBeCloseTo(13.5, 1);
+  });
+
+  it('begins the page’s text where the page began it, not at the top margin', () => {
+    // A Stripe invoice sets one blank at the very corner of the sheet and its
+    // title forty points under it. The margin is measured to the blank, and
+    // set against it the whole page rose by the difference.
+    const doc = reconstructByLayout(
+      PdfFile.parse(
+        helvetica(
+          [
+            'BT /F1 12 Tf 1 0 0 1 0 779 Tm ( ) Tj ET',
+            'BT /F1 18 Tf 1 0 0 1 30 744 Tm (Invoice) Tj ET',
+            'BT /F1 9 Tf 1 0 0 1 30 714 Tm (Invoice number) Tj ET',
+          ].join('\n'),
+        ),
+      ),
+    ).doc;
+    const title = paragraphs(doc).find((p) => textOf(p) === 'Invoice');
+    const props = title?.paragraph.properties as Record<string, number | undefined> | undefined;
+    const top = doc.section?.margins?.top as number;
+    expect(top + (props?.spacingBefore ?? 0) + BASELINE_AT * (props?.spacingLine ?? 0)).toBeCloseTo(
+      792 - 744,
+      1,
     );
   });
 });

@@ -754,15 +754,27 @@ function emitBody(
   sectPrByClosingIndex: ReadonlyMap<number, string>,
 ): void {
   let carried: Array<string> = [];
+  // The paragraph the drawings are anchored in is the first one's own: a mark
+  // the page drew where it stands comes with a carrier that takes no room, and
+  // written bare the carrier took the reader's default line — a blank line in
+  // the flow for every run of rules and fills an invoice draws.
+  let carrier: ParagraphProperties | undefined;
   const flush = (): void => {
-    if (carried.length > 0) out.push(`<w:p>${carried.join('')}</w:p>`);
+    if (carried.length > 0) out.push(`<w:p>${pPrWithSect(carrier ?? {})}${carried.join('')}</w:p>`);
     carried = [];
+    carrier = undefined;
   };
   blocks.forEach((el, idx) => {
     const closing = sectPrByClosingIndex.get(idx);
     const anchored =
       closing === undefined ? floatingDrawingRun(el, losses, state, scope) : undefined;
     if (anchored !== undefined) {
+      carrier ??=
+        el.kind === 'image'
+          ? el.image.paragraphProperties
+          : el.kind === 'shape'
+            ? el.shape.paragraphProperties
+            : undefined;
       carried.push(anchored);
       return;
     }
@@ -1674,7 +1686,10 @@ function pPrBody(p: ResolvedParagraphProperties): string {
       .join('');
     out.push(`<w:tabs>${stops}</w:tabs>`);
   }
-  if (p.bidi !== DEFAULT_PARA.bidi) out.push(toggle('w:bidi', p.bidi));
+  // A drawing's carrier and a band's lines come with RAW properties, where a
+  // direction nobody stated is absent — not the opposite of the default.
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+  if (p.bidi !== undefined && p.bidi !== DEFAULT_PARA.bidi) out.push(toggle('w:bidi', p.bidi));
   const spacing = spacingXml(p);
   if (spacing) out.push(spacing);
   const ind = indXml(p);

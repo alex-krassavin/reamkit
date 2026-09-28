@@ -101,7 +101,14 @@ export function paragraphFromRuns(
   outlineLevel?: number,
   placement?: Pick<
     ParagraphProperties,
-    'alignment' | 'spacingBefore' | 'indentLeft' | 'indentFirstLine' | 'tabs'
+    | 'alignment'
+    | 'spacingBefore'
+    | 'spacingLine'
+    | 'spacingLineRule'
+    | 'indentLeft'
+    | 'indentRight'
+    | 'indentFirstLine'
+    | 'tabs'
   >,
 ): BodyElement {
   const merged: Array<{
@@ -229,6 +236,25 @@ function sameMarkup(a: TextMarkup | undefined, b: TextMarkup | undefined): boole
 }
 
 /**
+ * The height of a line that carries nothing to read: one twip, the least
+ * §17.3.1.33 can state. Zero is not a height a writer states at all — it is
+ * read as "no line spacing given", and the reader's single spacing comes back.
+ */
+export const CARRIER_LINE_PT = pt(0.05);
+
+/**
+ * §17.3.1.33 — the paragraph a floating mark is anchored in, which takes no
+ * room: the mark stands where the page drew it and the line carrying it is on
+ * no page. Left at a reader's single spacing, every rule and fill an invoice
+ * draws was a blank line in the flow, and the text under it moved down a line
+ * for each.
+ */
+export const FLOAT_CARRIER: ParagraphProperties = {
+  spacingLine: CARRIER_LINE_PT,
+  spacingLineRule: 'exact',
+};
+
+/**
  * Store a {@link PdfImage}'s bytes (content-addressed dedup) and build the image
  * {@link BodyElement} that references them, sized in points from the placement
  * CTM. `alt` becomes the block's alt text when given.
@@ -277,7 +303,7 @@ export function imageBlock(
       // §20.1.8.4 `a:alphaModFix` — the page asked for the picture to be seen
       // through, and a format that can say so should say so.
       ...(image.alpha !== undefined ? { alpha: image.alpha } : {}),
-      paragraphProperties: {},
+      paragraphProperties: float ? FLOAT_CARRIER : {},
       ...(alt ? { altText: alt } : {}),
     },
   };
@@ -449,7 +475,7 @@ export function shapeBlock(
       geometry: { kind: 'custom', custom: { pathWidth: w, pathHeight: h, commands } },
       fill,
       ...(line ? { line } : {}),
-      paragraphProperties: {},
+      paragraphProperties: float ? FLOAT_CARRIER : {},
     },
   };
 }
@@ -519,11 +545,32 @@ const SLACK = 0.01;
 /** How much of the sheet a margin down the page may take. */
 const DEEPEST_MARGIN = 0.5;
 
-/** How far a face's ascender stands above its baseline, as a fraction of the size. */
-const ASCENDER = 0.8;
+/**
+ * §17.3.1.33 — where the baseline of an EXACT line stands in its box, from the
+ * top. LibreOffice puts it at four fifths of the height; Word at the height
+ * less the face's descent, which for the faces documents use is within a tenth
+ * of a line of the same place.
+ */
+export const BASELINE_AT = 0.8;
 
-/** And its descender below — the two together are a little over one em. */
-const DESCENDER = 0.22;
+/** A line's box where no pitch was measured: the ordinary single spacing, in ems. */
+export const NATURAL_LINE_EM = 1.2;
+
+/**
+ * How far above its baseline the first line's BOX reaches, as a fraction of the
+ * size — which is what the top margin has to leave room for. The lines are set
+ * in exact boxes (see `groupIntoParagraphs`), so this is where the box's top
+ * stands, not where a face's ascender happens to.
+ */
+const ASCENDER = BASELINE_AT * NATURAL_LINE_EM;
+
+/**
+ * And how far below its baseline the last line's box reaches. A box set half
+ * as deep again as its size reaches three tenths of it down; measured to a
+ * face's descender instead, bug1337429.pdf's last line did not fit the sheet
+ * it was drawn on and went to a second one.
+ */
+const DESCENDER = (1 - BASELINE_AT) * 1.5;
 
 export function withMeasuredMargins(
   section: SectionProperties | undefined,

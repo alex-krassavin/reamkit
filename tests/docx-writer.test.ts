@@ -7,6 +7,7 @@ import { Ream } from '@/core/converter/ream';
 import { OpcPackage } from '@/core/opc';
 import { writeDocx } from '@/word/docx-writer';
 import { readDocx } from '@/word/docx-reader';
+import { FLOAT_CARRIER, shapeBlock } from '@/pdf-reader/flow-build';
 
 const decode = (b: Uint8Array) => new TextDecoder().decode(b);
 
@@ -1035,5 +1036,37 @@ describe('a document written for another program to read', () => {
     expect(decode(table!)).toContain(
       '<w:font w:name="Inter"><w:family w:val="swiss"/><w:pitch w:val="variable"/></w:font>',
     );
+  });
+
+  it('anchors a floating mark in a paragraph that takes no room (§17.3.1.33)', () => {
+    // Every rule and fill a page draws is anchored where it was drawn. The
+    // paragraph carrying it is on no page, and written bare it took a reader's
+    // default line: a blank line in the flow for each.
+    const rule = shapeBlock(
+      {
+        orderKey: [0],
+        segs: [
+          { op: 'move', x: 30, y: 700 },
+          { op: 'line', x: 582, y: 700 },
+          { op: 'line', x: 582, y: 701 },
+          { op: 'line', x: 30, y: 701 },
+          { op: 'close' },
+        ],
+        minX: 30,
+        minY: 700,
+        maxX: 582,
+        maxY: 701,
+        fillHex: 'EBEBEB',
+      },
+      { left: 0, top: 792 },
+      0,
+      true,
+    );
+    const { doc } = readDocx(buildDocxFromBody('<w:p><w:r><w:t>after</w:t></w:r></w:p>'));
+    const xml = bodyOf(writeDocx({ ...doc, body: [rule, ...doc.body] }).bytes);
+    expect(xml).toMatch(
+      /<w:p><w:pPr><w:spacing w:line="1" w:lineRule="exact"\/><\/w:pPr><w:r><w:drawing>/u,
+    );
+    expect(FLOAT_CARRIER.spacingLineRule).toBe('exact');
   });
 });

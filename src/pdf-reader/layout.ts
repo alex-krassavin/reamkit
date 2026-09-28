@@ -11,6 +11,9 @@
 // a guarantee).
 
 import {
+  BASELINE_AT,
+  CARRIER_LINE_PT,
+  NATURAL_LINE_EM,
   buildFlowDoc,
   dedupeLosses,
   imageBlock,
@@ -183,6 +186,9 @@ export function reconstructByLayout(
   }> = [];
   let sectionFrom = 0;
   let lastSize = '';
+  // The first paragraph each page's text begins with: where in the body it is,
+  // and the baseline and box the page set its first line at.
+  const leads: Array<{ page: number; at: number; baseline: number; lineHeight: number }> = [];
   // §17.6.4 — the columns the pages are SET in, which change where a page's
   // gutters do: a paper's title stands over the two columns of its body, and a
   // section is what carries a column setup.
@@ -357,6 +363,8 @@ export function reconstructByLayout(
               : {}),
             ...(para.alignment !== undefined ? { alignment: para.alignment } : {}),
             ...(para.spacingBefore !== undefined ? { spacingBefore: pt(para.spacingBefore) } : {}),
+            spacingLine: pt(para.lineHeight),
+            spacingLineRule: 'exact',
             ...(para.indentLeft !== undefined ? { indentLeft: pt(para.indentLeft) } : {}),
             ...(para.indentFirstLine !== undefined
               ? { indentFirstLine: pt(para.indentFirstLine) }
@@ -520,7 +528,11 @@ export function reconstructByLayout(
       body.push({
         kind: 'paragraph',
         paragraph: {
-          properties: { pageBreakBefore: true, spacingLine: pt(0), spacingLineRule: 'exact' },
+          properties: {
+            pageBreakBefore: true,
+            spacingLine: CARRIER_LINE_PT,
+            spacingLineRule: 'exact',
+          },
           runs: [],
         },
       });
@@ -541,7 +553,16 @@ export function reconstructByLayout(
     const columnsHere =
       ruledIntoColumns || !proseColumns(runs, gutters, textEdges) ? 1 : gutters.length + 1;
     const spacePt = columnsHere > 1 ? median(gutters.map((g) => g.to - g.from)) : 0;
+    let led = false;
     for (const block of blocks) {
+      if (!led && mode !== 'positional') {
+        const lead = leadingLine(block.el);
+        if (lead !== undefined)
+          leads.push({ page: i, at: body.length, baseline: block.top, lineHeight: lead });
+        // A table or a line of text is where the page's text begins; a mark
+        // anchored to the page takes no room and does not.
+        led = lead !== undefined || block.el.kind === 'table' || block.el.kind === 'paragraph';
+      }
       const count = block.col === SPANNING_COLUMN ? 1 : columnsHere;
       if (count !== curColumns) {
         sectionEnds.push({
@@ -598,6 +619,26 @@ export function reconstructByLayout(
           return [{ properties, endIndex: end.at }];
         })
       : [];
+  // §17.3.1.33 — a page's text begins where the page began it, not against the
+  // top margin: the margin is measured to the highest ink, and an invoice
+  // paints a band across the top of the sheet thirty points above its title.
+  // Set against the margin the whole page rose by that much.
+  for (const lead of leads) {
+    const end = sectionEnds.find((e) => e.at > lead.at);
+    const top = (end ? setUp(end.from, end.to) : setUp(0, pages.length))?.margins?.top;
+    const page = shown[lead.page];
+    const el = body[lead.at];
+    if (top === undefined || page === undefined || el?.kind !== 'paragraph') continue;
+    const before = page.height - top - lead.baseline - BASELINE_AT * lead.lineHeight;
+    if (before <= SPACING_NOISE_PT) continue;
+    body[lead.at] = {
+      ...el,
+      paragraph: {
+        ...el.paragraph,
+        properties: { ...el.paragraph.properties, spacingBefore: pt(before) },
+      },
+    };
+  }
   // The band is built from the page that showed it first, and referenced by
   // every section: the foot runs through the document, not through a section.
   const stepped0 = stepsBetweenWords(allRuns[0] ?? []);
@@ -1580,6 +1621,7 @@ function groupIntoParagraphs(
   indentLeft?: number;
   indentFirstLine?: number;
   spacingBefore?: number;
+  lineHeight: number;
   stops?: Array<number>;
 }> {
   const groups: Array<Array<Line>> = [];
@@ -1617,21 +1659,42 @@ function groupIntoParagraphs(
   // whatever else is on the page.
   const starts = lines.map((l) => l.x).sort((a, b) => a - b);
   const columnLeft = starts[Math.floor(starts.length * COLUMN_LEFT_QUANTILE)] ?? 0;
+  const heights: Array<number> = [];
   return groups.map((g, i) => {
     const first = g[0]!;
     const fontSize = Math.max(...g.map((l) => l.fontSize));
-    // The gap that OPENED this paragraph, less the line it would have taken
-    // anyway, is the space its author put before it. Under a third of a line it
-    // is just leading, and a paragraph is not spaced by rounding error.
+    // §17.3.1.33 — the lines stand EXACTLY as far apart as the page stood them.
+    // Left to the reader's single spacing they stand as far apart as the face
+    // it substitutes says: an invoice sets its 9pt lines 13.5 apart, and in
+    // LibreOffice's sans they closed up to 10.4 — every block of the page rose
+    // a little more than the one above it, and the rules drawn between them
+    // were left behind on the page.
+    const inner = g.slice(1).map((l, k) => g[k]!.y - l.y);
+    let lineHeight = Math.min(
+      Math.max(inner.length > 0 ? median(inner) : fontSize * NATURAL_LINE_EM, fontSize),
+      fontSize * TALLEST_LINE_EM,
+    );
+    const above = heights[i - 1];
+    const gap = gaps[i] ?? 0;
+    // A line alone has no pitch of its own, and takes no taller a box than the
+    // gap above it leaves: a box the gap cannot hold pushes it down.
+    if (inner.length === 0 && above !== undefined) {
+      const room = (gap - (1 - BASELINE_AT) * above) / BASELINE_AT;
+      if (room < lineHeight) lineHeight = Math.max(room, fontSize);
+    }
+    heights.push(lineHeight);
+    // The gap that OPENED this paragraph, less the boxes the two lines stand
+    // in, is the space its author put before it.
     //
     // Bounded by a third of the sheet, not by three lines: the gap is MEASURED,
     // and three lines is a guess overriding a measurement.
     // annotation-square-circle-without-appearance.pdf sets its two labels two
     // hundred points apart, each over its own pair of drawings, and capped at
     // thirty the second label came back inside the first drawing.
-    const opened = (gaps[i] ?? 0) - fontSize * 1.2;
+    const opened =
+      above !== undefined ? gap - (1 - BASELINE_AT) * above - BASELINE_AT * lineHeight : 0;
     const most = pageHeight > 0 ? pageHeight / 3 : fontSize * 3;
-    const spacingBefore = opened > fontSize * 0.3 ? Math.min(opened, most) : undefined;
+    const spacingBefore = opened > SPACING_NOISE_PT ? Math.min(opened, most) : undefined;
     // §17.3.1.38 — the stops the page set the line out on, measured from where
     // the column begins. A tabbed line ends its paragraph, so these are one
     // line's stops and not a merge of several.
@@ -1646,11 +1709,30 @@ function groupIntoParagraphs(
       // the last column of a table came out a point wide.
       ...(stops.length > 0 ? { stops: stops.map((x) => x - (column?.left ?? columnLeft)) } : {}),
       ...(spacingBefore !== undefined ? { spacingBefore } : {}),
+      lineHeight,
       ...alignmentOf(g, column),
       ...indentOf(g, columnLeft, alignmentOf(g, column).alignment),
     };
   });
 }
+
+/**
+ * The exact box a paragraph's first line stands in, where the paragraph is a
+ * line of text set to one (see {@link groupIntoParagraphs}).
+ */
+function leadingLine(el: BodyElement): number | undefined {
+  if (el.kind !== 'paragraph' || el.paragraph.runs.length === 0) return undefined;
+  const { spacingLine, spacingLineRule } = el.paragraph.properties;
+  return spacingLineRule === 'exact' && spacingLine !== undefined && spacingLine > 0
+    ? spacingLine
+    : undefined;
+}
+
+/** The tallest box a line is given, in ems — past it the gap is paragraph spacing. */
+const TALLEST_LINE_EM = 3;
+
+/** Spacing under this is the rounding of the page's own numbers, not white put there. */
+const SPACING_NOISE_PT = 0.25;
 
 /**
  * A paragraph's lines as one run of spans, joined the way the page broke them.
@@ -2388,6 +2470,7 @@ function tabbedRows(
     fontSize: number;
     top: number;
     spacingBefore?: number;
+    lineHeight: number;
   }>,
   measure: { left: number; right: number } | undefined,
 ): Map<number, BodyElement | null> {
@@ -2428,23 +2511,27 @@ function tabbedRows(
           // spacing of its own to carry it, and glued to the block above it the
           // invoice's item table came up against the address over it.
           const prev = rows[r - 1];
-          // The white a row keeps from the one above it, less the line it would
-          // have taken anyway — the same measure a paragraph's spacing is read
-          // by. Stated as the ROW's height instead, LibreOffice set the rows
-          // solid and an invoice's heading sat on the item under it.
-          const pitch = prev ? prev.top - row.top - row.fontSize * 1.2 : 0;
-          const opening =
-            r === 0 ? row.spacingBefore : pitch > row.fontSize * 0.3 ? pitch : undefined;
+          // The white a row keeps from the one above it, less the boxes the two
+          // lines stand in — the same measure a paragraph's spacing is read by.
+          // Stated as the ROW's height instead, LibreOffice set the rows solid
+          // and an invoice's heading sat on the item under it.
+          const pitch = prev
+            ? prev.top -
+              row.top -
+              (1 - BASELINE_AT) * prev.lineHeight -
+              BASELINE_AT * row.lineHeight
+            : 0;
+          const opening = r === 0 ? row.spacingBefore : pitch > 0 ? pitch : undefined;
           return {
             properties: {},
             cells: splitAtTabs(row.spans).map((cell) => ({
               properties: {},
               content: [
-                paragraphFromRuns(
-                  cell,
-                  undefined,
-                  opening !== undefined ? { spacingBefore: pt(opening) } : {},
-                ),
+                paragraphFromRuns(cell, undefined, {
+                  ...(opening !== undefined ? { spacingBefore: pt(opening) } : {}),
+                  spacingLine: pt(row.lineHeight),
+                  spacingLineRule: 'exact',
+                }),
               ],
             })),
           };
@@ -2521,12 +2608,21 @@ function ruleBorders(
       colorHex: v.strokeHex ?? v.fillHex ?? '000000',
     };
     const { paragraph } = side.block.el;
+    // A rule takes the room it is drawn in (§17.3.1.24): stood over a line,
+    // it pushes the line down by its own width, and five rules over five
+    // totals put the last one four points below where the page has it.
+    const before = paragraph.properties.spacingBefore;
+    const room =
+      side.edge === 'top' && before !== undefined
+        ? { spacingBefore: pt(Math.max(0, before - border.width)) }
+        : {};
     side.block.el = {
       kind: 'paragraph',
       paragraph: {
         ...paragraph,
         properties: {
           ...paragraph.properties,
+          ...room,
           borders: { ...paragraph.properties.borders, [side.edge]: border },
         },
       },
