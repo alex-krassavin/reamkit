@@ -571,6 +571,51 @@ describe('a running foot is a foot, not a paragraph (§17.6.13)', () => {
     expect(kept?.some((r) => r.field === 'PAGE')).toBe(false);
   });
 
+  /** A sheet of eight long lines, and two that open a chapter with its heading alone. */
+  const chapters = (footed = true): Uint8Array => {
+    const foot = (n: number): string =>
+      footed ? `BT /F0 10 Tf 1 0 0 1 200 20 Tm (page ${String(n)} / 3) Tj ET` : '';
+    const body = Array.from(
+      { length: 8 },
+      (_, i) =>
+        `BT /F0 10 Tf 1 0 0 1 40 ${String(360 - i * 14)} Tm (body line ${String(i)} runs on across the whole of the sheet) Tj ET`,
+    ).join('\n');
+    const heading = 'BT /F0 16 Tf 1 0 0 1 40 360 Tm (Chapter) Tj ET';
+    return pages([`${body}\n${foot(1)}`, `${heading}\n${foot(2)}`, `${heading}\n${foot(3)}`]);
+  };
+
+  it('finds the foot under a sheet of one line', () => {
+    // A chapter opens on a sheet of its own: its heading, and the page number
+    // under it. Asked for more lines than that, basicapi.pdf's "page 2 / 3"
+    // stayed in the body and came back half way up the sheet.
+    const doc = reconstructByLayout(PdfFile.parse(chapters())).doc;
+    const body = doc.body
+      .flatMap((b) => (b.kind === 'paragraph' ? b.paragraph.runs.map((r) => r.text) : []))
+      .join(' ');
+    expect(body).toContain('Chapter');
+    expect(body).not.toContain('page');
+    expect(doc.section?.footers).toHaveLength(1);
+  });
+
+  it('keeps the bottom margin down to the foot, and the foot where the page set it', () => {
+    // The foot stands IN the bottom margin, so the text block may reach down
+    // to the white above it however early the sheets at hand end. Measured to
+    // where the three sheets' text stops, the margin came out at half the paper.
+    const margins = reconstructByLayout(PdfFile.parse(chapters())).doc.section?.margins;
+    // The foot's box starts three tenths of its size under the baseline at 20.
+    expect(margins?.footer).toBeCloseTo(17, 0);
+    // …and the text may come down to two ems above its top (20 + 9.6 + 20).
+    expect(margins?.bottom).toBeLessThan(50);
+  });
+
+  it('takes the right margin from the sheets full enough to reach it', () => {
+    // A sheet of one heading says where the heading ends. Two of them voted
+    // the right margin in to a third of the paper, and the first sheet's long
+    // lines could not be set in what was left.
+    const margins = reconstructByLayout(PdfFile.parse(chapters(false))).doc.section?.margins;
+    expect(margins?.right).toBeLessThan(60);
+  });
+
   it('leaves a last paragraph where the page put it', () => {
     // One page proves nothing, and a page whose last line is a line's gap from
     // the one above it is a paragraph, not a foot.

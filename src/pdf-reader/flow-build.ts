@@ -525,6 +525,33 @@ const SLACK = 0.01;
 /** How much of the sheet a margin down the page may take. */
 const DEEPEST_MARGIN = 0.5;
 
+/** How many lines a sheet must hold before where they end says where its measure does. */
+const MEASURE_LINES = 3;
+
+/**
+ * How many lines a sheet's runs stand on: baselines further apart than half
+ * the size of the type on them.
+ */
+function linesOf(runs: ReadonlyArray<TextRun>): number {
+  const ys = runs
+    .filter((r) => r.text.trim() !== '')
+    .map((r) => ({ y: r.y, size: r.fontSizePt || 10 }))
+    .sort((a, b) => b.y - a.y);
+  let count = 0;
+  let last: { y: number; size: number } | undefined;
+  for (const at of ys) {
+    if (last === undefined || last.y - at.y > Math.max(last.size, at.size) / 2) count++;
+    last = at;
+  }
+  return count;
+}
+
+/**
+ * The white, in ems of the text, a running foot keeps above it — which is
+ * what the reader asked of it before it took the line for a foot at all.
+ */
+const FOOT_CLEAR_EM = 2;
+
 /**
  * §17.3.1.33 — where the baseline of an EXACT line stands in its box, from the
  * top. LibreOffice puts it at four fifths of the height; Word at the height
@@ -610,6 +637,8 @@ export function tooSmallToRead(run: TextRun, textSize: number): boolean {
  * @param shown    Each page as it is shown, for its own width and height.
  * @param pageRuns Each page's runs, already placed on the shown page.
  * @param pageMarks Each page's pictures, which the measure has to hold.
+ * @param foot     The running foot lifted off the pages, as the first page
+ *                 showed it — the band the text block stands above.
  * @returns The section with measured margins, or `section` when nothing is
  *          measurable.
  */
@@ -620,12 +649,13 @@ export function withMeasuredMargins(
   pageMarks: ReadonlyArray<
     ReadonlyArray<{ x: number; y: number; widthPt: number; heightPt: number }>
   > = [],
+  foot: ReadonlyArray<TextRun> = [],
 ): SectionProperties | undefined {
   if (!section?.pageSize) return section;
   const width = section.pageSize.width as number;
   const height = section.pageSize.height as number;
   const lefts: Array<number> = [];
-  const rights: Array<number> = [];
+  const rights: Array<{ value: number; full: boolean }> = [];
   const tops: Array<number> = [];
   const bottoms: Array<number> = [];
   const textSize = textSizeOf(pageRuns);
@@ -677,6 +707,7 @@ export function withMeasuredMargins(
     // business: bug1883609.pdf heads its form with a banner that runs wider
     // than the words under it, and measured to the banner every line of the
     // form moved out to meet it.
+    const textEnd = maxX;
     for (const mark of pageMarks[i] ?? []) {
       if (!Number.isFinite(mark.x) || !Number.isFinite(mark.y)) continue;
       maxX = Math.max(maxX, mark.x + mark.widthPt);
@@ -684,7 +715,15 @@ export function withMeasuredMargins(
     }
     if (!Number.isFinite(minX) || !Number.isFinite(minY)) return;
     lefts.push(minX);
-    rights.push(page.width - maxX);
+    rights.push({
+      value: page.width - maxX,
+      // A sheet of a line or two says where THOSE lines end, not where the
+      // measure does: a chapter opens on a page of its own, and basicapi.pdf's
+      // two headings of a sheet each voted the right margin in to a third of
+      // the paper, where its contents line — 504 points across — could not be
+      // set. What a sheet's pictures reach it still says.
+      full: linesOf(runs) >= MEASURE_LINES || maxX > textEnd,
+    });
     // Runs carry a BASELINE, and a margin is to the top of the LINE.
     //
     // Measured to the baseline, every converted PDF came back a whole ascender
@@ -709,6 +748,17 @@ export function withMeasuredMargins(
   // pulled ninety points up, into the panel it stands below.
   const clamp = (v: number, span: number, most = 1 / 3): Pt =>
     pt(Math.max(0, Math.min(v, span * most)));
+  // §17.6.13 — a running foot stands IN the bottom margin, so the margin
+  // reaches no higher than the white above it: the text block may come down
+  // to there on any page, whether or not the pages at hand fill it. A chapter
+  // opens on a sheet of its own, and measured to where basicapi.pdf's three
+  // short sheets end, its bottom margin came out at half the paper. And the
+  // band is set where the page set it: the foot's distance from the edge of
+  // the sheet is its own.
+  const inked = foot.filter((r) => r.text.trim() !== '');
+  const footTop = Math.max(...inked.map((r) => r.y + r.fontSizePt * ASCENDER));
+  const footBottom = Math.min(...inked.map((r) => r.y - r.fontSizePt * DESCENDER));
+  const floor = inked.length > 0 ? footTop + textSize * FOOT_CLEAR_EM : Infinity;
   return {
     ...section,
     margins: {
@@ -725,7 +775,13 @@ export function withMeasuredMargins(
       // as wide as the widest line wraps that line's last word onto the next.
       // basicapi.pdf's contents line runs 504.5pt across a 504.5pt measure, and
       // its page number came back at the head of the line below.
-      right: clamp(median(rights) - width * SLACK, width),
+      right: clamp(
+        median(
+          (rights.some((r) => r.full) ? rights.filter((r) => r.full) : rights).map((r) => r.value),
+        ) -
+          width * SLACK,
+        width,
+      ),
       // Down the page the TIGHTEST page decides, not the middle one. A margin
       // is a wall the text may not cross, and the pages differ: the last one
       // ends early, and taking the middle of two puts the wall above the line
@@ -737,7 +793,8 @@ export function withMeasuredMargins(
       // have, and re-set in substitutes it cannot come out shorter everywhere.
       // A measure exactly as deep as the text block drops its last line onto a
       // sheet of its own.
-      bottom: clamp(Math.min(...bottoms) - height * SLACK, height, DEEPEST_MARGIN),
+      bottom: clamp(Math.min(...bottoms, floor) - height * SLACK, height, DEEPEST_MARGIN),
+      ...(inked.length > 0 ? { footer: clamp(footBottom, height, DEEPEST_MARGIN) } : {}),
     },
   };
 }

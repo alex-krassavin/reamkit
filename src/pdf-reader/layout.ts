@@ -771,6 +771,7 @@ export function reconstructByLayout(
           shown.slice(from, to),
           pageRuns.slice(from, to),
           pageMarks.slice(from, to),
+          foot?.band,
         );
   };
   sectionEnds.push({
@@ -2326,7 +2327,10 @@ function edgeLine(
   pageHeight: number,
   where: 'head' | 'foot',
 ): { y: number; runs: ReadonlyArray<TextRun> } | undefined {
-  if (runs.length < 4 || pageHeight <= 0) return undefined;
+  // The head is asked for a page of text under it, as it always was: the
+  // lines that OPEN a page are far more often the text itself (see below).
+  const head = where === 'head';
+  if (runs.length < (head ? HEAD_RUNS : 1) || pageHeight <= 0) return undefined;
   const fontSize = median(runs.map((r) => r.fontSizePt).filter((s) => s > 0)) || 10;
   const rows = rowsOf(runs, fontSize);
   if (rows.length === 0) return undefined;
@@ -2345,18 +2349,18 @@ function edgeLine(
   // for four rows of it the reader found none, could not confirm the foot
   // repeated, and flowed page one's "Page 1 of 2" into the body — where it came
   // back at the TOP of the second sheet.
-  if (rows.length < 4) {
-    // Blanks are not ink here either: both invoices set a space in the top
-    // corner of every sheet, and counted as a row it stood outside the band and
-    // said the page held something other than its foot.
-    const inked = rows.filter((row) => row.some((r) => r.text.trim() !== ''));
-    const inBand =
-      inked.length > 0 &&
-      inked.every((row) =>
-        where === 'foot'
-          ? edgeY(row) <= pageHeight * FOOT_BAND
-          : edgeY(row) >= pageHeight * (1 - FOOT_BAND),
-      );
+  // Blanks are not ink here either: both invoices set a space in the top
+  // corner of every sheet, and counted as a row it stood outside the band and
+  // said the page held something other than its foot.
+  const inked = rows.filter((row) => row.some((r) => r.text.trim() !== ''));
+  const inBand =
+    inked.length > 0 &&
+    inked.every((row) =>
+      where === 'foot'
+        ? edgeY(row) <= pageHeight * FOOT_BAND
+        : edgeY(row) >= pageHeight * (1 - FOOT_BAND),
+    );
+  if (rows.length < 4 && (inBand || head)) {
     const all = inked.flat();
     const text = all
       .map((r) => r.text)
@@ -2371,8 +2375,15 @@ function edgeLine(
   // Only the foot grows: the lines that OPEN a page are far more often the
   // text itself, and asked for a head of up to three ZapfDingbats.pdf gave up
   // its red note, its running head and the first line of its title.
-  const most = where === 'foot' ? FOOT_ROWS : 1;
-  for (let i = 0; i < Math.min(most, rows.length - 2); i++) {
+  const most = head ? 1 : FOOT_ROWS;
+  // A foot needs one line of text above it to stand clear of, and no more: a
+  // chapter opens on a sheet of its own, its heading with the page number
+  // under it, and asked for more basicapi.pdf's "page 2 / 3" stayed in the
+  // body and came back half way up the sheet. The head keeps asking for more —
+  // a chapter's heading, alone at the top of every sheet, is not the
+  // document's running head.
+  const above = head ? 2 : 1;
+  for (let i = 0; i < Math.min(most, rows.length - above); i++) {
     const row = at(i);
     // In the margin, not in the text: an eighth of the sheet at its own end.
     const edge = edgeY(row);
@@ -2398,6 +2409,9 @@ const FOOT_GAP_EM = 2;
 
 /** How many lines a running foot may hold before it is a paragraph. */
 const FOOT_ROWS = 3;
+
+/** How many runs a page must hold before its first line is asked whether it is a running head. */
+const HEAD_RUNS = 4;
 
 /** How far up the sheet a running foot may sit. */
 const FOOT_BAND = 0.12;
