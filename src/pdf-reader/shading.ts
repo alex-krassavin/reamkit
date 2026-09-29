@@ -466,12 +466,23 @@ export function buildAlphaMap(file: PdfFile, resources: PdfDict | undefined): Ma
     const masked = statesMask
       ? file.resolve(state.get('SMask') ?? PDF_NULL) instanceof Map
       : undefined;
-    if (alpha === undefined && mode === undefined && !statesMask) continue;
+    // §8.4.5 `/LW` and `/D` — the pen, which a state may set as `w` and `d` do.
+    const lw = file.resolve(state.get('LW') ?? PDF_NULL);
+    const lineWidth = typeof lw === 'number' && lw >= 0 ? lw : undefined;
+    const d = file.resolve(state.get('D') ?? PDF_NULL);
+    const dash = Array.isArray(d) ? dashLengths(file.resolve(d[0] ?? PDF_NULL)) : undefined;
+    const lc = file.resolve(state.get('LC') ?? PDF_NULL);
+    const lineCap = lc === 0 || lc === 1 || lc === 2 ? lc : undefined;
+    const statesPen = lineWidth !== undefined || dash !== undefined || lineCap !== undefined;
+    if (alpha === undefined && mode === undefined && !statesMask && !statesPen) continue;
     out.set(name, {
       ...(alpha !== undefined ? { alpha } : {}),
       ...(mode !== undefined ? { statesBlend: true, darkens } : {}),
       ...(blend !== undefined ? { blend } : {}),
       ...(masked !== undefined ? { masked } : {}),
+      ...(lineWidth !== undefined ? { lineWidth } : {}),
+      ...(dash !== undefined ? { dash } : {}),
+      ...(lineCap !== undefined ? { lineCap } : {}),
     });
   }
   return out;
@@ -501,6 +512,27 @@ export interface GsPaint {
    * `false` where the state names `/None`, which takes a mask off.
    */
   readonly masked?: boolean;
+  /** §8.4.5 `/LW` — the line width, in user space. */
+  readonly lineWidth?: number;
+  /** §8.4.5 `/D` — the dash pattern's lengths, in user space; empty is solid. */
+  readonly dash?: ReadonlyArray<number>;
+  /** §8.4.5 `/LC` — the line cap: 0 butt, 1 round, 2 projecting square. */
+  readonly lineCap?: number;
+}
+
+/**
+ * §8.4.3.6 — a dash array as a stroke can use it: lengths that are numbers and
+ * not negative, and none at all where every one is zero, which draws nothing
+ * and is solid by the spec's own reading.
+ *
+ * @param value The array, as the file states it.
+ * @returns The lengths, or an empty array for a solid line.
+ */
+export function dashLengths(value: unknown): ReadonlyArray<number> {
+  if (!Array.isArray(value)) return [];
+  const lengths = value.filter((n): n is number => typeof n === 'number' && n >= 0);
+  if (lengths.length !== value.length || lengths.every((n) => n === 0)) return [];
+  return lengths;
 }
 
 /**

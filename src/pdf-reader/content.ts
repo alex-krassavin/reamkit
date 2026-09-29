@@ -10,7 +10,7 @@
 // font falls back to Latin-1 with a half-em advance so text still surfaces.
 
 import { Lexer } from './lexer';
-import { cmykHex, grayHex, rgbHex, spaceColor } from './shading';
+import { cmykHex, dashLengths, grayHex, rgbHex, spaceColor } from './shading';
 import type { ColorSpaceInfo, GsPaint } from './shading';
 import type { TextMarkup } from './annot-draw';
 import type { ShapeGradient } from '@/core/vector';
@@ -328,6 +328,10 @@ export interface VectorPlacement {
   readonly strokeHex?: string;
   /** Stroke width in page-space points — EP11. */
   readonly lineWidth?: number;
+  /** §8.4.3.6 — the stroke's dash lengths in page-space points, where it is dashed. */
+  readonly dash?: ReadonlyArray<number>;
+  /** §8.4.3.3 — the stroke's cap, where it is not the butt cap every line starts with. */
+  readonly cap?: 'round' | 'square';
   readonly mcid?: number;
 }
 
@@ -460,6 +464,8 @@ interface TextState {
   fillColor: string; // current non-stroking colour (6-hex), graphics state (EP10)
   strokeColor: string; // current stroking colour (6-hex), graphics state (EP11)
   lineWidth: number; // current line width in user-space units (EP11)
+  dash: ReadonlyArray<number>; // §8.4.3.6 current dash lengths, user space; empty is solid
+  lineCap: number; // §8.4.3.3 0 butt, 1 round, 2 projecting square
   fillGradient: ShapeGradient | undefined; // current non-stroking shading pattern (EP16c)
   fillPattern: string | undefined; // §8.7.3 non-stroking TILING pattern resource name
   fillAlpha: number; // §11.6.4.4 `/ca` — how opaque the non-stroking paint is
@@ -486,6 +492,8 @@ function initialState(): TextState {
     fillColor: '000000',
     strokeColor: '000000',
     lineWidth: 1, // §8.4.3.2 default line width
+    dash: [], // §8.4.3.6 a solid line
+    lineCap: 0, // §8.4.3.3 butt
     fillGradient: undefined,
     fillPattern: undefined,
     fillAlpha: 1,
@@ -653,6 +661,12 @@ export function interpretContent(
     const scale = Math.sqrt(Math.abs(m[0] * m[3] - m[1] * m[2])) || 1;
     return state.lineWidth * scale;
   };
+  // §8.4.3.6 — the dash lengths in page space, scaled as the width is.
+  const ctmDash = (): ReadonlyArray<number> => {
+    const m = state.ctm;
+    const scale = Math.sqrt(Math.abs(m[0] * m[3] - m[1] * m[2])) || 1;
+    return state.dash.map((n) => n * scale);
+  };
   // Emit the current path as a painted vector (§8.5.3): filled, stroked, or both.
   // `n` and clip operators paint nothing — they pass fill=stroke=false to clear.
   const paintPath = (fill: boolean, stroke: boolean): void => {
@@ -670,6 +684,9 @@ export function interpretContent(
         ...(state.softMask ? { masked: true } : {}),
         ...(fill && state.fillGradient ? { gradient: state.fillGradient } : {}),
         ...(stroke ? { strokeHex: state.strokeColor, lineWidth: ctmLineWidth() } : {}),
+        ...(stroke && state.dash.length > 0 ? { dash: ctmDash() } : {}),
+        ...(stroke && state.lineCap === 1 ? { cap: 'round' as const } : {}),
+        ...(stroke && state.lineCap === 2 ? { cap: 'square' as const } : {}),
         ...(mcid !== undefined ? { mcid } : {}),
       });
     }
@@ -1047,6 +1064,17 @@ export function interpretContent(
       case 'w':
         state.lineWidth = num(0); // §8.4.3.2 line width (user space)
         break;
+      case 'd':
+        // §8.4.3.6 — the dash pattern: its lengths and a phase. The phase is
+        // where along the pattern the line starts, which no .docx line states.
+        state.dash = dashLengths(operands[0]);
+        break;
+      case 'J': {
+        // §8.4.3.3 — the line cap.
+        const cap = num(0);
+        if (cap === 0 || cap === 1 || cap === 2) state.lineCap = cap;
+        break;
+      }
       // §8.5.2 path construction.
       case 'm':
         moveTo(num(0), num(1));
@@ -1139,6 +1167,9 @@ export function interpretContent(
             state.blendMode = paint.blend;
           }
           if (paint.masked !== undefined) state.softMask = paint.masked;
+          if (paint.lineWidth !== undefined) state.lineWidth = paint.lineWidth;
+          if (paint.dash !== undefined) state.dash = paint.dash;
+          if (paint.lineCap !== undefined) state.lineCap = paint.lineCap;
         }
         break;
       }

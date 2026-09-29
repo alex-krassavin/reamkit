@@ -692,6 +692,73 @@ describe('the pen is as wide as the page says (§8.4.3.2)', () => {
   });
 });
 
+describe('a dashed pen (§8.4.3.6)', () => {
+  const stroke = (stream: string) =>
+    interpretContent(new TextEncoder().encode(stream), NO_FONTS).vectors[0];
+  const lineOf = (v: NonNullable<ReturnType<typeof stroke>>) => {
+    const el = shapeBlock({
+      orderKey: [0],
+      segs: v.segs,
+      strokeHex: '000000',
+      ...(v.lineWidth !== undefined ? { lineWidth: v.lineWidth } : {}),
+      ...(v.dash !== undefined ? { dash: v.dash } : {}),
+      ...(v.cap !== undefined ? { cap: v.cap } : {}),
+      minX: 0,
+      minY: 0,
+      maxX: 100,
+      maxY: 0,
+    });
+    return el.kind === 'shape' ? el.shape.line : undefined;
+  };
+
+  it('keeps the pattern the page dashes its line with, in the page’s space', () => {
+    // close-path-bug.pdf draws a four-point line four on, six off, and read
+    // without its pattern it came back solid.
+    const v = stroke('2 0 0 2 0 0 cm 2 w [2 3] 0 d 0 0 m 100 0 l S');
+    expect(v?.dash).toEqual([4, 6]);
+    // …as multiples of the pen, which is how DrawingML states one.
+    expect(lineOf(v!)?.customDash).toEqual([1, 1.5]);
+    // `[] 0 d` is solid again, and so is a pattern of nothing but zeros.
+    expect(stroke('[2 3] 0 d [] 0 d 0 0 m 100 0 l S')?.dash).toBeUndefined();
+    expect(stroke('[0 0] 0 d 0 0 m 100 0 l S')?.dash).toBeUndefined();
+  });
+
+  it('runs an odd pattern twice, and gives a dot a pen’s width', () => {
+    // [3] is three on and three off; [1 2 3] swaps dashes and gaps its second
+    // time round. A dash of no length is a dot the cap alone draws.
+    expect(lineOf(stroke('1 w [3] 0 d 0 0 m 100 0 l S')!)?.customDash).toEqual([3, 3]);
+    expect(lineOf(stroke('1 w [1 2 3] 0 d 0 0 m 100 0 l S')!)?.customDash).toEqual([
+      1, 2, 3, 1, 2, 3,
+    ]);
+    expect(lineOf(stroke('1 J 2 w [0 6] 0 d 0 0 m 100 0 l S')!)?.customDash).toEqual([1, 2]);
+  });
+
+  it('states the cap, the butt one included', () => {
+    // A .docx line that states no cap is capped square, and every dash of a
+    // pattern grows by the pen's width.
+    expect(lineOf(stroke('0 0 m 100 0 l S')!)?.cap).toBe('flat');
+    expect(lineOf(stroke('1 J 0 0 m 100 0 l S')!)?.cap).toBe('round');
+    expect(lineOf(stroke('2 J 0 0 m 100 0 l S')!)?.cap).toBe('square');
+  });
+
+  it('takes the pen a named graphics state sets (§8.4.5)', () => {
+    // extgstate.pdf sets its pen in `/GS1`: ten points wide, round, and dashed
+    // so it draws two dots.
+    const pdf = assemble([
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Contents 4 0 R ' +
+        '/Resources << /ExtGState << /GS1 << /LW 10 /LC 1 /D [[0.1 180] 0] >> >> >> >>',
+      '<< /Length 30 >>\nstream\n/GS1 gs 50 60 m 280 60 l S\nendstream',
+    ]);
+    const file = PdfFile.parse(pdf);
+    const [v] = collectPageVectors(file, file.pages()[0]!, []).vectors;
+    expect(v?.lineWidth).toBe(10);
+    expect(v?.dash).toEqual([0.1, 180]);
+    expect(v?.cap).toBe('round');
+  });
+});
+
 describe('filled rules (E-PDF EP10)', () => {
   const fills = (stream: string) =>
     interpretContent(new TextEncoder().encode(stream), NO_FONTS).vectors;

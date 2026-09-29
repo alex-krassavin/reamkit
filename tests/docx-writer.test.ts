@@ -495,6 +495,32 @@ describe('docx writer (E-DOCX D2 skeleton)', () => {
     '<pic:blipFill><a:blip r:embed="rIdImg"/></pic:blipFill></pic:pic>' +
     '</a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>';
 
+  it('writes a line’s own dash pattern back (§20.1.8.21 a:custDash)', () => {
+    // Read and never written, a custom pattern came back solid — from a .docx
+    // read and saved again, and from every dashed line a PDF draws.
+    const shape =
+      '<w:p><w:r><w:drawing>' +
+      '<wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">' +
+      '<wp:extent cx="914400" cy="12700"/><wp:docPr id="1" name="Rule"/>' +
+      '<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">' +
+      '<a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">' +
+      '<wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">' +
+      '<wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="12700"/></a:xfrm>' +
+      '<a:prstGeom prst="line"><a:avLst/></a:prstGeom>' +
+      '<a:ln w="12700" cap="flat"><a:solidFill><a:srgbClr val="000000"/></a:solidFill>' +
+      '<a:custDash><a:ds d="300000" sp="100000"/><a:ds d="100000" sp="100000"/></a:custDash></a:ln>' +
+      '</wps:spPr><wps:bodyPr/></wps:wsp>' +
+      '</a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>';
+    const { doc: flow } = readDocx(buildDocxFromBody(shape));
+    const xml = new TextDecoder().decode(
+      OpcPackage.open(writeDocx(flow).bytes).getMainDocument().data,
+    );
+    expect(xml).toContain(
+      '<a:ln w="12700" cap="flat"><a:solidFill><a:srgbClr val="000000"/></a:solidFill>' +
+        '<a:custDash><a:ds d="300000" sp="100000"/><a:ds d="100000" sp="100000"/></a:custDash></a:ln>',
+    );
+  });
+
   it('round-trips a DrawingML shape (preset geometry, fill, line)', () => {
     // A lone shape paragraph: the reader collapses it to a ShapeBlock, the
     // writer re-emits wps:wsp, and a re-read recovers the same geometry/fill —

@@ -256,6 +256,10 @@ export interface PdfVector {
   readonly strokeHex?: string;
   /** Stroke width in page-space points (EP11). */
   readonly lineWidth?: number;
+  /** §8.4.3.6 — the stroke's dash lengths in page-space points, where it is dashed. */
+  readonly dash?: ReadonlyArray<number>;
+  /** §8.4.3.3 — the stroke's cap, where it is not the butt cap. */
+  readonly cap?: 'round' | 'square';
   readonly minX: number;
   readonly minY: number;
   readonly maxX: number;
@@ -417,6 +421,8 @@ export function collectPageVectors(
         ? {
             strokeHex: v.strokeHex,
             ...(v.lineWidth !== undefined ? { lineWidth: v.lineWidth } : {}),
+            ...(v.dash !== undefined ? { dash: v.dash } : {}),
+            ...(v.cap !== undefined ? { cap: v.cap } : {}),
           }
         : {}),
       ...b,

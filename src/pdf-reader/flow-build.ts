@@ -438,9 +438,19 @@ export function shapeBlock(
       : v.fillHex !== undefined
         ? { kind: 'solid', colorHex: v.fillHex, ...alpha }
         : { kind: 'none' };
+  const dash = v.strokeHex !== undefined && v.dash !== undefined ? penDash(v.dash, pen) : [];
   const line: ShapeLine | undefined =
     v.strokeHex !== undefined
-      ? { width: pt(pen), colorHex: v.strokeHex, fill: 'solid' }
+      ? {
+          width: pt(pen),
+          colorHex: v.strokeHex,
+          fill: 'solid',
+          ...(dash.length > 0 ? { customDash: dash } : {}),
+          // §8.4.3.3 — the page's cap, stated even where it is the butt cap
+          // every line starts with: a line that states none is capped SQUARE
+          // in a .docx, and each dash of a pattern grows by the pen's width.
+          cap: v.cap ?? 'flat',
+        }
       : undefined;
   // §20.4.2.3 — anchored to the PAGE at the position it was drawn at, y flipped
   // from PDF's upward axis.
@@ -518,6 +528,35 @@ export function sectionFromPdfPages(pages: ReadonlyArray<PdfPage>): SectionPrope
     footers: [],
   };
 }
+
+/**
+ * §8.4.3.6 — a page's dash pattern as DrawingML states one (§20.1.8.21
+ * `a:custDash`): dash and gap in turn, as multiples of the pen's width.
+ *
+ * An odd count of lengths runs twice before it repeats, so the dashes and the
+ * gaps trade places the second time round; written out once more, the pairs
+ * come out even. A dash of no length is a DOT, drawn by the pen's cap alone —
+ * which no .docx line carries — so it is set a pen's width long and the gap
+ * after it gives that back, keeping the pattern's period.
+ *
+ * @param dash The lengths in page-space points.
+ * @param pen  The pen's width in points.
+ * @returns The pattern in pen widths, or an empty array for a solid line.
+ */
+function penDash(dash: ReadonlyArray<number>, pen: number): Array<number> {
+  if (dash.length === 0 || !(pen > 0)) return [];
+  const even = dash.length % 2 === 1 ? [...dash, ...dash] : [...dash];
+  const out = even.map((n) => n / pen);
+  for (let i = 0; i < out.length; i += 2) {
+    if (out[i]! > 0) continue;
+    out[i] = 1;
+    out[i + 1] = Math.max(out[i + 1]! - 1, MIN_DASH_GAP);
+  }
+  return out;
+}
+
+/** The least gap a dash pattern keeps, in pen widths, so a dotted line stays dotted. */
+const MIN_DASH_GAP = 0.5;
 
 /** What the measure gives back, so the widest line still fits when re-set. */
 const SLACK = 0.01;
