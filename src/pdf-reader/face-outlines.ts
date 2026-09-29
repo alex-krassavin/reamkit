@@ -433,9 +433,10 @@ function outlinesOf(
 const MAX_MISSED_SHARE = 0.2;
 
 /**
- * The advance of a space the page never showed: the face's own width for the
- * code a space has in its encoding, where there is one; the width the program
- * gives its space glyph — which a subset keeps though it drops the outline;
+ * The advance of a space the page never showed: the width the file states for
+ * the face's space (see `ContentFont.spaceWidth`), where it states one; the
+ * width the program gives its space glyph — which a subset keeps though it
+ * drops the outline;
  * the white the page itself leaves between the face's words; the one advance
  * every glyph has, in a fixed-pitch face; a quarter of an em otherwise.
  * bigboundingbox.pdf sets its Calibri in a subset that keeps no space and no
@@ -444,11 +445,8 @@ const MAX_MISSED_SHARE = 0.2;
  * fit its cell.
  */
 function spaceAdvance(face: Gathered, gap: number | undefined): number {
-  const font = face.font;
-  if (font.bytesPerCode === 1 && font.decode([0x20]) === ' ') {
-    const width = font.width(0x20);
-    if (width > 0 && width < 1000) return width;
-  }
+  const width = face.font.spaceWidth;
+  if (width !== undefined && width > 0 && width < 1000) return width;
   if (face.program.spaceAdvance !== undefined) return face.program.spaceAdvance;
   if (gap !== undefined) return gap;
   if (face.program.fixedPitch) {

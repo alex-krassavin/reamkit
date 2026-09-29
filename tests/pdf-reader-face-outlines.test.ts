@@ -97,6 +97,37 @@ describe('the outlines a PDF face drew its characters with', () => {
     expect(face?.glyphs.get(' ')?.advance).toBeCloseTo(300, 6);
   });
 
+  it('gives the space no width the file never states for it', () => {
+    // pdfTeX writes /Widths from the first code a subset shows, and it shows no
+    // space: code 32 had no width, which reads as the 500 a code with none
+    // falls back to — a space twice as wide as the face's own, in every face
+    // such a paper embeds.
+    const face = facesOf(
+      simpleFontPdf({
+        show: '(Hi) Tj',
+        font: '/Subtype /TrueType',
+        flags: 32,
+        program: ROBOTO,
+        firstChar: 33,
+      }),
+    ).get('roboto');
+    expect(face?.glyphs.get(' ')?.advance).toBeCloseTo(sfntSpaceAdvance(ROBOTO)!, 6);
+  });
+
+  it('takes no width for a space from a code its encoding names another glyph', () => {
+    // Computer Modern's code 32 is the stroke of the Polish l.
+    const face = facesOf(
+      simpleFontPdf({
+        show: '(Hi) Tj',
+        font: '/Subtype /TrueType',
+        flags: 32,
+        program: ROBOTO,
+        encoding: '/Encoding << /Differences [32 /suppress] >> ',
+      }),
+    ).get('roboto');
+    expect(face?.glyphs.get(' ')?.advance).toBeCloseTo(sfntSpaceAdvance(ROBOTO)!, 6);
+  });
+
   it('reads the pairs a page kerns a face by off the nudges of its TJ arrays', () => {
     // §9.4.3 — a number in a TJ array moves the pen back that many thousandths
     // of an em: 80 between H and i is a kern of -80.
@@ -368,18 +399,25 @@ function simpleFontPdf(options: {
   program: Uint8Array;
   compact?: boolean;
   base?: string;
+  /** The first code the `/Widths` array states (32 unless said). */
+  firstChar?: number;
+  /** An `/Encoding` entry for the font dictionary, whole. */
+  encoding?: string;
 }): Uint8Array {
   const content = `BT /F0 40 Tf 20 40 Td ${options.show} ET`;
   const base = options.base ?? (options.compact === true ? 'ABCDEF+Accented' : 'ABCDEF+Roboto');
-  const widths = Array.from({ length: 224 }, (_, i) => (i + 32 === 72 ? 610 : 600)).join(' ');
+  const first = options.firstChar ?? 32;
+  const widths = Array.from({ length: 256 - first }, (_, i) => (i + first === 72 ? 610 : 600)).join(
+    ' ',
+  );
   return assemble([
     '<< /Type /Catalog /Pages 2 0 R >>',
     '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
     '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 100] /Contents 4 0 R ' +
       '/Resources << /Font << /F0 5 0 R >> >> >>',
     `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
-    `<< /Type /Font ${options.font} /BaseFont /${base} /FirstChar 32 /LastChar 255 ` +
-      `/Widths [${widths}] /FontDescriptor 6 0 R >>`,
+    `<< /Type /Font ${options.font} /BaseFont /${base} /FirstChar ${String(first)} /LastChar 255 ` +
+      `/Widths [${widths}] ${options.encoding ?? ''}/FontDescriptor 6 0 R >>`,
     `<< /Type /FontDescriptor /FontName /${base} /Flags ${String(options.flags)} /ItalicAngle 0 ` +
       '/StemV 80 /Ascent 900 /Descent -200 /CapHeight 700 /FontBBox [-500 -300 1500 1000] ' +
       `/${options.compact === true ? 'FontFile3' : 'FontFile2'} 7 0 R >>`,

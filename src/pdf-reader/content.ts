@@ -39,6 +39,13 @@ export interface ContentFont {
   /** Glyph advance for one code, in 1000-unit text space. */
   width: (code: number) => number;
   /**
+   * §9.6.2.1 — the advance of the face's SPACE as the file states it, in
+   * 1000-unit text space: the code its encoding names `space`. Absent where
+   * the font states none — not the fallback {@link width} gives a code with no
+   * width of its own.
+   */
+  readonly spaceWidth?: number;
+  /**
    * §9.4.4 / §9.7.4.3 — the face sets its text DOWN the page, not across, and
    * the pen advances by the vertical displacement `w1` rather than by `w0`.
    * A `…-V` CMap asks for this; `/DW2`'s default `[880 -1000]` is one em down.
