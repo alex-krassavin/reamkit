@@ -1885,9 +1885,21 @@ function runXml(run: Run, state: WriteState, scope: PartScope): string {
   // PDF sets a line the page laid out on stops with them — an invoice's "Bill
   // to" block stands beside the address it belongs to — and written as text the
   // two ran together.
+  //
+  // §17.3.3.1 — and so is a line BREAK: the reader reads `w:br` as a newline in
+  // the run's text, and written back inside `w:t` a newline is whitespace, so
+  // every address, verse and signature read and written again ran its lines
+  // together. A run the reader marked as a column break breaks to the next
+  // column there instead.
+  const lineBreak = run.columnBreak ? '<w:br w:type="column"/>' : '<w:br/>';
   const body = run.text
     .split('\t')
-    .map((piece) => (piece === '' ? '' : `<w:t xml:space="preserve">${escapeXml(piece)}</w:t>`))
+    .map((piece) =>
+      piece
+        .split('\n')
+        .map((line) => (line === '' ? '' : `<w:t xml:space="preserve">${escapeXml(line)}</w:t>`))
+        .join(lineBreak),
+    )
     .join('<w:tab/>');
   return `<w:r>${rPr}${body}${brk}</w:r>`;
 }

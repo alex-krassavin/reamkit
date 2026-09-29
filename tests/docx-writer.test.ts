@@ -91,6 +91,24 @@ describe('docx writer (E-DOCX D2 skeleton)', () => {
     }
   });
 
+  it('writes a line break back as w:br, not as a newline inside w:t (§17.3.3.1)', () => {
+    // Inside `w:t` a newline is whitespace: read and written again, an
+    // address's lines ran together.
+    const body =
+      '<w:p><w:r><w:t>One street</w:t><w:br/><w:t>Two town</w:t></w:r></w:p>' +
+      '<w:p><w:r><w:t>Left</w:t></w:r><w:r><w:br w:type="column"/></w:r><w:r><w:t>Right</w:t></w:r></w:p>';
+    const written = writeDocx(readDocx(buildDocxFromBody(body)).doc).bytes;
+    const xml = decode(OpcPackage.open(written).getMainDocument().data);
+    expect(xml).toContain(
+      '<w:t xml:space="preserve">One street</w:t><w:br/><w:t xml:space="preserve">Two town</w:t>',
+    );
+    expect(xml).toContain('<w:br w:type="column"/>');
+    expect(xml).not.toMatch(/<w:t[^>]*>[^<]*\n/u);
+    const again = readDocx(written).doc.body[0];
+    if (again?.kind !== 'paragraph') throw new Error('a paragraph');
+    expect(again.paragraph.runs.map((r) => r.text).join('')).toBe('One street\nTwo town');
+  });
+
   it('omits default-valued properties (no rPr/pPr noise for plain text)', () => {
     const { doc: flow } = readDocx(buildDocxFromBody('<w:p><w:r><w:t>plain</w:t></w:r></w:p>'));
     const xml = new TextDecoder().decode(
