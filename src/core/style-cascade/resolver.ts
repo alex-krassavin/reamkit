@@ -426,8 +426,27 @@ export function resolveBodyStyles(
         for (const member of sh.children ?? []) shapeText(member.shape);
       };
       shapeText(el.shape);
+      standsOn(el.shape);
+    } else if (el.kind === 'image') {
+      standsOn(el.image);
+    } else {
+      standsOn(el.chart);
     }
-    // image, chart, textless shape: nothing to resolve
+  };
+
+  // §17.3.1 — a picture, chart or shape of its own in the flow stands on the
+  // paragraph that held it, spaced and aligned by that paragraph's style as
+  // much as by what it states itself: Bug51170.docx's header logo is a
+  // paragraph of the Header style, 10pt after it from Normal, and read raw it
+  // stood the body 10pt higher up the page than Word does. An anchored one
+  // stands on no paragraph of its own and takes no room: resolved, the four
+  // text boxes of tdf117843.docx's header took the document's 8pt each.
+  const standsOn = (block: {
+    paragraphProperties: ParagraphProperties;
+    readonly float?: unknown;
+  }): void => {
+    if (block.float !== undefined) return;
+    block.paragraphProperties = resolveParagraphProperties(block.paragraphProperties, sheet);
   };
 
   for (const el of body) visit(el);

@@ -345,20 +345,22 @@ function parseAnchorPos(
  * ECMA-376 Part 3 (Markup Compatibility) — resolve an `<mc:AlternateContent>` to
  * the children of the first `<mc:Choice>` whose `Requires` lists only namespaces
  * we understand, else the `<mc:Fallback>` children, else nothing. (`Requires`
- * holds space-separated namespace prefixes as declared in the document.)
+ * holds space-separated namespace prefixes as declared in the document.) The
+ * elements are known by their local names, whatever prefix the producer bound
+ * the namespace to: Word 2008 for Mac wrote `ve:`.
  *
  * @param altContent The `mc:AlternateContent` node.
  * @returns The chosen branch's children.
  */
 export function resolveMc(altContent: PoNode): ReadonlyArray<PoNode> {
   for (const choice of poChildren(altContent)) {
-    if (!poIs(choice, 'mc:Choice')) continue;
+    if (!poIsLocal(choice, 'Choice')) continue;
     const requires = (poAttr(choice, 'Requires') ?? '').split(/\s+/).filter(Boolean);
     if (requires.length > 0 && requires.every((r) => UNDERSTOOD_NS.has(r))) {
       return poChildren(choice);
     }
   }
-  const fallback = poChildren(altContent).find((c) => poIs(c, 'mc:Fallback'));
+  const fallback = poChildren(altContent).find((c) => poIsLocal(c, 'Fallback'));
   return fallback ? poChildren(fallback) : [];
 }
 
@@ -374,10 +376,40 @@ export function resolveMc(altContent: PoNode): ReadonlyArray<PoNode> {
 export function expandMcChildren(children: ReadonlyArray<PoNode>): Array<PoNode> {
   const out: Array<PoNode> = [];
   for (const c of children) {
-    if (poIs(c, 'mc:AlternateContent')) out.push(...resolveMc(c));
+    if (poIsLocal(c, 'AlternateContent')) out.push(...resolveMc(c));
     else out.push(c);
   }
   return out;
+}
+
+/**
+ * The node with every markup-compatibility block beneath it resolved (see
+ * {@link resolveMc}), so that a search through its descendants finds only
+ * the content a reader like this one is to take. Bug51170.docx's header offers
+ * its logo twice — a PDF for Word for Mac as the Choice, a PNG as the Fallback
+ * — and the first `a:blip` in document order was the PDF, which is not a
+ * picture a page can show: the logo was left out.
+ *
+ * @param node The node to resolve.
+ * @returns The node itself where nothing beneath it needed resolving.
+ */
+function resolveMcTree(node: PoNode): PoNode {
+  const tag = poTag(node);
+  const children = poChildren(node);
+  if (tag === undefined || children.length === 0) return node;
+  let changed = false;
+  const resolved: Array<PoNode> = [];
+  for (const child of children) {
+    if (poIsLocal(child, 'AlternateContent')) {
+      changed = true;
+      for (const chosen of resolveMc(child)) resolved.push(resolveMcTree(chosen));
+      continue;
+    }
+    const inner = resolveMcTree(child);
+    if (inner !== child) changed = true;
+    resolved.push(inner);
+  }
+  return changed ? { ...node, [tag]: resolved } : node;
 }
 
 /**
@@ -386,13 +418,13 @@ export function expandMcChildren(children: ReadonlyArray<PoNode>): Array<PoNode>
  * SmartArt diagram, or — falling through — an embedded picture from
  * `a:blip @r:embed`.
  *
- * @param drawing      The `w:drawing` node.
+ * @param drawingNode  The `w:drawing` node.
  * @param resolveColor Resolver for theme/scheme colours used by shape fills/lines.
  * @param parseBody    Optional body parser for a shape's text box (omitted ⇒ no text).
  * @returns The parsed content, or `null` when no anchor / recognizable graphic is found.
  */
 export function parseDrawing(
-  drawing: PoNode,
+  drawingNode: PoNode,
   resolveColor: ColorResolver,
   parseBody?: ParseBody,
   // §20.1.8.14 — a group may hold a `pic:pic`, which is a shape with a picture
@@ -407,6 +439,7 @@ export function parseDrawing(
   // §21.1.2 — the DrawingML text reader, for a shape that carries an `a:txBody`.
   parseDrawingText?: ParseDrawingText,
 ): DrawingContent | null {
+  const drawing = resolveMcTree(drawingNode);
   const anchor =
     poChildren(drawing).find((c) => poIs(c, 'wp:inline')) ??
     poChildren(drawing).find((c) => poIs(c, 'wp:anchor'));

@@ -39,6 +39,7 @@ import type {
   Numbering,
   NumberingFormat,
   Paragraph,
+  ParagraphProperties,
   PictureOutline,
   RelativeSize,
   Run,
@@ -1507,6 +1508,12 @@ export interface SectionRenderCtx {
   readonly columns?: ReadonlyArray<{ readonly xOffsetPt: number; readonly widthPt: number }>;
   readonly headerSet: HeaderFooterSet;
   readonly footerSet: HeaderFooterSet;
+  /**
+   * §17.10 — where the body starts and ends on a page that shows each band:
+   * below the header band and above the footer band that page carries, each
+   * as tall as it is. Absent ⇒ every page takes `marginTop`/`marginBottom`.
+   */
+  readonly bandMargins?: Readonly<Record<HfBand, BodyMargins>>;
   readonly titlePg: boolean;
   readonly evenAndOddHeaders: boolean;
   /**
@@ -1607,17 +1614,33 @@ function buildSectionContext(
   // `w:evenAndOddHeaders` does. issue_51265_3.docx keeps a four-picture EVEN
   // header it never shows, and counting it put the top margin 1390pt down a
   // 842pt page — every page of the body was drawn off the paper.
-  const headerHeight = Math.max(
-    headerSet.default.heightPt ?? 0,
-    section.properties.titlePg === true ? (headerSet.first.heightPt ?? 0) : 0,
-    section.properties.evenAndOddHeaders === true ? (headerSet.even.heightPt ?? 0) : 0,
-  );
   // …and a section with NO header to show is not pushed down by the offset the
   // header WOULD have had. tdf105490_negativeMargins.docx sets its top margin
   // at −1pt and declares no header at all, and the bare `w:header` of 35pt
   // moved its body 36pt down a 297pt page — two pages for the reference's one.
-  const headerBottom = headerHeight > 0 ? dims.headerOffsetPt + headerHeight : 0;
-  const marginTop = Math.max(dims.marginTop, headerBottom);
+  // §17.6.11 — and a footer band taller than the gap between its own offset and
+  // the bottom margin lifts the body's foot above itself on the same terms:
+  // Bug51170.docx's two-paragraph footer stands 83pt up a page whose margin is
+  // 50pt, and a body run down to the margin was written through it.
+  // Each page by the band IT shows: that document's title page carries no
+  // header and starts at the margin, its other pages below their logo.
+  const bodyMarginsFor = (band: HfBand): BodyMargins => {
+    const header = pickBand(headerSet, band).heightPt ?? 0;
+    const footer = pickBand(footerSet, band).heightPt ?? 0;
+    return {
+      top: Math.max(dims.marginTop, header > 0 ? dims.headerOffsetPt + header : 0),
+      bottom: Math.max(dims.marginBottom, footer > 0 ? dims.footerOffsetPt + footer : 0),
+    };
+  };
+  const bandMargins: Record<HfBand, BodyMargins> = {
+    default: bodyMarginsFor('default'),
+    first: bodyMarginsFor('first'),
+    even: bodyMarginsFor('even'),
+  };
+  // The section's own margins are its ordinary pages', for what is not laid
+  // out page by page.
+  const marginTop = bandMargins.default.top;
+  const marginBottom = bandMargins.default.bottom;
   // §17.6.20 — lines that run DOWN the sheet are laid out in the frame the
   // text reads in: the sheet turned back a quarter, as wide as the sheet is
   // tall. The sheet's top margin is where each line starts and its right one
@@ -1629,7 +1652,7 @@ function buildSectionContext(
       marginLeft: dims.marginLeft,
       marginRight: dims.marginRight,
       marginTop,
-      marginBottom: dims.marginBottom,
+      marginBottom,
     };
     const across = sheet.height - sheet.marginTop - sheet.marginBottom;
     const turnedColumns = buildColumnGeometry(section.properties.columns, across);
@@ -1660,12 +1683,13 @@ function buildSectionContext(
     pageHeight: dims.pageHeight,
     marginLeft: dims.marginLeft,
     marginTop,
-    marginBottom: dims.marginBottom,
+    marginBottom,
     contentWidth,
-    pageContentHeight: dims.pageHeight - marginTop - dims.marginBottom,
+    pageContentHeight: dims.pageHeight - marginTop - marginBottom,
     ...(columns ? { columns } : {}),
     headerSet,
     footerSet,
+    bandMargins,
     titlePg: section.properties.titlePg === true,
     evenAndOddHeaders: section.properties.evenAndOddHeaders === true,
     continuous: section.properties.sectionStart === 'continuous',
@@ -1706,6 +1730,12 @@ function refByType(
 }
 
 type HfBand = 'default' | 'first' | 'even';
+
+/** The distances from the paper's top and bottom edges to the body's. */
+interface BodyMargins {
+  readonly top: number;
+  readonly bottom: number;
+}
 
 // One header/footer band. Static bands carry their pre-rendered commands
 // (the byte-identical fast path). A band containing PAGE/NUMPAGES fields is
@@ -1826,9 +1856,13 @@ function blocksHeight(blocks: ReadonlyArray<LaidOutBlock>): number {
     // banner does not take and tdf105688.docx's body began 75pt below where
     // both references start it.
     if (b.kind !== 'paragraph' && isOutOfFlowFloat(b.float)) return sum;
+    // …and a picture, chart or shape in the flow stands on a paragraph of its
+    // own, spaced as that paragraph is — the pagination spends that space, and
+    // a band that did not count it began the body under Bug51170.docx's
+    // header logo 10pt higher up than Word.
     return (
       sum +
-      (b.kind === 'paragraph' ? b.spacingBeforePt + b.heightPt + b.spacingAfterPt : b.heightPt)
+      ('spacingBeforePt' in b ? b.spacingBeforePt + b.heightPt + b.spacingAfterPt : b.heightPt)
     );
   }, 0);
 }
@@ -1853,6 +1887,7 @@ function layoutFooterSet(
     if (!ref) return { commands: [] };
     const content = headersFooters.get(ref.relationshipId);
     if (!content) return { commands: [] };
+    let measured = 0;
     const render = (c: ReadonlyArray<BodyElement>): Array<PageItem> => {
       const blocks = laidOutBlocksFor(
         c,
@@ -1867,6 +1902,7 @@ function layoutFooterSet(
       // An anchored drawing adds nothing to that height (blocksHeight): counted,
       // fdo80895.docx's footer ellipse lifted the whole band 26pt off the floor.
       const totalHeight = blocksHeight(blocks);
+      measured = totalHeight;
       return markPagination(
         drawBlocksSequentially(
           blocks,
@@ -1880,12 +1916,17 @@ function layoutFooterSet(
       );
     };
     if (contentHasPageFields(content)) {
+      // Measured once with placeholder values, as a header is, so the body
+      // knows where the band's top stands before the first page is composed.
+      render(substitutePageFields(content, '1', 1));
       return {
         commands: [],
+        heightPt: measured,
         renderDynamic: (page, total) => render(substitutePageFields(content, page, total)),
       };
     }
-    return { commands: render(content) };
+    const commands = render(content);
+    return { commands, heightPt: measured };
   };
   return { default: band('default'), first: band('first'), even: band('even') };
 }
@@ -2423,7 +2464,7 @@ function layoutBodyElement(
           maxHeight,
           box,
         )
-      : layoutImageBlock(el.image, imageResources, contentWidth, maxHeight, box);
+      : layoutImageBlock(el.image, imageResources, contentWidth, maxHeight, box, options.styles);
   }
   if (el.kind === 'chart') {
     return layoutChartBlock(
@@ -2446,12 +2487,37 @@ function layoutBodyElement(
   );
 }
 
+/**
+ * §17.3.1.33 — what a paragraph's line spacing adds under a picture that
+ * stands on a line of its own. Word sets that line as tall as the picture,
+ * and a spacing of more than one line adds what the extra lines of the
+ * paragraph mark's font would, not a share of the picture: in Word for Mac a
+ * 100pt picture's next paragraph stands 100, 102.5 and 113 points down at
+ * single, 1.15 and double spacing of an 11pt mark.
+ *
+ * @param pp     The paragraph the picture stands on, resolved.
+ * @param styles The sheet its mark's font size resolves against.
+ * @returns The extra points, 0 where the spacing is not a multiple above one.
+ */
+function pictureLineExtra(pp: ParagraphProperties, styles: StyleSheet | undefined): number {
+  if (pp.spacingLine === undefined || (pp.spacingLineRule ?? 'auto') !== 'auto') return 0;
+  const multiple = Math.round(pp.spacingLine * 20) / 240;
+  if (multiple <= 1) return 0;
+  const markSizePt = styles
+    ? resolveRunProperties({}, pp, styles).fontSizePt
+    : DEFAULT_RESOLVED_RUN.fontSizePt;
+  return (multiple - 1) * markSizePt * 1.2;
+}
+
 function layoutImageBlock(
   image: ImageBlock,
   imageResources: ReadonlyMap<string, ImageResource> | undefined,
   contentWidth: number,
   maxHeight?: number,
   box?: RelativeBox,
+  // The sheet the paragraph under the picture resolves against, for what its
+  // line spacing adds (see pictureLineExtra); absent for a picture out of the flow.
+  styles?: StyleSheet,
 ): ImageBlockLaidOut {
   let widthPt: number = relativeWidth(image.relativeSize, contentWidth, box) ?? image.width;
   let heightPt: number =
@@ -2515,7 +2581,9 @@ function layoutImageBlock(
     ...(image.flipV ? { flipV: true } : {}),
     ...(drawInset ? { drawInset } : {}),
     spacingBeforePt: image.paragraphProperties.spacingBefore ?? 0,
-    spacingAfterPt: image.paragraphProperties.spacingAfter ?? 0,
+    spacingAfterPt:
+      (image.paragraphProperties.spacingAfter ?? 0) +
+      (image.float ? 0 : pictureLineExtra(image.paragraphProperties, styles)),
     ...(image.altText ? { altText: image.altText } : {}),
     ...(image.float ? { float: image.float } : {}),
   };
@@ -2978,7 +3046,8 @@ function layoutMetafileBlock(
     layout,
     resolvedAlignment: pp.alignment ?? 'left',
     spacingBeforePt: pp.spacingBefore ?? 0,
-    spacingAfterPt: pp.spacingAfter ?? 0,
+    spacingAfterPt:
+      (pp.spacingAfter ?? 0) + (image.float ? 0 : pictureLineExtra(pp, options.styles)),
     figureRole: 'Image',
     ...(image.altText ? { altText: image.altText } : {}),
     ...(image.float ? { float: image.float } : {}),
@@ -7774,7 +7843,7 @@ class PageAssembler {
     this.ctx = sectionCtxs[0]!;
     this.pageStartCtx = this.ctx;
     this.pageNumber = this.ctx.properties.pageNumberStart ?? 1;
-    this.cursorY = this.ctx.pageHeight - this.ctx.marginTop;
+    this.cursorY = this.pageTopY();
     this.colStartY = this.cursorY;
     this.bandTopY = this.cursorY;
   }
@@ -7844,6 +7913,23 @@ class PageAssembler {
    */
   pageHasContent = (): boolean =>
     this.current.length > 0 || this.floatsBehind.length > 0 || this.floatsFront.length > 0;
+  /**
+   * §17.10 — the body's margins on the page being laid out: below the header
+   * band that page shows and above its footer band (see `bandMargins`).
+   */
+  pageMargins = (): BodyMargins =>
+    this.ctx.bandMargins?.[
+      bandForPage(
+        this.pageInSection,
+        this.globalPageIdx,
+        this.ctx.titlePg,
+        this.ctx.evenAndOddHeaders,
+      )
+    ] ?? { top: this.ctx.marginTop, bottom: this.ctx.marginBottom };
+
+  /** Where the body of the page being laid out begins, y-up. */
+  pageTopY = (): number => this.ctx.pageHeight - this.pageMargins().top;
+
   /** Overflow step: next column on this page, or a fresh page after the last. */
   advanceColumn = (): void => {
     if (this.ctx.columns && this.colIdx + 1 < this.ctx.columns.length) {
@@ -7958,7 +8044,7 @@ class PageAssembler {
    */
   beginBalancedBand = (bandHeightPt: number): void => {
     const colCount = this.ctx.columns?.length ?? 1;
-    const room = this.cursorY - (this.ctx.marginBottom + this.noteReserve);
+    const room = this.cursorY - (this.pageMargins().bottom + this.noteReserve);
     const share = colCount > 1 ? balancedColumnHeight(bandHeightPt, colCount, room) : 0;
     this.balanceHeightPt = share;
     this.balanceBottomY = share > 0 ? this.cursorY - share : undefined;
@@ -8065,7 +8151,7 @@ class PageAssembler {
    */
   bottomLimit = (): number =>
     Math.max(
-      this.ctx.marginBottom + this.noteReserve,
+      this.pageMargins().bottom + this.noteReserve,
       this.balanceBottomY ?? Number.NEGATIVE_INFINITY,
     );
 
@@ -8247,7 +8333,7 @@ class PageAssembler {
   renderNotesBand = (): Array<PageItem> => {
     if (this.pageNotes.length === 0) return [];
     const out: Array<PageItem> = [];
-    const top = this.ctx.marginBottom + this.noteReserve; // y-up top of the reserve
+    const top = this.pageMargins().bottom + this.noteReserve; // y-up top of the reserve
     out.push({
       type: 'fill',
       x: pt(this.ctx.marginLeft),
@@ -8376,7 +8462,7 @@ class PageAssembler {
     if ((this.ctx.properties.lineNumbering?.restart ?? 'newPage') === 'newPage') {
       this.lineNumber = 0;
     }
-    this.cursorY = this.ctx.pageHeight - this.ctx.marginTop;
+    this.cursorY = this.pageTopY();
     this.colStartY = this.cursorY;
     this.bandTopY = this.cursorY;
     this.balanceBottomY = undefined;
@@ -8593,7 +8679,7 @@ class PageAssembler {
     this.noteReserve = 0;
     this.colIdx = 0;
     this.colStartLen = 0;
-    this.cursorY = this.ctx.pageHeight - this.ctx.marginTop;
+    this.cursorY = this.pageTopY();
     this.colStartY = this.cursorY;
     this.bandTopY = this.cursorY;
     this.balanceBottomY = undefined;
@@ -8751,7 +8837,7 @@ function paginateSections(
       if (wants === 'oddPage' || wants === 'evenPage') {
         const first = opening?.pageNumberStart ?? asm.pageNumber;
         if ((first % 2 === 1) !== (wants === 'oddPage')) {
-          asm.cursorY = asm.ctx.pageHeight - asm.ctx.marginTop;
+          asm.cursorY = asm.pageTopY();
           asm.flushPage(true);
         }
       }
@@ -8759,7 +8845,7 @@ function paginateSections(
       asm.ctx = sectionCtxs[asm.secIdx]!;
       asm.restartPageNumbers(asm.ctx);
       asm.pageInSection = 0;
-      asm.cursorY = asm.ctx.pageHeight - asm.ctx.marginTop;
+      asm.cursorY = asm.pageTopY();
       balanceIfEndsContinuous(blockIdx);
     }
 
