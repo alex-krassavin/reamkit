@@ -1158,6 +1158,46 @@ describe('the way an axial shading runs, on the page (§8.7.2)', () => {
     return shape.shape.fill.gradient?.angle;
   };
 
+  it('shows the part of the axis the shape covers, not the whole of it', () => {
+    // issue10572.pdf's pattern runs twenty-four stripes down 1800 points and
+    // its 450-point square shows six; spread over the square, all twenty-four
+    // came back as hairlines. Here the axis runs 0 → 400 up the page, green
+    // below 200 and blue above.
+    const colorsOf = (y: number): Array<string> => {
+      const content = `/Pattern cs /P1 scn 10 ${String(y)} 80 80 re f`;
+      const objects = [
+        '<< /Type /Catalog /Pages 2 0 R >>',
+        '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+        '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 400] /Contents 4 0 R ' +
+          '/Resources << /Pattern << /P1 5 0 R >> >> >>',
+        `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+        '<< /Type /Pattern /PatternType 2 /Shading << /ShadingType 2 /ColorSpace /DeviceRGB ' +
+          '/Coords [0 0 0 400] /Function << /FunctionType 3 /Domain [0 1] /Bounds [0.5] ' +
+          '/Encode [0 1 0 1] /Functions [<< /FunctionType 2 /Domain [0 1] /C0 [0 1 0] /C1 [0 1 0] /N 1 >> ' +
+          '<< /FunctionType 2 /Domain [0 1] /C0 [0 0 1] /C1 [0 0 1] /N 1 >>] >> >> >>',
+      ];
+      let pdf = '%PDF-1.7\n';
+      const offsets: Array<number> = [];
+      objects.forEach((body, i) => {
+        offsets.push(pdf.length);
+        pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+      });
+      const xref = pdf.length;
+      pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+      for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+      pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`;
+      const bytes = Uint8Array.from([...pdf].map((c) => c.charCodeAt(0)));
+      const shape = Ream.parse(bytes).flow.body.find((el) => el.kind === 'shape');
+      if (shape?.kind !== 'shape' || shape.shape.fill.kind !== 'gradient') return [];
+      return (shape.shape.fill.gradient?.stops ?? []).map((st) => st.colorHex);
+    };
+    // A square over 100 → 180 is all green…
+    expect([...new Set(colorsOf(100))]).toEqual(['00FF00']);
+    // …and one that starts ON the edge, at 200, is all blue: the colour it
+    // starts with is the one after the edge, not the one before it.
+    expect([...new Set(colorsOf(200))]).toEqual(['0000FF']);
+  });
+
   it('runs the way the pattern’s matrix carries it', () => {
     // Up the page is 270° in DrawingML's y-down terms…
     expect(angleOf('')).toBe(270);
@@ -1180,8 +1220,9 @@ describe('a shading stitched out of shadings (§7.10.4)', () => {
       '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Contents 4 0 R ' +
         '/Resources << /Pattern << /P1 5 0 R >> >> >>',
       `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+      // The axis spans the square, 10 → 90, so the square shows all of it.
       '<< /Type /Pattern /PatternType 2 /Shading << /ShadingType 2 /ColorSpace /DeviceRGB ' +
-        `/Coords [0 0 0 100] /Function ${fn} >> >>`,
+        `/Coords [0 10 0 90] /Function ${fn} >> >>`,
     ];
     let pdf = '%PDF-1.7\n';
     const offsets: Array<number> = [];

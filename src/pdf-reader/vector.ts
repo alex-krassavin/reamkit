@@ -17,7 +17,7 @@ import {
 import { appearanceContent, collectPageAppearances } from './annots';
 import { hiddenProperties, hiddenXObject } from './optional-content';
 import { buildFonts } from './text';
-import type { ColorSpaceInfo, GsPaint } from './shading';
+import type { ColorSpaceInfo, GsPaint, PageGradient } from './shading';
 import type {
   ContentFont,
   ImagePlacement,
@@ -48,7 +48,7 @@ import { FEATURES } from '@/core/ir';
  */
 /** The name-keyed state a resource dictionary supplies to the interpreter. */
 interface ResourceMaps {
-  readonly shadings: ReadonlyMap<string, ShapeGradient>;
+  readonly shadings: ReadonlyMap<string, PageGradient>;
   readonly alphas: ReadonlyMap<string, GsPaint>;
   readonly spaces: ReadonlyMap<string, ColorSpaceInfo>;
 }
@@ -244,7 +244,7 @@ export interface PdfVector {
   /** Present iff a qualifying solid fill survived (EP10). */
   readonly fillHex?: string;
   /** Present iff a shading-pattern fill survived (EP16c). */
-  readonly gradient?: ShapeGradient;
+  readonly gradient?: PageGradient;
   /** §11.6.4.4 — how opaque the fill is, when the page asked for less than all. */
   readonly alpha?: number;
   /**

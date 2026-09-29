@@ -39,8 +39,8 @@ import { PDF_NULL, PdfHexString, PdfName, PdfStream } from '@/pdf/objects';
 export function buildShadingMap(
   file: PdfFile,
   resources: PdfDict | undefined,
-): Map<string, ShapeGradient> {
-  const out = new Map<string, ShapeGradient>();
+): Map<string, PageGradient> {
+  const out = new Map<string, PageGradient>();
   if (!resources) return out;
   const patterns = file.get(resources, 'Pattern');
   if (!(patterns instanceof Map)) return out;
@@ -60,6 +60,110 @@ export function buildShadingMap(
 }
 
 /**
+ * §8.7.4.5.3 — where an axial shading's axis runs on the page, y up: its
+ * first stop at (x0, y0) and its last at (x1, y1).
+ */
+export interface GradientAxis {
+  readonly x0: number;
+  readonly y0: number;
+  readonly x1: number;
+  readonly y1: number;
+}
+
+/**
+ * A gradient as the page states it: the model's, and where its axis runs. A
+ * shape shows the part of the axis its box covers, and the model's gradient
+ * spans the box — see {@link gradientOverBox}.
+ */
+export type PageGradient = ShapeGradient & { readonly axis?: GradientAxis };
+
+/**
+ * A page's gradient as a shape filled with it shows it: its stops re-mapped
+ * from the whole axis to the part of it the shape's box covers.
+ *
+ * A DrawingML gradient spans the shape it fills, and a PDF shading spans its
+ * own axis, which may reach far past the shape: issue10572.pdf's pattern
+ * runs twenty-four stripes down 1800 points, of which its 450-point square
+ * shows six — spread over the square, all twenty-four came back as hairlines.
+ * Beyond either end of the axis the end colour carries on, as `/Extend` asks.
+ *
+ * @param g   The gradient, with its axis where the page states one.
+ * @param box The shape's box, in the same space as the axis.
+ * @returns The gradient as the shape shows it, with no axis.
+ */
+export function gradientOverBox(
+  g: PageGradient,
+  box: {
+    readonly minX: number;
+    readonly minY: number;
+    readonly maxX: number;
+    readonly maxY: number;
+  },
+): ShapeGradient {
+  const { axis, ...plain } = g;
+  if (!axis || g.kind !== 'linear' || g.stops.length === 0) return plain;
+  const dx = axis.x1 - axis.x0;
+  const dy = axis.y1 - axis.y0;
+  const len2 = dx * dx + dy * dy;
+  if (!(len2 > 0)) return plain;
+  const along = (x: number, y: number): number => ((x - axis.x0) * dx + (y - axis.y0) * dy) / len2;
+  const ts = [
+    along(box.minX, box.minY),
+    along(box.minX, box.maxY),
+    along(box.maxX, box.minY),
+    along(box.maxX, box.maxY),
+  ];
+  const t0 = Math.min(...ts);
+  const t1 = Math.max(...ts);
+  if (!(t1 - t0 > 1e-9)) return plain;
+  if (Math.abs(t0) < SPAN_NOISE && Math.abs(t1 - 1) < SPAN_NOISE) return plain;
+  const inner = g.stops.filter((st) => st.offset > t0 && st.offset < t1);
+  const stops: Array<GradientStop> = [
+    { offset: 0, colorHex: colorAlong(g.stops, t0, 'after') },
+    ...inner.map((st) => ({ offset: (st.offset - t0) / (t1 - t0), colorHex: st.colorHex })),
+    { offset: 1, colorHex: colorAlong(g.stops, t1, 'before') },
+  ];
+  return { ...plain, stops };
+}
+
+/** How near the box's span may come to the whole axis and be taken for it. */
+const SPAN_NOISE = 1e-3;
+
+/**
+ * A gradient's colour at `t` along it, its end colours carried on past either
+ * end. Where two stops share `t` the gradient changes colour AT it, and `side`
+ * says which of the two is wanted: the one the span after `t` starts with, or
+ * the one the span before it ends with. issue10572.pdf's square starts on such
+ * an edge, and taken from the wrong side its first stripe faded in from blue.
+ */
+function colorAlong(
+  stops: ReadonlyArray<GradientStop>,
+  t: number,
+  side: 'before' | 'after',
+): string {
+  const first = stops[0]!;
+  const last = stops[stops.length - 1]!;
+  if (t <= first.offset) return first.colorHex;
+  if (t >= last.offset) return last.colorHex;
+  const at = stops.filter((st) => Math.abs(st.offset - t) < 1e-9);
+  if (at.length > 0) return (side === 'after' ? at[at.length - 1]! : at[0]!).colorHex;
+  for (let i = 1; i < stops.length; i++) {
+    const b = stops[i]!;
+    if (t > b.offset) continue;
+    const a = stops[i - 1]!;
+    const span = b.offset - a.offset;
+    const f = span > 0 ? (t - a.offset) / span : 1;
+    const mix = (shift: number): number => {
+      const ca = (parseInt(a.colorHex, 16) >> shift) & 255;
+      const cb = (parseInt(b.colorHex, 16) >> shift) & 255;
+      return ca + (cb - ca) * f;
+    };
+    return hex255(mix(16), mix(8), mix(0));
+  }
+  return last.colorHex;
+}
+
+/**
  * §8.7.4.5.2 — an axial or radial shading as a gradient, for a bare `sh`.
  *
  * A `sh` paints the CLIP rather than a path, so what it needs is not a fill for
@@ -74,7 +178,7 @@ export function gradientShading(
   file: PdfFile,
   sh: PdfDict,
   ctm?: Matrix,
-): ShapeGradient | undefined {
+): PageGradient | undefined {
   return parseShading(file, sh, ctm);
 }
 
@@ -89,7 +193,7 @@ export function shadingTypeOf(file: PdfFile, sh: PdfDict): number {
   return numOf(file.get(sh, 'ShadingType'));
 }
 
-function parseShading(file: PdfFile, sh: PdfDict, matrix?: Matrix): ShapeGradient | undefined {
+function parseShading(file: PdfFile, sh: PdfDict, matrix?: Matrix): PageGradient | undefined {
   const type = numOf(file.get(sh, 'ShadingType'));
   if (type !== 2 && type !== 3) return undefined; // only axial (2) / radial (3)
   const stops = parseFunction(file, sh.get('Function'), shadingSpace(file, sh));
@@ -102,16 +206,13 @@ function parseShading(file: PdfFile, sh: PdfDict, matrix?: Matrix): ShapeGradien
   // shading's own space, gradientfill.pdf's pattern — its matrix turns y over
   // — ran red to green where the page runs green to red.
   const c = numArray(file, sh.get('Coords'));
-  let angle = 0;
-  if (c && c.length >= 4) {
-    const dx = c[2]! - c[0]!;
-    const dy = c[3]! - c[1]!;
-    const [a, b, cc, d] = matrix ?? [1, 0, 0, 1];
-    const px = a * dx + cc * dy;
-    const py = b * dx + d * dy;
-    angle = ((((Math.atan2(-py, px) * 180) / Math.PI) % 360) + 360) % 360;
-  }
-  return { kind: 'linear', angle, stops };
+  if (!c || c.length < 4) return { kind: 'linear', angle: 0, stops };
+  const [a, b, cc, d, e, f] = matrix ?? [1, 0, 0, 1, 0, 0];
+  const at = (x: number, y: number): [number, number] => [a * x + cc * y + e, b * x + d * y + f];
+  const [x0, y0] = at(c[0]!, c[1]!);
+  const [x1, y1] = at(c[2]!, c[3]!);
+  const angle = ((((Math.atan2(-(y1 - y0), x1 - x0) * 180) / Math.PI) % 360) + 360) % 360;
+  return { kind: 'linear', angle, stops, axis: { x0, y0, x1, y1 } };
 }
 
 // A 1-in / n-out function → colour stops. Recurses for the type-3 stitching case.

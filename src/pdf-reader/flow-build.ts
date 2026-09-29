@@ -4,6 +4,7 @@
 // any lifted image bytes (EP6) in the resource store the writers embed from.
 
 import { displayOf } from './display';
+import { gradientOverBox } from './shading';
 import type {
   BodyElement,
   CustomPathCmd,
@@ -437,7 +438,7 @@ export function shapeBlock(
   const alpha = v.alpha !== undefined ? { alpha: v.alpha } : {};
   const fill: ShapeFill =
     v.gradient !== undefined
-      ? { kind: 'gradient', gradient: v.gradient, ...alpha }
+      ? { kind: 'gradient', gradient: gradientOverBox(v.gradient, v), ...alpha }
       : v.fillHex !== undefined
         ? { kind: 'solid', colorHex: v.fillHex, ...alpha }
         : { kind: 'none' };

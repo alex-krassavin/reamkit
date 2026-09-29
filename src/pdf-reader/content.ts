@@ -11,7 +11,7 @@
 
 import { Lexer } from './lexer';
 import { cmykHex, dashLengths, grayHex, rgbHex, spaceColor } from './shading';
-import type { ColorSpaceInfo, GsPaint } from './shading';
+import type { ColorSpaceInfo, GsPaint, PageGradient } from './shading';
 import type { TextMarkup } from './annot-draw';
 import type { ShapeGradient } from '@/core/vector';
 import type { PdfDict, PdfStream, PdfValue } from '@/pdf/objects';
@@ -298,7 +298,7 @@ export interface VectorPlacement {
   /** Fill colour (6-hex), present iff the path is filled (`f` / `F` / `f*` / `B` / `b`). */
   readonly fillHex?: string;
   /** Shading pattern, present iff filled with one (EP16c). */
-  readonly gradient?: ShapeGradient;
+  readonly gradient?: PageGradient;
   /** §11.6.4.4 `/ca` — how opaque the fill is, when the page asked for less. */
   readonly alpha?: number;
   /**
@@ -468,7 +468,7 @@ interface TextState {
   lineWidth: number; // current line width in user-space units (EP11)
   dash: ReadonlyArray<number>; // §8.4.3.6 current dash lengths, user space; empty is solid
   lineCap: number; // §8.4.3.3 0 butt, 1 round, 2 projecting square
-  fillGradient: ShapeGradient | undefined; // current non-stroking shading pattern (EP16c)
+  fillGradient: PageGradient | undefined; // current non-stroking shading pattern (EP16c)
   fillPattern: string | undefined; // §8.7.3 non-stroking TILING pattern resource name
   fillAlpha: number; // §11.6.4.4 `/ca` — how opaque the non-stroking paint is
   strokeAlpha: number; // §11.6.4.4 `/CA` — how opaque the stroking paint is
@@ -587,7 +587,7 @@ export function interpretContent(
   bytes: Uint8Array,
   fonts: ReadonlyMap<string, ContentFont>,
   initialCtm: Matrix = IDENTITY,
-  shadings: ReadonlyMap<string, ShapeGradient> = new Map(),
+  shadings: ReadonlyMap<string, PageGradient> = new Map(),
   alphas: ReadonlyMap<string, GsPaint> = new Map(),
   spaces: ReadonlyMap<string, ColorSpaceInfo> = new Map(),
   hiddenOc: ReadonlySet<string> = new Set(),
