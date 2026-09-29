@@ -261,7 +261,13 @@ function assembleSubsetTtf(
   return out;
 }
 
-function directoryGeometry(numTables: number): {
+/**
+ * The sfnt table directory's binary-search fields for `numTables` tables.
+ *
+ * @param numTables How many tables the font holds.
+ * @returns `searchRange`, `entrySelector` and `rangeShift`, as the header states them.
+ */
+export function directoryGeometry(numTables: number): {
   searchRange: number;
   entrySelector: number;
   rangeShift: number;
@@ -277,7 +283,14 @@ function directoryGeometry(numTables: number): {
   return { searchRange, entrySelector, rangeShift };
 }
 
-function paddedChecksum(data: Uint8Array): number {
+/**
+ * An sfnt table checksum: the sum of its big-endian 32-bit words, the last one
+ * padded with zeros.
+ *
+ * @param data The table's bytes (or the whole font's).
+ * @returns The checksum, as an unsigned 32-bit value.
+ */
+export function paddedChecksum(data: Uint8Array): number {
   let sum = 0;
   const len = data.length;
   let i = 0;

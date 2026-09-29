@@ -9,3 +9,5 @@ export type { KerningMap, LigatureMap, ShapedRun } from '@/core/font/opentype-la
 export { hasSubstitutable, lettersForLigature, substituteLetters } from '@/core/font/ligatures';
 export { createFontMeasure } from '@/core/font/measure';
 export type { FontMeasure } from '@/core/font/measure';
+export { buildTrueType, editableEmbedding, MAX_BUILT_GLYPHS } from '@/core/font/ttf-build';
+export type { BuiltFace, BuiltGlyph, GlyphSeg } from '@/core/font/ttf-build';

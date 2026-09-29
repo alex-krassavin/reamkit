@@ -62,7 +62,7 @@ import type {
 import type { ResolvedParagraphProperties, ResolvedRunProperties } from '@/core/style-cascade';
 import type { ShapeGradient } from '@/core/vector';
 import type { DocumentWriter, WriteResult } from '@/core/ir/adapters';
-import type { FaceFamily, FlowDoc } from '@/core/ir/flow';
+import type { FaceFamily, FaceOutlines, FlowDoc } from '@/core/ir/flow';
 import type { Loss, ResourceId, ResourceStore } from '@/core/ir';
 import type { OpcPart, Relationship } from '@/core/opc';
 
@@ -70,6 +70,7 @@ import { FEATURES } from '@/core/ir';
 import { chartSpaceXml } from '@/core/drawingml/chart-serializer';
 import { detectImageFormat } from '@/core/images';
 import { buildOpcPackage } from '@/core/opc';
+import { OBFUSCATED_FONT_CONTENT_TYPE, embedFaces } from '@/word/font-embed';
 import {
   EMPTY_STYLE_SHEET,
   resolveParagraphProperties,
@@ -237,6 +238,10 @@ interface WriteState {
   // Word's `Inter`), and the families written, for the font table.
   readonly faceFamilies?: ReadonlyMap<string, FaceFamily>;
   readonly familiesUsed: Map<string, FaceFamily>;
+  // The outlines of the faces a run names, where the source carried them, and
+  // the faces the runs written name — the ones the package embeds.
+  readonly faceOutlines?: ReadonlyMap<string, FaceOutlines>;
+  readonly facesUsed: Set<string>;
   // Every z-order the document's floats state, by rank (see `relativeHeight`).
   readonly zRanks: ReadonlyMap<number, number>;
 }
@@ -284,6 +289,8 @@ export function writeDocx(flow: FlowDoc): WriteResult {
     ...(flow.charts ? { charts: flow.charts } : {}),
     ...(flow.faceFamilies ? { faceFamilies: flow.faceFamilies } : {}),
     familiesUsed: new Map(),
+    ...(flow.faceOutlines ? { faceOutlines: flow.faceOutlines } : {}),
+    facesUsed: new Set(),
     zRanks: zRanksOf(flow),
   };
   const docScope = newScope();
@@ -402,6 +409,16 @@ export function writeDocx(flow: FlowDoc): WriteResult {
   );
   emitCommentsExtended(flow.comments, commentParaIds, docScope, extraParts);
 
+  // §17.8.1 — the faces the runs name, embedded where the source carried
+  // their outlines and their licence lets them travel.
+  const embedded =
+    state.faceOutlines && state.faceFamilies
+      ? embedFaces(state.facesUsed, state.faceOutlines, state.faceFamilies, losses)
+      : undefined;
+  if (embedded && embedded.relationships.length > 0) {
+    extraPartRels.push({ sourcePart: FONT_TABLE_PART, relationships: [...embedded.relationships] });
+  }
+
   // §17.8.3 — the font table: every family the runs name, with the kind of
   // face it is (§17.8.3.10), so a reader without it substitutes a face of the
   // same kind instead of its default serif.
@@ -409,7 +426,7 @@ export function writeDocx(flow: FlowDoc): WriteResult {
     state.familiesUsed.size > 0
       ? {
           path: FONT_TABLE_PART,
-          data: encoder.encode(fontTableXml(state.familiesUsed)),
+          data: encoder.encode(fontTableXml(state.familiesUsed, embedded?.elements)),
           contentType: FONT_TABLE_CONTENT_TYPE,
         }
       : undefined;
@@ -426,7 +443,7 @@ export function writeDocx(flow: FlowDoc): WriteResult {
   // out, a document with headers for its even pages printed its odd pages'
   // on every page once saved, and one bound along its head was bound along
   // its side.
-  const settings = settingsXml(flow, sections);
+  const settings = settingsXml(flow, sections, (embedded?.parts.length ?? 0) > 0);
   const settingsPart =
     settings !== undefined
       ? { path: SETTINGS_PART, data: encoder.encode(settings), contentType: SETTINGS_CONTENT_TYPE }
@@ -460,7 +477,11 @@ export function writeDocx(flow: FlowDoc): WriteResult {
       ...extraParts,
       ...state.chartParts,
       ...state.mediaParts,
+      ...(embedded?.parts ?? []),
     ],
+    ...((embedded?.parts.length ?? 0) > 0
+      ? { defaultsByExtension: { odttf: OBFUSCATED_FONT_CONTENT_TYPE } }
+      : {}),
     rootRelationships: [
       {
         id: 'rId1',
@@ -477,16 +498,25 @@ export function writeDocx(flow: FlowDoc): WriteResult {
 
 /**
  * §17.15.1.78 `w:settings` — the document-wide settings the model carries, in
- * the order CT_Settings declares them: `w:gutterAtTop` (§17.15.1.49),
- * `w:evenAndOddHeaders` (§17.15.1.36, which a section carries in the model),
- * and §17.15.3.4's `w:doNotExpandShiftReturn` inside `w:compat`.
+ * the order CT_Settings declares them: `w:embedTrueTypeFonts` and
+ * `w:saveSubsetFonts` (§17.15.1.42, .74) where the package embeds its faces,
+ * `w:gutterAtTop` (§17.15.1.49), `w:evenAndOddHeaders` (§17.15.1.36, which a
+ * section carries in the model), and §17.15.3.4's `w:doNotExpandShiftReturn`
+ * inside `w:compat`.
  *
- * @param flow     The document.
- * @param sections The sections being written.
+ * @param flow        The document.
+ * @param sections    The sections being written.
+ * @param embedsFonts Whether the package embeds fonts — which then stay
+ *                    embedded, as subsets, when the document is saved again.
  * @returns The part's XML, or undefined where the document states none.
  */
-function settingsXml(flow: FlowDoc, sections: ReadonlyArray<Section>): string | undefined {
+function settingsXml(
+  flow: FlowDoc,
+  sections: ReadonlyArray<Section>,
+  embedsFonts: boolean,
+): string | undefined {
   const parts: Array<string> = [];
+  if (embedsFonts) parts.push('<w:embedTrueTypeFonts/><w:saveSubsetFonts/>');
   if (flow.gutterAtTop === true) parts.push('<w:gutterAtTop/>');
   if (sections.some((sec) => sec.properties.evenAndOddHeaders === true)) {
     parts.push('<w:evenAndOddHeaders/>');
@@ -501,19 +531,24 @@ function settingsXml(flow: FlowDoc, sections: ReadonlyArray<Section>): string | 
   );
 }
 
-// §17.8.3.9 CT_Font — family (§17.8.3.10) before pitch (§17.8.3.13), the
-// schema's order.
-function fontTableXml(families: ReadonlyMap<string, FaceFamily>): string {
+// §17.8.3.9 CT_Font — family (§17.8.3.10) before pitch (§17.8.3.13), and the
+// embedded faces (§17.8.3.3–6) after both: the schema's order.
+function fontTableXml(
+  families: ReadonlyMap<string, FaceFamily>,
+  embeds?: ReadonlyMap<string, string>,
+): string {
   const fonts = [...families.values()]
     .map(
       (f) =>
         `<w:font w:name="${escapeAttr(f.family)}"><w:family w:val="${f.generic}"/>` +
-        `<w:pitch w:val="${f.generic === 'modern' ? 'fixed' : 'variable'}"/></w:font>`,
+        `<w:pitch w:val="${f.generic === 'modern' ? 'fixed' : 'variable'}"/>` +
+        `${embeds?.get(f.family) ?? ''}</w:font>`,
     )
     .join('');
   return (
     '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
-    `<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">${fonts}</w:fonts>`
+    '<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"' +
+    ` xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">${fonts}</w:fonts>`
   );
 }
 
@@ -833,7 +868,7 @@ function emitHeadersFooters(
 export const docxWriter: DocumentWriter<FlowDoc> = {
   id: 'docx',
   consumes: 'flow',
-  supports: new Set([FEATURES.text]),
+  supports: new Set([FEATURES.text, FEATURES.fontsEmbedding]),
   write: (doc) => writeDocx(doc),
 };
 
@@ -1971,6 +2006,7 @@ function rFontsXml(fonts: FontFamilyMap | undefined, state?: WriteState): string
     const known = state?.faceFamilies?.get(name);
     if (known === undefined) return name;
     state?.familiesUsed.set(known.family, known);
+    if (state?.faceOutlines?.has(name) === true) state.facesUsed.add(name);
     return known.family;
   };
   const attrs: Array<string> = [];

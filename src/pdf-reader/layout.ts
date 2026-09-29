@@ -42,6 +42,7 @@ import { collectEmbeddedFonts } from './embedded-fonts';
 import { collectFaceFamilies } from './font';
 import { collectPageImages } from './images';
 import { extractPageText } from './text';
+import { faceOutlinesOf } from './face-outlines';
 import { collectPageVectors } from './vector';
 import { markDrawnRules } from './text-rules';
 import { regionsOf } from './regions';
@@ -49,6 +50,7 @@ import { punctuationOf } from './glyph-shapes';
 import { matrixBlocks } from './math-rows';
 import { pageNumberingOf, runOf } from './page-numbers';
 import { isRightToLeft } from './content';
+import type { ShownCodes } from './face-outlines';
 import type { PageNumbering } from './page-numbers';
 import type { SideBySide } from './regions';
 import type { PdfVector } from './vector';
@@ -139,7 +141,9 @@ export function reconstructByLayout(
   // §14.11.1 — every mark is lifted into the page's SHOWN frame, so nothing
   // downstream has to know the page was ever turned.
   const sheets = pages.map((page) => displayOf(page));
-  const extracted = pages.map((page) => extractPageText(file, page));
+  // §9.9 — the codes each font paints, for the faces a writer may embed.
+  const painted: ShownCodes = new Map();
+  const extracted = pages.map((page) => extractPageText(file, page, painted));
   const onSheets = extracted.map((runs, i) => placeRuns(runs, sheets[i]!));
   // §17.6.20 — …and a page whose words run DOWN its sheet is read in the frame
   // where they stand upright, and set back on the sheet turned: a viewer turns
@@ -986,6 +990,7 @@ export function reconstructByLayout(
           ])
         : undefined,
       collectFaceFamilies(file, pages),
+      faceOutlinesOf(painted, extracted),
     ),
     losses: dedupeLosses(losses),
   };

@@ -5,9 +5,22 @@
 import { parseToUnicodeCMap } from './cmap';
 import { decodePredefined, predefinedCMap, splitPredefined } from './predefined-cmap';
 import { textForGlyphName } from './glyph-names';
-import { cffCidToGid, cffNameToGid, cffOutlineSource, openTypeCff } from './cff-outline';
+import {
+  cffCidToGid,
+  cffFsType,
+  cffNameToGid,
+  cffOutlineSource,
+  cffSpaceAdvance,
+  openTypeCff,
+} from './cff-outline';
 import { type1Font } from './type1-outline';
-import { outlineSource, postGlyphNames } from './glyf-outline';
+import {
+  cmapSubtables,
+  outlineSource,
+  postGlyphNames,
+  sfntFsType,
+  sfntSpaceAdvance,
+} from './glyf-outline';
 import { standardFace, standardWidth } from './standard-widths';
 import { eachPageFont, embeddedFontName, hasLiftableProgram, programStyle } from './embedded-fonts';
 import { isZapfDingbats, zapfDingbatsChar } from './dingbats';
@@ -16,9 +29,11 @@ import {
   isStandardLatinFace,
   macGlyphName,
   standardEncodingTable,
+  winAnsiLatinName,
 } from './encodings';
 import type { PdfDict, PdfValue } from '@/pdf/objects';
-import type { ContentFont, GlyphOutline, Matrix, PathSeg, Type3Face } from './content';
+import type { ContentFont, FaceProgram, GlyphOutline, Matrix, PathSeg, Type3Face } from './content';
+import type { OutlineSource } from './glyf-outline';
 import type { PdfFile, PdfPage } from './document';
 import type { FaceFamily } from '@/core/ir/flow';
 import { knowsFamily, resolveFamilyStyle } from '@/core/fonts';
@@ -245,6 +260,8 @@ export function buildContentFont(file: PdfFile, fontDict: PdfDict): ContentFont 
     // where it stood and the page came back blank with nothing said about it,
     // which is the one loss this reader must never take in silence.
     (bytesPerCode === 1 ? latin1(code) : UNANSWERABLE);
+  // §9.7.4 — a composite font's program, read by glyph once for both uses.
+  const composite = isType0 ? compositeGlyphs(file, fontDict) : undefined;
   const simple = simpleWidths(file, fontDict, decodeOne);
   // §9.6.5 — a Type 3 font states its widths in GLYPH space, which its
   // `/FontMatrix` maps to text space; every other font states them in
@@ -262,9 +279,20 @@ export function buildContentFont(file: PdfFile, fontDict: PdfDict): ContentFont 
     // file. Drawn, the page shows what it showed; left out, it is a blank
     // sheet. Only for a code that has no character: a face this reads is set
     // as type, not traced.
-    ...(isType0
-      ? outlineOf(file, fontDict, decodeOne)
-      : simpleOutlineOf(decodeOne, namesOf, glyphs)),
+    ...(isType0 ? outlineOf(composite, decodeOne) : simpleOutlineOf(decodeOne, namesOf, glyphs)),
+    // §9.9 — and the program itself, for a writer that embeds the face. Only a
+    // face a run can name, and never a Type 3 one, whose glyphs are drawings.
+    ...(name !== undefined && !type3
+      ? programOf(
+          file,
+          fontDict,
+          isType0,
+          isType0
+            ? compositeGlyph(composite, fontDict, file)
+            : simpleGlyph(glyphs, namesOf, baseNames === baseEncodingTable('WinAnsiEncoding')),
+          isType0 ? composite : glyphs,
+        )
+      : {}),
     ...(named?.vertical ? { verticalAdvance: cidVerticalAdvance(file, fontDict) } : {}),
     ...(type3 ? { type3 } : {}),
     ...(name !== undefined ? { name } : {}),
@@ -523,6 +551,76 @@ function programCharacters(file: PdfFile, owner: PdfDict): Map<number, string> |
 }
 
 /**
+ * §9.7.4 — a composite font's embedded program, read by glyph: the code is a
+ * CID, `/CIDToGIDMap` (or, for a CID-keyed CFF, its charset) turns that into a
+ * glyph index, and the program holds the contours.
+ *
+ * @param file     The owning file.
+ * @param fontDict The Type 0 font dictionary.
+ * @returns The program's outlines and how a CID reaches them, or `undefined`
+ *          where the font embeds no program this reads.
+ */
+function compositeGlyphs(file: PdfFile, fontDict: PdfDict): CompositeGlyphs | undefined {
+  const cidFont = descendantFont(file, fontDict);
+  const descriptor = file.resolve(cidFont.get('FontDescriptor') ?? PDF_NULL);
+  if (!(descriptor instanceof Map)) return undefined;
+  const truetype = file.resolve(descriptor.get('FontFile2') ?? PDF_NULL);
+  const compact = file.resolve(descriptor.get('FontFile3') ?? PDF_NULL);
+  const program = truetype instanceof PdfStream ? truetype : compact;
+  if (!(program instanceof PdfStream)) return undefined;
+  let source: OutlineSource | undefined;
+  let charsetCids: Map<number, number> | undefined;
+  let fsType: number | undefined;
+  let spaceAdvance: number | undefined;
+  try {
+    const bytes = file.streamData(program);
+    // §9.9 — `/FontFile3` is a CFF program, either bare or wrapped in an
+    // OpenType shell; the shell may carry TrueType outlines instead.
+    source = outlineSource(bytes);
+    fsType = sfntFsType(bytes);
+    spaceAdvance = sfntSpaceAdvance(bytes);
+    if (!source) {
+      const cff = openTypeCff(bytes) ?? bytes;
+      source = cffOutlineSource(cff);
+      // TN 5176 §10 — a CID-keyed CFF is ordered by CID, so the code is not
+      // the index into its charstrings; its charset says which glyph is which.
+      charsetCids = source ? cffCidToGid(cff) : undefined;
+      fsType ??= cffFsType(cff);
+    }
+  } catch {
+    return undefined;
+  }
+  if (!source) return undefined;
+  const cidToGid = readCidToGid(file, cidFont);
+  return {
+    source,
+    glyphOf: (cid) => {
+      const mapped = cidToGid ? cidToGid[cid] : cid;
+      if (mapped === undefined) return undefined;
+      return charsetCids ? charsetCids.get(mapped) : mapped;
+    },
+    looseGlyphOf: (cid) => {
+      const mapped = cidToGid ? (cidToGid[cid] ?? 0) : cid;
+      return charsetCids ? (charsetCids.get(mapped) ?? mapped) : mapped;
+    },
+    ...(fsType !== undefined ? { fsType } : {}),
+    ...(spaceAdvance !== undefined ? { spaceAdvance } : {}),
+  };
+}
+
+/** A composite font's program, and the ways a CID reaches its glyphs. */
+interface CompositeGlyphs extends ProgramFacts {
+  readonly source: OutlineSource;
+  /** The glyph a CID selects, or `undefined` where the maps name none for it. */
+  readonly glyphOf: (cid: number) => number | undefined;
+  /**
+   * The same, falling back to the CID itself where the maps are silent — the
+   * last resort of a code that otherwise draws nothing at all.
+   */
+  readonly looseGlyphOf: (cid: number) => number;
+}
+
+/**
  * §9.6.6 — the outline a code draws, for a code that stands for no character.
  *
  * The glyph is there even when the character is not: `/Encoding /Identity-H`
@@ -534,43 +632,16 @@ function programCharacters(file: PdfFile, owner: PdfDict): Map<number, string> |
  * Deliberately NOT a fallback for text: a code the font CAN answer for is set
  * as type, and only the unanswerable ones are traced.
  *
- * @param file      The owning file.
- * @param fontDict  The Type 0 font dictionary.
+ * @param glyphs    The font's program, read by glyph (see `compositeGlyphs`).
  * @param decodeOne What one code comes to, to tell the two cases apart.
  * @returns The `outline` field of a {@link ContentFont}, or nothing where the
  *          program carries no outlines this reads.
  */
 function outlineOf(
-  file: PdfFile,
-  fontDict: PdfDict,
+  glyphs: CompositeGlyphs | undefined,
   decodeOne: (code: number) => string,
 ): { outline?: GlyphOutline } {
-  const cidFont = descendantFont(file, fontDict);
-  const descriptor = file.resolve(cidFont.get('FontDescriptor') ?? PDF_NULL);
-  if (!(descriptor instanceof Map)) return {};
-  const truetype = file.resolve(descriptor.get('FontFile2') ?? PDF_NULL);
-  const compact = file.resolve(descriptor.get('FontFile3') ?? PDF_NULL);
-  const program = truetype instanceof PdfStream ? truetype : compact;
-  if (!(program instanceof PdfStream)) return {};
-  let source;
-  let charsetCids: Map<number, number> | undefined;
-  try {
-    const bytes = file.streamData(program);
-    // §9.9 — `/FontFile3` is a CFF program, either bare or wrapped in an
-    // OpenType shell; the shell may carry TrueType outlines instead.
-    source = outlineSource(bytes);
-    if (!source) {
-      const cff = openTypeCff(bytes) ?? bytes;
-      source = cffOutlineSource(cff);
-      // TN 5176 §10 — a CID-keyed CFF is ordered by CID, so the code is not
-      // the index into its charstrings; its charset says which glyph is which.
-      charsetCids = source ? cffCidToGid(cff) : undefined;
-    }
-  } catch {
-    return {};
-  }
-  if (!source) return {};
-  const cidToGid = readCidToGid(file, cidFont);
+  if (!glyphs) return {};
   return {
     outline: {
       // The reader gives a one-unit em, which is a `/FontMatrix` of 1/upem
@@ -582,11 +653,32 @@ function outlineOf(
         // nothing at all. arial_unicode_ab_cidfont.pdf maps its four Arabic
         // letters to U+FFFF.
         if (readable(decodeOne(code)) !== UNANSWERABLE) return undefined;
-        const mapped = cidToGid ? (cidToGid[code] ?? 0) : code;
-        const gid = charsetCids ? (charsetCids.get(mapped) ?? mapped) : mapped;
-        return source.path(gid);
+        return glyphs.source.path(glyphs.looseGlyphOf(code));
       },
     },
+  };
+}
+
+/**
+ * §9.7.5.2 — the glyph ANY code of a composite font draws, for a writer that
+ * embeds the face.
+ *
+ * Only under `Identity-H` or `Identity-V`, where the code is the CID: any other
+ * CMap turns codes into CIDs by a table of its own, and a glyph looked up by
+ * the code there would be some other character's.
+ */
+function compositeGlyph(
+  glyphs: CompositeGlyphs | undefined,
+  fontDict: PdfDict,
+  file: PdfFile,
+): ((code: number) => ReadonlyArray<PathSeg> | undefined) | undefined {
+  const encoding = asName(file.resolve(fontDict.get('Encoding') ?? PDF_NULL));
+  if (!glyphs || (encoding !== 'Identity-H' && encoding !== 'Identity-V')) return undefined;
+  return (code) => {
+    const gid = glyphs.glyphOf(code);
+    // Glyph 0 is `.notdef`: the program has nothing for the code.
+    if (gid === undefined || gid <= 0 || gid >= glyphs.source.count) return undefined;
+    return glyphs.source.path(gid) ?? [];
   };
 }
 
@@ -631,7 +723,7 @@ function simpleOutlineOf(
 }
 
 /** The outlines a simple font's program holds, addressed the way it addresses them. */
-interface SimpleGlyphs {
+interface SimpleGlyphs extends ProgramFacts {
   readonly byName: (name: string) => Array<PathSeg> | undefined;
   /**
    * Whether the program HOLDS that glyph and it draws nothing. A blank glyph
@@ -650,6 +742,13 @@ interface SimpleGlyphs {
    * them as text is invention.
    */
   readonly indexed?: boolean;
+  /**
+   * §9.6.6 — the glyph a code draws, reached the way the program is: by the
+   * name the encoding gives the code, or — for a TrueType program — through
+   * whichever `cmap` it carries. Empty for a blank glyph, `undefined` where the
+   * program holds none for the code.
+   */
+  readonly glyph: (code: number, name: string | undefined) => ReadonlyArray<PathSeg> | undefined;
 }
 
 /**
@@ -681,6 +780,12 @@ function simpleGlyphs(file: PdfFile, fontDict: PdfDict): SimpleGlyphs | undefine
         byName: face.path,
         blank: (name: string): boolean => face.has(name) && face.path(name) === undefined,
         ...(face.encoding ? { builtIn: face.encoding } : {}),
+        glyph: (_code, name) =>
+          name === undefined || name === NOTDEF || !face.has(name)
+            ? undefined
+            : (face.path(name) ?? []),
+        ...(face.fsType !== undefined ? { fsType: face.fsType } : {}),
+        ...spaceOf(face.advance('space')),
       };
     }
     const stream = compact instanceof PdfStream ? compact : truetype;
@@ -688,6 +793,7 @@ function simpleGlyphs(file: PdfFile, fontDict: PdfDict): SimpleGlyphs | undefine
     const bytes = file.streamData(stream);
     // A TrueType program, or the TrueType half of an OpenType shell.
     const glyf = outlineSource(bytes);
+    const fsType = sfntFsType(bytes);
     if (glyf) {
       // §post — the names the program itself gives its glyphs, which is how a
       // legacy eight-bit face is reached: it has no `cmap`, and its shapes sit
@@ -697,7 +803,22 @@ function simpleGlyphs(file: PdfFile, fontDict: PdfDict): SimpleGlyphs | undefine
         const gid = named?.get(name) ?? numberedGlyph(name, numbering);
         return gid !== undefined && gid < glyf.count ? gid : undefined;
       };
+      const flags = asNumber(file.resolve(descriptor.get('Flags') ?? PDF_NULL), 0);
+      const encoding = file.resolve(fontDict.get('Encoding') ?? PDF_NULL);
+      const byCode = trueTypeGlyphs(
+        bytes,
+        (flags & FLAG_SYMBOLIC) !== 0 && (flags & FLAG_NONSYMBOLIC) === 0,
+        encoding instanceof Map || encoding instanceof PdfName,
+        gidOf,
+      );
       return {
+        glyph: (code, name) => {
+          const gid = byCode(code, name);
+          if (gid === undefined || gid <= 0 || gid >= glyf.count) return undefined;
+          return glyf.path(gid) ?? [];
+        },
+        ...(fsType !== undefined ? { fsType } : {}),
+        ...spaceOf(sfntSpaceAdvance(bytes)),
         byName: (name: string): Array<PathSeg> | undefined => {
           const gid = gidOf(name);
           return gid === undefined ? undefined : glyf.path(gid);
@@ -721,7 +842,14 @@ function simpleGlyphs(file: PdfFile, fontDict: PdfDict): SimpleGlyphs | undefine
       const gid = names?.get(name) ?? numberedGlyph(name, numbering);
       return gid !== undefined && gid < outlines.count ? gid : undefined;
     };
+    const stated = fsType ?? cffFsType(cff);
     return {
+      glyph: (_code, name) => {
+        const gid = name === undefined || name === NOTDEF ? undefined : gidOf(name);
+        return gid === undefined || gid === 0 ? undefined : (outlines.path(gid) ?? []);
+      },
+      ...(stated !== undefined ? { fsType: stated } : {}),
+      ...spaceOf(sfntSpaceAdvance(bytes) ?? cffSpaceAdvance(cff)),
       byName: (name: string): Array<PathSeg> | undefined => {
         const gid = gidOf(name);
         return gid === undefined ? undefined : outlines.path(gid);
@@ -734,6 +862,185 @@ function simpleGlyphs(file: PdfFile, fontDict: PdfDict): SimpleGlyphs | undefine
   } catch {
     return undefined;
   }
+}
+
+/** The `spaceAdvance` field, where a program states a sensible one. */
+function spaceOf(advance: number | undefined): { spaceAdvance?: number } {
+  return advance !== undefined && advance > 0 && advance < 1000 ? { spaceAdvance: advance } : {};
+}
+
+/**
+ * §9.6.6.4 — how a SIMPLE TrueType font's code reaches a glyph: through the
+ * program's `cmap`, and which subtable decides what the code is looked up as.
+ *
+ * A face that states an encoding turns the code into its glyph NAME, and the
+ * name into a character for the Unicode subtable (3,1), a Mac Roman code for
+ * (1,0), or an entry of the program's own `post` names — and past ASCII, only
+ * that: the same byte is another letter in Mac Roman, and a glyph found by the
+ * code there is the wrong one. A symbolic face with a Windows symbol subtable
+ * (3,0), and a face that states no encoding, is looked up by the CODE: in
+ * (3,0), where it stands in one of four ranges (itself, or behind 0xF000,
+ * 0xF100 or 0xF200), or byte for byte in (1,0) — its names the fallback, as a
+ * viewer tries them. A program with no `cmap` at all is read by index: the
+ * code IS the glyph.
+ *
+ * @param program     The raw `/FontFile2` bytes.
+ * @param symbolic    Whether `/Flags` call the face symbolic (bit 3, not bit 6).
+ * @param hasEncoding Whether the font dictionary states an `/Encoding`.
+ * @param byName      The glyph a name selects through `post` or the
+ *                    numbered-name convention (see {@link numberedGlyph}).
+ * @returns Code (and the name the encoding gives it) → glyph index, or
+ *          `undefined` where nothing reaches one.
+ */
+function trueTypeGlyphs(
+  program: Uint8Array,
+  symbolic: boolean,
+  hasEncoding: boolean,
+  byName: (name: string) => number | undefined,
+): (code: number, name: string | undefined) => number | undefined {
+  let tables: Map<string, (code: number) => number> | undefined;
+  return (code, name) => {
+    tables ??= cmapSubtables(program);
+    const unicode =
+      tables.get('3,1') ?? tables.get('0,3') ?? tables.get('0,1') ?? tables.get('0,0');
+    const symbol = tables.get('3,0');
+    const roman = tables.get('1,0');
+    const bySymbol = (): number => {
+      if (symbol) {
+        for (const high of SYMBOL_RANGES) {
+          const gid = symbol(high | code);
+          if (gid > 0) return gid;
+        }
+        return 0;
+      }
+      return roman ? roman(code) : 0;
+    };
+    const byGlyphName = (): number => {
+      if (name === undefined || name === NOTDEF) return 0;
+      const text = textForGlyphName(name);
+      const cp = text !== undefined && [...text].length === 1 ? text.codePointAt(0) : undefined;
+      const viaUnicode = unicode && cp !== undefined ? unicode(cp) : 0;
+      if (viaUnicode > 0) return viaUnicode;
+      const mac = macRomanCode(name);
+      const viaRoman = roman && mac !== undefined ? roman(mac) : 0;
+      if (viaRoman > 0) return viaRoman;
+      return byName(name) ?? 0;
+    };
+    const gid =
+      symbolic && symbol !== undefined
+        ? bySymbol() || byGlyphName()
+        : hasEncoding
+          ? byGlyphName() || (code < ASCII_END ? bySymbol() : 0)
+          : // A Unicode subtable asked with the code itself: what a face with
+            // no encoding of its own leaves to be tried last.
+            bySymbol() || byGlyphName() || (unicode ? unicode(code) : 0);
+    if (gid > 0) return gid;
+    // §9.6.6.4 — no `cmap` at all: the codes are glyph indices.
+    return tables.size === 0 ? code : undefined;
+  };
+}
+
+/** Below this, a byte is the same character in every encoding a simple font uses. */
+const ASCII_END = 0x80;
+
+/** §9.6.6.4 — where a symbolic face's (3,0) subtable may put a one-byte code. */
+const SYMBOL_RANGES: ReadonlyArray<number> = [0x0000, 0xf000, 0xf100, 0xf200];
+
+/** §9.8.2 `/Flags` — bit 3 is Symbolic, bit 6 Nonsymbolic (bits numbered from 1). */
+const FLAG_SYMBOLIC = 1 << 2;
+const FLAG_NONSYMBOLIC = 1 << 5;
+
+/** The Mac Roman code of a glyph name, which is what a (1,0) `cmap` is keyed by. */
+function macRomanCode(name: string): number | undefined {
+  if (!macRomanCodes) {
+    macRomanCodes = new Map();
+    for (const [code, glyph] of baseEncodingTable('MacRomanEncoding') ?? []) {
+      if (!macRomanCodes.has(glyph)) macRomanCodes.set(glyph, code);
+    }
+  }
+  return macRomanCodes.get(name);
+}
+
+let macRomanCodes: Map<string, number> | undefined;
+
+/**
+ * §9.6.6 — the glyph ANY code of a simple font draws, for a writer that embeds
+ * the face: the name the encoding gives the code, as the outline path reads it.
+ *
+ * WinAnsiEncoding's Latin-1 half is named too (Annex D.2), though the text
+ * reads it as Latin-1 without a name: unnamed, an é in a program addressed by
+ * name selected nothing — and in a TrueType one, the Mac Roman subtable's È.
+ *
+ * @param glyphs  The program, read by name and code.
+ * @param nameOf  The name each code has: `/Differences` over the base encoding.
+ * @param winAnsi Whether that base encoding is WinAnsiEncoding.
+ */
+function simpleGlyph(
+  glyphs: SimpleGlyphs | undefined,
+  nameOf: ReadonlyMap<number, string>,
+  winAnsi: boolean,
+): ((code: number) => ReadonlyArray<PathSeg> | undefined) | undefined {
+  if (!glyphs) return undefined;
+  return (code) =>
+    glyphs.glyph(
+      code,
+      nameOf.get(code) ??
+        (winAnsi ? winAnsiLatinName(code) : undefined) ??
+        glyphs.builtIn?.get(code),
+    );
+}
+
+/** What a font program states of itself, beside its glyphs. */
+interface ProgramFacts {
+  /** OS/2 `fsType`, or the `/FSType` a CFF or Type 1 program states. */
+  readonly fsType?: number;
+  /** How far the program's own space advances, in thousandths of an em. */
+  readonly spaceAdvance?: number;
+}
+
+/**
+ * §9.9 — the {@link FaceProgram} of a font whose program this reads: the glyph
+ * lookup, the licence, and what the descriptor states (§9.8.1).
+ *
+ * @param file     The owning file.
+ * @param fontDict The font dictionary.
+ * @param isType0  Whether it is a composite font, whose descendant owns the
+ *                 descriptor.
+ * @param glyph    The glyph each code draws, where the program can be read.
+ * @param facts    What the program states of itself: its licence and its space.
+ * @returns The `program` field of a {@link ContentFont}, or nothing.
+ */
+function programOf(
+  file: PdfFile,
+  fontDict: PdfDict,
+  isType0: boolean,
+  glyph: ((code: number) => ReadonlyArray<PathSeg> | undefined) | undefined,
+  facts: ProgramFacts | undefined,
+): { program?: FaceProgram } {
+  if (!glyph) return {};
+  const owner = isType0 ? descendantFont(file, fontDict) : fontDict;
+  const descriptor = file.resolve(owner.get('FontDescriptor') ?? PDF_NULL);
+  if (!(descriptor instanceof Map)) return {};
+  const stated = (key: string): number | undefined => {
+    const v = file.resolve(descriptor.get(key) ?? PDF_NULL);
+    return typeof v === 'number' && Number.isFinite(v) ? v : undefined;
+  };
+  const flags = stated('Flags') ?? 0;
+  const capHeight = stated('CapHeight');
+  const xHeight = stated('XHeight');
+  const base = asName(file.resolve(owner.get('BaseFont') ?? fontDict.get('BaseFont') ?? PDF_NULL));
+  return {
+    program: {
+      glyph,
+      ...(facts?.fsType !== undefined ? { fsType: facts.fsType } : {}),
+      ...(facts?.spaceAdvance !== undefined ? { spaceAdvance: facts.spaceAdvance } : {}),
+      postScriptName: base.replace(/^[A-Z]{6}\+/u, ''),
+      ...(capHeight !== undefined && capHeight > 0 ? { capHeight } : {}),
+      ...(xHeight !== undefined && xHeight > 0 ? { xHeight } : {}),
+      italicAngle: stated('ItalicAngle') ?? 0,
+      fixedPitch: (flags & FLAG_FIXED_PITCH) !== 0,
+    },
+  };
 }
 
 /**

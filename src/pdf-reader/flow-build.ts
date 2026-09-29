@@ -16,7 +16,7 @@ import type {
   ShapeLine,
   TextOutline,
 } from '@/core/document-model';
-import type { FaceFamily, FlowDoc } from '@/core/ir/flow';
+import type { FaceFamily, FaceOutlines, FlowDoc } from '@/core/ir/flow';
 import type { FontRegistry } from '@/core/font';
 import type { Loss, Pt } from '@/core/ir';
 
@@ -1014,6 +1014,7 @@ export function buildFlowDoc(
   sections: ReadonlyArray<Section> = [],
   headersFooters?: ReadonlyMap<string, ReadonlyArray<BodyElement>>,
   faceFamilies?: ReadonlyMap<string, FaceFamily>,
+  faceOutlines?: ReadonlyMap<string, FaceOutlines>,
 ): FlowDoc {
   return {
     kind: 'flow',
@@ -1025,6 +1026,7 @@ export function buildFlowDoc(
     ...(section ? { section } : {}),
     ...(embeddedFonts && embeddedFonts.size > 0 ? { embeddedFonts } : {}),
     ...(faceFamilies && faceFamilies.size > 0 ? { faceFamilies } : {}),
+    ...(faceOutlines && faceOutlines.size > 0 ? { faceOutlines } : {}),
     styles: EMPTY_STYLE_SHEET,
     resources,
   };

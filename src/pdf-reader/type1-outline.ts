@@ -15,6 +15,7 @@
 //
 // The outline comes back in a ONE-UNIT em, like the other two readers'.
 
+import { postScriptFsType } from './cff-outline';
 import type { PathSeg } from './content';
 
 /** What an embedded Type 1 program says about its glyphs. */
@@ -28,6 +29,17 @@ export interface Type1Font {
   readonly has: (name: string) => boolean;
   /** The program's own `/Encoding`: code → glyph name, where it states one. */
   readonly encoding?: ReadonlyMap<number, string>;
+  /**
+   * The embedding the program's licence allows — the OS/2 `fsType` Adobe
+   * writes into `FontInfo` as `/FSType`, where the program states one.
+   */
+  readonly fsType?: number;
+  /**
+   * §6.4 — how far the pen moves after a glyph, in thousandths of an em: the
+   * width its `hsbw` (or `sbw`) states. `undefined` where the program holds no
+   * such glyph or its charstring states no width first.
+   */
+  readonly advance: (name: string) => number | undefined;
 }
 
 /**
@@ -62,7 +74,13 @@ export function type1Font(program: Uint8Array): Type1Font | undefined {
       return out;
     },
     has: (name: string): boolean => parsed.charstrings.has(name),
+    advance: (name: string): number | undefined => {
+      const charstring = parsed.charstrings.get(name);
+      const width = charstring ? statedWidth(charstring) : undefined;
+      return width === undefined ? undefined : width * parsed.scale * 1000;
+    },
     ...(parsed.encoding ? { encoding: parsed.encoding } : {}),
+    ...(parsed.fsType !== undefined ? { fsType: parsed.fsType } : {}),
   };
 }
 
@@ -72,6 +90,7 @@ interface Parsed {
   readonly encoding?: Map<number, string>;
   /** `/FontMatrix`'s scale — 1/1000 for all but a handful of faces. */
   readonly scale: number;
+  readonly fsType?: number;
 }
 
 function parseType1(program: Uint8Array): Parsed | undefined {
@@ -90,11 +109,13 @@ function parseType1(program: Uint8Array): Parsed | undefined {
   const charstrings = readCharstrings(plain, text, lenIV);
   if (charstrings.size === 0) return undefined;
   const encoding = readEncoding(clear);
+  const fsType = postScriptFsType(clear);
   return {
     charstrings,
     subrs: readSubrs(plain, text, lenIV),
     ...(encoding ? { encoding } : {}),
     scale: readMatrixScale(clear) ?? 0.001,
+    ...(fsType !== undefined ? { fsType } : {}),
   };
 }
 
@@ -275,6 +296,9 @@ function runGlyph(font: Parsed, program: Uint8Array, depth: number): Array<PathS
   let inFlex = false;
   let x = 0;
   let y = 0;
+  // The left sidebearing `hsbw` or `sbw` states, which a `seac` accent is
+  // placed from.
+  let sideBearing = 0;
   let open = false;
   let steps = 0;
 
@@ -313,6 +337,7 @@ function runGlyph(font: Parsed, program: Uint8Array, depth: number): Array<PathS
         case 13: // hsbw — the left sidebearing sets the origin, the width is not ours
           x = stack[0] ?? 0;
           y = 0;
+          sideBearing = x;
           stack.length = 0;
           break;
         case 9: // closepath
@@ -464,16 +489,24 @@ function runGlyph(font: Parsed, program: Uint8Array, depth: number): Array<PathS
             break;
           }
           if (op2 === 6) {
-            // §8.4 seac — a standard-encoding accented character, drawn as two
-            // glyphs. Only the base is taken: the accent needs the standard
-            // encoding's names, and a base with no accent reads better than
-            // nothing at all.
-            const base = STANDARD_ENCODING[stack[3] ?? 0];
-            const charstring = base !== undefined ? font.charstrings.get(base) : undefined;
-            if (charstring && depth < 2) {
+            // §8.4 seac — `asb adx ady bchar achar`: a standard-encoding
+            // accented character, drawn as two glyphs of the font. The base
+            // stands where this glyph does; the accent's origin goes `adx`
+            // along from it, less the accent's own sidebearing `asb` and plus
+            // this glyph's — which is how every rasteriser reads the operator.
+            // An é drawn as its e alone is a different letter.
+            const [asb = 0, adx = 0, ady = 0, bchar = 0, achar = 0] = stack;
+            if (open) out.push({ op: 'close' });
+            open = false;
+            const part = (charCode: number, dx: number, dy: number): void => {
+              const name = STANDARD_ENCODING[charCode];
+              const charstring = name !== undefined ? font.charstrings.get(name) : undefined;
+              if (!charstring || depth >= 2) return;
               const drawn = runGlyph(font, charstring, depth + 1);
-              if (drawn) out.push(...drawn.map((seg) => unscale(seg, font.scale)));
-            }
+              if (drawn) out.push(...drawn.map((seg) => shift(unscale(seg, font.scale), dx, dy)));
+            };
+            part(bchar, 0, 0);
+            part(achar, adx + sideBearing - asb, ady);
             stack.length = 0;
             return false;
           }
@@ -481,6 +514,7 @@ function runGlyph(font: Parsed, program: Uint8Array, depth: number): Array<PathS
             // sbw — the sidebearing and width in both directions
             x = stack[0] ?? 0;
             y = stack[1] ?? 0;
+            sideBearing = x;
             stack.length = 0;
             break;
           }
@@ -524,9 +558,47 @@ function scaleSeg(seg: PathSeg, k: number): PathSeg {
   return { op: seg.op, x: seg.x * k, y: seg.y * k };
 }
 
-/** The base of a `seac` comes back already scaled; this puts it back in glyph space. */
+/**
+ * §6.4 — the width a charstring states before it draws: the second operand of
+ * `hsbw` (`sbx wx hsbw`), or the third of `sbw` (`sbx sby wx wy sbw`).
+ */
+function statedWidth(code: Uint8Array): number | undefined {
+  const stack: Array<number> = [];
+  for (let i = 0; i < code.length && stack.length <= 4; ) {
+    const b = code[i++]!;
+    if (b >= 32 && b <= 246) stack.push(b - 139);
+    else if (b >= 247 && b <= 250) stack.push((b - 247) * 256 + (code[i++] ?? 0) + 108);
+    else if (b >= 251 && b <= 254) stack.push(-(b - 251) * 256 - (code[i++] ?? 0) - 108);
+    else if (b === 255) {
+      stack.push((code[i]! << 24) | (code[i + 1]! << 16) | (code[i + 2]! << 8) | code[i + 3]! | 0);
+      i += 4;
+    } else if (b === 13) return stack[1];
+    else if (b === 12 && code[i] === 7) return stack[2];
+    else return undefined;
+  }
+  return undefined;
+}
+
+/** The parts of a `seac` come back already scaled; this puts them back in glyph space. */
 function unscale(seg: PathSeg, k: number): PathSeg {
   return scaleSeg(seg, k === 0 ? 1 : 1 / k);
+}
+
+/** A segment moved by `(dx, dy)`: where a `seac` puts its accent. */
+function shift(seg: PathSeg, dx: number, dy: number): PathSeg {
+  if (seg.op === 'close' || (dx === 0 && dy === 0)) return seg;
+  if (seg.op === 'cubic') {
+    return {
+      op: 'cubic',
+      x1: seg.x1 + dx,
+      y1: seg.y1 + dy,
+      x2: seg.x2 + dx,
+      y2: seg.y2 + dy,
+      x: seg.x + dx,
+      y: seg.y + dy,
+    };
+  }
+  return { op: seg.op, x: seg.x + dx, y: seg.y + dy };
 }
 
 /** §C.1 — the names `seac` selects its two parts by, at the codes it states. */

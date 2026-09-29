@@ -10,8 +10,10 @@ import { textMarkupOf } from './annot-draw';
 import { patternTint, tintedHex } from './pattern-tint';
 import { hiddenProperties, hiddenXObject } from './optional-content';
 import { buildColorSpaceMap, buildShadingMap } from './shading';
+import { addShown } from './face-outlines';
 import type { Quad, TextMarkup, TextMarkupAnnot } from './annot-draw';
 import type { ContentFont, Matrix, TextRun } from './content';
+import type { ShownCodes } from './face-outlines';
 import type { PdfDict } from '@/pdf/objects';
 import type { PdfFile, PdfPage, Rectangle } from './document';
 
@@ -26,13 +28,19 @@ const MAX_FORM_DEPTH = 8;
  * origin falls inside a `/Link` annotation's `/Rect` with that link's URI (EP8)
  * so hyperlinks survive.
  *
- * @param file The owning {@link PdfFile}.
- * @param page The page to extract.
+ * @param file  The owning {@link PdfFile}.
+ * @param page  The page to extract.
+ * @param painted Where to gather the codes each font painted, for a caller
+ *                that embeds the faces (see `./face-outlines`).
  * @returns The page's runs, each carrying an `href` when it sits under a link.
  */
-export function extractPageText(file: PdfFile, page: PdfPage): Array<TextRun> {
+export function extractPageText(
+  file: PdfFile,
+  page: PdfPage,
+  painted?: ShownCodes,
+): Array<TextRun> {
   const runs: Array<TextRun> = [];
-  collectRuns(file, page.resources, file.pageContent(page), IDENTITY, 0, new Set(), runs);
+  collectRuns(file, page.resources, file.pageContent(page), IDENTITY, 0, new Set(), runs, painted);
   // §12.5.5 — an annotation draws in its own appearance stream, and the words
   // it draws are the page's words too: a field's value, a button's caption.
   // Only its ARTWORK was being lifted, so 160F-2019.pdf's reset button arrived
@@ -47,6 +55,7 @@ export function extractPageText(file: PdfFile, page: PdfPage): Array<TextRun> {
       1,
       new Set([appearance.stream]),
       runs,
+      painted,
     );
   }
   for (let i = own; i < runs.length; i++) runs[i] = { ...runs[i]!, annotation: true };
@@ -229,6 +238,7 @@ function collectRuns(
   depth: number,
   visiting: Set<PdfStream>,
   out: Array<TextRun>,
+  shown?: ShownCodes,
 ): void {
   const result = interpretContent(
     content,
@@ -249,6 +259,7 @@ function collectRuns(
     hiddenProperties(file, resources),
   );
   out.push(...result.texts.map((r) => withPatternColour(file, resources, r, visiting)));
+  if (shown) addShown(shown, result.shown);
   if (depth >= MAX_FORM_DEPTH) return;
   // §9.6.5 — a Type 3 glyph's procedure may show text of its own, and it is
   // text the page shows. ContentStreamCycleType3insideType3.pdf sets a word
@@ -264,6 +275,7 @@ function collectRuns(
       depth + 1,
       visiting,
       out,
+      shown,
     );
     visiting.delete(glyph.stream);
   }
@@ -287,6 +299,7 @@ function collectRuns(
       depth + 1,
       visiting,
       out,
+      shown,
     );
     visiting.delete(stream);
   }

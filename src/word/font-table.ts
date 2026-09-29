@@ -51,6 +51,19 @@ export function deobfuscateEmbeddedFont(data: Uint8Array, fontKey: string): Uint
 }
 
 /**
+ * §17.8.1 — obfuscate a font for embedding. The obfuscation is an XOR of the
+ * first 32 bytes with the `fontKey` GUID's bytes in reverse order, so it is its
+ * own inverse: this is {@link deobfuscateEmbeddedFont} run on a plain font.
+ *
+ * @param data    The plain sfnt bytes.
+ * @param fontKey The GUID the font table states as its `w:fontKey`.
+ * @returns The bytes to store as the `.odttf` part.
+ */
+export function obfuscateEmbeddedFont(data: Uint8Array, fontKey: string): Uint8Array {
+  return deobfuscateEmbeddedFont(data, fontKey);
+}
+
+/**
  * Parse `word/fontTable.xml` for its embedded-font references (§17.8). Returns
  * one `FontTableEntry` per `w:font` that carries at least one `w:embed*` child,
  * each naming the relationship id + `w:fontKey` for a Regular/Bold/Italic/

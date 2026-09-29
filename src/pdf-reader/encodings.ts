@@ -96,6 +96,34 @@ const MAC_ROMAN: ReadonlyMap<number, string> = new Map([
   ),
 ]);
 
+/**
+ * Annex D.2 WIN — the glyph NAMES of CP-1252's upper half, which the table
+ * above leaves to Latin-1 for the TEXT. A program addressed by name still has
+ * to be told which glyph 0xE9 is: `eacute`, looked up by name or through the
+ * character a Unicode `cmap` keys it by. (0xA0 is `space` and 0xAD `hyphen`
+ * here, as Annex D names the glyphs they draw.)
+ */
+const WIN_ANSI_LATIN: ReadonlyMap<number, string> = table(
+  0xa0,
+  'space exclamdown cent sterling currency yen brokenbar section dieresis copyright ordfeminine guillemotleft logicalnot hyphen registered macron',
+  'degree plusminus twosuperior threesuperior acute mu paragraph periodcentered cedilla onesuperior ordmasculine guillemotright onequarter onehalf threequarters questiondown',
+  'Agrave Aacute Acircumflex Atilde Adieresis Aring AE Ccedilla Egrave Eacute Ecircumflex Edieresis Igrave Iacute Icircumflex Idieresis',
+  'Eth Ntilde Ograve Oacute Ocircumflex Otilde Odieresis multiply Oslash Ugrave Uacute Ucircumflex Udieresis Yacute Thorn germandbls',
+  'agrave aacute acircumflex atilde adieresis aring ae ccedilla egrave eacute ecircumflex edieresis igrave iacute icircumflex idieresis',
+  'eth ntilde ograve oacute ocircumflex otilde odieresis divide oslash ugrave uacute ucircumflex udieresis yacute thorn ydieresis',
+);
+
+/**
+ * The glyph a code of WinAnsiEncoding's Latin-1 half selects, by name (see
+ * `WIN_ANSI_LATIN`).
+ *
+ * @param code A one-byte code.
+ * @returns The Annex D.2 glyph name, or `undefined` outside 0xA0–0xFF.
+ */
+export function winAnsiLatinName(code: number): string | undefined {
+  return WIN_ANSI_LATIN.get(code);
+}
+
 const TABLES: Readonly<Record<BaseEncodingName, ReadonlyMap<number, string>>> = {
   StandardEncoding: STANDARD,
   WinAnsiEncoding: WIN_ANSI,

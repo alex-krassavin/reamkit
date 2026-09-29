@@ -41,6 +41,8 @@ import {
 import { markDrawnRules } from './text-rules';
 import { readStructTree } from './struct-tree';
 import { extractPageText } from './text';
+import { faceOutlinesOf } from './face-outlines';
+import type { ShownCodes } from './face-outlines';
 import type {
   BodyElement,
   SectionProperties,
@@ -87,7 +89,9 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
   // tree says what the words ARE; where they sit is still the page's to say,
   // and it is the only witness of the margins the author set.
   const sheets = pages.map((page) => displayOf(page));
-  const extracted = pages.map((page) => extractPageText(file, page));
+  // §9.9 — the codes each font paints, for the faces a writer may embed.
+  const painted: ShownCodes = new Map();
+  const extracted = pages.map((page) => extractPageText(file, page, painted));
   const onSheets = extracted.map((runs, i) => placeRuns(runs, sheets[i]!));
   // §17.6.20 — a document whose words run DOWN its sheets is read in the frame
   // where they stand upright and set back on the sheets turned, as the untagged
@@ -672,6 +676,7 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
           ])
         : undefined,
       collectFaceFamilies(file, pages),
+      faceOutlinesOf(painted, extracted),
     ),
     losses: imageLosses,
   };
