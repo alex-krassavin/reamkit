@@ -14,6 +14,7 @@ import {
   readOs2FsType,
   remoteFontProvider,
 } from '@/core/fonts/provider';
+import { clearFontCache } from '@/core/fonts/remote-fonts';
 
 const ROBOTO = new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Regular.ttf'));
 const ROBOTO_BOLD = new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Bold.ttf'));
@@ -100,6 +101,61 @@ describe('remoteFontProvider fallback cascade', () => {
     if (a.kind !== 'bytes') throw new Error('unreachable');
     // Pre-fix this fell straight through to regular.
     expect(Buffer.from(a.bytes).equals(Buffer.from(ROBOTO_BOLD))).toBe(true);
+  });
+});
+
+describe('remoteFontProvider, after a set the network lost', () => {
+  // Serves the Roboto fixtures, except that the first `lost` requests reject,
+  // as fetch does offline or when a DNS lookup fails. Records every URL asked.
+  const flakyFetch = (urls: Array<string>, lost: number) => (url: string) => {
+    urls.push(url);
+    if (urls.length <= lost) return Promise.reject(new TypeError('fetch failed'));
+    const bytes = url.includes('Bold') ? ROBOTO_BOLD : ROBOTO;
+    return Promise.resolve({ ok: true, arrayBuffer: () => Promise.resolve(bytes.buffer.slice(0)) });
+  };
+
+  it('asks again on the next request, not answering it with the same error for good', async () => {
+    clearFontCache();
+    const urls: Array<string> = [];
+    // One provider for the life of the process, as a server builds its chain.
+    const provider = remoteFontProvider({ fetch: flakyFetch(urls, 1) });
+    const regular = { family: 'Arial', bold: false, italic: false };
+    // The regular face is the one a set cannot do without, so the loss is thrown.
+    await expect(provider.resolve(regular)).rejects.toThrow(
+      /Failed to download font from .*Arimo_400Regular\.ttf/,
+    );
+    const a = await provider.resolve(regular);
+    if (a.kind !== 'bytes') throw new Error('unreachable');
+    expect(Buffer.from(a.bytes).equals(Buffer.from(ROBOTO))).toBe(true);
+    expect(urls.filter((u) => u.endsWith('Arimo_400Regular.ttf'))).toHaveLength(2);
+  });
+
+  it('is one download for the requests made while it is in flight, lost or not', async () => {
+    clearFontCache();
+    const urls: Array<string> = [];
+    const provider = remoteFontProvider({ fetch: flakyFetch(urls, 1) });
+    // The four faces a conversion asks the chain for at once.
+    const four = () =>
+      Promise.allSettled(
+        [false, true].flatMap((bold) =>
+          [false, true].map((italic) => provider.resolve({ family: 'Arial', bold, italic })),
+        ),
+      );
+    const errors = (await four()).flatMap((r) => (r.status === 'rejected' ? [r.reason] : []));
+    expect(errors).toHaveLength(4);
+    // One request, lost once, and one error for all four: each would have
+    // thrown its own had the provider started a set per request.
+    expect(urls).toHaveLength(1);
+    expect(new Set(errors).size).toBe(1);
+    // Asked again, the set is downloaded anew: each face once, for all four.
+    const found = await four();
+    expect(found.map((r) => r.status)).toEqual([
+      'fulfilled',
+      'fulfilled',
+      'fulfilled',
+      'fulfilled',
+    ]);
+    expect(urls).toHaveLength(5);
   });
 });
 
