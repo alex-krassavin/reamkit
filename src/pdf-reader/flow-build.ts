@@ -394,7 +394,11 @@ export function positionedText(
         insetRight: pt(0),
         insetBottom: pt(0),
       },
-      paragraphProperties: {},
+      // The box floats, so the paragraph that carries it takes no room, as a
+      // placed drawing's does (`FLOAT_CARRIER`). Floats in a row share one
+      // carrier, the first one's: left at single spacing it is a blank line,
+      // and every line under it moves down one.
+      paragraphProperties: FLOAT_CARRIER,
     },
   };
 }

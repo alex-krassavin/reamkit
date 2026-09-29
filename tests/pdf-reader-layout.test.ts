@@ -11,7 +11,7 @@ import { buildDocxFromBody } from './fixtures/build-docx';
 import type { BodyElement } from '@/core/document-model';
 import { Ream } from '@/core/converter/ream';
 import { PdfFile } from '@/pdf-reader/document';
-import { BASELINE_AT, positionedText } from '@/pdf-reader/flow-build';
+import { BASELINE_AT, FLOAT_CARRIER, positionedText } from '@/pdf-reader/flow-build';
 import { drawnWords, endedParagraph, reconstructByLayout } from '@/pdf-reader/layout';
 
 const FONTS = {
@@ -1734,5 +1734,18 @@ describe('a line set where the page set it', () => {
       spacingLineRule: 'exact',
     });
     expect(BASELINE_AT * 15).toBeCloseTo(12, 6);
+  });
+
+  it('is carried by a paragraph that takes no room', () => {
+    // Floats in a row share one carrier, the first one's; left at single
+    // spacing a placed line's was a blank line that moved everything under it.
+    const el = positionedText(
+      [{ text: 'world', sizePt: 12 }],
+      { x: 10, y: 10, width: 60, height: 15 },
+      { left: 0, top: 100 },
+      1,
+    );
+    if (el.kind !== 'shape') throw new Error('a positioned line is a shape');
+    expect(el.shape.paragraphProperties).toEqual(FLOAT_CARRIER);
   });
 });
