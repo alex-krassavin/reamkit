@@ -271,7 +271,7 @@ export function readDocx(docx: Uint8Array): ReadResult<FlowDoc> {
     ...(settings.compatibilityMode !== undefined
       ? { compatibilityMode: settings.compatibilityMode }
       : {}),
-    lineHeights: 'word',
+    typesetBy: 'word',
   };
   return { doc, losses };
 }

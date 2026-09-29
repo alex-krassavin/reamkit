@@ -173,7 +173,7 @@ function parsePdfAProfile(pdfA: PdfALevel): PdfAProfile {
  * E-PARITY: renderer-compatibility profile — how lines are measured, broken
  * and stacked.
  *   `'ream'` (default) — kerned measuring, Knuth-Plass breaking, and the line
- *     height the document asks for (see {@link LineHeights}).
+ *     height the document asks for (see {@link TypesetBy}).
  *   `'word'` — kern-free measuring, first-fit breaking, and lines as Word sets
  *     them whatever the document.
  *   `'libreoffice'` — first-fit breaking, lines from the face in hand: hhea, or
@@ -184,12 +184,14 @@ function parsePdfAProfile(pdfA: PdfALevel): PdfAProfile {
 export type LayoutProfile = 'ream' | 'word' | 'libreoffice';
 
 /**
- * §17.3.1.33 — how tall a line stands at single spacing: `'word'`, as Word
- * sets it — the line of the faces on it (see `fontLeadingPt`) — rather than
- * Ream's flat 1.2× of the size. A Word document's reader asks for it (see
- * `FlowDoc.lineHeights`).
+ * The application whose rules a document is set by: `'word'` stands its
+ * lines as tall as the faces on them make them (§17.3.1.33, see
+ * `fontLeadingPt`) rather than Ream's flat 1.2× of the size, and gives every
+ * horizontal table border the room it is wide (§17.4.38, see
+ * `withBorderBands`) rather than none. A Word document's reader asks for it
+ * (see `FlowDoc.typesetBy`).
  */
-export type LineHeights = 'word';
+export type TypesetBy = 'word';
 
 /** The line model a layout runs with: the profile's own, else the document's. */
 type Leading = 'flat' | 'word' | 'libreoffice';
@@ -197,7 +199,7 @@ type Leading = 'flat' | 'word' | 'libreoffice';
 function leadingOf(options: StyledRenderOptions): Leading {
   const profile = options.layoutProfile ?? 'ream';
   if (profile !== 'ream') return profile;
-  return options.lineHeights === 'word' ? 'word' : 'flat';
+  return options.typesetBy === 'word' ? 'word' : 'flat';
 }
 
 /** What a paragraph's lines are reckoned from. */
@@ -308,8 +310,8 @@ export interface StyledRenderOptions {
   readonly registry: FontRegistry;
   /** Renderer-compatibility profile for the line-height model (default `'ream'`). */
   readonly layoutProfile?: LayoutProfile;
-  /** §17.3.1.33 — lines as tall as their fonts make them, as Word sets them (see {@link LineHeights}). */
-  readonly lineHeights?: LineHeights;
+  /** The application whose rules the document is set by (see {@link TypesetBy}). */
+  readonly typesetBy?: TypesetBy;
   /**
    * Per-run font resolution: when supplied, each text run picks the registry of
    * its declared family (sans→arimo / serif→tinos / mono→cousine via the run's
@@ -827,6 +829,12 @@ interface RowLayout {
    * fit on the page moves to the next rather than breaking across the two.
    */
   readonly cantSplit?: boolean;
+  /**
+   * §17.4.38 — the room the row gives its top border, and (the table's last
+   * row) its bottom one, where the document is set as Word sets it (see
+   * {@link withBorderBands}). The borders are drawn down the middle of it.
+   */
+  readonly borderBands?: { readonly topPt: number; readonly bottomPt: number };
 }
 
 interface TableBlock {
@@ -7532,6 +7540,13 @@ function layoutTableRow(
     cursorX += widthPt;
     colIdx += span;
   }
+  const bands =
+    options.typesetBy === 'word' ? withBorderBands(cells, rowIdx === rowCount - 1) : undefined;
+  const bandSpread = bands && (bands.topPt > 0 || bands.bottomPt > 0) ? bands : undefined;
+  if (bandSpread) cells.splice(0, cells.length, ...bandSpread.cells);
+  const borderBands = bandSpread
+    ? { borderBands: { topPt: bandSpread.topPt, bottomPt: bandSpread.bottomPt } }
+    : {};
   let heightPt = 0;
   // A cell that starts a vertical merge is as tall as its content, but that
   // content has EVERY row of the merge to sit in — the row it starts in does
@@ -7555,6 +7570,7 @@ function layoutTableRow(
       rowIdx,
       rowCount,
       ...(row.properties.cantSplit ? { cantSplit: true } : {}),
+      ...borderBands,
     };
   } else if (row.properties.height && row.properties.heightRule === 'atLeast') {
     heightPt = Math.max(heightPt, row.properties.height);
@@ -7566,6 +7582,45 @@ function layoutTableRow(
     rowIdx,
     rowCount,
     ...(row.properties.cantSplit ? { cantSplit: true } : {}),
+    ...borderBands,
+  };
+}
+
+/**
+ * §17.4.38 — a table row as Word sets it: every horizontal border takes the
+ * room it is wide, the edge above a row in that row and the table's bottom
+ * edge in its last one, and the text stands clear of it. Measured in Word for
+ * Mac, a row of 11pt Calibri with no cell margins stands 13.44pt apart from
+ * the next with no borders, 13.92 under 0.5pt ones, 14.94 under 1.5pt and
+ * 16.43 under 3pt; a one-row table between two paragraphs adds its top and
+ * its bottom border whole, 3pt each at 3pt. LibreOffice does the same. The
+ * room is the widest border along the edge, and it goes into the cells' top
+ * and bottom padding, which is what places their text and sizes the row.
+ *
+ * @param cells   The row's laid-out cells, their borders resolved.
+ * @param lastRow Whether the row is the table's last, whose bottom border is
+ *                the table's own.
+ * @returns The cells with the room in their padding, and the room taken.
+ */
+function withBorderBands(
+  cells: ReadonlyArray<CellLayout>,
+  lastRow: boolean,
+): { cells: Array<CellLayout>; topPt: number; bottomPt: number } {
+  let topPt = 0;
+  let bottomPt = 0;
+  for (const c of cells) {
+    topPt = Math.max(topPt, borderWeight(c.borders.top));
+    if (lastRow) bottomPt = Math.max(bottomPt, borderWeight(c.borders.bottom));
+  }
+  return {
+    cells: cells.map((c) => ({
+      ...c,
+      padTopPt: c.padTopPt + topPt,
+      padBottomPt: c.padBottomPt + bottomPt,
+      totalHeightPt: c.totalHeightPt + topPt + bottomPt,
+    })),
+    topPt,
+    bottomPt,
   };
 }
 
@@ -9935,6 +9990,7 @@ function emitRowChunk(
       row.rowIdx,
       row.rowCount,
       colCount,
+      row.borderBands,
     );
     // Diagonal cell strokes (Excel diagonal borders): a line across the cell box,
     // drawn in the shapes pass like the icon / dropdown glyphs. diagonalDown runs
@@ -10256,6 +10312,8 @@ const FILL_SEAM_PT = 0.07;
 // Each shared edge between adjacent cells is the same physical line, so we
 // render it exactly once. Convention: every cell paints its top + left; the
 // last row paints its bottom and the last spanned column paints its right.
+// A row that gives its horizontal borders room (RowLayout.borderBands) has
+// them drawn down the middle of it rather than astride its edge.
 function emitCellBorders(
   out: Array<PageItem>,
   cell: CellLayout,
@@ -10266,6 +10324,7 @@ function emitCellBorders(
   rowIdx: number,
   rowCount: number,
   colCount: number,
+  bands?: RowLayout['borderBands'],
 ): void {
   const pushSide = (
     side: 'top' | 'right' | 'bottom' | 'left',
@@ -10273,17 +10332,21 @@ function emitCellBorders(
   ) => {
     if (!border || border.style === 'none') return;
     const sz = border.width ?? DEFAULT_BORDER_SIZE_EIGHTH * EIGHTH_PT;
+    // The box the side is the edge of: a top rule lowered, a bottom one raised,
+    // to the middle of the room the row gives it.
+    const lowered = side === 'top' ? (bands?.topPt ?? 0) / 2 : 0;
+    const raised = side === 'bottom' ? (bands?.bottomPt ?? 0) / 2 : 0;
     out.push({
       type: 'border',
       side,
       x: pt(cellX),
-      y: pt(pageHeight - cellY - rowHeight),
+      y: pt(pageHeight - cellY - rowHeight + lowered),
       // A rule belongs to the CELL, not to the run of empty neighbours its text
       // borrowed. The fill beside it already knows that; the border did not, so
       // 53734.xlsx framed one bold cell in a box twice its width, running out
       // past its own green fill and past where both references close it.
       width: pt(cell.paintWidthPt ?? cell.widthPt),
-      height: pt(rowHeight),
+      height: pt(rowHeight - lowered - raised),
       borderSizePt: sz,
       borderColorHex: border.colorHex ?? '000000',
       ...(border.style !== 'single' ? { borderStyle: border.style } : {}),

@@ -176,10 +176,11 @@ export interface FlowDoc {
    */
   readonly compatibilityMode?: number;
   /**
-   * ECMA-376 §17.3.1.33 — how tall a line stands at single spacing: `'word'`
-   * for a document Word sets, whose lines stand as tall as the faces on them
-   * make them (see the layout's `LineHeights`). Absent, the layout's flat
-   * 1.2× of the size.
+   * The application whose rules the document is set by: `'word'` for one Word
+   * sets — lines as tall as the faces on them make them (§17.3.1.33), table
+   * rows as tall as their borders make them (§17.4.38); see the layout's
+   * `TypesetBy`. Absent, the layout's flat 1.2× lines and borders that take no
+   * room.
    */
-  readonly lineHeights?: 'word';
+  readonly typesetBy?: 'word';
 }

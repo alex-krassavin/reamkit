@@ -25,7 +25,7 @@ const docx = buildDocxFromBody(`<w:p><w:r><w:t>${'word '.repeat(200)}</w:t></w:r
 // `flat`: the layout as a document that asks for no line model gets it.
 function lineCmds(profile?: LayoutProfile, flat = false): ReadonlyArray<TextLineItem> {
   const flow = Ream.parse(docx).flow;
-  const { lineHeights: _asked, ...options } = flowRenderOptions(flow);
+  const { typesetBy: _asked, ...options } = flowRenderOptions(flow);
   const laid = layoutStyledDocument(flow.body, {
     registry: FontRegistry.fromBytes(FONTS),
     ...(flat ? options : flowRenderOptions(flow)),

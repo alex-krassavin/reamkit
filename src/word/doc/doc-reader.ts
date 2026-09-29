@@ -254,7 +254,7 @@ export function readDoc(bytes: Uint8Array): ReadResult<FlowDoc> {
     styles: EMPTY_STYLE_SHEET,
     resources,
     ...(headersFooters.size > 0 ? { headersFooters } : {}),
-    lineHeights: 'word',
+    typesetBy: 'word',
   };
   return { doc, losses: [content.encrypted ? DOC_ENCRYPTED_LOSS : DOC_TEXT_LOSS] };
 }

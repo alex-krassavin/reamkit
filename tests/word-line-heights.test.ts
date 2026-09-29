@@ -227,7 +227,7 @@ describe('a blank paragraph', () => {
 
 describe('the documents set as Word sets them', () => {
   it('are the ones Word writes: .docx and .doc', () => {
-    expect(readDocx(buildDocxFromBody(para(run('Calibri', 'x')))).doc.lineHeights).toBe('word');
-    expect(readDoc(buildDoc([{ text: 'x\r', compressed: false }])).doc.lineHeights).toBe('word');
+    expect(readDocx(buildDocxFromBody(para(run('Calibri', 'x')))).doc.typesetBy).toBe('word');
+    expect(readDoc(buildDoc([{ text: 'x\r', compressed: false }])).doc.typesetBy).toBe('word');
   });
 });
