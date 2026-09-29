@@ -9,15 +9,17 @@
 import {
   buildFlowDoc,
   dedupeLosses,
+  floatOntoSheet,
   imageBlock,
   paragraphBlock,
   paragraphFromRuns,
   sectionFromPdfPages,
+  sectionOnSheet,
   shapeBlock,
   spaceAfter,
   withMeasuredMargins,
 } from './flow-build';
-import { displayOf, placeRuns, placeVectors } from './display';
+import { displayOf, placeRuns, placeVectors, textFrameOf, wordsTurnOf } from './display';
 import { collectEmbeddedFonts } from './embedded-fonts';
 import { collectFaceFamilies } from './font';
 import { collectPageImages } from './images';
@@ -65,8 +67,17 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
   // §14.11.1 — the pages as they are SHOWN, and every run placed on them. The
   // tree says what the words ARE; where they sit is still the page's to say,
   // and it is the only witness of the margins the author set.
-  const shown = pages.map((page) => displayOf(page));
-  const placedRuns = pages.map((page, i) => placeRuns(extractPageText(file, page), shown[i]!));
+  const sheets = pages.map((page) => displayOf(page));
+  const extracted = pages.map((page) => extractPageText(file, page));
+  const onSheets = extracted.map((runs, i) => placeRuns(runs, sheets[i]!));
+  // §17.6.20 — a document whose words run DOWN its sheets is read in the frame
+  // where they stand upright and set back on the sheets turned, as the untagged
+  // reading does a page at a time. A tagged reading is one section, so it
+  // turns when every page that has words has them running down it.
+  const worded = onSheets.filter((runs) => runs.some((r) => r.text.trim() !== ''));
+  const turned = worded.length > 0 && worded.every((runs) => wordsTurnOf(runs) === 270);
+  const shown = turned ? sheets.map((sheet) => textFrameOf(sheet)) : sheets;
+  const placedRuns = turned ? extracted.map((runs, i) => placeRuns(runs, shown[i]!)) : onSheets;
   // A PDF has no underline: it draws a thin bar under the words, and the tree
   // says nothing about it. Read onto the runs before they are gathered, so it
   // travels with them, and the bar itself is not placed a second time.
@@ -411,7 +422,9 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
     for (const v of pageVectors[index] ?? []) {
       // A bar that became a run's underline is not also a bar on the page.
       if (taken?.has(v) === true) continue;
-      body.push(shapeBlock(v, frame, zOrder++, true));
+      const shape = shapeBlock(v, frame, zOrder++, true);
+      // …and on a turned sheet it stands where the page drew it, turned with it.
+      body.push(turned ? floatOntoSheet(shape, shown[index]!.height) : shape);
     }
   });
 
@@ -457,11 +470,14 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
       // it needs the same margins: measured off where the source put them.
       // Without this every tagged PDF came back with its text against all four
       // edges of the paper.
-      withMeasuredMargins(
-        sectionFromPdfPages(pages),
-        shown,
-        placedRuns,
-        pageImages.map((p) => p.images),
+      sectionOnSheet(
+        withMeasuredMargins(
+          sectionFromPdfPages(pages, shown[0]),
+          shown,
+          placedRuns,
+          pageImages.map((p) => p.images),
+        ),
+        shown[0],
       ),
       collectEmbeddedFonts(file, pages, imageLosses),
       [],

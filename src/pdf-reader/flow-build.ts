@@ -20,6 +20,7 @@ import type { FaceFamily, FlowDoc } from '@/core/ir/flow';
 import type { FontRegistry } from '@/core/font';
 import type { Loss, Pt } from '@/core/ir';
 
+import type { Display } from './display';
 import type { PdfImage } from './images';
 import type { PdfPage } from './document';
 import type { PdfVector } from './vector';
@@ -540,14 +541,18 @@ export function shapeBlock(
  * this single geometry — a known approximation, still far better than a fixed
  * `A4`. Returns `undefined` when there is no usable first-page box.
  */
-export function sectionFromPdfPages(pages: ReadonlyArray<PdfPage>): SectionProperties | undefined {
+export function sectionFromPdfPages(
+  pages: ReadonlyArray<PdfPage>,
+  display?: Display,
+): SectionProperties | undefined {
   const first = pages[0];
   if (!first) return undefined;
   // §14.11.1 — the page as it is SHOWN. A landscape sheet drawn sideways in a
   // portrait box with `/Rotate 270` is a landscape page, and read as its box
   // says every one of Brotli-Prototype-FileA.pdf's twenty-five came back
-  // portrait with its words running down the page.
-  const shown = displayOf(first);
+  // portrait with its words running down the page. (A page READ in a frame of
+  // its own is sized to that frame; see `sectionOnSheet`.)
+  const shown = display ?? displayOf(first);
   const width = shown.width;
   const height = shown.height;
   if (!(width > 0 && height > 0)) return undefined;
@@ -566,6 +571,85 @@ export function sectionFromPdfPages(pages: ReadonlyArray<PdfPage>): SectionPrope
     headers: [],
     footers: [],
   };
+}
+
+/**
+ * §17.6.20 — a section read in a page's text frame (see `textFrameOf`), set
+ * back on the sheet the page is shown on, its lines running down it (`tbRl`).
+ *
+ * The frame is the sheet turned back a quarter, so its measurements carry
+ * over edge for edge: the frame's left margin is where each line starts, the
+ * sheet's top one; its top margin is where the first line stands, the
+ * sheet's right one.
+ *
+ * @param section The section as the frame measured it.
+ * @param display The geometry its pages were read in.
+ * @returns The section on the sheet, or the section unchanged for a page read
+ *          on its sheet.
+ */
+export function sectionOnSheet(
+  section: SectionProperties | undefined,
+  display: Display | undefined,
+): SectionProperties | undefined {
+  const sheet = display?.sheet;
+  if (!section || !sheet) return section;
+  const m = section.margins;
+  return {
+    ...section,
+    pageSize: {
+      width: pt(sheet.width),
+      height: pt(sheet.height),
+      orientation: sheet.width > sheet.height ? 'landscape' : 'portrait',
+    },
+    ...(m ? { margins: { ...m, top: m.left, right: m.top, bottom: m.right, left: m.bottom } } : {}),
+    textDirection: 'tbRl',
+  };
+}
+
+/**
+ * A mark anchored to a page read in its text frame, set on the SHEET the page
+ * is shown on: where the page drew it, turned with the page.
+ *
+ * Word lays a `tbRl` section's text down the sheet but stands a drawing
+ * anchored to the page at its offsets on the sheet, upright (§17.6.20) — so a
+ * picture the frame placed is carried onto the sheet, and turned a quarter
+ * clockwise as the words around it are.
+ *
+ * @param el         A body element, anchored or not.
+ * @param sheetWidth The sheet's width, which is the frame's height.
+ * @returns The element, anchored on the sheet.
+ */
+export function floatOntoSheet(el: BodyElement, sheetWidth: number): BodyElement {
+  const onto = (float: FloatAnchor, width: number, height: number): FloatAnchor | undefined => {
+    if (float.posH?.relativeFrom !== 'page' || float.posV?.relativeFrom !== 'page')
+      return undefined;
+    // The box's centre, frame (x, y) → sheet (sheetWidth − y, x); the box keeps
+    // its size and turns about that centre.
+    const cx = (float.posH.offsetPt ?? 0) + width / 2;
+    const cy = (float.posV.offsetPt ?? 0) + height / 2;
+    return {
+      ...float,
+      posH: { relativeFrom: 'page', offsetPt: pt(sheetWidth - cy - width / 2) },
+      posV: { relativeFrom: 'page', offsetPt: pt(cx - height / 2) },
+    };
+  };
+  const quarter = (rotation60k: number | undefined): number =>
+    ((rotation60k ?? 0) + 90 * 60000) % (360 * 60000);
+  if (el.kind === 'image' && el.image.float) {
+    const float = onto(el.image.float, el.image.width, el.image.height);
+    if (!float) return el;
+    return { ...el, image: { ...el.image, float, rotation60k: quarter(el.image.rotation60k) } };
+  }
+  if (el.kind === 'shape' && el.shape.float) {
+    const float = onto(el.shape.float, el.shape.width, el.shape.height);
+    if (!float) return el;
+    const rotation60k = quarter(el.shape.transform?.rotation60k);
+    return {
+      ...el,
+      shape: { ...el.shape, float, transform: { ...el.shape.transform, rotation60k } },
+    };
+  }
+  return el;
 }
 
 /**

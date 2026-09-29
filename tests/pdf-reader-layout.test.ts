@@ -1124,6 +1124,49 @@ describe('placed reconstruction (E-PDF EP4)', () => {
     expect(shape.shape.float?.posH?.offsetPt).toBeCloseTo(200, 5);
   });
 
+  it('turns the words with a page whose turn leaves them running down it (§17.6.20)', () => {
+    // hello_world_rotated.pdf sets its words upright in a portrait box and
+    // turns the page by /Rotate 90: every viewer shows them running down a
+    // landscape sheet. Read on the sheet, they came back flat across it.
+    const pdf = onePagePdf(
+      '/MediaBox [0 0 400 800] /Rotate 90',
+      'BT /F1 20 Tf 100 600 Td (Hello world) Tj ET 0 0 1 rg 100 300 50 30 re f',
+    );
+    const flowed = reconstructByLayout(PdfFile.parse(pdf));
+    const section = flowed.doc.section;
+    expect(section?.textDirection).toBe('tbRl');
+    expect([section?.pageSize?.width, section?.pageSize?.height]).toEqual([800, 400]);
+    expect(section?.pageSize?.orientation).toBe('landscape');
+    // Read in the frame where the words stand upright, they are one line, and
+    // the line starts where the page starts it: at x=100 of the box, which is
+    // the sheet's top margin once the section runs down it.
+    const paras = paragraphs(flowed.doc);
+    expect(paras.map((p) => p.paragraph.runs.map((r) => r.text).join(''))).toContain('Hello world');
+    expect(section?.margins?.top).toBeCloseTo(100, 0);
+    // The box drawn on the page stands on the SHEET, turned with the page, as
+    // Word stands an anchored drawing: (100, 300) 50×30 on the box is x 300–330,
+    // y 100–150 on the sheet, and a 50×30 box turned a quarter about its
+    // centre covers exactly that.
+    const shape = flowed.doc.body.find((b) => b.kind === 'shape');
+    if (shape?.kind !== 'shape') throw new Error('expected the box');
+    expect(shape.shape.transform?.rotation60k).toBe(90 * 60000);
+    expect(shape.shape.float?.posH?.offsetPt).toBeCloseTo(290, 3);
+    expect(shape.shape.float?.posV?.offsetPt).toBeCloseTo(110, 3);
+  });
+
+  it('sets words that run UP the sheet across it, and says so', () => {
+    // No section runs its lines up a sheet — Word and LibreOffice set a
+    // section down it or across it — so /Rotate 270 over upright words is
+    // read across the sheet, with a loss that names what was not kept.
+    const pdf = onePagePdf(
+      '/MediaBox [0 0 400 800] /Rotate 270',
+      'BT /F1 20 Tf 100 600 Td (Up) Tj ET',
+    );
+    const flowed = reconstructByLayout(PdfFile.parse(pdf));
+    expect(flowed.doc.section?.textDirection).toBeUndefined();
+    expect(flowed.losses.some((l) => /running up the sheet/u.test(l.detail))).toBe(true);
+  });
+
   it('leaves a page its box describes exactly where it stands', () => {
     // The same file with no turn: portrait, and the words still on their side.
     const placed = reconstructByLayout(PdfFile.parse(turnedPagePdf(0)), 'positional');

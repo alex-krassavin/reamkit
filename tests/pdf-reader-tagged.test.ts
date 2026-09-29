@@ -44,7 +44,48 @@ const paragraphTexts = (flow: { body: ReadonlyArray<{ kind: string }> }): Array<
         .trim(),
     );
 
+/**
+ * The same PDF with every page turned by `/Rotate 90`, written as an
+ * incremental update (§7.5.6): a new revision of each page object and a
+ * cross-reference section that points at it, the way an editor turns a page.
+ */
+function turnedPages(pdf: Uint8Array): Uint8Array {
+  // Byte for byte: TextDecoder's 'latin1' is windows-1252, which rewrites
+  // 0x80–0x9F and would corrupt every compressed stream on the way back.
+  const text = Array.from(pdf, (b) => String.fromCharCode(b)).join('');
+  const size = /\/Size (\d+)/u.exec(text)![1]!;
+  const root = /\/Root (\d+ \d+ R)/u.exec(text)![1]!;
+  const prev = /startxref\s+(\d+)\s+%%EOF\s*$/u.exec(text)![1]!;
+  let out = text;
+  const entries: Array<string> = [];
+  for (const m of text.matchAll(/(\d+) 0 obj\s*<<\/Type \/Page ([^]*?)>>\s*endobj/gu)) {
+    const offset = out.length;
+    out += `${m[1]!} 0 obj\n<</Type /Page ${m[2]!} /Rotate 90>>\nendobj\n`;
+    entries.push(`${m[1]!} 1\n${String(offset).padStart(10, '0')} 00000 n \n`);
+  }
+  const xref = out.length;
+  out +=
+    `xref\n${entries.join('')}trailer\n<</Size ${size} /Root ${root} /Prev ${prev}>>\n` +
+    `startxref\n${String(xref)}\n%%EOF\n`;
+  return Uint8Array.from(out, (c) => c.charCodeAt(0));
+}
+
 describe('tagged-PDF reconstruction (E-PDF EP3)', () => {
+  it('turns the words with pages the turn leaves running down their sheets (§17.6.20)', async () => {
+    // Every viewer shows a portrait page turned by /Rotate 90 as a landscape
+    // sheet with its words running down it — and so is the document read back.
+    const pdf = await Ream.parse(buildDocxFromBody(para('Turned with its page.'))).convert('pdf', {
+      fonts: FONTS,
+      tagged: true,
+    });
+    const flow = reconstructTaggedPdf(PdfFile.parse(turnedPages(pdf)))?.doc;
+    expect(flow?.section?.textDirection).toBe('tbRl');
+    expect(flow?.section?.pageSize?.orientation).toBe('landscape');
+    expect(paragraphTexts(flow!)).toContain('Turned with its page.');
+    // …and the same document unturned reads across its sheet, as before.
+    expect(reconstructTaggedPdf(PdfFile.parse(pdf))?.doc.section?.textDirection).toBeUndefined();
+  });
+
   it('measures the margins the source set instead of leaving them at zero', async () => {
     // A tagged reading re-sets the words exactly as an untagged one does, and
     // needs the same margins. Without them every tagged PDF came back with its

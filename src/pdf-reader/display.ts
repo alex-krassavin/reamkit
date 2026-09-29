@@ -25,6 +25,13 @@ export interface Display {
   readonly turnDeg: number;
   /** Map a `/MediaBox`-space point into the shown page's own y-up frame. */
   readonly place: (x: number, y: number) => { x: number; y: number };
+  /**
+   * §17.6.20 — present when the page is READ in a frame turned back from the
+   * sheet it is shown on: its words run DOWN the sheet, and they are read in
+   * the frame where they stand upright (see {@link textFrameOf}). `width` and
+   * `height` above are that frame's; these are the sheet's.
+   */
+  readonly sheet?: { readonly width: number; readonly height: number };
 }
 
 /**
@@ -66,6 +73,59 @@ export function displayOf(page: PdfPage): Display {
     turnDeg: page.rotate === 90 ? -90 : page.rotate === 180 ? 180 : page.rotate === 270 ? 90 : 0,
     place,
   };
+}
+
+/**
+ * The frame a page whose words run DOWN its sheet is read in: the sheet turned
+ * back a quarter, so the words stand upright in it and every line, paragraph
+ * and margin is found the way it is on any other page.
+ *
+ * A viewer turns such a page with its words, and so does the document it is
+ * read into (§17.6.20 `tbRl`; see {@link wordsTurnOf} for when a page's words
+ * run down it): hello_world_rotated.pdf sets "Hello world"
+ * upright in a portrait box and turns the page by `/Rotate 90`, and read on
+ * the shown sheet the words were set flat across it where every viewer shows
+ * them running down.
+ *
+ * @param shown The page's shown geometry.
+ * @returns The frame, which knows the sheet it was turned back from.
+ */
+export function textFrameOf(shown: Display): Display {
+  return {
+    width: shown.height,
+    height: shown.width,
+    // The frame turns every mark a further quarter counter-clockwise.
+    turnDeg: shown.turnDeg === 270 || shown.turnDeg === -90 ? 0 : shown.turnDeg + 90,
+    place: (x, y) => {
+      const p = shown.place(x, y);
+      return { x: shown.height - p.y, y: p.x };
+    },
+    sheet: { width: shown.width, height: shown.height },
+  };
+}
+
+/**
+ * How a page's words stand on its sheet: the quarter turn, counter-clockwise,
+ * whose words outweigh every other on it together, by their letters at their
+ * size — or 0 where none does. A label set on its side beside the text does
+ * not turn a page; a page of it does.
+ *
+ * @param runs The page's runs, placed on the shown sheet.
+ * @returns 0, 90, 180 or 270; 270 is a page whose words run DOWN it.
+ */
+export function wordsTurnOf(runs: ReadonlyArray<TextRun>): 0 | 90 | 180 | 270 {
+  const by = [0, 0, 0, 0];
+  let all = 0;
+  for (const r of runs) {
+    const letters = r.text.trim().length;
+    if (letters === 0) continue;
+    const weight = letters * (r.fontSizePt || 10);
+    all += weight;
+    const angle = ((Math.round(r.angleDeg ?? 0) % 360) + 360) % 360;
+    if (angle % 90 === 0) by[angle / 90]! += weight;
+  }
+  const most = by.findIndex((w) => w * 2 > all);
+  return most > 0 ? ([90, 180, 270] as const)[most - 1]! : 0;
 }
 
 /**

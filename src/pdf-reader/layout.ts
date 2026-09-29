@@ -18,17 +18,26 @@ import {
   NATURAL_LINE_EM,
   buildFlowDoc,
   dedupeLosses,
+  floatOntoSheet,
   imageBlock,
   paragraphFromRuns,
   positionedText,
   sectionFromPdfPages,
+  sectionOnSheet,
   shapeBlock,
   spaceAfter,
   textSizeOf,
   tooSmallToRead,
   withMeasuredMargins,
 } from './flow-build';
-import { displayOf, placeImages, placeRuns, placeVectors } from './display';
+import {
+  displayOf,
+  placeImages,
+  placeRuns,
+  placeVectors,
+  textFrameOf,
+  wordsTurnOf,
+} from './display';
 import { collectEmbeddedFonts } from './embedded-fonts';
 import { collectFaceFamilies } from './font';
 import { collectPageImages } from './images';
@@ -127,14 +136,29 @@ export function reconstructByLayout(
   const pages = file.pages();
   // §14.11.1 — every mark is lifted into the page's SHOWN frame, so nothing
   // downstream has to know the page was ever turned.
-  const shown = pages.map((page) => displayOf(page));
-  const allRuns = pages.map((page, i) => placeRuns(extractPageText(file, page), shown[i]!));
+  const sheets = pages.map((page) => displayOf(page));
+  const extracted = pages.map((page) => extractPageText(file, page));
+  const onSheets = extracted.map((runs, i) => placeRuns(runs, sheets[i]!));
+  // §17.6.20 — …and a page whose words run DOWN its sheet is read in the frame
+  // where they stand upright, and set back on the sheet turned: a viewer turns
+  // the words with the page, and so does the document (`sectionOnSheet`). A
+  // placed reading has no frame to read in: every line of it already stands
+  // where the page shows it, turned boxes and all.
+  const turns = onSheets.map((runs) => wordsTurnOf(runs));
+  const shown = sheets.map((sheet, i) =>
+    mode !== 'positional' && turns[i] === 270 ? textFrameOf(sheet) : sheet,
+  );
+  const allRuns = shown.map((d, i) => (d.sheet ? placeRuns(extracted[i]!, d) : onSheets[i]!));
   // §17.6.13 — what the document repeats at the foot of its pages is a running
   // foot, not a paragraph of the body. Lifted off before anything else reads
   // the page: it must not measure the margins either, and a page number in the
   // text block is a page number in the wrong place.
-  const foot = mode === 'positional' ? undefined : runningFoot(allRuns, shown, 'foot');
-  const head = mode === 'positional' ? undefined : runningFoot(allRuns, shown, 'head');
+  // …on a page read the way it is shown. A header and a footer stay across the
+  // sheet whichever way a section's lines run (§17.6.20), so the band of a page
+  // whose words run down it stays in its text and turns with it.
+  const bandRuns = allRuns.map((runs, i) => (shown[i]!.sheet ? [] : runs));
+  const foot = mode === 'positional' ? undefined : runningFoot(bandRuns, shown, 'foot');
+  const head = mode === 'positional' ? undefined : runningFoot(bandRuns, shown, 'head');
   // …and what is set too small to read is a mark the producer left on the
   // sheet, not a line of it: TCPDF signs the last page of everything it makes
   // in one-point type in the very corner of the paper. Read as text it was the
@@ -172,6 +196,17 @@ export function reconstructByLayout(
 
   const resources = new ResourceStore();
   const losses: Array<Loss> = [];
+  // Words that run UP a sheet, or stand on their heads, have no section to be
+  // set in that way — Word and LibreOffice both lay a section's text down the
+  // sheet or across it and no other way — and are set across it.
+  if (mode !== 'positional' && turns.some((t) => t === 90 || t === 180)) {
+    losses.push({
+      severity: 'degraded',
+      feature: FEATURES.text,
+      detail:
+        'a page shows its words running up the sheet or upside down; a document sets a section’s text across the sheet or down it, so they are set across it',
+    });
+  }
   // §8.6.6.2 — type filled with a tiling pattern keeps the pattern's colour at
   // the pattern's own density and loses its shape: a run carries one colour, not
   // a content stream, so a hatch that alternates ink and paper becomes the flat
@@ -244,6 +279,11 @@ export function reconstructByLayout(
   pages.forEach((page, i) => {
     const runs = pageRuns[i]!;
     const display = shown[i]!;
+    // §17.6.20 — a page read in its text frame is set back on its sheet turned,
+    // and Word turns a section's paragraphs and not its tables: a table set
+    // there lies flat in the corner of the sheet while the text around it runs
+    // down. Such a page is read as the lines and stops it shows.
+    const turned = display.sheet !== undefined;
     // EP17 — the page's gutters, and so its columns. Each column is grouped and
     // read independently, and its blocks precede the next column's.
     const gutters = pageGutters[i]!;
@@ -373,7 +413,8 @@ export function reconstructByLayout(
       // The column read region by region: a stretch that reads straight down,
       // then a band of blocks side by side, each spaced from the one before.
       let above: LineBox | undefined;
-      for (const region of regionsOf(textRuns)) {
+      const regions = turned ? [{ kind: 'flow' as const, runs: textRuns }] : regionsOf(textRuns);
+      for (const region of regions) {
         if (region.kind === 'side') {
           const made = sideBySide(region, measure, above);
           if (made === undefined) continue;
@@ -439,7 +480,9 @@ export function reconstructByLayout(
       // Written as tabbed paragraphs the picture is right and the document is
       // not — nothing downstream can read a column out of it, and a reader that
       // re-wraps one cell drags the whole line with it.
-      const asRows = tabbedRows(paras, tableMeasure);
+      const asRows = turned
+        ? new Map<number, BodyElement | null>()
+        : tabbedRows(paras, tableMeasure);
       const out: Array<{ top: number; el: BodyElement }> = [];
       for (const [at, para] of paras.entries()) {
         const table = asRows.get(at);
@@ -627,7 +670,8 @@ export function reconstructByLayout(
     // A page RULED into columns is a table, and its ROWS are what it says; a
     // page SET in columns is prose, and its columns are. Read by column, a
     // table comes back one column at a time with every row torn up.
-    const ruledIntoColumns = mode !== 'positional' && looksRuled(ruled.runs, gutters, textEdges);
+    const ruledIntoColumns =
+      mode !== 'positional' && !turned && looksRuled(ruled.runs, gutters, textEdges);
     const asTable =
       ruledIntoColumns && textEdges
         ? tableFrom(ruled.runs, gutters, textEdges, stepped)
@@ -710,7 +754,9 @@ export function reconstructByLayout(
     // as one size the second sheet's six squares were cut down to the one that
     // fitted. A section break already forces a page, so the break paragraph
     // below is for the pages that stay inside one.
-    const size = `${shown[i]!.width.toFixed(2)}x${shown[i]!.height.toFixed(2)}`;
+    // …and so does a page whose lines run another way than the one before
+    // (§17.6.20): a section is what carries the direction too.
+    const size = `${shown[i]!.width.toFixed(2)}x${shown[i]!.height.toFixed(2)}${turned ? ' down' : ''}`;
     const opensSection = i > 0 && size !== lastSize;
     if (opensSection) {
       sectionEnds.push({
@@ -804,8 +850,10 @@ export function reconstructByLayout(
   // at zero or the anchors move. A FLOWING one is a document being re-set, and
   // a document with no margins prints its words against the edge of the paper
   // — which is what every converted PDF looked like.
+  // Measured in the frame the pages were READ in; `sectionOnSheet` sets a
+  // turned one back on its sheet once everything measured against it is done.
   const setUp = (from: number, to: number): SectionProperties | undefined => {
-    const own = sectionFromPdfPages(pages.slice(from, to));
+    const own = sectionFromPdfPages(pages.slice(from, to), shown[from]);
     return mode === 'positional'
       ? own
       : withMeasuredMargins(
@@ -813,7 +861,8 @@ export function reconstructByLayout(
           shown.slice(from, to),
           pageRuns.slice(from, to),
           pageMarks.slice(from, to),
-          foot?.band,
+          // The band is the upright pages' own, and a turned page kept its own.
+          shown[from]?.sheet ? undefined : foot?.band,
         );
   };
   sectionEnds.push({
@@ -827,7 +876,7 @@ export function reconstructByLayout(
   const sections =
     sectionEnds.length > 1
       ? sectionEnds.flatMap((end) => {
-          const base = setUp(end.from, end.to);
+          const base = sectionOnSheet(setUp(end.from, end.to), shown[end.from]);
           if (!base) return [];
           const properties: SectionProperties = {
             ...base,
@@ -859,6 +908,17 @@ export function reconstructByLayout(
       },
     };
   }
+  // §17.6.20 — what a page read in its text frame anchors, it anchors on the
+  // SHEET: Word stands a drawing at its offsets there, however the section's
+  // lines run, so each one is carried onto the sheet and turned with the page.
+  let sectionStart = 0;
+  for (const end of sectionEnds) {
+    const sheet = shown[end.from]?.sheet;
+    if (sheet) {
+      for (let k = sectionStart; k < end.at; k++) body[k] = floatOntoSheet(body[k]!, sheet.width);
+    }
+    sectionStart = end.at;
+  }
   // The band is built from the page that showed it first, and referenced by
   // every section: the foot runs through the document, not through a section.
   const stepped0 = stepsBetweenWords(allRuns[0] ?? []);
@@ -881,7 +941,7 @@ export function reconstructByLayout(
     doc: buildFlowDoc(
       body,
       resources,
-      withFooter(setUp(0, pages.length)),
+      withFooter(sectionOnSheet(setUp(0, pages.length), shown[0])),
       collectEmbeddedFonts(file, pages, losses),
       sections.map((s) => ({ ...s, properties: withFooter(s.properties) ?? s.properties })),
       band.length > 0 || headBand.length > 0
