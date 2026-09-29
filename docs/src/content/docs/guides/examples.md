@@ -161,7 +161,9 @@ always in the clear.
 `Ream.parse` also accepts a **PDF** — including a modern compressed one
 (cross-reference streams, object streams) or an encrypted one. A tagged PDF (the
 ones Ream writes) is rebuilt from its structure tree — headings, paragraphs,
-tables, lists in reading order; an untagged PDF is reconstructed heuristically
+tables, lists in reading order, through the role map a document names its own
+elements by, with an inline element (a span, a link, MathML) kept in its
+parent's line; an untagged PDF is reconstructed heuristically
 from glyph positions — in the columns of prose the page was set in, with a
 running head or foot kept out of the body and its page number written as a
 field, a page ruled into a grid rebuilt as a table with its own columns and row
@@ -170,20 +172,34 @@ of rows and columns read as an OfficeMath matrix.
 
 A page that is not prose in columns is read ACROSS: an invoice sets its labels
 along the left and its figures against the right margin, and every one of those
-figures belongs to the line beside it. A gap no word space could be comes back
-as a TAB standing on the stop the page set the piece after it at, consecutive
-lines broken at the SAME stops come back as a table, and a line the page drew
-between two blocks becomes the border of the paragraph it separates rather than
-a shape anchored where the words used to be.
+figures belongs to the line beside it. Blocks set SIDE BY SIDE are another
+matter: the same invoice stacks its dates and numbers beside the address it
+bills, each stack at a leading of its own, and read across, every line would
+catch a line of the other. Such a band comes back as the borderless table a
+writer would set it in, each block read down on its own, while blocks whose
+lines share their baselines stay one text. A gap no word space could be — or
+one that lands on a stop the lines around it share — comes back as a TAB
+standing on the stop the page set the piece after it at, consecutive lines
+broken at the SAME stops come back as a table, with a column of figures that
+end together set against its right edge, and a line the page drew between two
+blocks becomes the border of the paragraph it separates rather than a shape
+anchored where the words used to be. What a form writes — a button's caption, a
+field's value, a tick — stands where the page placed it, over the box it is
+written on, rather than joining the lines of the page.
 
 **Raster images, hyperlinks and the page's artwork come
 back too** — images lifted out and sized from their placement (including the
-ones written into the content stream, and stencil masks painted in the page's
-own colour), link annotations re-attached to the text, filled paths, stroked
-lines and shading-pattern gradients turned into shapes, the clipping paths that
-limit them, tiling patterns, constant alpha, the appearance an annotation
-carries — or one drawn from its properties where the file supplies none — and
-the Type 3 glyphs that are drawings rather than letters. Colour comes back
+ones written into the content stream, stencil masks painted in the page's own
+colour, a colour key leaving unpainted the samples it names, and a CMYK JPEG in
+the colours its inks paint rather than in Adobe's inverted convention), link
+annotations re-attached to the text, filled paths, stroked lines — dashed and
+capped as the page draws them — and shading-pattern gradients turned into
+shapes, the clipping paths that limit them, tiling patterns (a hatch or a grid
+as the tone it gives the page), the opacity a fill or a stroke is painted at,
+the appearance an annotation carries — or one drawn from its properties where
+the file supplies none, a free-text note from its contents, and a form that
+asks for its appearances rebuilt showing its fields' values — and the Type 3
+glyphs that are drawings rather than letters. Colour comes back
 through whatever space states it: device, CIE (`CalGray`, `CalRGB`, `Lab`), an
 `/ICCBased` stream through the profile it carries, or a `Separation`/`DeviceN`
 run through its own tint transform — for an image as much as for a fill. A
@@ -192,10 +208,14 @@ and words filled with one come back in its colours. The layers a file
 turns off stay off, and the box it says to show is the box you get. Type is
 read the way the font states it — the base encoding it declares, the built-in
 one a symbolic font carries (ZapfDingbats is a font of pictures and comes back
-as pictures), a predefined CMap it names instead of embedding — and a face that
-cannot be addressed by character at all is DRAWN from its outlines rather than
-guessed at. The result is an ordinary `FlowDoc`, so it converts onward like any
-other source.
+as pictures), a predefined CMap it names instead of embedding — a ligature
+comes back as the letters it joins, punctuation a font names no character for
+is read off the shape the page draws, and a face that cannot be addressed by
+character at all is DRAWN from its outlines rather than guessed at. The result
+is an ordinary `FlowDoc`, so it converts onward like any other source. Written
+to `.docx`, a run names its face's family — `Inter`, not `Inter-SemiBold`, a
+font no word processor has — and a picture keeps its crop, its turn and its
+opacity, a line its dash.
 
 A form or a drawing is not a reflowable document, though — its rules and boxes
 are placed absolutely, and a label an inch from the box it labels says nothing.

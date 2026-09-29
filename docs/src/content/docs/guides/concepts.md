@@ -53,14 +53,19 @@ The same seam runs in reverse for **PDF input**. A PDF reader is just another
 clean tree: a tagged PDF is rebuilt from its logical structure tree, an untagged
 one heuristically from glyph positions (lines by baseline, paragraphs by spacing
 and indent, the page read for its own gutters — as many columns of prose as it
-was set in, a running head or foot kept out of the body, a ruled grid rebuilt as
-a table, a gap no word space could be written as a tab on the stop the page set
-it at, and consecutive lines standing on the same stops rebuilt as a table of
-their own). Which reading it gets is the
+was set in, blocks set side by side read down each on its own, a running head or
+foot kept out of the body, a ruled grid rebuilt as a table, a gap no word space
+could be — or one that lands on a stop the lines around it share — written as a
+tab on that stop, and consecutive lines standing on the same stops rebuilt as a
+table of their own). Which reading it gets is the
 FILE's to decide — a paper is mostly lines and re-flows, a form is mostly marks
 and keeps its page, with nothing for a caller to configure. The result is an ordinary
 FlowDoc, so `Ream.parse(pdfBytes)` converts onward to HTML, Markdown, docx or a re-laid PDF
-like any other source.
+like any other source. A PDF names FACES (`Inter-SemiBold`, `ArialMT`), which is
+what a layout finds the document's own program by; beside them the FlowDoc
+carries the family each face belongs to (`faceFamilies`, a `FaceFamily` apiece),
+the name a writer that hands the text to another program — a `.docx` — gives
+it, with the kind of face it is for a program that has to substitute.
 
 ## Bytes in, bytes out
 

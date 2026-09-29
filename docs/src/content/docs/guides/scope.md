@@ -28,50 +28,84 @@ PDF input handles classic and modern compressed files
 (cross-reference streams, object streams) and encrypted files (RC4 / AES; the
 user password is passed to `Ream.parse`, defaulting to the empty permissions-only
 case). A **tagged** PDF (including the ones Ream writes) is rebuilt from
-its structure tree — headings, paragraphs, tables, list items, reading order; an
+its structure tree — headings, paragraphs, tables, list items, reading order,
+the elements a document names for itself followed through its `/RoleMap` to the
+standard ones they stand for, and an inline element (a span, a link, a formula
+set in a line, MathML) read as a stretch of its parent's line rather than a
+block of its own (§14.8); an
 **untagged** PDF is reconstructed heuristically from glyph positions (lines by
 baseline, paragraphs by spacing and by the indent the page set them with,
 headings by relative font size, a word the line broke in half put back together,
 and the page read for its own gutters: as many columns of PROSE as it was set
 in — a page of labels with figures against the right margin breaks a dozen lines
 at the same x and is not two columns, so it is read across and each label keeps
-its figure — a page RULED into a grid rebuilt as a table with its measured
-columns and rows, a gap no word space could be written as a TAB with the stop
-the page set the piece after it at, consecutive lines standing on the SAME stops
-rebuilt as a table of their own, a line drawn between two blocks given to the
-block it separates as that paragraph's border, a rule typed out of hyphens left
-on the line of its own it was written on, a band repeated at the top or bottom
-of every sheet as a running head or foot with its regions and its page number as
-a field, and a bracketed block of rows and columns as an OfficeMath matrix),
-which is approximate. The margins are measured to the page's INK — a blank is
+its figure — blocks set SIDE BY SIDE, each at a leading of its own, set as the
+borderless table a writer sets them in and each read down on its own (an
+invoice's stack of dates and numbers beside the address it bills; blocks whose
+lines share their baselines stay one text, read across on its stops), a page
+RULED into a grid rebuilt as a table with its measured columns and rows, a gap
+written as a TAB with the stop the page set the piece after it at, where no
+word space could make it or where it lands on a stop the lines around it share,
+consecutive lines standing on the SAME stops rebuilt as a table of their own,
+with a column whose figures end together set against its right edge, a line
+drawn between two blocks given to the block it separates as that paragraph's
+border, a rule typed out of hyphens left on the line of its own it was written
+on, a band repeated at the top or bottom of every sheet as a running head or
+foot with its regions and its page number as a field, and a bracketed block of
+rows and columns as an OfficeMath matrix), which is approximate. The margins are
+measured to the page's INK — a blank is
 not ink, and a picture is: a sheet whose one line of text sits over a picture
 wider than that line keeps a measure the picture still fits. Text comes
-back via each font's `/ToUnicode` map, or — where a composite font ships none —
-from the reverse `cmap` of the program it embeds (§9.10.2), or — where a SIMPLE
+back via each font's `/ToUnicode` map (a range of it judged code by code,
+§9.10.3), or — where a composite font ships none — from the reverse `cmap` of
+the program it embeds (§9.10.2), or — where a SIMPLE
 font ships none, which is every PDF from TeX — from the glyph NAMES its
 `/Encoding /Differences` states (§9.6.6.1) over the base encoding the font
 declares (Annex D.2 Standard, WinAnsi and MacRoman, or a symbolic font's own
 built-in one — ZapfDingbats is a font of PICTURES and is read as pictures,
-Annex D.6). A face that cannot be addressed by character at all — a TrueType
+Annex D.6), and a code the differences leave `.notdef` is no character at all.
+A ligature comes back as the letters it joins — "ﬁrst" is `first` to a search
+and to an edit — and a composite font the file names but does not embed, with
+`Identity-H` and no `/ToUnicode`, is read in the glyph order of the face it
+names where that is one of the Microsoft core faces (§9.7.4 — Arial, Times New
+Roman, Verdana and their like keep the Macintosh standard order for their first
+258 glyphs). A face that cannot be addressed by character at all — a TrueType
 program with no usable `cmap` (§9.6.6.4) — is not guessed at: its codes are
 glyph indices, the text is marked unrecoverable and the glyphs are DRAWN from
-their outlines, as are the glyphs of a font that names them after nothing a
-reader knows (CFF charstrings run as the programs they are, `glyf` outlines and
-their composites, `post` names over the Macintosh standard order). The
+their outlines, a word at a time, as are the glyphs of a font that names them
+after nothing a reader knows (CFF charstrings run as the programs they are,
+`glyf` outlines and their composites, `post` names over the Macintosh standard
+order). Punctuation a font names no character for — a producer that maps every
+mark to U+0000 leaves an invoice with no hyphen, colon or bracket in its text —
+is read off the SHAPE the page draws, where that shape says one thing: a flat
+bar at the middle of the lower case is a dash, two stacked dots a colon, one
+small mark on the baseline a full stop or a comma. The
 predefined CMaps a file names instead of embedding are known (§9.7.5.2),
-including the vertical ones that advance the pen down the page. The weight and slant
-come from the `/FontDescriptor`, and the embedded font programs themselves are
-carried into the output, so a rebuilt page is set in the type it was set in.
+including the vertical ones that advance the pen down the page. A run names its
+face's FAMILY — `Inter` for `Inter-SemiBold`, without the producer's debris (a
+`,Bold`, a `-Identity-H`, a serial number) — with the kind of face it is, so a
+program that lacks it substitutes one of the same kind. The weight and slant
+come from the `/FontDescriptor`, and where it states no weight from the header
+of the program itself; a face's own name outweighs the flags that contradict it
+(a `-Light` face is not bold for a ForceBold hint), and a family the
+substitution tables know decides whether it is a serif, a sans or a typewriter
+face. The embedded font programs themselves are carried into the output, so a
+rebuilt page is set in the type it was set in.
 **Raster images, hyperlinks and vector artwork** are lifted back out too (JPEG
-verbatim, other images re-encoded as PNG with soft-mask alpha — including
-JBIG2, the bilevel coding a scanner stores a page of text in (ISO/IEC 14492:
+verbatim but for a baseline CMYK one, which every viewer reads in Adobe's
+inverted convention and which is decoded instead, Adobe's YCCK included, and
+given back in the colours its inks paint; other images re-encoded as PNG with
+soft-mask
+alpha — including JBIG2, the bilevel coding a scanner stores a page of text in
+(ISO/IEC 14492:
 generic, refinement, symbol-dictionary, text and halftone regions, arithmetic
 and Huffman, and a dictionary whose symbols are REFINEMENTS of the ones it
 already holds), and CCITT Group 3 two-dimensional, where every line begins with
-the bit that says how it is coded — `/Link` URIs
-re-attached to the text, filled paths, stroked lines and shading-pattern
-gradients turned into shapes), colour set through a named space (§8.6.8 `cs` /
-`sc`, which is how every PDF a browser prints states it) — including the CIE
+the bit that says how it is coded — `/Link` URIs re-attached to the text,
+filled paths, stroked lines — dashed in the page's own pattern and capped as it
+caps them (§8.4.3.6 `d`, §8.4.3.3 `J`) — and shading-pattern gradients turned
+into shapes), colour set through a named space (§8.6.8 `cs` / `sc`, which is how
+every PDF a browser prints states it) — including the CIE
 spaces `CalGray` (§8.6.5.6), `CalRGB` (§8.6.5.7, gamma and matrix into XYZ,
 adapted onto D65 by Bradford) and `Lab` (§8.6.5.8), an `/ICCBased` stream
 decoded through the profile it carries (§8.6.5.5), and a `Separation` or
@@ -81,14 +115,25 @@ all four kinds of PDF function (§7.10: sampled, exponential, stitching, and the
 type-4 PostScript calculator) — along with clipping
 paths (§8.5.4 `W` / `W*`, applied to paths and pictures alike, and carried into
 a turned picture's OWN axes), stencil image masks (§8.9.6.2, painted in the
-page's non-stroking colour), images written into the content stream (§8.9.7
-`BI` … `EI`), tiling patterns (§8.7.3 — drawn as a
-picture where they fill a shape, read as a tint at the tile's own density where
-they fill type), constant alpha (§11.6.4.4 `/ca` through the `gs` operator),
+page's non-stroking colour), colour-key masks (§8.9.6.4 — the samples a `/Mask`
+array names left unpainted, held against the samples before any `/Decode`),
+images written into the content stream (§8.9.7 `BI` … `EI`), tiling patterns
+(§8.7.3 — read as the pattern's colour at the strength its tile covers where
+they fill type, and where they fill a shape with a tile drawn in lines and dots,
+a hatch or a grid, which comes back as the tone it gives the page rather than as
+the hatch itself; a tile that holds a picture is lifted as that picture; an
+uncoloured pattern, §8.7.3.3, takes the colour `scn` gives it), constant alpha
+(§11.6.4.4 — a fill's `/ca` and a stroke's `/CA` through the `gs` operator),
 Type 3 glyphs (§9.6.5 — content streams, drawn as the artwork they are in every
 reading: such a font has no program and no face, so its codes are never re-set
 in a substitute, which would draw the letter a second time),
-annotation appearance streams (§12.5.5, so a form field draws itself), the text
+annotation appearance streams (§12.5.5, so a form field draws itself — inside
+its `/BBox`, which is its clip, and what it writes, a button's caption or a
+field's value, stands where the annotation stands, over the box it is written
+on, rather than being read into the page's lines; a form that asks for its
+appearances rebuilt, §12.7.2
+`/NeedAppearances`, shows its fields' values rather than the stale text of the
+old appearance), the text
 render modes (§9.3.6 `Tr` — stroked type keeps its outline, and the invisible
 modes an OCR layer uses are marked rather than painted), the box a viewer shows
 (§14.11.2 `/CropBox` — which sizes the page AND clips the marks outside it) and
@@ -97,11 +142,15 @@ the page's own `/Rotate` (§14.11.1). A file's optional content is honoured
 marked content and on an XObject's own `/OC`, through an `/OCMD`'s policies).
 An annotation the file gives no `/AP` is drawn from its own properties (§12.5.5
 — Ink, Line, Square, Circle, Polygon, PolyLine, a text field's `/V` set in its
-`/DA`, and the text markups' `QuadPoints` applied to the words they cover). The
+`/DA`, a free-text note's `/Contents` set in its `/DA` (§12.5.6.6), and the text
+markups' `QuadPoints` applied to the words they cover). The
 built-in metrics of the 14 standard fonts (§9.6.2.2) stand in where a file
 embeds neither the face nor a `/Widths` array. A gradient the page paints with
 a bare `sh` is read as the shape it covers (§8.7.4.5, function-based type 1
-included), in the colour space the shading dictionary states; text filled with
+included), in the colour space the shading dictionary states; an axial one runs
+the way its matrix carries it onto the page, and a shape it fills shows the part
+of its axis the shape covers (§8.7.4.5.3) rather than the whole axis squeezed
+across it; text filled with
 one comes back in its colours rather than in black, and the loss report says
 where the gradient's shape was flattened to a single colour.
 
@@ -115,7 +164,15 @@ multi-section geometry, footnotes/endnotes, charts and OfficeMath all write
 back, and so do a paragraph's tab stops (§17.3.1.38) and its own rules
 (§17.3.1.24 `w:pBdr`), and the page-number fields a running foot is written with
 (§17.16.19 `w:fldSimple` — `PAGE` and `NUMPAGES`, so the second sheet does not
-say it is the first). A section states where it must OPEN as well as where it begins: a
+say it is the first). A picture keeps how it is drawn into its frame — its crop
+(§20.1.8.55 `a:srcRect`), its turn and mirror (§20.1.7.6 `a:xfrm`) and its
+opacity (`a:alphaModFix`) — so a cropped picture read from Word and saved again
+no longer comes back whole and squeezed into the frame its crop was sized for; a
+fill and a line keep the opacity they are painted at (§20.1.2.3.1 `a:alpha`),
+and a line its own dash pattern (§20.1.8.21 `a:custDash`). A run names its
+font's family, and the font table says what kind of face that is (§17.8.3), so
+a reader that lacks the family substitutes one of the same kind. A section
+states where it must OPEN as well as where it begins: a
 `w:type` of `oddPage` or `evenPage` (§17.6.22) survives the round trip and is
 laid out as Word lays it out, printing the blank sheet it implies — charged to
 the section that ends, not the one that starts. A drawing that states where on
@@ -153,9 +210,12 @@ it. The FILE decides which it gets. A paper is mostly LINES with a rule or two
 between them and is read as a re-flowable document — paragraphs and tables in
 reading order, from the structure tree where the file has one, and where it has
 none, in the columns of PROSE the page was set in, with its running head and
-foot kept out of the body, its ruled grids and its rows-on-the-same-stops
-rebuilt as tables, and the lines it drew between blocks given to the paragraphs
-they separate. A form or a
+foot kept out of the body, its blocks set side by side read down each on its
+own, its ruled grids and its rows-on-the-same-stops rebuilt as tables, and the
+lines it drew between blocks given to the paragraphs they separate; what a form
+field or a button writes still stands where the page placed it, over the box it
+is written on.
+A form or a
 drawing is mostly MARKS (one form sets 28 numbered rows in 355 ruled boxes) and
 is read as a page: every line stands where its glyphs stand, beside the artwork,
 with no reading order, no paragraphs and no tables. The marks are counted
