@@ -13,6 +13,8 @@
 import {
   BASELINE_AT,
   CARRIER_LINE_PT,
+  GUESSED_MARGIN,
+  MEASURE_LINES,
   NATURAL_LINE_EM,
   buildFlowDoc,
   dedupeLosses,
@@ -374,7 +376,25 @@ export function reconstructByLayout(
         const regionLines = groupIntoLines(region.runs, false, stepped).filter(
           (l) => l.text.length > 0,
         );
-        const paras = groupIntoParagraphs(regionLines, measure, display.height, above);
+        // A sheet of a line or two shows no measure (see `MEASURE_LINES`):
+        // its longest line reaches the edge only because it IS the edge, and
+        // the .docx is re-set across the sheet's own width instead — at the
+        // least all but the third a guessed margin may take. A line whose
+        // next word would have fit short of THAT was ended, not broken: run
+        // together, checkbox-bad-appearance.pdf's "Checkbox 1 - not checked"
+        // and "✔ Checkbox 2 - Checked" came back side by side on one line.
+        const reach =
+          lines.length < MEASURE_LINES && gutters.length === 0
+            ? pageWidth * (1 - GUESSED_MARGIN)
+            : undefined;
+        const paras = groupIntoParagraphs(
+          regionLines,
+          measure,
+          display.height,
+          above,
+          false,
+          reach,
+        );
         for (const set of setParagraphs(
           paras,
           measure && {
@@ -1892,6 +1912,7 @@ function groupIntoParagraphs(
   pageHeight = 0,
   before?: LineBox,
   eachLine = false,
+  reach?: number,
 ): Array<{
   spans: Array<TextSpan>;
   fontSize: number;
@@ -1930,6 +1951,7 @@ function groupIntoParagraphs(
       (prev !== undefined &&
         (ruleOfCharacters(prev) ||
           endedParagraph(prev, line, column) ||
+          (reach !== undefined && roomForWord(prev, line, reach)) ||
           carriesLeader(prev) ||
           prev.tabbed === true))
     ) {
@@ -2030,6 +2052,24 @@ function groupIntoParagraphs(
     };
   });
 }
+
+/**
+ * Whether the first word of `next` would have fit on `prev` short of `reach` —
+ * so the page did not break `prev` for want of room, and ended it.
+ *
+ * The width of the word is its share of its line's: a guess good to a letter,
+ * and the margin it is compared with is the rest of the sheet.
+ */
+function roomForWord(prev: Line, next: Line, reach: number): boolean {
+  const text = next.text.trimStart();
+  const word = text.split(/\s/u)[0] ?? '';
+  if (word.length === 0) return false;
+  const width = (next.width * word.length) / text.length;
+  return reach - (prev.x + prev.width) > width + prev.fontSize * WORD_SPACE_EM;
+}
+
+/** A word space, in ems: what stands between a line's end and the word put after it. */
+const WORD_SPACE_EM = 0.3;
 
 /**
  * The exact box a paragraph's first line stands in, where the paragraph is a

@@ -526,7 +526,14 @@ const SLACK = 0.01;
 const DEEPEST_MARGIN = 0.5;
 
 /** How many lines a sheet must hold before where they end says where its measure does. */
-const MEASURE_LINES = 3;
+export const MEASURE_LINES = 3;
+
+/**
+ * How far in, as a share of the sheet, a right margin the lines do not show
+ * may come: what a sheet of a line or two is re-set across is at least the
+ * rest of it.
+ */
+export const GUESSED_MARGIN = 1 / 3;
 
 /** The narrowest measure a sheet's own lines may leave, as a share of the sheet. */
 const NARROWEST_MEASURE = 0.2;
@@ -792,8 +799,8 @@ export function withMeasuredMargins(
   const voters = rights.filter((r) => r.full);
   const farthest =
     voters.length > 0 && voters.every((r) => r.edged)
-      ? Math.max(width / 3, width * (1 - NARROWEST_MEASURE) - left)
-      : width / 3;
+      ? Math.max(width * GUESSED_MARGIN, width * (1 - NARROWEST_MEASURE) - left)
+      : width * GUESSED_MARGIN;
   return {
     ...section,
     margins: {

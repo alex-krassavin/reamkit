@@ -230,10 +230,11 @@ describe('a paragraph keeps the indent the page set it with (§17.3.1.12)', () =
 
   it('keeps a list item whose marker line runs the full measure', () => {
     // A FULL line followed by an indented one is an item and its continuation,
-    // not two paragraphs.
+    // not two paragraphs. Full across the sheet: a sheet of two lines shows no
+    // measure of its own, and is re-set across the rest of the paper.
     const paras = parasOf(
       [
-        line(40, 360, 'A line of body text right across the measure'),
+        line(40, 360, 'A line of body text right across the whole of the measure'),
         line(55, 346, 'and its own second line, set in under it'),
       ].join('\n'),
     );
@@ -1658,5 +1659,36 @@ describe('a blank page is still a page', () => {
     expect(
       doc.body[0]?.kind === 'paragraph' && doc.body[0].paragraph.properties.pageBreakBefore,
     ).not.toBe(true);
+  });
+});
+
+describe('a sheet of a line or two shows no measure (§17.3.1)', () => {
+  const COURIER =
+    '/MediaBox [0 0 612 792] /Resources << /Font << /F1 << /Type /Font /Subtype /Type1 ' +
+    '/BaseFont /Courier >> >> >>';
+  const texts = (pdf: Uint8Array): Array<string> =>
+    paragraphs(reconstructByLayout(PdfFile.parse(pdf)).doc).map((p) =>
+      p.paragraph.runs.map((r) => r.text).join(''),
+    );
+
+  it('keeps its lines as the page set them', () => {
+    // Its longest line reaches the edge only because it IS the edge.
+    // checkbox-bad-appearance.pdf sets "Checkbox 1 - not checked" over
+    // "Checkbox 2 - Checked", and run together the two came back side by side.
+    const pdf = onePagePdf(
+      COURIER,
+      'BT /F1 10 Tf 50 700 Td (Checkbox 1 - not checked) Tj 0 -12 Td (Checkbox 2 - Checked) Tj ET',
+    );
+    expect(texts(pdf)).toEqual(['Checkbox 1 - not checked', 'Checkbox 2 - Checked']);
+  });
+
+  it('still runs together the lines of a sheet that shows one', () => {
+    // Two lines out of three break at the same edge: that is the measure.
+    const pdf = onePagePdf(
+      COURIER,
+      'BT /F1 10 Tf 50 700 Td (aaaa bbbb cccc dddd) Tj 0 -12 Td (eeee ffff gggg hhhh) Tj ' +
+        '0 -12 Td (iiii.) Tj ET',
+    );
+    expect(texts(pdf)).toEqual(['aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii.']);
   });
 });
