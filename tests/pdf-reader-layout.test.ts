@@ -10,10 +10,12 @@ import { describe, expect, it } from 'vitest';
 import { buildDocxFromBody } from './fixtures/build-docx';
 import type { BodyElement } from '@/core/document-model';
 import { Ream } from '@/core/converter/ream';
+import { OpcPackage } from '@/core/opc';
 import { PdfFile } from '@/pdf-reader/document';
 import { BASELINE_AT, FLOAT_CARRIER, positionedText } from '@/pdf-reader/flow-build';
 import { drawnWords, endedParagraph, reconstructByLayout } from '@/pdf-reader/layout';
 import { extractPageText } from '@/pdf-reader/text';
+import { writeDocx } from '@/word/docx-writer';
 
 const FONTS = {
   regular: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Regular.ttf')),
@@ -83,6 +85,26 @@ describe('a multi-page PDF keeps its pages (E-PDF EP4)', () => {
       (b) => b.kind === 'paragraph' && b.paragraph.properties.pageBreakBefore === true,
     );
     expect(breaks).toHaveLength(file.pages().length - 1);
+  });
+
+  it('turns widow control off, so a column the page broke is not broken again (§17.3.1.44)', async () => {
+    // Every source page opens a page of its own; where a reconstructed column
+    // runs a line long, widow control would carry a second line along.
+    const docx = buildDocxFromBody(
+      '<w:p><w:r><w:t>PageOne</w:t></w:r></w:p>' +
+        '<w:p><w:pPr><w:pageBreakBefore/></w:pPr><w:r><w:t>PageTwo</w:t></w:r></w:p>',
+    );
+    const pdf = await Ream.parse(docx).convert('pdf', { fonts: FONTS });
+    const doc = reconstructByLayout(PdfFile.parse(pdf)).doc;
+    const found = paragraphs(doc);
+    expect(found.length).toBeGreaterThan(0);
+    for (const p of found) {
+      expect((p.paragraph.properties as { widowControl?: boolean }).widowControl).toBe(false);
+    }
+    const body = new TextDecoder().decode(
+      OpcPackage.open(writeDocx(doc).bytes).getMainDocument().data,
+    );
+    expect(body).toContain('<w:widowControl w:val="0"/>');
   });
 
   it('opens a SECTION where the page size changes', () => {

@@ -16,6 +16,7 @@ import type {
   ShapeBlock,
   ShapeFill,
   ShapeLine,
+  StyleSheet,
   TextOutline,
 } from '@/core/document-model';
 import type { FaceFamily, FaceOutlines, FlowDoc } from '@/core/ir/flow';
@@ -1103,7 +1104,7 @@ export function buildFlowDoc(
       : headersFooters;
   return {
     kind: 'flow',
-    body: resolveBodyStyles(typesetRuns(body, typeset), EMPTY_STYLE_SHEET),
+    body: resolveBodyStyles(typesetRuns(body, typeset), RECONSTRUCTION_SHEET),
     // §17.6 — a document whose pages differ in size is several sections; one
     // page size for all of them is the ordinary case and states none.
     sections,
@@ -1122,3 +1123,16 @@ export function buildFlowDoc(
 
 /** [MS-DOCX] `compatibilityMode` 15 — Word 2013's layout, a current Word's. */
 const CURRENT_WORD_LAYOUT = 15;
+
+/**
+ * §17.3.1.44 — the sheet a reconstruction's paragraphs resolve against: the
+ * empty one, with widow control off. Every source page opens a page of its
+ * own, and the page already broke its paragraphs where it did; where a
+ * reconstructed column runs a line long, widow control — on wherever nothing
+ * says otherwise — carries a second line over with it, and the column after
+ * runs longer still.
+ */
+const RECONSTRUCTION_SHEET: StyleSheet = {
+  ...EMPTY_STYLE_SHEET,
+  defaultParagraphProperties: { widowControl: false },
+};
