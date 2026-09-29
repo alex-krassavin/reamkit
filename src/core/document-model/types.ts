@@ -111,6 +111,11 @@ export interface RunProperties {
    */
   readonly letterSpacingPt?: Pt;
   /**
+   * §17.3.2.43 `w:w` — each character set at this share of its own width
+   * (1 is as the face sets it), the glyph itself narrowed or widened.
+   */
+  readonly widthScale?: number;
+  /**
    * §17.3.2.19 `w:kern` — the run's glyph pairs are KERNED, at this size and
    * above (0 turns kerning off). Word kerns nothing a run does not ask for.
    */

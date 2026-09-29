@@ -914,9 +914,11 @@ function emitPageContent(
       lastStroke = strokeHex;
     }
     // ISO 32000-1 §9.3.3 — horizontal scaling, which is how a condensed face is
-    // drawn when the substitute has no condensed cut. Layout measured through
-    // the same fraction, so the glyphs and the line agree.
-    const tz = Math.round((tok.synthetic?.widthScale ?? 1) * 100);
+    // drawn when the substitute has no condensed cut, and how a run the
+    // document sets narrower than its face (§17.3.2.43) is drawn. Layout
+    // measured through the same fraction, so the glyphs and the line agree.
+    const scale = (tok.synthetic?.widthScale ?? 1) * (tok.resolvedRun.widthScale ?? 1);
+    const tz = Math.round(scale * 100);
     if (tz !== lastTz) {
       out.push(`${formatNumber(tz)} Tz`);
       lastTz = tz;
@@ -924,7 +926,9 @@ function emitPageContent(
     // §17.3.2.35 — the run's own character spacing, which PDF applies per
     // glyph through `Tc` (ISO 32000-1 §9.3.2). Set only when it changes, and
     // cleared for the runs that ask for none.
-    const tc = tok.resolvedRun.letterSpacingPt ?? 0;
+    // §9.4.4 — `Tc` is scaled by `Tz` with the glyphs, and the layout measured
+    // the spacing unscaled.
+    const tc = (tok.resolvedRun.letterSpacingPt ?? 0) / (tz > 0 ? tz / 100 : 1);
     if (tc !== lastTc) {
       out.push(`${formatNumber(tc)} Tc`);
       lastTc = tc;

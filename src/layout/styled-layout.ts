@@ -6151,8 +6151,11 @@ function measureRunText(plan: RunPlan, text: string, face?: RunFace): number {
     font: plan.font,
     ...(plan.synthetic ? { synthetic: plan.synthetic } : {}),
   };
+  // §17.3.2.43 — and a run set narrower or wider than its face, glyph by glyph.
   const base =
-    drawn.font.measure.textWidthPt(text, plan.fontSizePt) * (drawn.synthetic?.widthScale ?? 1);
+    drawn.font.measure.textWidthPt(text, plan.fontSizePt) *
+    (drawn.synthetic?.widthScale ?? 1) *
+    (plan.resolvedRun.widthScale ?? 1);
   const extra = plan.resolvedRun.letterSpacingPt;
   return extra === undefined || extra === 0 ? base : base + extra * [...text].length;
 }
@@ -7582,7 +7585,10 @@ function measureSingleLine(
     );
     const font = lookupFont(fontResources, fontKey);
     const fontSizePt = resolved.fontSizePt;
-    total += font.measure.textWidthPt(run.text, fontSizePt) * (synthetic?.widthScale ?? 1);
+    total +=
+      font.measure.textWidthPt(run.text, fontSizePt) *
+      (synthetic?.widthScale ?? 1) *
+      (resolved.widthScale ?? 1);
   }
   return total;
 }

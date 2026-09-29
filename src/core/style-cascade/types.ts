@@ -49,6 +49,8 @@ export interface ResolvedRunProperties {
   readonly shadingColorHex?: string;
   /** §17.3.2.35 — extra space between the run's characters, in points. */
   readonly letterSpacingPt?: Pt;
+  /** §17.3.2.43 — the share of its own width each character is set at. */
+  readonly widthScale?: number;
   /** §17.3.2.19 — the run is kerned at this size and above (0: not at all). */
   readonly kerningMinPt?: Pt;
   /** [MS-DOCX] `w14:ligatures` — the face's ligatures the run is set with. */

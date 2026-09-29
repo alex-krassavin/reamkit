@@ -2040,6 +2040,20 @@ function rPrXml(r: ResolvedRunProperties, state?: WriteState): string {
   if (states('italic')) out.push(toggle('w:i', r.italic), toggle('w:iCs', r.italic));
   if (states('strike')) out.push(toggle('w:strike', r.strike));
   if (states('colorHex')) out.push(`<w:color w:val="${r.colorHex}"/>`);
+  // §17.3.2.35 `w:spacing` — how much wider or tighter the characters stand,
+  // in twips, between the colour and the kerning. Read from a .docx and never
+  // written back: text set expanded or condensed came back at the face's own
+  // spacing.
+  if (r.letterSpacingPt !== undefined && r.letterSpacingPt !== 0) {
+    const twips = Math.round(r.letterSpacingPt * 20);
+    if (twips !== 0) out.push(`<w:spacing w:val="${String(twips)}"/>`);
+  }
+  // §17.3.2.43 `w:w` — the share of its width each glyph is set at, in whole
+  // percent (ST_TextScale, up to 600), after the spacing.
+  if (r.widthScale !== undefined) {
+    const percent = Math.min(600, Math.max(1, Math.round(r.widthScale * 100)));
+    if (percent !== 100) out.push(`<w:w w:val="${String(percent)}"/>`);
+  }
   // §17.3.2.19 `w:kern` — after the colour and before the size, the schema's
   // place for it; half-points, like the size.
   if (r.kerningMinPt !== undefined && states('kerningMinPt')) {

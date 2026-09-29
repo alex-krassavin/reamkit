@@ -237,6 +237,9 @@ function mergeRun(base: ResolvedRunProperties, override: RunProperties): Resolve
     ...((override.letterSpacingPt ?? base.letterSpacingPt) !== undefined
       ? { letterSpacingPt: override.letterSpacingPt ?? base.letterSpacingPt }
       : {}),
+    ...((override.widthScale ?? base.widthScale) !== undefined
+      ? { widthScale: override.widthScale ?? base.widthScale }
+      : {}),
     ...((override.kerningMinPt ?? base.kerningMinPt) !== undefined
       ? { kerningMinPt: override.kerningMinPt ?? base.kerningMinPt }
       : {}),
