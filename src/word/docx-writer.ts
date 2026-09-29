@@ -45,6 +45,7 @@ import type {
   ParagraphProperties,
   Run,
   RunProperties,
+  Section,
   SectionColumns,
   SectionProperties,
   ShapeBlock,
@@ -102,6 +103,10 @@ const REL_FONT_TABLE =
 const FONT_TABLE_CONTENT_TYPE =
   'application/vnd.openxmlformats-officedocument.wordprocessingml.fontTable+xml';
 const FONT_TABLE_PART = 'word/fontTable.xml';
+const REL_SETTINGS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings';
+const SETTINGS_CONTENT_TYPE =
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml';
+const SETTINGS_PART = 'word/settings.xml';
 const REL_FOOTNOTES =
   'http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes';
 const REL_ENDNOTES = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/endnotes';
@@ -417,6 +422,24 @@ export function writeDocx(flow: FlowDoc): WriteResult {
     });
   }
 
+  // §17.15.1 — the settings the document is set by, where it states any. Left
+  // out, a document with headers for its even pages printed its odd pages'
+  // on every page once saved, and one bound along its head was bound along
+  // its side.
+  const settings = settingsXml(flow, sections);
+  const settingsPart =
+    settings !== undefined
+      ? { path: SETTINGS_PART, data: encoder.encode(settings), contentType: SETTINGS_CONTENT_TYPE }
+      : undefined;
+  if (settingsPart) {
+    docScope.rels.push({
+      id: `rId${++docScope.relSeq}`,
+      type: REL_SETTINGS,
+      target: 'settings.xml',
+      targetMode: 'Internal',
+    });
+  }
+
   const partRelationships = [
     ...(docScope.rels.length > 0
       ? [{ sourcePart: 'word/document.xml', relationships: docScope.rels }]
@@ -433,6 +456,7 @@ export function writeDocx(flow: FlowDoc): WriteResult {
       },
       ...(numberingPart ? [numberingPart] : []),
       ...(fontTablePart ? [fontTablePart] : []),
+      ...(settingsPart ? [settingsPart] : []),
       ...extraParts,
       ...state.chartParts,
       ...state.mediaParts,
@@ -449,6 +473,32 @@ export function writeDocx(flow: FlowDoc): WriteResult {
   });
 
   return { bytes, losses };
+}
+
+/**
+ * §17.15.1.78 `w:settings` — the document-wide settings the model carries, in
+ * the order CT_Settings declares them: `w:gutterAtTop` (§17.15.1.49),
+ * `w:evenAndOddHeaders` (§17.15.1.36, which a section carries in the model),
+ * and §17.15.3.4's `w:doNotExpandShiftReturn` inside `w:compat`.
+ *
+ * @param flow     The document.
+ * @param sections The sections being written.
+ * @returns The part's XML, or undefined where the document states none.
+ */
+function settingsXml(flow: FlowDoc, sections: ReadonlyArray<Section>): string | undefined {
+  const parts: Array<string> = [];
+  if (flow.gutterAtTop === true) parts.push('<w:gutterAtTop/>');
+  if (sections.some((sec) => sec.properties.evenAndOddHeaders === true)) {
+    parts.push('<w:evenAndOddHeaders/>');
+  }
+  if (flow.doNotExpandShiftReturn === true) {
+    parts.push('<w:compat><w:doNotExpandShiftReturn/></w:compat>');
+  }
+  if (parts.length === 0) return undefined;
+  return (
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    `<w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">${parts.join('')}</w:settings>`
+  );
 }
 
 // §17.8.3.9 CT_Font — family (§17.8.3.10) before pitch (§17.8.3.13), the

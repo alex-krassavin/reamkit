@@ -1134,6 +1134,38 @@ describe('what a reader can actually draw', () => {
   });
 });
 
+describe('the settings a document is set by (§17.15.1)', () => {
+  it('writes them back, so a round trip keeps them', () => {
+    // 20 of the corpus's .docx turn on headers of their own for the even
+    // pages; written without a settings part, every page printed the odd
+    // pages' header once saved.
+    const source = buildDocxFromBody(
+      '<w:p><w:r><w:t>Body</w:t></w:r></w:p><w:sectPr><w:pgSz w:w="11906" w:h="16838"/></w:sectPr>',
+      {
+        settingsXml:
+          '<w:gutterAtTop/><w:evenAndOddHeaders/><w:compat><w:doNotExpandShiftReturn/></w:compat>',
+      },
+    );
+    const written = writeDocx(readDocx(source).doc).bytes;
+    const settings = OpcPackage.open(written).getPart('word/settings.xml');
+    expect(settings).toBeDefined();
+    expect(decode(settings!)).toMatch(
+      /<w:gutterAtTop\/><w:evenAndOddHeaders\/><w:compat><w:doNotExpandShiftReturn\/><\/w:compat>/u,
+    );
+    const again = readDocx(written).doc;
+    expect(again.sections.every((s) => s.properties.evenAndOddHeaders === true)).toBe(true);
+    expect(again.gutterAtTop).toBe(true);
+    expect(again.doNotExpandShiftReturn).toBe(true);
+  });
+
+  it('writes no settings part where the document states none', () => {
+    const written = writeDocx(
+      readDocx(buildDocxFromBody('<w:p><w:r><w:t>Body</w:t></w:r></w:p>')).doc,
+    ).bytes;
+    expect(OpcPackage.open(written).getPart('word/settings.xml')).toBeUndefined();
+  });
+});
+
 describe('a document written for another program to read', () => {
   const bodyOf = (bytes: Uint8Array): string =>
     decode(OpcPackage.open(bytes).getMainDocument().data);
