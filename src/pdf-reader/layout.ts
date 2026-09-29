@@ -3104,14 +3104,24 @@ function proseColumns(
     for (const x of xs) most = Math.max(most, xs.filter((y) => Math.abs(y - x) <= FLUSH_PT).length);
     return most;
   };
-  return edgesIn.every((lines) => {
+  return edgesIn.every((lines, i) => {
     if (lines.length < MIN_PROSE_LINES) return false;
     // Prose is set flush LEFT and comes out ragged right: line after line
     // starts in the same place and ends wherever its last word ends. A column
     // of figures is the other way round — an invoice's amounts agree on their
     // right edge and on nothing else — and that is not a column to re-set a
     // document in.
-    return agreeing(lines.map((l) => l.right)) <= agreeing(lines.map((l) => l.left));
+    // …or it is JUSTIFIED, and flush on both sides: every full line ends
+    // where the column does, and only a paragraph's first line starts
+    // anywhere else. Its lines fill the column, which a column of amounts
+    // never does. comments.pdf's pages agree on more right edges than left
+    // ones, and five of its fourteen were read straight across both columns.
+    const [lo, hi] = regions[i]!;
+    const full = lines.filter((l) => l.right - l.left >= (hi - lo) * FULL_LINE_SHARE).length;
+    return (
+      agreeing(lines.map((l) => l.right)) <= agreeing(lines.map((l) => l.left)) ||
+      full >= lines.length * FILLED_SHARE
+    );
   });
 }
 
@@ -3593,6 +3603,9 @@ const FLUSH_PT = 1;
 
 /** And how many lines it takes before a region is a column at all. */
 const MIN_PROSE_LINES = 6;
+
+/** How many of a column's lines fill it when it is justified prose. */
+const FILLED_SHARE = 0.5;
 
 /**
  * §17.4.38 — the page's rows as the TABLE they are.

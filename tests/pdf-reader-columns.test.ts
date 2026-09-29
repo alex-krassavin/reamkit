@@ -14,12 +14,10 @@ import { PdfDocument } from '@/pdf/writer';
 
 const ROWS = 18;
 
-/** A one-page PDF of `ops`, drawn in Helvetica on a letter sheet. */
-function onePage(ops: ReadonlyArray<string>): Uint8Array {
+/** A one-page PDF of `ops`, drawn in Helvetica (or `face`) on a letter sheet. */
+function onePage(ops: ReadonlyArray<string>, face = 'Helvetica'): Uint8Array {
   const doc = new PdfDocument();
-  const font = doc.add(
-    dict({ Type: name('Font'), Subtype: name('Type1'), BaseFont: name('Helvetica') }),
-  );
+  const font = doc.add(dict({ Type: name('Font'), Subtype: name('Type1'), BaseFont: name(face) }));
   const content = doc.add(stream({}, new TextEncoder().encode(ops.join('\n'))));
   const pagesMap = dict({ Type: name('Pages'), Kids: [], Count: 1 });
   const pagesRef = doc.add(pagesMap);
@@ -135,6 +133,36 @@ describe('two-column reconstruction (E-PDF EP17)', () => {
     expect(tokens.slice(0, ROWS)).toEqual(column('L'));
     expect(tokens.slice(ROWS, ROWS * 2)).toEqual(column('M'));
     expect(tokens.slice(ROWS * 2)).toEqual(column('R'));
+  });
+
+  it('reads a JUSTIFIED page in its columns', () => {
+    // Every full line of a justified column ends where the column does, and
+    // only a paragraph's first line starts anywhere but its edge: the right
+    // edges agree more than the left ones, which is what a column of amounts
+    // looks like. comments.pdf's pages came back read straight across both
+    // columns, a line of one and a line of the other.
+    const line = (tag: string, first: boolean): string =>
+      `${tag} ${'set in the column and filling it '.repeat(3)}`.slice(0, first ? 42 : 44);
+    const ops = ['BT /F1 9 Tf'];
+    for (let k = 0; k < 30; k++) {
+      const first = k % 5 === 0;
+      const y = String(720 - k * 11);
+      const n = String(k + 1).padStart(2, '0');
+      // 44 characters of 9pt Courier fill the 237.6 points of each column.
+      ops.push(`1 0 0 1 ${String(54 + (first ? 10.8 : 0))} ${y} Tm (${line(`L${n}`, first)}) Tj`);
+      ops.push(`1 0 0 1 ${String(317 + (first ? 10.8 : 0))} ${y} Tm (${line(`R${n}`, first)}) Tj`);
+    }
+    ops.push('ET');
+    const tokens =
+      Ream.parse(onePage(ops, 'Courier'))
+        .flow.body.map((el) =>
+          el.kind === 'paragraph' ? el.paragraph.runs.map((r) => r.text).join('') : '',
+        )
+        .join(' ')
+        .match(/[LR]\d\d/gu) ?? [];
+    const column = (letter: string): Array<string> =>
+      Array.from({ length: 30 }, (_, i) => `${letter}${String(i + 1).padStart(2, '0')}`);
+    expect(tokens).toEqual([...column('L'), ...column('R')]);
   });
 
   it('reads a page RULED into columns by its rows, not by its columns', () => {
