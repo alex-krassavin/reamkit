@@ -303,6 +303,14 @@ describe('the encoding a font is read through (Annex D.2)', () => {
     expect(standardFaceText('Helvetica', 'd0d1', dict)).toBe('•—');
   });
 
+  it('reads a code the font’s own /Differences leave .notdef as no character', () => {
+    // issue11403_reduced.pdf writes a UTF-8 no-break space (C2 A0) into a
+    // Helvetica whose /Differences name both bytes `.notdef`; read through
+    // StandardEncoding the C2 came back an acute accent before the line.
+    const dict = '/Encoding << /Type /Encoding /Differences [160 /.notdef 194 /.notdef] >>';
+    expect(standardFaceText('Helvetica', 'c2a02041', dict)).toBe(' A');
+  });
+
   it('leaves a face whose encoding nobody knows to Latin-1', () => {
     // A subset of some sans: its built-in encoding is in the program, and what
     // a producer meant by its high codes is nearly always Latin-1.

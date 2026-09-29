@@ -220,6 +220,12 @@ export function buildContentFont(file: PdfFile, fontDict: PdfDict): ContentFont 
     // ordinary, and read as Latin-1 the space is a control and is dropped:
     // TAMReview.pdf's figure labels came back "SystemFeatures".
     fromNames?.get(code) ??
+    // §9.6.6.1 — a code the font's own `/Differences` name `.notdef` selects
+    // no glyph and is no character, whatever the base encoding would have
+    // made of it. issue11403_reduced.pdf writes a UTF-8 no-break space into
+    // a Helvetica that names both its bytes `.notdef`, and read through
+    // StandardEncoding the first came back an acute accent before the line.
+    (glyphNames.get(code) === NOTDEF ? '' : undefined) ??
     // Annex D.6 — the built-in encoding of a standard face that has one of its
     // own. ZapfDingbats is a font of PICTURES: its 0x4B is not the letter K but
     // `a38`, the six-pointed star, and read through the Latin encoding below —
@@ -338,6 +344,9 @@ const LATIN_LIGATURES: ReadonlyMap<string, string> = new Map([
   ['\uFB05', '\u017Ft'],
   ['\uFB06', 'st'],
 ]);
+
+/** The glyph name that selects no glyph (§9.6.6.1). */
+const NOTDEF = '.notdef';
 
 /** The last Unicode code point in the BMP, and the surrogate block inside it. */
 const BMP_END = 0xffff;
