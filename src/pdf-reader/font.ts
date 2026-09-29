@@ -11,7 +11,12 @@ import { outlineSource, postGlyphNames } from './glyf-outline';
 import { standardFace, standardWidth } from './standard-widths';
 import { eachPageFont, embeddedFontName, hasLiftableProgram, programStyle } from './embedded-fonts';
 import { isZapfDingbats, zapfDingbatsChar } from './dingbats';
-import { baseEncodingTable, isStandardLatinFace, standardEncodingTable } from './encodings';
+import {
+  baseEncodingTable,
+  isStandardLatinFace,
+  macGlyphName,
+  standardEncodingTable,
+} from './encodings';
 import type { PdfDict, PdfValue } from '@/pdf/objects';
 import type { ContentFont, GlyphOutline, Matrix, PathSeg, Type3Face } from './content';
 import type { PdfFile, PdfPage } from './document';
@@ -83,6 +88,12 @@ export function buildContentFont(file: PdfFile, fontDict: PdfDict): ContentFont 
     isType0 && toUnicode.size === 0 && fromProgram === undefined
       ? unicodeCids(file, fontDict)
       : undefined;
+  // …and a font that embeds nothing, named for a face every machine carries,
+  // has its codes as glyph indices into THAT face (see `coreGlyphOrder`).
+  const fromCore =
+    isType0 && toUnicode.size === 0 && fromProgram === undefined && fromCids === undefined
+      ? coreGlyphOrder(file, fontDict)
+      : undefined;
   // …and a `/ToUnicode` that EXISTS may not cover the codes the page actually
   // shows. bug911034.pdf ships one describing 95 codes and then draws glyphs
   // 0x2000 upward out of a 222 KB Arial Unicode subset; every one of them
@@ -133,7 +144,10 @@ export function buildContentFont(file: PdfFile, fontDict: PdfDict): ContentFont 
   // still selects a glyph, which is what the outline path draws.
   const glyphNames = isType0 ? new Map<number, string>() : differences(file, fontDict);
   const unicode =
-    fromProgram ?? fromCids ?? (toUnicode.size > 0 ? toUnicode : (fromNames ?? toUnicode));
+    fromProgram ??
+    fromCids ??
+    fromCore ??
+    (toUnicode.size > 0 ? toUnicode : (fromNames ?? toUnicode));
 
   const bytesPerCode = codeBytes;
   // §9.6.6.4 — a simple TrueType whose program has NO `cmap`, and which names
@@ -356,6 +370,61 @@ function embeddedCmap(file: PdfFile, fontDict: PdfDict): Map<number, string> | u
   });
   return out.size > 0 ? out : undefined;
 }
+
+/**
+ * §9.7.4 — the characters of a composite font that embeds no program, names a
+ * core face and states no `/ToUnicode`: its codes are glyph indices into the
+ * face the reader's machine carries under that name, and the core faces put
+ * their first 258 glyphs in the standard Macintosh order (the `post` table's
+ * format 1 names).
+ *
+ * issue11242_reduced.pdf shows "VAT Code" in a Verdana it does not embed.
+ * Nothing in the file says what its codes are but the face's own order, and
+ * read as characters they are "9$7&RGH"; read as nothing, the page came back
+ * blank. Only faces known to keep that order are read this way — a face's
+ * order is its own, and Calibri's is not this one.
+ *
+ * @param file     The owning file.
+ * @param fontDict The `/Type0` font dictionary.
+ * @returns Code → character, or `undefined` where the font is not such a one.
+ */
+function coreGlyphOrder(file: PdfFile, fontDict: PdfDict): Map<number, string> | undefined {
+  const encoding = asName(file.resolve(fontDict.get('Encoding') ?? PDF_NULL));
+  if (encoding !== 'Identity-H' && encoding !== 'Identity-V') return undefined;
+  const cidFont = descendantFont(file, fontDict);
+  if (asName(file.resolve(cidFont.get('Subtype') ?? PDF_NULL)) !== 'CIDFontType2') return undefined;
+  const map = file.resolve(cidFont.get('CIDToGIDMap') ?? PDF_NULL);
+  if (map !== PDF_NULL && !(map instanceof PdfName && map.value === 'Identity')) return undefined;
+  const descriptor = file.resolve(cidFont.get('FontDescriptor') ?? PDF_NULL);
+  if (
+    descriptor instanceof Map &&
+    ['FontFile', 'FontFile2', 'FontFile3'].some((k) => descriptor.has(k))
+  )
+    return undefined;
+  const family = familyOfFace(asName(file.resolve(fontDict.get('BaseFont') ?? PDF_NULL)));
+  if (!CORE_FACES.has(family.toLowerCase().replace(/[^a-z]/gu, ''))) return undefined;
+  const out = new Map<number, string>();
+  for (let gid = 0; gid < MAC_GLYPHS; gid++) {
+    const name = macGlyphName(gid);
+    const text = name === undefined ? undefined : textForGlyphName(name);
+    if (text !== undefined && text !== '') out.set(gid, text);
+  }
+  return out;
+}
+
+/** The core faces whose first glyphs stand in the standard Macintosh order. */
+const CORE_FACES: ReadonlySet<string> = new Set([
+  'arial',
+  'timesnewroman',
+  'couriernew',
+  'verdana',
+  'tahoma',
+  'georgia',
+  'trebuchetms',
+]);
+
+/** How many glyphs the standard Macintosh order names. */
+const MAC_GLYPHS = 258;
 
 /**
  * §9.7.4.2 — the CIDs of a composite font that ARE characters.

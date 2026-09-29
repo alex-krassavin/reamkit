@@ -1603,3 +1603,48 @@ function runsOf(content: string): Array<TextRun> {
   const file = PdfFile.parse(new TextEncoder().encode(pdf));
   return extractPageText(file, file.pages()[0]!);
 }
+
+describe('a composite font that names a system face and embeds nothing (§9.7.4)', () => {
+  /** A page showing `hex` in a non-embedded TrueType CIDFont named `face`. */
+  const shown = (face: string, hex: string): string | undefined => {
+    const content = `BT /F0 12 Tf 10 30 Td <${hex}> Tj ET`;
+    const objects = [
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 50] /Contents 4 0 R ' +
+        '/Resources << /Font << /F0 5 0 R >> >> >>',
+      `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+      `<< /Type /Font /Subtype /Type0 /BaseFont /${face} /Encoding /Identity-H /DescendantFonts [6 0 R] >>`,
+      `<< /Type /Font /Subtype /CIDFontType2 /BaseFont /${face} ` +
+        '/CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor 7 0 R >>',
+      `<< /Type /FontDescriptor /FontName /${face} /Flags 32 /Ascent 764 /Descent -206 ` +
+        '/CapHeight 727 /ItalicAngle 0 /StemV 80 /FontBBox [-550 -303 1707 1072] >>',
+    ];
+    let pdf = '%PDF-1.7\n';
+    const offsets: Array<number> = [];
+    objects.forEach((body, i) => {
+      offsets.push(pdf.length);
+      pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+    });
+    const xref = pdf.length;
+    pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+    for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+    pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`;
+    const file = PdfFile.parse(new TextEncoder().encode(pdf));
+    return extractPageText(file, file.pages()[0]!)[0]?.text;
+  };
+
+  it('reads its codes as the glyph order the core faces share', () => {
+    // issue11242_reduced.pdf shows "VAT Code" in a Verdana it does not embed,
+    // with no /ToUnicode: its codes are glyph indices into the system face,
+    // whose first 258 glyphs stand in the standard Macintosh order. Read as
+    // characters they are "9$7&RGH"; read as nothing, the page came back blank.
+    expect(shown('Verdana', '0039002400370026')).toBe('VATC');
+    expect(shown('Verdana-Bold', '00030039')).toBe(' V');
+  });
+
+  it('leaves a face nobody knows unread', () => {
+    // Its glyph order is its own, and guessing at it is inventing text.
+    expect(shown('SomeFoundryFace', '0039002400370026')).not.toBe('VATC');
+  });
+});
