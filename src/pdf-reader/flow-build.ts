@@ -749,7 +749,7 @@ export const NATURAL_LINE_EM = 1.2;
  * in exact boxes (see `groupIntoParagraphs`), so this is where the box's top
  * stands, not where a face's ascender happens to.
  */
-const ASCENDER = BASELINE_AT * NATURAL_LINE_EM;
+export const ASCENDER = BASELINE_AT * NATURAL_LINE_EM;
 
 /**
  * And how far below its baseline the last line's box reaches. A box set half

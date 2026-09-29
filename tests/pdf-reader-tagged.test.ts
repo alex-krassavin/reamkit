@@ -7,6 +7,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
+import type { BodyElement } from '@/core/document-model';
 import { Ream } from '@/core/converter/ream';
 import { PdfFile } from '@/pdf-reader/document';
 import { reconstructTaggedPdf } from '@/pdf-reader/tagged';
@@ -69,6 +70,41 @@ function turnedPages(pdf: Uint8Array): Uint8Array {
     `startxref\n${String(xref)}\n%%EOF\n`;
   return Uint8Array.from(out, (c) => c.charCodeAt(0));
 }
+
+const pageBreaksIn = (flow: { body: ReadonlyArray<BodyElement> }): number =>
+  flow.body.filter((b) => b.kind === 'paragraph' && b.paragraph.properties.pageBreakBefore === true)
+    .length;
+
+describe('the pages a tagged document is set on (§14.8)', () => {
+  it('opens a page of its own where the source page ended short', async () => {
+    // bug793632.pdf is four pages of a line each — three of front matter and
+    // the first of the body. A tree names the lines and not the pages, and
+    // read as one flow they came back as one page.
+    const brk = '<w:p><w:r><w:br w:type="page"/></w:r></w:p>';
+    const flow = await taggedFlow(
+      para('Page one.') + brk + para('Page two.') + brk + para('Page three.'),
+    );
+    expect(paragraphTexts(flow).filter((t) => t.length > 0)).toEqual([
+      'Page one.',
+      'Page two.',
+      'Page three.',
+    ]);
+    expect(pageBreaksIn(flow)).toBe(2);
+  });
+
+  it('lets the words of a page they filled run on, as the paper broke them', async () => {
+    // A page the words filled was broken by the paper, and re-set they break
+    // wherever the new setting puts them: bug1997343.pdf's two-column first
+    // page read as one column ran on past a page, and broken again where the
+    // source page broke, a sheet of it stood alone.
+    const long = Array.from({ length: 60 }, (_, i) =>
+      para(`Line ${String(i + 1)} of a page the words fill to its foot.`),
+    ).join('');
+    const flow = await taggedFlow(long);
+    expect(paragraphTexts(flow)).toContain('Line 60 of a page the words fill to its foot.');
+    expect(pageBreaksIn(flow)).toBe(0);
+  });
+});
 
 describe('tagged-PDF reconstruction (E-PDF EP3)', () => {
   it('turns the words with pages the turn leaves running down their sheets (§17.6.20)', async () => {
