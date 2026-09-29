@@ -47,7 +47,9 @@ import { markDrawnRules } from './text-rules';
 import { regionsOf } from './regions';
 import { punctuationOf } from './glyph-shapes';
 import { matrixBlocks } from './math-rows';
+import { pageNumberingOf, runOf } from './page-numbers';
 import { isRightToLeft } from './content';
+import type { PageNumbering } from './page-numbers';
 import type { SideBySide } from './regions';
 import type { PdfVector } from './vector';
 import type {
@@ -67,8 +69,8 @@ import type { Reconstruction, TextSpan } from './flow-build';
 import { FEATURES, ResourceStore, pt } from '@/core/ir';
 
 /** The relationships the reconstruction files its running head and foot under. */
-const FOOTER_PART = 'pdf-running-foot';
-const HEADER_PART = 'pdf-running-head';
+export const FOOTER_PART = 'pdf-running-foot';
+export const HEADER_PART = 'pdf-running-head';
 
 /** §9.10.2 — a glyph the face maps to no character (see `./font`). */
 export const UNMAPPED = '\uFFFD';
@@ -159,6 +161,11 @@ export function reconstructByLayout(
   const bandRuns = allRuns.map((runs, i) => (shown[i]!.sheet ? [] : runs));
   const foot = mode === 'positional' ? undefined : runningFoot(bandRuns, shown, 'foot');
   const head = mode === 'positional' ? undefined : runningFoot(bandRuns, shown, 'head');
+  // §17.6.12 — the page numbers the band prints, and the sequences they run
+  // in: front matter numbered i, ii, iii before a body that starts again at 1
+  // is two sections, each numbering its pages its own way.
+  const numberedBand = foot?.numbered === true ? foot : head?.numbered === true ? head : undefined;
+  const numbering = numberingOf(numberedBand);
   // …and what is set too small to read is a mark the producer left on the
   // sheet, not a line of it: TCPDF signs the last page of everything it makes
   // in one-point type in the very corner of the paper. Read as text it was the
@@ -757,7 +764,9 @@ export function reconstructByLayout(
     // …and so does a page whose lines run another way than the one before
     // (§17.6.20): a section is what carries the direction too.
     const size = `${shown[i]!.width.toFixed(2)}x${shown[i]!.height.toFixed(2)}${turned ? ' down' : ''}`;
-    const opensSection = i > 0 && size !== lastSize;
+    // …and where the pages' numbering starts again, which only a section does.
+    const opensSection =
+      i > 0 && (size !== lastSize || numbering?.runs.some((run) => run.from === i) === true);
     if (opensSection) {
       sectionEnds.push({
         at: body.length,
@@ -880,6 +889,7 @@ export function reconstructByLayout(
           if (!base) return [];
           const properties: SectionProperties = {
             ...base,
+            ...numberedFrom(numbering, end.from),
             ...(end.columns > 1 && mode !== 'positional'
               ? { columns: { count: end.columns, spacePt: end.spacePt } }
               : {}),
@@ -923,8 +933,17 @@ export function reconstructByLayout(
   // every section: the foot runs through the document, not through a section.
   const stepped0 = stepsBetweenWords(allRuns[0] ?? []);
   const edges0 = pageTextEdges(allRuns[0] ?? []);
-  const band = foot ? footerBand(foot.band, stepped0, edges0, foot.numbered) : [];
-  const headBand = head ? footerBand(head.band, stepped0, edges0, head.numbered) : [];
+  // The numeral a band's own first page prints its number as — for the band
+  // the numbering was read from.
+  const numeralOf = (of: typeof foot): string | undefined => {
+    if (of === undefined || of !== numberedBand || numbering === undefined) return undefined;
+    const first = of.lift.findIndex((set) => set.size > 0);
+    return first >= 0 ? numbering.numbers[first]?.text : undefined;
+  };
+  const band = foot ? footerBand(foot.band, stepped0, edges0, foot.numbered, numeralOf(foot)) : [];
+  const headBand = head
+    ? footerBand(head.band, stepped0, edges0, head.numbered, numeralOf(head))
+    : [];
   const withFooter = (properties: SectionProperties | undefined): SectionProperties | undefined =>
     properties
       ? {
@@ -941,7 +960,7 @@ export function reconstructByLayout(
     doc: buildFlowDoc(
       body,
       resources,
-      withFooter(sectionOnSheet(setUp(0, pages.length), shown[0])),
+      withFooter(numberedAs(sectionOnSheet(setUp(0, pages.length), shown[0]), numbering)),
       collectEmbeddedFonts(file, pages, losses),
       sections.map((s) => ({ ...s, properties: withFooter(s.properties) ?? s.properties })),
       band.length > 0 || headBand.length > 0
@@ -1271,7 +1290,9 @@ function runInk(run: TextRun): [number, number] | undefined {
 const SPACE = /\s/u;
 
 /** Where the page's text starts and ends, ignoring what is only a space. */
-function pageTextEdges(runs: ReadonlyArray<TextRun>): { left: number; right: number } | undefined {
+export function pageTextEdges(
+  runs: ReadonlyArray<TextRun>,
+): { left: number; right: number } | undefined {
   let left = Number.POSITIVE_INFINITY;
   let right = Number.NEGATIVE_INFINITY;
   for (const run of runs) {
@@ -1837,7 +1858,7 @@ const STEPPED_SPACE_EM = 0.12;
  * both. A page with almost no text says nothing either way and keeps the
  * cautious reading.
  */
-function stepsBetweenWords(runs: ReadonlyArray<TextRun>): boolean {
+export function stepsBetweenWords(runs: ReadonlyArray<TextRun>): boolean {
   if (runs.length < 8) return false;
   const drawn = runs.filter((r) => /\s/u.test(r.text)).length;
   return drawn / runs.length < 0.05;
@@ -2521,7 +2542,7 @@ function compareOrder(a: ReadonlyArray<number>, b: ReadonlyArray<number>): numbe
  * @returns The runs to lift off each page and the band to put them in, or
  *          `undefined` where the document repeats nothing.
  */
-function runningFoot(
+export function runningFoot(
   pageRuns: ReadonlyArray<ReadonlyArray<TextRun>>,
   shown: ReadonlyArray<{ height: number }>,
   where: 'head' | 'foot',
@@ -2564,6 +2585,56 @@ function runningFoot(
 }
 
 /** How many of a document's pages must carry the foot before it is running. */
+/**
+ * §17.6.12 — how a document's pages are numbered, read off the band that
+ * prints their numbers (see ./page-numbers).
+ *
+ * @param band The running head or foot whose numbers change from page to page.
+ * @returns The numbering, or undefined where no band numbers the pages.
+ */
+export function numberingOf(
+  band: { readonly lift: ReadonlyArray<ReadonlySet<TextRun>> } | undefined,
+): PageNumbering | undefined {
+  if (!band) return undefined;
+  return pageNumberingOf(band.lift.map((set) => (set.size > 0 ? bandText([...set]) : undefined)));
+}
+
+/** A band's text on one page, with a word space wherever the page shows one. */
+function bandText(runs: ReadonlyArray<TextRun>): string {
+  return groupIntoLines(runs, false, stepsBetweenWords(runs))
+    .map((line) => line.text)
+    .join(' ');
+}
+
+/**
+ * The numbering a section opening at `page` states: the numerals of the
+ * sequence the page is counted in, and the number the sequence starts at where
+ * it starts there.
+ *
+ * @param numbering The document's numbering.
+ * @param page      The section's first page.
+ * @returns The section's `pageNumberFormat` and `pageNumberStart`, as needed.
+ */
+export function numberedFrom(
+  numbering: PageNumbering | undefined,
+  page: number,
+): Pick<SectionProperties, 'pageNumberFormat' | 'pageNumberStart'> {
+  const run = numbering ? runOf(numbering.runs, page) : undefined;
+  if (!run) return {};
+  return {
+    ...(run.format !== 'decimal' ? { pageNumberFormat: run.format } : {}),
+    ...(run.from === page && (page > 0 || run.start !== 1) ? { pageNumberStart: run.start } : {}),
+  };
+}
+
+/** A document of one section, numbered from its first page. */
+function numberedAs(
+  section: SectionProperties | undefined,
+  numbering: PageNumbering | undefined,
+): SectionProperties | undefined {
+  return section ? { ...section, ...numberedFrom(numbering, 0) } : section;
+}
+
 const FOOT_SHARE = 0.6;
 
 /** How far, in points, a running foot may drift from page to page. */
@@ -2686,11 +2757,19 @@ const FOOT_CHARS = 90;
  * the number of the page it is drawn on, which is what lets ONE band serve
  * every page. The run is cut around it and the middle becomes the field.
  *
- * @param run The footer's run.
+ * @param run     The footer's run.
+ * @param numeral The page's number as this band prints it, where it is known.
  * @returns The run, or the two or three it is cut into.
  */
-function pageNumbered(run: Run): Array<Run> {
-  const found = /(^|\s)(\d{1,4})(\s|$)/u.exec(run.text);
+function pageNumbered(run: Run, numeral?: string): Array<Run> {
+  // The numeral the page's number is printed as — the one that changes from
+  // page to page, which may be roman (see ./page-numbers) — or the first run
+  // of digits where the bands said nothing more.
+  const pattern =
+    numeral !== undefined
+      ? new RegExp(`(^|\\s)(${numeral})(\\s|$)`, 'u')
+      : /(^|\s)(\d{1,4})(\s|$)/u;
+  const found = pattern.exec(run.text);
   if (!found || run.field !== undefined) return [run];
   const at = found.index + found[1]!.length;
   const number = found[2]!;
@@ -2744,12 +2823,14 @@ function pageNumbered(run: Run): Array<Run> {
  * @param stepped  Whether the page steps between its words.
  * @param measure  The measure it was set across, for its alignment.
  * @param numbered Whether a number in it is the page's own.
+ * @param numeral  That number as this band prints it, where it is known.
  */
-function footerBand(
+export function footerBand(
   runs: ReadonlyArray<TextRun>,
   stepped: boolean,
   measure: { left: number; right: number } | undefined,
   numbered: boolean,
+  numeral?: string,
 ): Array<BodyElement> {
   const fontSize = median(runs.map((r) => r.fontSizePt).filter((s) => s > 0)) || 10;
   const lines = rowsOf(runs, fontSize)
@@ -2764,7 +2845,9 @@ function footerBand(
       kind: 'paragraph',
       paragraph: {
         ...el.paragraph,
-        runs: numbered ? el.paragraph.runs.flatMap((run) => pageNumbered(run)) : el.paragraph.runs,
+        runs: numbered
+          ? el.paragraph.runs.flatMap((run) => pageNumbered(run, numeral))
+          : el.paragraph.runs,
       },
     };
   });

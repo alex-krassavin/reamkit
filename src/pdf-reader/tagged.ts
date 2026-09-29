@@ -26,11 +26,28 @@ import { collectEmbeddedFonts } from './embedded-fonts';
 import { collectFaceFamilies } from './font';
 import { collectPageImages } from './images';
 import { collectPageVectors } from './vector';
-import { UNMAPPED, endedParagraph } from './layout';
+import {
+  FOOTER_PART,
+  HEADER_PART,
+  UNMAPPED,
+  endedParagraph,
+  footerBand,
+  numberedFrom,
+  numberingOf,
+  pageTextEdges,
+  runningFoot,
+  stepsBetweenWords,
+} from './layout';
 import { markDrawnRules } from './text-rules';
 import { readStructTree } from './struct-tree';
 import { extractPageText } from './text';
-import type { BodyElement, Table, TableCell, TableRow } from '@/core/document-model';
+import type {
+  BodyElement,
+  SectionProperties,
+  Table,
+  TableCell,
+  TableRow,
+} from '@/core/document-model';
 import type { Loss, Pt } from '@/core/ir';
 
 import type { TextRun } from './content';
@@ -483,22 +500,48 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
   });
 
   if (byPage.every((own) => own.length === 0)) return undefined;
+  // §14.8.2.2.2 — a running head or foot is an ARTIFACT, named by no element
+  // of the tree, and read from the tree alone a tagged document lost every
+  // page number it had. The words no element claimed are read for the bands
+  // the untagged reading finds — the same line at the same place on every
+  // page — and for the numbering they print: bug793632.pdf numbers its front
+  // matter i, ii, iii before its body starts again at 1. A page read turned
+  // keeps its band in its text (§17.6.20).
+  const loose = placedRuns.map((runs, i) =>
+    shown[i]!.sheet ? [] : runs.filter((r) => !claimed.has(r)),
+  );
+  const foot = runningFoot(loose, shown, 'foot');
+  const head = runningFoot(loose, shown, 'head');
+  const numberedBand = foot?.numbered === true ? foot : head?.numbered === true ? head : undefined;
+  const numbering = numberingOf(numberedBand);
+  const lifted = (r: TextRun, i: number): boolean =>
+    foot?.lift[i]?.has(r) === true || head?.lift[i]?.has(r) === true;
   // A tagged reading re-sets the words exactly as an untagged one does, so it
   // needs the same margins: measured off where the source put them. Without
   // this every tagged PDF came back with its text against all four edges of
-  // the paper.
+  // the paper. A band is not the body, and measures nothing but the room the
+  // foot takes.
   const measured = withMeasuredMargins(
     sectionFromPdfPages(pages, shown[0]),
     shown,
-    placedRuns,
+    placedRuns.map((runs, i) => runs.filter((r) => !lifted(r, i))),
     pageImages.map((p) => p.images),
+    foot?.band,
   );
   const body: Array<BodyElement> = [];
   const top = measured?.margins?.top ?? 0;
   const bottom = measured?.margins?.bottom ?? 0;
   // Taken before the spacing below re-writes the paragraphs it spaces.
   const ends = byPage.map((own) => lowestOf(own));
+  // Where each section ends: a page whose numbering starts again opens one.
+  const sectionsFrom = (numbering?.runs ?? []).map((run) => run.from).filter((from) => from > 0);
+  const endsAt: Array<{ at: number; from: number }> = [];
+  let sectionFrom = 0;
   byPage.forEach((own, index) => {
+    if (sectionsFrom.includes(index)) {
+      endsAt.push({ at: body.length, from: sectionFrom });
+      sectionFrom = index;
+    }
     const height = shown[index]?.height ?? 0;
     spaceParagraphs(own, setting, height);
     // A page OPENS an output page of its own where the page before it ended
@@ -515,17 +558,20 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
       (own.length === 0 ||
         ended === undefined ||
         ended - bottom > (height - top - bottom) * SHORT_PAGE_SHARE);
-    // §17.3.1.33 — a page that opens begins its text where the page began it,
-    // not against the top margin, which is measured to the highest ink of any.
+    // §17.3.1.33 — a page that opens a sheet — by a break or by a section —
+    // begins its text where the page began it, not against the top margin,
+    // which is measured to the highest ink of any.
     const lead = own.findIndex((el) => !floats(el));
     const set = lead >= 0 ? setting.get(own[lead]!) : undefined;
-    if ((index === 0 || opens) && set !== undefined && measured?.margins) {
+    const fresh = index === 0 || opens || sectionsFrom.includes(index);
+    if (fresh && set !== undefined && measured?.margins) {
       const gap = height - top - (set.top + set.size * ASCENDER);
       if (gap > 1) own[lead] = spacedBefore(own[lead]!, gap);
     }
     // A break stands before the paragraph that carries it, so a blank FIRST
-    // sheet holds a carrier of its own for the second to break from.
-    if (opens) body.push(pageBreak(true));
+    // sheet holds a carrier of its own for the second to break from. A page
+    // that opens a section is broken by the section.
+    if (opens && !sectionsFrom.includes(index)) body.push(pageBreak(true));
     else if (index === 0 && own.length === 0 && pages.length > 1) body.push(pageBreak(false));
     body.push(...own);
   });
@@ -549,18 +595,66 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
         'some glyphs map to no character — the font states no /ToUnicode and its program says nothing either, so that text is unrecoverable',
     });
   }
-  const onPage = placedRuns.flat().reduce((n, r) => n + r.text.length, 0);
+  // …and a band read as one is accounted for: a page of front matter a line
+  // long is outweighed by its own foot.
+  const onPage = placedRuns
+    .flatMap((runs, i) => runs.filter((r) => !lifted(r, i)))
+    .reduce((n, r) => n + r.text.length, 0);
   const reached = [...claimed].reduce((n, r) => n + r.text.length, 0);
   if (onPage > 0 && reached * 2 < onPage) return undefined;
+  endsAt.push({ at: body.length, from: sectionFrom });
+  // The bands, built from the page that showed each first and referenced by
+  // every section, as the untagged reading does.
+  const stepped0 = stepsBetweenWords(placedRuns[0] ?? []);
+  const edges0 = pageTextEdges(placedRuns[0] ?? []);
+  const numeralOf = (of: typeof foot): string | undefined => {
+    if (of === undefined || of !== numberedBand || numbering === undefined) return undefined;
+    const first = of.lift.findIndex((set) => set.size > 0);
+    return first >= 0 ? numbering.numbers[first]?.text : undefined;
+  };
+  const footBand = foot
+    ? footerBand(foot.band, stepped0, edges0, foot.numbered, numeralOf(foot))
+    : [];
+  const headBand = head
+    ? footerBand(head.band, stepped0, edges0, head.numbered, numeralOf(head))
+    : [];
+  // The margins measured above, on the sheet the pages are shown on, with the
+  // bands and the numbering each section starts.
+  const sectionAt = (from: number): SectionProperties | undefined => {
+    const base = sectionOnSheet(measured, shown[0]);
+    return base
+      ? {
+          ...base,
+          ...numberedFrom(numbering, from),
+          ...(footBand.length > 0
+            ? { footers: [{ type: 'default' as const, relationshipId: FOOTER_PART }] }
+            : {}),
+          ...(headBand.length > 0
+            ? { headers: [{ type: 'default' as const, relationshipId: HEADER_PART }] }
+            : {}),
+        }
+      : base;
+  };
+  const sections =
+    endsAt.length > 1
+      ? endsAt.flatMap((end) => {
+          const properties = sectionAt(end.from);
+          return properties ? [{ properties, endIndex: end.at }] : [];
+        })
+      : [];
   return {
     doc: buildFlowDoc(
       body,
       resources,
-      // The margins measured above, on the sheet the pages are shown on.
-      sectionOnSheet(measured, shown[0]),
+      sectionAt(0),
       collectEmbeddedFonts(file, pages, imageLosses),
-      [],
-      undefined,
+      sections,
+      footBand.length > 0 || headBand.length > 0
+        ? new Map([
+            ...(footBand.length > 0 ? ([[FOOTER_PART, footBand]] as const) : []),
+            ...(headBand.length > 0 ? ([[HEADER_PART, headBand]] as const) : []),
+          ])
+        : undefined,
       collectFaceFamilies(file, pages),
     ),
     losses: imageLosses,
