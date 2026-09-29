@@ -1593,6 +1593,30 @@ describe('a flowing reading re-sets the page where the page set it', () => {
     expect(paragraphs(doc).map(textOf).join(' ')).not.toContain('Invoice');
   });
 
+  it('sets a block of PROSE beside another as the paragraphs it is, not a line apiece', () => {
+    // comments.pdf's two columns, read as blocks side by side, were set a line
+    // to a paragraph, and each line a word wider in a substitute's widths left
+    // that word standing alone under it: half again as long.
+    const line = 'the words of a column run out to its edge here';
+    // Each column at a leading of its own, so their lines never share a baseline.
+    const column = (x: number, top: number, leading: number): Array<string> =>
+      Array.from(
+        { length: 6 },
+        (_, i) =>
+          `BT /F1 9 Tf 1 0 0 1 ${String(x)} ${String(top - i * leading)} Tm (${line}) Tj ET`,
+      );
+    const doc = reconstructByLayout(
+      PdfFile.parse(helvetica([...column(40, 700, 11), ...column(300, 697, 11.5)].join('\n'))),
+    ).doc;
+    const table = doc.body.find((b) => b.kind === 'table');
+    if (table?.kind !== 'table') throw new Error('the band is a table');
+    const cells = table.table.rows[0]!.cells.map((c) =>
+      c.content.filter((el) => el.kind === 'paragraph'),
+    );
+    expect(cells.map((paras) => paras.length)).toEqual([1, 1]);
+    expect(textOf(cells[0]![0]!)).toContain(`${line} ${line}`);
+  });
+
   it('takes a rule drawn in pieces as one rule (§17.3.1.24)', () => {
     // An invoice draws the rule under its headings cell by cell. Measured apart
     // only the widest piece was long enough to be a rule: it moved with the

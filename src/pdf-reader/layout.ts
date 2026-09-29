@@ -560,8 +560,13 @@ export function reconstructByLayout(
         const own = { left: cell.from, right: cell.to };
         // A block beside another is a stack of lines — a label over its value,
         // an address — set as narrow as it is: run together, its lines re-wrap
-        // wherever a substitute's widths put the break.
-        const paras = groupIntoParagraphs(lines, own, display.height, edge, true);
+        // wherever a substitute's widths put the break. A block of PROSE is
+        // not: its lines run to the edge the column breaks them at, and set a
+        // line apiece, each one a word wider in a substitute's widths left
+        // that word on a line of its own — comments.pdf's two columns, read
+        // as blocks side by side, came back half again as long, a word
+        // standing alone under every line.
+        const paras = groupIntoParagraphs(lines, own, display.height, edge, !isProse(lines, own));
         const last = paras[paras.length - 1]!;
         foot = Math.min(foot, last.bottom - (1 - BASELINE_AT) * last.lineHeight);
         const inset = cell.from - starts[k]!;
@@ -1654,6 +1659,41 @@ function groupIntoLines(runs: ReadonlyArray<TextRun>, split = false, stepped = f
     );
   });
 }
+
+/**
+ * Whether a block's lines are PROSE: many of them, across a measure a sentence
+ * is set to, and most running out to the edge that measure breaks them at, as
+ * a column of text does — where a stack of labels and values, or an address,
+ * is short lines of their own lengths.
+ *
+ * @param lines The block's lines, top first.
+ * @param own   The block's own left and right edges.
+ * @returns True for a column of running text.
+ */
+function isProse(lines: ReadonlyArray<Line>, own: { left: number; right: number }): boolean {
+  if (lines.length < PROSE_LINES) return false;
+  // …and a measure wide enough to set a sentence in: an invoice's stack of
+  // labels and values is lines of a few words, which end as near its edge as
+  // a column's do because the edge is the longest of them.
+  const size = median(lines.map((l) => l.fontSize)) || 10;
+  if (own.right - own.left < size * PROSE_MEASURE_EM) return false;
+  // The last line of a paragraph ends where its words do, so it is not asked.
+  const asked = lines.slice(0, -1);
+  const full = asked.filter((l) => l.x + l.width >= own.right - l.fontSize * FULL_LINE_EM);
+  return full.length >= asked.length * PROSE_FULL_SHARE;
+}
+
+/** How many lines a block needs before it can be told for prose. */
+const PROSE_LINES = 5;
+
+/** The narrowest measure, in ems, a column of prose is set to. */
+const PROSE_MEASURE_EM = 20;
+
+/** How near the block's edge, in ems, a line has to end to have run out to it. */
+const FULL_LINE_EM = 2;
+
+/** The share of a block's lines that run out to its edge in a column of prose. */
+const PROSE_FULL_SHARE = 0.6;
 
 /**
  * §17.3.1.38 — the stops a block of lines is set out on: where text resumes,
