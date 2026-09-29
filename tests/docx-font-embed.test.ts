@@ -222,6 +222,44 @@ describe('a document that embeds the faces it is set in (§17.8.1)', () => {
     expect(again.paragraph.runs[0]?.properties.kerningMinPt).toBe(1);
   });
 
+  it("carries the ligatures the source drew, as its GSUB's standard ligatures", () => {
+    const joined: FaceGlyph = { outline: BAR, advance: 520 };
+    const flow = documentIn(
+      [{ face: 'inter-regular', text: 'fit' }],
+      new Map([['inter-regular', face('fit ', { ligatures: new Map([['fi', joined]]) })]]),
+    );
+    const parsed = parseTtf(embeddedFont(writeDocx(flow).bytes, 'Regular'));
+    const [f, i] = ['f', 'i'].map((c) => parsed.glyphForCodepoint(c.codePointAt(0)!));
+    const glyph = parsed.ligatures.get(`${String(f)},${String(i)}`);
+    expect(glyph).toBeDefined();
+    expect(parsed.advanceWidths[glyph!]).toBe(520);
+  });
+
+  it('writes a run set with its ligatures as w14:ligatures, in a part a reader may pass it over in', () => {
+    // [MS-DOCX] — Word 2010's own element, after the base schema's, in a part
+    // that declares its namespace ignorable (ECMA-376 Part 3 `mc:Ignorable`).
+    const { doc } = readDocx(
+      buildDocxFromBody(
+        '<w:p><w:r><w:rPr><w:lang w:val="en-US"/><w14:ligatures w14:val="standard"/></w:rPr>' +
+          '<w:t>fit</w:t></w:r></w:p>',
+      ),
+    );
+    const bytes = writeDocx(doc).bytes;
+    const body = decode(OpcPackage.open(bytes).getMainDocument().data);
+    expect(body).toContain('<w:lang w:val="en-US"/><w14:ligatures w14:val="standard"/></w:rPr>');
+    expect(body).toMatch(/<w:document [^>]*xmlns:w14="[^"]+"[^>]* mc:Ignorable="w14"/u);
+    const again = readDocx(bytes).doc.body[0];
+    if (again?.kind !== 'paragraph') throw new Error('a paragraph');
+    expect(again.paragraph.runs[0]?.properties.ligatures).toBe('standard');
+  });
+
+  it('declares no w14 in a part that uses none', () => {
+    const { doc } = readDocx(buildDocxFromBody('<w:p><w:r><w:t>fit</w:t></w:r></w:p>'));
+    const body = decode(OpcPackage.open(writeDocx(doc).bytes).getMainDocument().data);
+    expect(body).not.toContain('xmlns:w14');
+    expect(body).not.toContain('mc:Ignorable');
+  });
+
   it('writes the same package from the same document', () => {
     const flow = documentIn(
       [{ face: 'inter-regular', text: 'Hi' }],

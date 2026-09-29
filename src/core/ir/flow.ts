@@ -50,6 +50,11 @@ export interface FaceOutlines {
    */
   readonly kerning?: ReadonlyMap<string, number>;
   /**
+   * The ligatures the source drew in the face: the letters one glyph stands
+   * for ("fi", "ffl") → that glyph.
+   */
+  readonly ligatures?: ReadonlyMap<string, FaceGlyph>;
+  /**
    * OS/2 `fsType` — the embedding the face's licence allows, as its program
    * states it; absent where the program states nothing.
    */

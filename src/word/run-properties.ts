@@ -2,6 +2,7 @@
 
 import type {
   FontFamilyMap,
+  Ligatures,
   RunProperties,
   UnderlineStyle,
   VerticalAlign,
@@ -27,6 +28,25 @@ const UNDERLINE_STYLES = new Set<UnderlineStyle>([
 ]);
 
 const VERTICAL_ALIGNS = new Set<VerticalAlign>(['baseline', 'superscript', 'subscript']);
+
+const LIGATURES = new Set<Ligatures>([
+  'none',
+  'standard',
+  'contextual',
+  'historical',
+  'discretional',
+  'standardContextual',
+  'standardHistorical',
+  'contextualHistorical',
+  'standardDiscretional',
+  'contextualDiscretional',
+  'historicalDiscretional',
+  'standardContextualHistorical',
+  'standardContextualDiscretional',
+  'standardHistoricalDiscretional',
+  'contextualHistoricalDiscretional',
+  'all',
+]);
 
 // §17.18.40 ST_HighlightColor — the marker pen's seventeen colours. `none` is
 // the absence of one, so it maps to nothing rather than to a colour.
@@ -161,6 +181,13 @@ export function parseRunProperties(rPr: unknown, themeFonts?: ThemeFonts): RunPr
   if ('w:kern' in el) {
     const n = Number(getVal(el['w:kern']));
     if (Number.isFinite(n) && n >= 0) out.kerningMinPt = halfPtToPt(n);
+  }
+
+  // [MS-DOCX] `w14:ligatures` — which of the face's ligatures the run is set
+  // with; the attribute is the Word 2010 namespace's own `w14:val`.
+  if ('w14:ligatures' in el) {
+    const v = asElement(el['w14:ligatures'])?.['@_w14:val'];
+    if (typeof v === 'string' && LIGATURES.has(v as Ligatures)) out.ligatures = v as Ligatures;
   }
 
   // §17.3.2.32 — the run's own background. Unlike a paragraph's, this one is

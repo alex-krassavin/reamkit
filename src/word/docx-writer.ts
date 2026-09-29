@@ -128,6 +128,25 @@ const COMMENTS_EXTENDED_CONTENT_TYPE =
   'application/vnd.openxmlformats-officedocument.wordprocessingml.commentsExtended+xml';
 const COMMENTS_EXTENDED_PART = 'word/commentsExtended.xml';
 const W14_NS = 'http://schemas.microsoft.com/office/word/2010/wordml';
+const MC_NS = 'http://schemas.openxmlformats.org/markup-compatibility/2006';
+
+/**
+ * The namespaces a part's root declares: WordprocessingML's and the
+ * relationships', and — where the part uses one — Word 2010's `w14`, which a
+ * reader that does not know it is told to pass over (ECMA-376 Part 3
+ * `mc:Ignorable`) rather than to refuse the file.
+ *
+ * @param inner The part's content, to see whether it uses `w14`.
+ * @returns The attributes, each with its leading space.
+ */
+function rootNamespaces(inner: string): string {
+  const base =
+    ' xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"' +
+    ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"';
+  return inner.includes('<w14:')
+    ? `${base} xmlns:w14="${W14_NS}" xmlns:mc="${MC_NS}" mc:Ignorable="w14"`
+    : base;
+}
 const W15_NS = 'http://schemas.microsoft.com/office/word/2012/wordml';
 const REL_CHART = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart';
 const CHART_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.drawingml.chart+xml';
@@ -331,11 +350,11 @@ export function writeDocx(flow: FlowDoc): WriteResult {
   emitBody(body, flow.body, losses, state, docScope, sectPrByClosingIndex);
   if (finalSectPr) body.push(finalSectPr);
 
+  const bodyXml = body.join('');
   const documentXml =
     '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
-    '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"' +
-    ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
-    `<w:body>${body.join('')}</w:body>` +
+    `<w:document${rootNamespaces(bodyXml)}>` +
+    `<w:body>${bodyXml}</w:body>` +
     '</w:document>';
 
   // §17.9 numbering: re-emit the raw definitions whenever a paragraph carries
@@ -640,13 +659,13 @@ function emitNotes(
       `<${cfg.noteTag} w:id="${escapeAttr(id)}">${inner.join('') || '<w:p/>'}</${cfg.noteTag}>`,
     );
   }
+  const notesXml = noteXmls.join('');
   const xml =
     '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
-    `<${cfg.rootTag} xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"` +
-    ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
+    `<${cfg.rootTag}${rootNamespaces(notesXml)}>` +
     stub('separator', -1, '<w:separator/>') +
     stub('continuationSeparator', 0, '<w:continuationSeparator/>') +
-    noteXmls.join('') +
+    notesXml +
     `</${cfg.rootTag}>`;
   extraParts.push({ path: cfg.partPath, data: encoder.encode(xml), contentType: cfg.contentType });
   if (scope.rels.length > 0) {
@@ -827,11 +846,10 @@ function emitHeadersFooters(
     const scope = newScope();
     const inner: Array<string> = [];
     for (const el of content) emitBlock(inner, el, losses, state, scope);
+    const bandXml = inner.join('');
     const xml =
       '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
-      `<${root} xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"` +
-      ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
-      `${inner.join('')}</${root}>`;
+      `<${root}${rootNamespaces(bandXml)}>${bandXml}</${root}>`;
     extraParts.push({
       path,
       data: encoder.encode(xml),
@@ -1816,7 +1834,8 @@ function runXml(run: Run, state: WriteState, scope: PartScope): string {
 // §17.3.2 — run properties as a delta from the resolved defaults.
 function rPrXml(r: ResolvedRunProperties, state?: WriteState): string {
   // §17.3.2.28 CT_RPr is a SEQUENCE, and a reader may drop what arrives out of
-  // it: rFonts, b, i, strike, color, kern, sz, u, shd, vertAlign, rtl, lang. Written
+  // it: rFonts, b, i, strike, color, kern, sz, u, shd, vertAlign, rtl, lang, and
+  // Word 2010's own after them. Written
   // in the old order — `w:u` ahead of `w:rFonts` — LibreOffice ignored the
   // underline outright, so annotation-squiggly.pdf's wavy blue rule was in the
   // package and on no page.
@@ -1859,6 +1878,11 @@ function rPrXml(r: ResolvedRunProperties, state?: WriteState): string {
   }
   if (states('rtl')) out.push(toggle('w:rtl', r.rtl));
   if (r.lang !== undefined) out.push(`<w:lang w:val="${escapeAttr(r.lang)}"/>`);
+  // [MS-DOCX] `w14:ligatures` — Word 2010's own, after every element of the
+  // base schema (see `rootNamespaces` for the namespace it is declared in).
+  if (r.ligatures !== undefined && states('ligatures')) {
+    out.push(`<w14:ligatures w14:val="${r.ligatures}"/>`);
+  }
   return out.length > 0 ? `<w:rPr>${out.join('')}</w:rPr>` : '';
 }
 

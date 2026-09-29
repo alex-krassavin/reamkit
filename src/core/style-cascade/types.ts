@@ -8,6 +8,7 @@ import type {
   CellShading,
   FontFamilyMap,
   FrameProperties,
+  Ligatures,
   NumberingReference,
   RunProperties,
   TabStop,
@@ -50,6 +51,8 @@ export interface ResolvedRunProperties {
   readonly letterSpacingPt?: Pt;
   /** §17.3.2.19 — the run is kerned at this size and above (0: not at all). */
   readonly kerningMinPt?: Pt;
+  /** [MS-DOCX] `w14:ligatures` — the face's ligatures the run is set with. */
+  readonly ligatures?: Ligatures;
   /** §21.1.2.3.9 — a line drawn round the glyphs themselves. */
   readonly textOutline?: TextOutline;
 }

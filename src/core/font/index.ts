@@ -10,4 +10,10 @@ export { hasSubstitutable, lettersForLigature, substituteLetters } from '@/core/
 export { createFontMeasure } from '@/core/font/measure';
 export type { FontMeasure } from '@/core/font/measure';
 export { buildTrueType, editableEmbedding, MAX_BUILT_GLYPHS } from '@/core/font/ttf-build';
-export type { BuiltFace, BuiltGlyph, BuiltKernPair, GlyphSeg } from '@/core/font/ttf-build';
+export type {
+  BuiltFace,
+  BuiltGlyph,
+  BuiltKernPair,
+  BuiltLigature,
+  GlyphSeg,
+} from '@/core/font/ttf-build';

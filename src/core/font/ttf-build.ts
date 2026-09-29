@@ -64,6 +64,20 @@ export interface BuiltFace {
   readonly fsType: number;
   /** The pairs the face is kerned by: how far the second glyph moves in towards the first. */
   readonly kerning?: ReadonlyArray<BuiltKernPair>;
+  /** The glyphs the face draws for a run of characters at once: its ligatures. */
+  readonly ligatures?: ReadonlyArray<BuiltLigature>;
+}
+
+/**
+ * One ligature of a {@link BuiltFace}: a glyph no character reaches alone,
+ * substituted for the characters it joins wherever they meet (GSUB `liga`).
+ */
+export interface BuiltLigature {
+  /** The characters it stands for, in order — two or more. */
+  readonly codePoints: ReadonlyArray<number>;
+  readonly outline: ReadonlyArray<GlyphSeg>;
+  /** How far the pen moves after it, in thousandths of an em. */
+  readonly advance: number;
 }
 
 /** One kerning pair of a {@link BuiltFace}, by the characters it joins. */
@@ -143,11 +157,14 @@ export const MAX_BUILT_GLYPHS = 8000;
  * @throws When the face holds more than {@link MAX_BUILT_GLYPHS} glyphs.
  */
 export function buildTrueType(face: BuiltFace): Uint8Array {
-  if (face.glyphs.length > MAX_BUILT_GLYPHS) {
+  const ligatures = reachableLigatures(face);
+  if (face.glyphs.length + ligatures.length > MAX_BUILT_GLYPHS) {
     throw new Error(`A built face holds at most ${MAX_BUILT_GLYPHS} glyphs`);
   }
-  const encoded = [emptyGlyph(), ...face.glyphs.map((g) => encodeGlyph(contoursOf(g.outline)))];
-  const advances = [0, ...face.glyphs.map((g) => clamp(Math.round(g.advance), 0, 0xffff))];
+  // The character glyphs, then the ligatures, which only a substitution reaches.
+  const drawn = [...face.glyphs, ...ligatures];
+  const encoded = [emptyGlyph(), ...drawn.map((g) => encodeGlyph(contoursOf(g.outline)))];
+  const advances = [0, ...drawn.map((g) => clamp(Math.round(g.advance), 0, 0xffff))];
   const inked = encoded.filter((g) => g.contours > 0);
   const bounds = {
     xMin: Math.min(0, ...inked.map((g) => g.xMin)),
@@ -174,6 +191,7 @@ export function buildTrueType(face: BuiltFace): Uint8Array {
     ['hhea', hheaTable(face, encoded, advances, metrics)],
     ['hmtx', hmtxTable(encoded, advances)],
     ...kerningTables(face),
+    ...ligatureTable(face, ligatures),
     ['loca', locaTable(encoded)],
     ['maxp', maxpTable(encoded)],
     ['name', nameTable(face)],
@@ -640,16 +658,130 @@ function locaTable(glyphs: ReadonlyArray<EncodedGlyph>): Uint8Array {
   return out.data;
 }
 
+/** Each character's glyph — the first that carries it — by code point. */
+function glyphsByCharacter(face: BuiltFace): Map<number, number> {
+  const glyphOf = new Map<number, number>();
+  face.glyphs.forEach((g, i) => {
+    for (const cp of g.codePoints) if (!glyphOf.has(cp)) glyphOf.set(cp, i + 1);
+  });
+  return glyphOf;
+}
+
+/**
+ * The ligatures a substitution can reach: two characters or more, every one of
+ * them a glyph of the face — a ligature of a letter the face does not carry
+ * joins nothing a reader lays out in it — and each run of characters once.
+ */
+function reachableLigatures(face: BuiltFace): Array<BuiltLigature> {
+  const glyphOf = glyphsByCharacter(face);
+  const seen = new Set<string>();
+  return (face.ligatures ?? []).filter((ligature) => {
+    const key = ligature.codePoints.join(',');
+    if (ligature.codePoints.length < 2 || seen.has(key)) return false;
+    seen.add(key);
+    return ligature.codePoints.every((cp) => glyphOf.has(cp));
+  });
+}
+
+/**
+ * GSUB 1.0 with one feature, `liga`, under the default script and Latin: one
+ * ligature-substitution lookup (type 4, format 1) joining each run of
+ * character glyphs into the glyph the page drew for it — the longest run
+ * first, so "ffi" is tried before "ff".
+ *
+ * @param face      The face, for its character glyphs.
+ * @param ligatures Its reachable ligatures, glyph `face.glyphs.length + 1` on.
+ * @returns The table to add, or none where the face draws no ligature.
+ */
+function ligatureTable(
+  face: BuiltFace,
+  ligatures: ReadonlyArray<BuiltLigature>,
+): Array<[string, Uint8Array]> {
+  if (ligatures.length === 0) return [];
+  const glyphOf = glyphsByCharacter(face);
+  const byFirst = new Map<number, Array<{ glyph: number; rest: Array<number> }>>();
+  ligatures.forEach((ligature, i) => {
+    const [first, ...rest] = ligature.codePoints.map((cp) => glyphOf.get(cp)!);
+    const entry = { glyph: face.glyphs.length + 1 + i, rest };
+    byFirst.set(first!, [...(byFirst.get(first!) ?? []), entry]);
+  });
+  const firsts = [...byFirst.keys()].sort((a, b) => a - b);
+  const sets = firsts.map((first) =>
+    [...byFirst.get(first)!].sort(
+      (a, b) => b.rest.length - a.rest.length || a.rest.join(',').localeCompare(b.rest.join(',')),
+    ),
+  );
+  const substHeader = 6 + firsts.length * 2;
+  const coverageSize = 4 + firsts.length * 2;
+  const setSize = (set: ReadonlyArray<{ rest: ReadonlyArray<number> }>): number =>
+    2 + set.length * 2 + set.reduce((n, lig) => n + 4 + lig.rest.length * 2, 0);
+  // The same fixed 62 bytes of scripts, feature and lookup as `gposTable`.
+  const SUBST_AT = 62;
+  const out = new Writer(
+    SUBST_AT + substHeader + coverageSize + sets.reduce((n, set) => n + setSize(set), 0),
+  );
+  out.u16(1); // majorVersion
+  out.u16(0); // minorVersion
+  out.u16(10); // scriptListOffset
+  out.u16(36); // featureListOffset
+  out.u16(50); // lookupListOffset
+  out.u16(2); // ScriptList at 10: DFLT and latn, one script table between them
+  for (const tag of ['DFLT', 'latn']) {
+    out.bytes([...tag].map((c) => c.charCodeAt(0)));
+    out.u16(14);
+  }
+  out.u16(4); // Script at 24: defaultLangSysOffset
+  out.u16(0); // langSysCount
+  out.u16(0); // LangSys at 28: lookupOrderOffset
+  out.u16(0xffff); // requiredFeatureIndex: none
+  out.u16(1); // featureIndexCount
+  out.u16(0); // → feature 0
+  out.u16(1); // FeatureList at 36: `liga` → lookup 0
+  out.bytes([...'liga'].map((c) => c.charCodeAt(0)));
+  out.u16(8);
+  out.u16(0); // Feature at 44: featureParamsOffset
+  out.u16(1); // lookupIndexCount
+  out.u16(0); // → lookup 0
+  out.u16(1); // LookupList at 50
+  out.u16(4);
+  out.u16(4); // Lookup at 54: lookupType — ligature substitution
+  out.u16(0); // lookupFlag
+  out.u16(1); // subTableCount
+  out.u16(SUBST_AT - 54);
+  out.u16(1); // LigatureSubst format 1 at 62
+  out.u16(substHeader); // coverageOffset
+  out.u16(firsts.length); // ligatureSetCount
+  let at = substHeader + coverageSize;
+  for (const set of sets) {
+    out.u16(at);
+    at += setSize(set);
+  }
+  out.u16(1); // Coverage format 1
+  out.u16(firsts.length);
+  for (const first of firsts) out.u16(first);
+  for (const set of sets) {
+    out.u16(set.length); // ligatureCount
+    let lig = 2 + set.length * 2;
+    for (const entry of set) {
+      out.u16(lig);
+      lig += 4 + entry.rest.length * 2;
+    }
+    for (const entry of set) {
+      out.u16(entry.glyph);
+      out.u16(entry.rest.length + 1); // componentCount
+      for (const g of entry.rest) out.u16(g);
+    }
+  }
+  return [['GSUB', out.data]];
+}
+
 /**
  * The face's kerning pairs by glyph — the first glyph of each character — in
  * the order a binary search expects them, less those of glyphs it does not
  * hold and those that move nothing.
  */
 function glyphPairs(face: BuiltFace): Array<[number, number, number]> {
-  const glyphOf = new Map<number, number>();
-  face.glyphs.forEach((g, i) => {
-    for (const cp of g.codePoints) if (!glyphOf.has(cp)) glyphOf.set(cp, i + 1);
-  });
+  const glyphOf = glyphsByCharacter(face);
   const byGlyphs = new Map<number, [number, number, number]>();
   for (const pair of face.kerning ?? []) {
     const left = glyphOf.get(pair.left);

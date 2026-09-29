@@ -98,18 +98,22 @@ export function embedFaces(
       if (!first) continue;
       const glyphs = new Map(first.glyphs);
       const kerning = new Map(first.kerning);
+      const ligatures = new Map(first.ligatures);
       for (const other of faces.slice(1)) {
         for (const [char, glyph] of other.glyphs) if (!glyphs.has(char)) glyphs.set(char, glyph);
         for (const [pair, value] of other.kerning ?? []) {
           if (!kerning.has(pair)) kerning.set(pair, value);
         }
+        for (const [letters, glyph] of other.ligatures ?? []) {
+          if (!ligatures.has(letters)) ligatures.set(letters, glyph);
+        }
       }
       const built = builtGlyphs(glyphs);
-      if (built.length > MAX_BUILT_GLYPHS) {
+      if (built.length + ligatures.size > MAX_BUILT_GLYPHS) {
         losses.push({
           severity: 'degraded',
           feature: FEATURES.fontsEmbedding,
-          detail: `font ${first.postScriptName} not embedded: ${built.length} glyphs is more than an embedded subset holds`,
+          detail: `font ${first.postScriptName} not embedded: ${built.length + ligatures.size} glyphs is more than an embedded subset holds`,
         });
         continue;
       }
@@ -127,6 +131,11 @@ export function embedFaces(
         fixedPitch: first.fixedPitch,
         fsType: statedFsType(first.fsType),
         kerning: kernPairs(kerning),
+        ligatures: [...ligatures].map(([letters, glyph]) => ({
+          codePoints: [...letters].map((c) => c.codePointAt(0)!),
+          outline: glyph.outline,
+          advance: glyph.advance,
+        })),
       });
       const fontKey = fontKeyOf(program);
       const index = parts.length + 1;

@@ -73,7 +73,15 @@ export function faceOutlinesOf(
     if (!program || font.name === undefined) continue;
     let face = faces.get(font.name);
     if (!face) {
-      face = { font, program, glyphs: new Map(), sought: 0, missed: 0, shaped: false };
+      face = {
+        font,
+        program,
+        glyphs: new Map(),
+        ligatures: new Map(),
+        sought: 0,
+        missed: 0,
+        shaped: false,
+      };
       faces.set(font.name, face);
     }
     // The strictest licence any of the face's programs states.
@@ -302,6 +310,8 @@ interface Gathered {
   readonly font: ContentFont;
   readonly program: FaceProgram;
   readonly glyphs: Map<string, FaceGlyph>;
+  /** The glyphs the face draws for a run of letters at once, by the letters. */
+  readonly ligatures: Map<string, FaceGlyph>;
   fsType?: number;
   /** Characters with ink that were looked for, and those not found. */
   sought: number;
@@ -310,10 +320,14 @@ interface Gathered {
   shaped: boolean;
 }
 
-/** Read one code's glyph into its face, where it stands for one character. */
+/** Read one code's glyph into its face, where it stands for one character or a ligature. */
 function gather(face: Gathered, font: ContentFont, program: FaceProgram, code: number): void {
   const chars = [...font.decode([code])];
-  if (chars.length !== 1) return; // a ligature, or no character at all
+  if (chars.length > 1) {
+    gatherLigature(face, font, program, code, chars);
+    return;
+  }
+  if (chars.length !== 1) return; // no character at all
   const char = chars[0]!;
   if (face.glyphs.has(char) || !embeddable(char)) return;
   if (shaped(char)) {
@@ -331,6 +345,35 @@ function gather(face: Gathered, font: ContentFont, program: FaceProgram, code: n
   }
   face.glyphs.set(char, { outline, advance: font.width(code) });
 }
+
+/**
+ * §9.10.2 — a code that stands for a run of letters is a LIGATURE: one glyph
+ * the page drew for "fi", "ffl" or Calibri's "tt". The text carries the letters
+ * and the rebuilt face the glyph, so a reader that joins them draws what the
+ * page drew — set apart, attachment.pdf's "attachment" came out with two
+ * crossbars where the page has one.
+ *
+ * Only letters, and no more than {@link MAX_LIGATURE} of them: a producer that
+ * maps a glyph to a longer string — a logo to a company's name — has not drawn
+ * a ligature.
+ */
+function gatherLigature(
+  face: Gathered,
+  font: ContentFont,
+  program: FaceProgram,
+  code: number,
+  chars: ReadonlyArray<string>,
+): void {
+  const key = chars.join('');
+  if (chars.length > MAX_LIGATURE || face.ligatures.has(key)) return;
+  if (!chars.every((c) => /^\p{L}$/u.test(c) && !shaped(c))) return;
+  const outline = program.glyph(code);
+  if (outline === undefined || outline.length === 0) return;
+  face.ligatures.set(key, { outline, advance: font.width(code) });
+}
+
+/** The most letters one ligature joins: ffi, ffl. */
+const MAX_LIGATURE = 3;
 
 /** A face's gathered glyphs as {@link FaceOutlines}, where it is one to embed. */
 function outlinesOf(
@@ -353,9 +396,15 @@ function outlinesOf(
   const pairs = new Map(
     [...(kerning ?? [])].filter(([pair]) => [...pair].every((c) => glyphs.has(c))),
   );
+  // …and so for a ligature: one of letters the face does not carry alone is
+  // one a reader never lays out in it.
+  const ligatures = new Map(
+    [...face.ligatures].filter(([letters]) => [...letters].every((c) => glyphs.has(c))),
+  );
   return {
     glyphs,
     ...(pairs.size > 0 ? { kerning: pairs } : {}),
+    ...(ligatures.size > 0 ? { ligatures } : {}),
     ...(face.fsType !== undefined ? { fsType: face.fsType } : {}),
     // The slot a run in the face looks the face up in, whatever the program
     // calls itself: bug900822.pdf sets `LucidaSansUnicode,Bold` in the

@@ -30,6 +30,29 @@ export type UnderlineStyle =
 export type VerticalAlign = 'baseline' | 'superscript' | 'subscript';
 
 /**
+ * [MS-DOCX] ST_Ligatures — which of a face's OpenType ligatures a run is set
+ * with (`w14:ligatures`): the standard ones (`liga`), the contextual (`clig`),
+ * the historical (`hlig`) and the discretionary (`dlig`), alone or together.
+ */
+export type Ligatures =
+  | 'none'
+  | 'standard'
+  | 'contextual'
+  | 'historical'
+  | 'discretional'
+  | 'standardContextual'
+  | 'standardHistorical'
+  | 'contextualHistorical'
+  | 'standardDiscretional'
+  | 'contextualDiscretional'
+  | 'historicalDiscretional'
+  | 'standardContextualHistorical'
+  | 'standardContextualDiscretional'
+  | 'standardHistoricalDiscretional'
+  | 'contextualHistoricalDiscretional'
+  | 'all';
+
+/**
  * The four script slots of `w:rFonts` (§17.3.2.26). A character picks its font
  * from the slot its Unicode range maps to (ASCII, high-ANSI, complex-script,
  * East-Asian).
@@ -92,6 +115,11 @@ export interface RunProperties {
    * above (0 turns kerning off). Word kerns nothing a run does not ask for.
    */
   readonly kerningMinPt?: Pt;
+  /**
+   * [MS-DOCX] `w14:ligatures` — the face's ligatures the run is set with.
+   * Word forms none at all in a document it opens in compatibility mode.
+   */
+  readonly ligatures?: Ligatures;
   /**
    * §21.1.2.3.9 `a:rPr/a:ln` — a line drawn round the glyphs themselves, which
    * DrawingML puts on a run and ISO 32000-1 §9.3.6 calls a text rendering mode

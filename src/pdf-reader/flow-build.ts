@@ -9,6 +9,7 @@ import type {
   BodyElement,
   CustomPathCmd,
   FloatAnchor,
+  Ligatures,
   ParagraphProperties,
   Section,
   SectionProperties,
@@ -1000,23 +1001,33 @@ export function withMeasuredMargins(
   };
 }
 
+/** What a face's runs ask of a word processor to be set as the page set them. */
+export interface Typesetting {
+  /** §17.3.2.19 — kerned from this size up. */
+  readonly kerningMinPt?: Pt;
+  /** [MS-DOCX] `w14:ligatures` — set with these ligatures. */
+  readonly ligatures?: Ligatures;
+}
+
 /**
- * §17.3.2.19 — the runs set in a face the page KERNED, marked kerned (see
- * `pageSpacing`): a word processor kerns nothing a run does not ask it to, and
- * set unkerned, a line kerned on the page runs longer than it did there.
+ * The runs set in a face the page KERNED or LIGATED, marked so (see
+ * `pageSpacing`, `FaceOutlines.ligatures`): a word processor kerns nothing a
+ * run does not ask it to, and set unkerned, a line kerned on the page runs
+ * longer than it did there; a ligature the embedded face carries is formed
+ * where the run asks for its face's ligatures.
  *
- * @param blocks The blocks to mark, tables and text boxes within them too.
- * @param faces  The run font names of the faces the page kerned.
- * @returns The blocks, their runs in those faces kerned from the smallest size.
+ * @param blocks   The blocks to mark, tables and text boxes within them too.
+ * @param typeset  Run font name → what its runs ask for.
+ * @returns The blocks, their runs in those faces asking for it.
  */
-export function kernedRuns(
+export function typesetRuns(
   blocks: ReadonlyArray<BodyElement>,
-  faces: ReadonlySet<string>,
+  typeset: ReadonlyMap<string, Typesetting>,
 ): Array<BodyElement> {
-  if (faces.size === 0) return [...blocks];
+  if (typeset.size === 0) return [...blocks];
   const shape = (s: ShapeBlock): ShapeBlock => ({
     ...s,
-    ...(s.text ? { text: { ...s.text, content: kernedRuns(s.text.content, faces) } } : {}),
+    ...(s.text ? { text: { ...s.text, content: typesetRuns(s.text.content, typeset) } } : {}),
     ...(s.children
       ? { children: s.children.map((child) => ({ ...child, shape: shape(child.shape) })) }
       : {}),
@@ -1025,22 +1036,43 @@ export function kernedRuns(
     if (el.kind === 'paragraph') {
       const runs = el.paragraph.runs.map((run) => {
         const face = run.properties.fontFamily?.ascii;
-        return face !== undefined && faces.has(face)
-          ? { ...run, properties: { ...run.properties, kerningMinPt: KERN_FROM_PT } }
-          : run;
+        const asked = face !== undefined ? typeset.get(face) : undefined;
+        return asked ? { ...run, properties: { ...run.properties, ...asked } } : run;
       });
       return { ...el, paragraph: { ...el.paragraph, runs } };
     }
     if (el.kind === 'table') {
       const rows = el.table.rows.map((row) => ({
         ...row,
-        cells: row.cells.map((cell) => ({ ...cell, content: kernedRuns(cell.content, faces) })),
+        cells: row.cells.map((cell) => ({ ...cell, content: typesetRuns(cell.content, typeset) })),
       }));
       return { ...el, table: { ...el.table, rows } };
     }
     if (el.kind === 'shape') return { ...el, shape: shape(el.shape) };
     return el;
   });
+}
+
+/**
+ * What each face's runs ask for: kerning where the page kerned the face, and
+ * its standard ligatures where the page drew one of them (the ligatures the
+ * face's embedded font then forms are exactly the ones the page drew).
+ *
+ * @param kerned       The run font names of the faces the page kerned.
+ * @param faceOutlines Run font name → the face's outlines, ligatures among them.
+ */
+export function typesetting(
+  kerned: ReadonlySet<string>,
+  faceOutlines: ReadonlyMap<string, FaceOutlines> | undefined,
+): Map<string, Typesetting> {
+  const out = new Map<string, Typesetting>();
+  for (const face of kerned) out.set(face, { kerningMinPt: KERN_FROM_PT });
+  for (const [face, outlines] of faceOutlines ?? []) {
+    if (outlines.ligatures && outlines.ligatures.size > 0) {
+      out.set(face, { ...out.get(face), ligatures: 'standard' });
+    }
+  }
+  return out;
 }
 
 /** §17.3.2.19 — kerned from one point up: at every size a page is set in. */
@@ -1064,13 +1096,14 @@ export function buildFlowDoc(
   faceOutlines?: ReadonlyMap<string, FaceOutlines>,
   kerned: ReadonlySet<string> = new Set(),
 ): FlowDoc {
+  const typeset = typesetting(kerned, faceOutlines);
   const bands =
-    headersFooters && kerned.size > 0
-      ? new Map([...headersFooters].map(([id, blocks]) => [id, kernedRuns(blocks, kerned)]))
+    headersFooters && typeset.size > 0
+      ? new Map([...headersFooters].map(([id, blocks]) => [id, typesetRuns(blocks, typeset)]))
       : headersFooters;
   return {
     kind: 'flow',
-    body: resolveBodyStyles(kernedRuns(body, kerned), EMPTY_STYLE_SHEET),
+    body: resolveBodyStyles(typesetRuns(body, typeset), EMPTY_STYLE_SHEET),
     // §17.6 — a document whose pages differ in size is several sections; one
     // page size for all of them is the ordinary case and states none.
     sections,

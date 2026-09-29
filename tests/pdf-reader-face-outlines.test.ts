@@ -138,6 +138,38 @@ describe('the outlines a PDF face drew its characters with', () => {
     expect(flow.faceOutlines?.get('roboto')?.kerning).toBeUndefined();
   });
 
+  it("keeps the glyph a page drew for a run of letters as the face's ligature of them", () => {
+    // §9.10.2 — Roboto's "fi" is one glyph, which /ToUnicode maps to two letters.
+    const parsed = parseTtf(ROBOTO);
+    const [fi, f, i] = ['\ufb01', 'f', 'i'].map((c) => parsed.glyphForCodepoint(c.codePointAt(0)!));
+    const show = `<${hex4(fi!)}${hex4(f!)}${hex4(i!)}> Tj`;
+    const flow = Ream.parse(identityPdf(show, [fi!, f!, i!], ['fi', 'f', 'i'])).flow;
+    const face = flow.faceOutlines?.get('roboto');
+    expect(face?.ligatures?.get('fi')?.outline).toEqual(outlineSource(ROBOTO)?.path(fi!));
+    expect(face?.ligatures?.get('fi')?.advance).toBe(600); // `/DW`
+    expect(face?.glyphs.get('f')?.outline).toEqual(robotoGlyph('f'));
+    // [MS-DOCX] `w14:ligatures` — and a run set in a face the page ligated asks
+    // for the face's ligatures.
+    const runs = flow.body.flatMap((el) => (el.kind === 'paragraph' ? el.paragraph.runs : []));
+    expect(runs.length).toBeGreaterThan(0);
+    for (const run of runs) expect(run.properties.ligatures).toBe('standard');
+  });
+
+  it('takes no ligature of more than letters, nor of letters the face never draws alone', () => {
+    // A glyph mapped to a name is a logo, not a ligature; and with no "l" of its
+    // own, the face's "fl" is one a reader never lays out in it.
+    const parsed = parseTtf(ROBOTO);
+    const [fi, fl, f, i] = ['\ufb01', '\ufb02', 'f', 'i'].map((c) =>
+      parsed.glyphForCodepoint(c.codePointAt(0)!),
+    );
+    const show = `<${hex4(fi!)}${hex4(fl!)}${hex4(f!)}${hex4(i!)}> Tj`;
+    const flow = Ream.parse(identityPdf(show, [fi!, fl!, f!, i!], ['ACME', 'fl', 'f', 'i'])).flow;
+    expect(flow.faceOutlines?.get('roboto')?.glyphs.get('f')).toBeDefined();
+    expect(flow.faceOutlines?.get('roboto')?.ligatures).toBeUndefined();
+    const runs = flow.body.flatMap((el) => (el.kind === 'paragraph' ? el.paragraph.runs : []));
+    for (const run of runs) expect(run.properties.ligatures).toBeUndefined();
+  });
+
   it('draws the accented letter a CFF program composes of two glyphs (seac)', () => {
     // TN 5177 Appendix C — `eacute` is `adx ady bchar achar endchar`: the e,
     // and the acute moved by (adx, ady). Drawn as nothing, the é embedded as a
@@ -341,17 +373,21 @@ function simpleFontPdf(options: {
 
 /**
  * A one-page PDF showing `show` in Roboto through an `Identity-H` composite
- * font, whose `/ToUnicode` maps the given CIDs to `text`'s characters.
+ * font, whose `/ToUnicode` maps the given CIDs to `text`'s characters — or,
+ * given a list, each CID to its string: a ligature's letters.
  */
 function identityPdf(
   show: string,
   cids: ReadonlyArray<number>,
-  text: string,
+  text: string | ReadonlyArray<string>,
   program: Uint8Array = ROBOTO,
   size = 40,
 ): Uint8Array {
   const content = `BT /F0 ${String(size)} Tf 20 40 Td ${show} ET`;
-  const pairs = cids.map((cid, i) => `<${hex4(cid)}> <${hex4(text.codePointAt(i)!)}>`).join('\n');
+  const strings = typeof text === 'string' ? [...text] : text;
+  const utf16 = (s: string): string =>
+    Array.from({ length: s.length }, (_, k) => hex4(s.charCodeAt(k))).join('');
+  const pairs = cids.map((cid, i) => `<${hex4(cid)}> <${utf16(strings[i]!)}>`).join('\n');
   const toUnicode =
     '/CIDInit /ProcSet findresource begin 12 dict begin begincmap\n' +
     '1 begincodespacerange <0000> <FFFF> endcodespacerange\n' +

@@ -240,6 +240,9 @@ function mergeRun(base: ResolvedRunProperties, override: RunProperties): Resolve
     ...((override.kerningMinPt ?? base.kerningMinPt) !== undefined
       ? { kerningMinPt: override.kerningMinPt ?? base.kerningMinPt }
       : {}),
+    ...((override.ligatures ?? base.ligatures) !== undefined
+      ? { ligatures: override.ligatures ?? base.ligatures }
+      : {}),
   };
 }
 

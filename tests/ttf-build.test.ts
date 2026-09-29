@@ -193,9 +193,39 @@ describe('a TrueType font built from outlines', () => {
     expect(kerning.size).toBe(2);
   });
 
+  it('joins the characters a ligature stands for into its glyph (GSUB liga)', () => {
+    const font = buildTrueType({
+      family: 'Test Face',
+      bold: false,
+      italic: false,
+      postScriptName: 'TestFace',
+      glyphs: [
+        { codePoints: [0x66], outline: BOX, advance: 300 }, // f
+        { codePoints: [0x69], outline: BOX, advance: 250 }, // i
+      ],
+      ligatures: [
+        { codePoints: [0x66, 0x69], outline: ARCH, advance: 520 }, // fi
+        { codePoints: [0x66, 0x66, 0x69], outline: ARCH, advance: 800 }, // ffi
+        { codePoints: [0x66, 0x6c], outline: ARCH, advance: 520 }, // fl: no l to join
+      ],
+      ascent: 800,
+      descent: -200,
+      fsType: 8,
+    });
+    const parsed = parseTtf(font);
+    // f is glyph 1, i glyph 2; the ligatures follow them, reachable by no character.
+    expect(parsed.numGlyphs).toBe(5);
+    expect(parsed.ligatures.get('1,2')).toBe(3);
+    expect(parsed.ligatures.get('1,1,2')).toBe(4);
+    expect(parsed.ligatures.size).toBe(2);
+    expect([...parsed.advanceWidths]).toEqual([0, 300, 250, 520, 800]);
+    expect(parsed.glyphForCodepoint(0xfb01)).toBe(0);
+  });
+
   it('writes no kerning tables for a face kerned by nothing', () => {
     expect(() => tableAt(build(), 'kern')).toThrow();
     expect(() => tableAt(build(), 'GPOS')).toThrow();
+    expect(() => tableAt(build(), 'GSUB')).toThrow();
   });
 
   it('builds the same bytes from the same face', () => {

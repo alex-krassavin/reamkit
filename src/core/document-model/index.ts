@@ -71,6 +71,7 @@ export type {
   Run,
   RunProperties,
   TextOutline,
+  Ligatures,
   RowConditionalFormat,
   RowProperties,
   Section,
