@@ -5662,11 +5662,22 @@ function layoutParagraphBlock(
   // paragraph. Counted as empty, tdf125657.docx — a full-page image and then a
   // break — kept the break's page to itself and lost the one the mark after it
   // stands on.
+  //
+  // …and only when something FOLLOWS it. A paragraph that is nothing but the
+  // break — a page break typed on a line of its own — keeps its mark with the
+  // break, on the page the break ends, and what follows starts the next page
+  // at its very top. Word for Mac, in every mode: a document ending in one is
+  // one page, two in a row leave the second alone at the top of page 2, and
+  // the paragraph after the break stands at the page's first line. Moved to
+  // the next page with its mark, it stood an empty line down every such page.
+  const holds = (r: Paragraph['runs'][number]): boolean =>
+    r.text !== '' || r.inlineImage !== undefined || r.math !== undefined;
   const leadingPageBreak =
     breakIdx >= 0 &&
     paragraph.runs
       .slice(0, breakIdx + 1)
-      .every((r) => r.text === '' && r.inlineImage === undefined);
+      .every((r) => r.text === '' && r.inlineImage === undefined) &&
+    paragraph.runs.slice(breakIdx + 1).some(holds);
   const trailingPageBreak = paragraph.runs.some(
     (r, i) => r.pageBreak === true && (!leadingPageBreak || i > breakIdx),
   );
