@@ -13,6 +13,7 @@ import { Ream } from '@/core/converter/ream';
 import { PdfFile } from '@/pdf-reader/document';
 import { BASELINE_AT, FLOAT_CARRIER, positionedText } from '@/pdf-reader/flow-build';
 import { drawnWords, endedParagraph, reconstructByLayout } from '@/pdf-reader/layout';
+import { extractPageText } from '@/pdf-reader/text';
 
 const FONTS = {
   regular: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Regular.ttf')),
@@ -1747,5 +1748,66 @@ describe('a line set where the page set it', () => {
     );
     if (el.kind !== 'shape') throw new Error('a positioned line is a shape');
     expect(el.shape.paragraphProperties).toEqual(FLOAT_CARRIER);
+  });
+});
+
+describe('what an annotation writes stands in its own box (§12.5.5)', () => {
+  /**
+   * A page of one line of prose, and a push button whose appearance fills
+   * its box grey and writes "Execute" in it — evaljs.pdf's button.
+   */
+  const buttonPdf = (): Uint8Array => {
+    // A line under the button too, so the caption is not the page's last word
+    // (which is placed where it stands for a reason of its own).
+    const content =
+      'BT /F1 12 Tf 40 700 Td (A line of the page itself.) Tj 0 -600 Td (And one under it.) Tj ET';
+    const ap = '0.75 g 0 0 72 20 re f BT /F1 12 Tf 0 g 13 6 Td (Execute) Tj ET';
+    return onePagePdf(
+      '/MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> ' +
+        '/Annots [<< /Type /Annot /Subtype /Widget /FT /Btn /Rect [265 142 337 162] ' +
+        '/AP << /N 6 0 R >> >>]',
+      content,
+      [
+        '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+        '<< /Type /XObject /Subtype /Form /BBox [0 0 72 20] ' +
+          `/Resources << /Font << /F1 5 0 R >> >> /Length ${String(ap.length)} >>\n` +
+          `stream\n${ap}\nendstream`,
+      ],
+    );
+  };
+
+  it('marks the words an appearance writes as the annotation’s', () => {
+    const file = PdfFile.parse(buttonPdf());
+    const runs = extractPageText(file, file.pages()[0]!);
+    expect(runs.find((r) => r.text.includes('Execute'))?.annotation).toBe(true);
+    expect(runs.find((r) => r.text.includes('page itself'))?.annotation).toBeUndefined();
+  });
+
+  it('places them where the box stands, over the box they are written on', () => {
+    // Read into the page's lines, evaljs.pdf's "Execute" stood at the margin,
+    // two hundred points from its button; placed but keyed with the page's
+    // own words, it went under the grey of the button it names.
+    const body = reconstructByLayout(PdfFile.parse(buttonPdf())).doc.body;
+    const caption = body.find(
+      (b) =>
+        b.kind === 'shape' &&
+        b.shape.text?.content.some(
+          (p) => p.kind === 'paragraph' && p.paragraph.runs.some((r) => r.text === 'Execute'),
+        ),
+    );
+    if (caption?.kind !== 'shape') throw new Error('the caption is placed');
+    expect(caption.shape.float?.posH?.offsetPt).toBeCloseTo(278, 0);
+    const fills = body.filter(
+      (b) => b.kind === 'shape' && b.shape.text === undefined && b.shape.fill.kind === 'solid',
+    );
+    expect(fills.length).toBeGreaterThan(0);
+    for (const fill of fills) {
+      if (fill.kind !== 'shape') continue;
+      expect(caption.shape.float?.zOrder ?? -1).toBeGreaterThan(fill.shape.float?.zOrder ?? 0);
+    }
+    // The page's own line is still read as the page's.
+    expect(
+      paragraphs({ body }).some((p) => p.paragraph.runs.some((r) => r.text.includes('itself'))),
+    ).toBe(true);
   });
 });

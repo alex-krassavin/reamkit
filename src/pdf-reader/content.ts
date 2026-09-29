@@ -156,6 +156,12 @@ export interface TextRun {
    */
   readonly invisible?: boolean;
   /**
+   * §12.5.5 — drawn by an annotation's appearance rather than by the page: a
+   * field's value, a button's caption, a tick. It stands in the annotation's
+   * box, which is placed where the page has it, not in the page's reading.
+   */
+  readonly annotation?: boolean;
+  /**
    * §9.3.6 — the colour the glyphs are STROKED in, when the rendering mode
    * asks for a stroke, and how wide the pen is.
    */

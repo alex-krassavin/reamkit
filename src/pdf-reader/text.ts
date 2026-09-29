@@ -37,6 +37,7 @@ export function extractPageText(file: PdfFile, page: PdfPage): Array<TextRun> {
   // it draws are the page's words too: a field's value, a button's caption.
   // Only its ARTWORK was being lifted, so 160F-2019.pdf's reset button arrived
   // as a tinted rectangle with nothing written on it.
+  const own = runs.length;
   for (const appearance of collectPageAppearances(file, page)) {
     collectRuns(
       file,
@@ -48,6 +49,7 @@ export function extractPageText(file: PdfFile, page: PdfPage): Array<TextRun> {
       runs,
     );
   }
+  for (let i = own; i < runs.length; i++) runs[i] = { ...runs[i]!, annotation: true };
   const links = collectLinks(file, page);
   const marks = collectTextMarkup(file, page);
   const shown = withoutRestrikes(runs);

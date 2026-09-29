@@ -757,7 +757,7 @@ export function withMeasuredMargins(
   const textSize = textSizeOf(pageRuns);
   pageRuns.forEach((all, i) => {
     const page = shown[i];
-    const runs = all.filter((r) => !tooSmallToRead(r, textSize));
+    const runs = all.filter((r) => r.annotation !== true && !tooSmallToRead(r, textSize));
     if (!page || runs.length === 0) return;
     let minX = Infinity;
     let maxX = -Infinity;

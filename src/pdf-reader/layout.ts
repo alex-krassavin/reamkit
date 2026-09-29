@@ -142,7 +142,12 @@ export function reconstructByLayout(
   // indent were taken from it. It is put back where the page had it, a box of
   // its own that nothing else is measured against.
   const textSize = textSizeOf(allRuns);
-  const stamp = (r: TextRun): boolean => mode !== 'positional' && tooSmallToRead(r, textSize);
+  // …and so is what an annotation's appearance writes (§12.5.5): a button's
+  // caption, a field's value, a tick. Its box is placed where the page has
+  // it, and read into the page's lines the words left it — evaljs.pdf's
+  // "Execute" stood at the margin, two hundred points from its button.
+  const stamp = (r: TextRun): boolean =>
+    mode !== 'positional' && (r.annotation === true || tooSmallToRead(r, textSize));
   const stamps = allRuns.map((runs) => runs.filter(stamp));
   const pageRuns =
     foot || head || stamps.some((s) => s.length > 0)
@@ -298,19 +303,21 @@ export function reconstructByLayout(
         // its own frame and comes back carrying it: 160F-2019.pdf sets "Nature"
         // on its side down the middle of a column, and read flat it joined the
         // row it happened to cross.
-        for (const [angle, runs] of byAngle(colRuns)) {
-          for (const line of groupIntoLines(rotate(runs, -angle), true, stepped)) {
-            if (line.text.length === 0) continue;
-            const box = turnedBox(line, angle, pageWidth);
-            placed.push({
-              key: [Number.MAX_SAFE_INTEGER, placed.length],
-              col,
-              // The box's own top on the PAGE — `line.y` is measured in the
-              // turned frame, and the blocks are ordered by where they stand.
-              top: box.y + box.height,
-              make: (z: number): BodyElement =>
-                positionedText(line.spans, box, frame, z, rotation60kOf(angle)),
-            });
+        for (const [angle, turned] of byAngle(colRuns)) {
+          for (const runs of byPainter(turned)) {
+            for (const line of groupIntoLines(rotate(runs, -angle), true, stepped)) {
+              if (line.text.length === 0) continue;
+              const box = turnedBox(line, angle, pageWidth);
+              placed.push({
+                key: placedKey(runs, placed.length),
+                col,
+                // The box's own top on the PAGE — `line.y` is measured in the
+                // turned frame, and the blocks are ordered by where they stand.
+                top: box.y + box.height,
+                make: (z: number): BodyElement =>
+                  positionedText(line.spans, box, frame, z, rotation60kOf(angle)),
+              });
+            }
           }
         }
         return;
@@ -555,15 +562,17 @@ export function reconstructByLayout(
     // The shown page has its own corner: the turn has already been applied, so
     // what is left is a box that starts at the origin.
     const frame = { left: 0, top: display.height };
-    for (const line of groupIntoLines(stamps[i] ?? [], true, stepped)) {
-      if (line.text.length === 0) continue;
-      const box = turnedBox(line, 0, pageWidth);
-      placed.push({
-        key: [Number.MAX_SAFE_INTEGER, placed.length],
-        col: colOf(box.x + box.width / 2),
-        top: box.y + box.height,
-        make: (z: number): BodyElement => positionedText(line.spans, box, frame, z),
-      });
+    for (const runs of byPainter(stamps[i] ?? [])) {
+      for (const line of groupIntoLines(runs, true, stepped)) {
+        if (line.text.length === 0) continue;
+        const box = turnedBox(line, 0, pageWidth);
+        placed.push({
+          key: placedKey(runs, placed.length),
+          col: colOf(box.x + box.width / 2),
+          top: box.y + box.height,
+          make: (z: number): BodyElement => positionedText(line.spans, box, frame, z),
+        });
+      }
     }
     const raw = collectPageImages(file, page);
     const imgs = { images: placeImages(raw.images, display), losses: raw.losses };
@@ -1373,6 +1382,34 @@ function bandOf(breaks: ReadonlyArray<number>, top: number, epsilon: number): nu
  * does this — a flowing paragraph is meant to be read across.
  */
 const SPACE_GAP_EM = 0.25;
+
+/**
+ * §12.5.5 — the runs the page's own content paints, and then the ones an
+ * annotation's appearance does: two layers, grouped into lines apart.
+ */
+function byPainter(runs: ReadonlyArray<TextRun>): Array<ReadonlyArray<TextRun>> {
+  const own = runs.filter((r) => r.annotation !== true);
+  const annotated = runs.filter((r) => r.annotation === true);
+  return [own, annotated].filter((group) => group.length > 0);
+}
+
+/**
+ * §8.5.3 / §12.5.5 — where a placed line stands among the page's marks, which
+ * are ordered as they were painted (see `compareOrder`): the page's own words
+ * over everything its content drew, and under every annotation, whose
+ * appearances paint after it (`[MAX_SAFE_INTEGER, index, …]`); an
+ * annotation's words over all of it. Keyed as one layer, the placed lines
+ * fell among the appearances by their count: evaljs.pdf's "Execute" went
+ * under the grey of the button it names.
+ *
+ * @param runs  The layer the line was grouped from (see `byPainter`).
+ * @param count How many lines are placed already.
+ */
+function placedKey(runs: ReadonlyArray<TextRun>, count: number): ReadonlyArray<number> {
+  return runs[0]?.annotation === true
+    ? [Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER, count]
+    : [Number.MAX_SAFE_INTEGER - 1, count];
+}
 
 /** Runs by the direction of their baseline, upright first, each angle rounded. */
 function byAngle(runs: ReadonlyArray<TextRun>): Array<[number, Array<TextRun>]> {
