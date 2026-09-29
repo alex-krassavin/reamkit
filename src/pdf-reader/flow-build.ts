@@ -359,7 +359,15 @@ export function positionedText(
   zOrder: number,
   rotation60k?: number,
 ): BodyElement {
-  const paragraph = paragraphFromRuns(spans);
+  // §17.3.1.33 — the line stands EXACTLY as tall as its box, so its baseline
+  // falls where an exact line's does, four fifths down (`BASELINE_AT`) — which
+  // is where the box was measured to put it. Left to single spacing the face's
+  // own ascent placed it, a tenth of an em too high: bug1724918.pdf's "hello"
+  // and "world" rode up against the tops of the fields they are typed in.
+  const paragraph = paragraphFromRuns(spans, undefined, {
+    spacingLine: pt(Math.max(1, box.height)),
+    spacingLineRule: 'exact',
+  });
   return {
     kind: 'shape',
     shape: {

@@ -11,7 +11,7 @@ import { buildDocxFromBody } from './fixtures/build-docx';
 import type { BodyElement } from '@/core/document-model';
 import { Ream } from '@/core/converter/ream';
 import { PdfFile } from '@/pdf-reader/document';
-import { BASELINE_AT } from '@/pdf-reader/flow-build';
+import { BASELINE_AT, positionedText } from '@/pdf-reader/flow-build';
 import { drawnWords, endedParagraph, reconstructByLayout } from '@/pdf-reader/layout';
 
 const FONTS = {
@@ -1710,5 +1710,29 @@ describe('a word space is as wide as the type it stands in', () => {
     // Set in the digits' own size, the space runs on with them as one run.
     const spaced = runs.find((r) => r.text.includes(' '));
     expect(spaced?.properties.fontSizePt).toBeCloseTo(60, 0);
+  });
+});
+
+describe('a line set where the page set it', () => {
+  it('stands its baseline where its box was measured to put it (§17.3.1.33)', () => {
+    // The box is a line and a quarter of the size tall with its top an em
+    // over the baseline, which is where an EXACT line of that height puts it
+    // (`BASELINE_AT`). Left to single spacing the face's own ascent placed
+    // it, a tenth of an em too high: bug1724918.pdf's field values rode up
+    // against the tops of their fields.
+    const el = positionedText(
+      [{ text: 'world', sizePt: 12 }],
+      { x: 10, y: 10, width: 60, height: 15 },
+      { left: 0, top: 100 },
+      1,
+    );
+    if (el.kind !== 'shape') throw new Error('a positioned line is a shape');
+    const first = el.shape.text?.content[0];
+    if (first?.kind !== 'paragraph') throw new Error('holding a paragraph');
+    expect(first.paragraph.properties).toMatchObject({
+      spacingLine: 15,
+      spacingLineRule: 'exact',
+    });
+    expect(BASELINE_AT * 15).toBeCloseTo(12, 6);
   });
 });
