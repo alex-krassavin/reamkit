@@ -114,6 +114,22 @@ describe('floating drawings (wp:anchor, §20.4.2.3)', () => {
     ).toBeFalsy();
   });
 
+  it('goes to the next page with a paragraph that breaks to it (§17.3.1.21)', () => {
+    // Word stands the picture on its paragraph's own page; placed before the
+    // paragraph's break, it stayed at the foot of the page before.
+    const pos =
+      '<wp:positionH relativeFrom="margin"><wp:posOffset>0</wp:posOffset></wp:positionH>' +
+      '<wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV>' +
+      '<wp:wrapSquare wrapText="bothSides"/>';
+    const breaking = anchoredShape(pos)
+      .replace('<w:p>', '<w:p><w:pPr><w:pageBreakBefore/></w:pPr>')
+      .replace('</w:p>', '<w:r><w:t>two</w:t></w:r></w:p>');
+    const laid = layoutOf(buildDocxFromBody('<w:p><w:r><w:t>one</w:t></w:r></w:p>' + breaking));
+    expect(laid.pages).toHaveLength(2);
+    expect(laid.pages[0]!.commands.some((c) => c.type === 'shape')).toBe(false);
+    expect(laid.pages[1]!.commands.some((c) => c.type === 'shape')).toBe(true);
+  });
+
   it('margin-relative vertical offsets hang off the top margin', () => {
     const pos =
       '<wp:positionH relativeFrom="margin"><wp:align>right</wp:align></wp:positionH>' +

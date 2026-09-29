@@ -9253,14 +9253,16 @@ function paginateSections(
   // §17.2.1 — the resource name of a PICTURE page background: the resource
   // table is the only thing that knows it, and it lives a caller away.
   backgroundImage?: { name: string; widthPt: number; heightPt: number },
-  // Whether paragraph spacing stacks as Word stacks it (see SpacingStack).
-  collapseSpacing = false,
+  // Whether the document is set as Word sets it (see TypesetBy): its spacing
+  // stacks as Word stacks it (SpacingStack), its drawings stand before the
+  // paragraph they are anchored in.
+  typesetByWord = false,
   // [MS-DOCX] compatibilityMode — the Word whose page tops the spacing follows.
   compatibilityMode?: number,
 ): Array<LaidOutPage> {
   if (sectionCtxs.length === 0) return [];
   const asm = new PageAssembler(sectionCtxs, builder, notes, bookmarkPositions, backgroundImage);
-  asm.collapseSpacing = collapseSpacing;
+  asm.collapseSpacing = typesetByWord;
   asm.keepsBeforeAtOwnBreak = (compatibilityMode ?? 0) < 15;
 
   // §17.6.4 — a multi-column section that ENDS at a continuous break has its
@@ -9276,10 +9278,12 @@ function paginateSections(
     if (next.pageWidth !== here.pageWidth || next.pageHeight !== here.pageHeight) return;
     if ((next.sheet === undefined) !== (here.sheet === undefined)) return;
     const end = Math.min(here.endIndex, blocks.length);
-    asm.beginBalancedBand(blocksHeight(blocks.slice(fromBlock, end), collapseSpacing));
+    asm.beginBalancedBand(blocksHeight(blocks.slice(fromBlock, end), typesetByWord));
   };
   balanceIfEndsContinuous(0);
 
+  // The paragraph whose own page break its anchored drawings already took.
+  let brokenFor: number | undefined;
   for (let blockIdx = 0; blockIdx < blocks.length; blockIdx++) {
     // Advance to the section that owns this block. A section boundary forces
     // a page break before the next section's first block.
@@ -9301,7 +9305,7 @@ function paginateSections(
         // §17.6.4 — the band's whole height, so a multi-column one can be
         // balanced: every block from here to the section's end.
         const end = Math.min(next.endIndex, blocks.length);
-        asm.startBandSection(next, blocksHeight(blocks.slice(blockIdx, end), collapseSpacing));
+        asm.startBandSection(next, blocksHeight(blocks.slice(blockIdx, end), typesetByWord));
         continue;
       }
       // Forced: a section owns a page even when the body it holds draws
@@ -9342,7 +9346,8 @@ function paginateSections(
     // A drawing anchored out of the flow opens nothing: the paragraph it hangs
     // off, placed after it, is still the section's first.
     const opensSection = asm.sectionStart;
-    if (!('float' in block && isOutOfFlowFloat(block.float))) asm.sectionStart = false;
+    const anchored = 'float' in block && isOutOfFlowFloat(block.float);
+    if (!anchored) asm.sectionStart = false;
     // A forced page break (w:br w:type="page") carried by the previous block:
     // start this block on a fresh page.
     if (asm.pendingPageBreak) {
@@ -9353,11 +9358,37 @@ function paginateSections(
       // pair into one.
       asm.flushPage(true);
     }
+    // §17.3.1.21 — a drawing anchored off a paragraph that breaks to a new page
+    // goes to that page with it. A Word document's reader puts the anchored
+    // drawings before their paragraph among the blocks, so placed first they
+    // stayed on the page the break ends: Word stands such a picture on the
+    // paragraph's own page, and we left it at the foot of the one before.
+    // (A spreadsheet's drawings belong to the sheet before the break.)
+    if (typesetByWord && anchored && asm.pageHasContent() && brokenFor === undefined) {
+      let owner = blockIdx + 1;
+      while (owner < blocks.length) {
+        const b = blocks[owner]!;
+        if (!('float' in b && isOutOfFlowFloat(b.float))) break;
+        owner++;
+      }
+      const para = blocks[owner];
+      if (para?.kind === 'paragraph' && para.resolved.pageBreakBefore) {
+        asm.flushPage();
+        brokenFor = owner;
+      }
+    }
     // A non-list-item block ends any open list run (tagged PDF).
     if (builder && !(block.kind === 'paragraph' && block.list)) asm.listStack.length = 0;
     if (block.kind === 'paragraph') {
-      const ownBreak = block.resolved.pageBreakBefore && asm.pageHasContent();
-      if ((block.resolved.pageBreakBefore || block.pageBreakBefore) && asm.pageHasContent()) {
+      // Its drawings may have taken the break already (see above).
+      const brokeAhead = brokenFor === blockIdx;
+      brokenFor = undefined;
+      const ownBreak = block.resolved.pageBreakBefore && (brokeAhead || asm.pageHasContent());
+      if (
+        !brokeAhead &&
+        (block.resolved.pageBreakBefore || block.pageBreakBefore) &&
+        asm.pageHasContent()
+      ) {
         asm.flushPage();
       }
       const columnInUse = asm.colHasContent();
@@ -9377,7 +9408,7 @@ function paginateSections(
       // page would hold it all, and break it there. It moves the way a first
       // line that runs past the foot does, its space before spent here. Not
       // beside a float, whose exclusions shape lines the count cannot foresee.
-      const kept = keptTogetherHeight(blocks, blockIdx, asm.ctx.endIndex, collapseSpacing);
+      const kept = keptTogetherHeight(blocks, blockIdx, asm.ctx.endIndex, typesetByWord);
       if (
         kept !== undefined &&
         columnInUse &&
