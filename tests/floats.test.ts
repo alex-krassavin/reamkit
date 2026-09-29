@@ -536,7 +536,7 @@ describe('a shadow under a picture fill', () => {
     // The state that carries a shadow's alpha has to be named in the PICTURE
     // pass as it is in the shape pass. Left out, tdf128596's 50% black under a
     // nearly transparent tile came out solid.
-    const pdf = await Ream.parse(shadowed(true)).convert('pdf');
+    const pdf = await Ream.parse(shadowed(true)).convert('pdf', { fonts: FONTS });
     const s = Buffer.from(pdf).toString('latin1');
     // An /ExtGState carrying the per-layer alpha exists…
     expect(/\/ca 0?\.\d+/u.test(s)).toBe(true);
