@@ -1168,6 +1168,28 @@ describe('placed reconstruction (E-PDF EP4)', () => {
     ]);
   });
 
+  it('places what stands off the sheet as a mark, and measures nothing by it', () => {
+    // freeculture.pdf sets a printer's bar of ZapfDingbats nine points under
+    // the crop of its front matter's pages. Read into the page's lines it came
+    // back as four lines of bars on a page of their own, and — standing at
+    // x=0 — it put every page's left margin against the paper's edge.
+    const pdf = onePagePdf(
+      '/MediaBox [0 0 400 600]',
+      [
+        'BT /F1 12 Tf 60 500 Td (The body of the page starts here.) Tj ET',
+        'BT /F1 12 Tf 60 486 Td (It runs on for a line or two more.) Tj ET',
+        'BT /F1 40 Tf 0 -9 Td (off the sheet) Tj ET',
+      ].join('\n'),
+    );
+    const flowed = reconstructByLayout(PdfFile.parse(pdf));
+    const texts = paragraphs(flowed.doc).map((p) => p.paragraph.runs.map((r) => r.text).join(''));
+    expect(texts.join(' ')).not.toContain('off the sheet');
+    const mark = flowed.doc.body.find((b) => b.kind === 'shape');
+    if (mark?.kind !== 'shape') throw new Error('expected the mark placed');
+    expect(mark.shape.float?.posV?.relativeFrom).toBe('page');
+    expect(flowed.doc.section?.margins?.left).toBeGreaterThan(50);
+  });
+
   it('sets words that run UP the sheet across it, and says so', () => {
     // No section runs its lines up a sheet — Word and LibreOffice set a
     // section down it or across it — so /Rotate 270 over upright words is

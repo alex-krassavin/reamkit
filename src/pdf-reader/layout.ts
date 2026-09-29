@@ -158,7 +158,11 @@ export function reconstructByLayout(
   // …on a page read the way it is shown. A header and a footer stay across the
   // sheet whichever way a section's lines run (§17.6.20), so the band of a page
   // whose words run down it stays in its text and turns with it.
-  const bandRuns = allRuns.map((runs, i) => (shown[i]!.sheet ? [] : runs));
+  // …and a mark set off the sheet (see `offSheet` below) is no band either.
+  const offSheet = (r: TextRun, i: number): boolean => r.y < 0 || r.y > shown[i]!.height;
+  const bandRuns = allRuns.map((runs, i) =>
+    shown[i]!.sheet ? [] : runs.filter((r) => !offSheet(r, i)),
+  );
   const foot = mode === 'positional' ? undefined : runningFoot(bandRuns, shown, 'foot');
   const head = mode === 'positional' ? undefined : runningFoot(bandRuns, shown, 'head');
   // §17.6.12 — the page numbers the band prints, and the sequences they run
@@ -177,14 +181,21 @@ export function reconstructByLayout(
   // caption, a field's value, a tick. Its box is placed where the page has
   // it, and read into the page's lines the words left it — evaljs.pdf's
   // "Execute" stood at the margin, two hundred points from its button.
-  const stamp = (r: TextRun): boolean =>
-    mode !== 'positional' && (r.annotation === true || tooSmallToRead(r, textSize));
-  const stamps = allRuns.map((runs) => runs.filter(stamp));
+  // …and so is what stands OFF the sheet: a run whose baseline lies past the
+  // page's foot or its head shows a sliver of its glyphs at the edge, if
+  // anything. freeculture.pdf sets a printer's bar of ZapfDingbats at forty
+  // points nine points under the crop of every page of its front matter; read
+  // into the page's lines, it came back four lines of bars at the head of a
+  // page of their own, and every page after it one sheet late.
+  const stamp = (r: TextRun, i: number): boolean =>
+    mode !== 'positional' &&
+    (r.annotation === true || tooSmallToRead(r, textSize) || offSheet(r, i));
+  const stamps = allRuns.map((runs, i) => runs.filter((r) => stamp(r, i)));
   const pageRuns =
     foot || head || stamps.some((s) => s.length > 0)
       ? allRuns.map((runs, i) =>
           runs.filter(
-            (r) => foot?.lift[i]?.has(r) !== true && head?.lift[i]?.has(r) !== true && !stamp(r),
+            (r) => foot?.lift[i]?.has(r) !== true && head?.lift[i]?.has(r) !== true && !stamp(r, i),
           ),
         )
       : allRuns;
