@@ -136,6 +136,15 @@ describe('parseRunProperties', () => {
     ).toEqual({ styleId: 'Emphasis', verticalAlign: 'superscript' });
   });
 
+  it('reads the size a run is kerned from (§17.3.2.19), and kerning turned off', () => {
+    expect(parseRunProperties(parseRpr('<w:rPr><w:kern w:val="28"/></w:rPr>'))).toEqual({
+      kerningMinPt: halfPtToPt(28),
+    });
+    expect(parseRunProperties(parseRpr('<w:rPr><w:kern w:val="0"/></w:rPr>'))).toEqual({
+      kerningMinPt: 0,
+    });
+  });
+
   it('parses w:rtl toggle', () => {
     expect(parseRunProperties(parseRpr('<w:rPr><w:rtl/></w:rPr>'))).toEqual({ rtl: true });
     expect(parseRunProperties(parseRpr('<w:rPr><w:rtl w:val="false"/></w:rPr>'))).toEqual({

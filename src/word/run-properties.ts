@@ -156,6 +156,13 @@ export function parseRunProperties(rPr: unknown, themeFonts?: ThemeFonts): RunPr
     if (Number.isFinite(n) && n !== 0) out.letterSpacingPt = twipsToPt(n);
   }
 
+  // §17.3.2.19 — the size from which the run's glyph pairs are kerned, in
+  // half-points; 0 turns kerning off, which a style may need to say.
+  if ('w:kern' in el) {
+    const n = Number(getVal(el['w:kern']));
+    if (Number.isFinite(n) && n >= 0) out.kerningMinPt = halfPtToPt(n);
+  }
+
   // §17.3.2.32 — the run's own background. Unlike a paragraph's, this one is
   // usually a PATTERN over a fill (`pct15` of black on white is Word's "light
   // shading"), so the two are blended rather than the fill taken alone:

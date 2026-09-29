@@ -48,6 +48,8 @@ export interface ResolvedRunProperties {
   readonly shadingColorHex?: string;
   /** §17.3.2.35 — extra space between the run's characters, in points. */
   readonly letterSpacingPt?: Pt;
+  /** §17.3.2.19 — the run is kerned at this size and above (0: not at all). */
+  readonly kerningMinPt?: Pt;
   /** §21.1.2.3.9 — a line drawn round the glyphs themselves. */
   readonly textOutline?: TextOutline;
 }

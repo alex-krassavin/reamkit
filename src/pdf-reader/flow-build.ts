@@ -12,6 +12,7 @@ import type {
   ParagraphProperties,
   Section,
   SectionProperties,
+  ShapeBlock,
   ShapeFill,
   ShapeLine,
   TextOutline,
@@ -1000,6 +1001,52 @@ export function withMeasuredMargins(
 }
 
 /**
+ * §17.3.2.19 — the runs set in a face the page KERNED, marked kerned (see
+ * `pageSpacing`): a word processor kerns nothing a run does not ask it to, and
+ * set unkerned, a line kerned on the page runs longer than it did there.
+ *
+ * @param blocks The blocks to mark, tables and text boxes within them too.
+ * @param faces  The run font names of the faces the page kerned.
+ * @returns The blocks, their runs in those faces kerned from the smallest size.
+ */
+export function kernedRuns(
+  blocks: ReadonlyArray<BodyElement>,
+  faces: ReadonlySet<string>,
+): Array<BodyElement> {
+  if (faces.size === 0) return [...blocks];
+  const shape = (s: ShapeBlock): ShapeBlock => ({
+    ...s,
+    ...(s.text ? { text: { ...s.text, content: kernedRuns(s.text.content, faces) } } : {}),
+    ...(s.children
+      ? { children: s.children.map((child) => ({ ...child, shape: shape(child.shape) })) }
+      : {}),
+  });
+  return blocks.map((el): BodyElement => {
+    if (el.kind === 'paragraph') {
+      const runs = el.paragraph.runs.map((run) => {
+        const face = run.properties.fontFamily?.ascii;
+        return face !== undefined && faces.has(face)
+          ? { ...run, properties: { ...run.properties, kerningMinPt: KERN_FROM_PT } }
+          : run;
+      });
+      return { ...el, paragraph: { ...el.paragraph, runs } };
+    }
+    if (el.kind === 'table') {
+      const rows = el.table.rows.map((row) => ({
+        ...row,
+        cells: row.cells.map((cell) => ({ ...cell, content: kernedRuns(cell.content, faces) })),
+      }));
+      return { ...el, table: { ...el.table, rows } };
+    }
+    if (el.kind === 'shape') return { ...el, shape: shape(el.shape) };
+    return el;
+  });
+}
+
+/** §17.3.2.19 — kerned from one point up: at every size a page is set in. */
+const KERN_FROM_PT = pt(1);
+
+/**
  * Assemble the final {@link FlowDoc} for a reconstruction: the body elements
  * with their styles resolved against the empty style sheet, the lifted-image
  * resource store, and the optional page {@link SectionProperties}. Shared by
@@ -1015,14 +1062,19 @@ export function buildFlowDoc(
   headersFooters?: ReadonlyMap<string, ReadonlyArray<BodyElement>>,
   faceFamilies?: ReadonlyMap<string, FaceFamily>,
   faceOutlines?: ReadonlyMap<string, FaceOutlines>,
+  kerned: ReadonlySet<string> = new Set(),
 ): FlowDoc {
+  const bands =
+    headersFooters && kerned.size > 0
+      ? new Map([...headersFooters].map(([id, blocks]) => [id, kernedRuns(blocks, kerned)]))
+      : headersFooters;
   return {
     kind: 'flow',
-    body: resolveBodyStyles([...body], EMPTY_STYLE_SHEET),
+    body: resolveBodyStyles(kernedRuns(body, kerned), EMPTY_STYLE_SHEET),
     // §17.6 — a document whose pages differ in size is several sections; one
     // page size for all of them is the ordinary case and states none.
     sections,
-    ...(headersFooters && headersFooters.size > 0 ? { headersFooters } : {}),
+    ...(bands && bands.size > 0 ? { headersFooters: bands } : {}),
     ...(section ? { section } : {}),
     ...(embeddedFonts && embeddedFonts.size > 0 ? { embeddedFonts } : {}),
     ...(faceFamilies && faceFamilies.size > 0 ? { faceFamilies } : {}),

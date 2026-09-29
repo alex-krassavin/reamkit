@@ -88,6 +88,11 @@ export interface RunProperties {
    */
   readonly letterSpacingPt?: Pt;
   /**
+   * §17.3.2.19 `w:kern` — the run's glyph pairs are KERNED, at this size and
+   * above (0 turns kerning off). Word kerns nothing a run does not ask for.
+   */
+  readonly kerningMinPt?: Pt;
+  /**
    * §21.1.2.3.9 `a:rPr/a:ln` — a line drawn round the glyphs themselves, which
    * DrawingML puts on a run and ISO 32000-1 §9.3.6 calls a text rendering mode
    * that strokes as well as fills.

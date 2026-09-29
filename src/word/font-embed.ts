@@ -13,7 +13,7 @@
 // opened read-only, stays out, and a reader substitutes for it as before.
 
 import type { FaceFamily, FaceGlyph, FaceOutlines } from '@/core/ir/flow';
-import type { BuiltGlyph } from '@/core/font';
+import type { BuiltGlyph, BuiltKernPair } from '@/core/font';
 import type { Loss } from '@/core/ir';
 import type { OpcPart, Relationship } from '@/core/opc';
 import { MAX_BUILT_GLYPHS, buildTrueType, editableEmbedding } from '@/core/font';
@@ -97,8 +97,12 @@ export function embedFaces(
       const first = faces[0];
       if (!first) continue;
       const glyphs = new Map(first.glyphs);
+      const kerning = new Map(first.kerning);
       for (const other of faces.slice(1)) {
         for (const [char, glyph] of other.glyphs) if (!glyphs.has(char)) glyphs.set(char, glyph);
+        for (const [pair, value] of other.kerning ?? []) {
+          if (!kerning.has(pair)) kerning.set(pair, value);
+        }
       }
       const built = builtGlyphs(glyphs);
       if (built.length > MAX_BUILT_GLYPHS) {
@@ -122,6 +126,7 @@ export function embedFaces(
         italicAngle: first.italicAngle,
         fixedPitch: first.fixedPitch,
         fsType: statedFsType(first.fsType),
+        kerning: kernPairs(kerning),
       });
       const fontKey = fontKeyOf(program);
       const index = parts.length + 1;
@@ -161,6 +166,16 @@ function builtGlyphs(glyphs: ReadonlyMap<string, FaceGlyph>): Array<BuiltGlyph> 
       advance: glyph.advance,
     }))
     .sort((a, b) => a.codePoints[0]! - b.codePoints[0]!);
+}
+
+/** The face's kerning pairs as the font states them: by code point, left then right. */
+function kernPairs(kerning: ReadonlyMap<string, number>): Array<BuiltKernPair> {
+  const out: Array<BuiltKernPair> = [];
+  for (const [pair, value] of kerning) {
+    const [left, right] = [...pair].map((c) => c.codePointAt(0));
+    if (left !== undefined && right !== undefined) out.push({ left, right, value });
+  }
+  return out;
 }
 
 /**

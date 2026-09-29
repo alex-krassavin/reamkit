@@ -45,6 +45,11 @@ export interface FaceOutlines {
   /** Each character (one code point) the document shows in the face → its glyph. */
   readonly glyphs: ReadonlyMap<string, FaceGlyph>;
   /**
+   * The pairs the source KERNED the face by: two characters → the adjustment
+   * to the first one's advance, in thousandths of an em (negative tightens).
+   */
+  readonly kerning?: ReadonlyMap<string, number>;
+  /**
    * OS/2 `fsType` — the embedding the face's licence allows, as its program
    * states it; absent where the program states nothing.
    */

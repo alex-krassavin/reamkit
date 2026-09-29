@@ -14,6 +14,7 @@
 // ink in it, embed nothing.
 
 import { ASCENDER, NATURAL_LINE_EM } from './flow-build';
+import { isRightToLeft } from './content';
 import type { ContentFont, FaceProgram, TextRun } from './content';
 import type { FaceGlyph, FaceOutlines } from '@/core/ir/flow';
 import { editableEmbedding } from '@/core/font';
@@ -57,16 +58,15 @@ export function addShown(
  * letters — embedded, each line came out in two faces, a bold word with light
  * letters in it.
  *
- * @param shown The codes the pages painted, per font.
- * @param pages The runs each page set, where a face's words are spaced apart
- *              by moving the pen rather than by a glyph (see `spaceAdvance`).
+ * @param shown   The codes the pages painted, per font.
+ * @param spacing How the pages space each face's text apart where they move the
+ *                pen rather than draw a glyph (see {@link pageSpacing}).
  * @returns Run font name → the face's outlines.
  */
 export function faceOutlinesOf(
   shown: ShownCodes,
-  pages: ReadonlyArray<ReadonlyArray<TextRun>> = [],
+  spacing: PageSpacing = NO_SPACING,
 ): Map<string, FaceOutlines> {
-  const gaps = wordGaps(pages);
   const faces = new Map<string, Gathered>();
   for (const [font, codes] of shown) {
     const program = font.program;
@@ -87,21 +87,55 @@ export function faceOutlinesOf(
   }
   const out = new Map<string, FaceOutlines>();
   for (const [name, face] of faces) {
-    const outlines = outlinesOf(face, gaps.get(name));
+    const outlines = outlinesOf(face, spacing.wordGaps.get(name), spacing.kerning.get(name));
     if (outlines) out.set(name, outlines);
   }
   return out;
 }
 
 /**
- * The white a page leaves between two words of a face, in thousandths of an
- * em, where it moves the pen instead of showing a space: the gap from one run's
- * end to the next's start on the same line, where neither brings a space of
- * its own. A quarter of them are the narrowest — the lower quartile, which a
- * justified line's stretched gaps do not reach.
+ * How a page spaces a face's text apart where it moves the pen rather than
+ * draws a glyph — between words, and between two letters of one word.
  */
-function wordGaps(pages: ReadonlyArray<ReadonlyArray<TextRun>>): Map<string, number> {
-  const samples = new Map<string, Array<number>>();
+export interface PageSpacing {
+  /** Face → the white it leaves between words, in thousandths of an em. */
+  readonly wordGaps: ReadonlyMap<string, number>;
+  /**
+   * Face → the pairs of letters it is KERNED by: the two characters → how far
+   * the second stands from where the first's advance leaves it, in thousandths
+   * of an em (negative tightens).
+   */
+  readonly kerning: ReadonlyMap<string, ReadonlyMap<string, number>>;
+}
+
+const NO_SPACING: PageSpacing = { wordGaps: new Map(), kerning: new Map() };
+
+/**
+ * §9.4.3 — what the gaps between a face's runs say about how it is spaced.
+ *
+ * The interpreter emits a run for every string of a `TJ` array, so where the
+ * page nudges the pen inside a word — which is how a producer KERNS it — two
+ * runs meet with the nudge between them, and the letters on either side are
+ * the pair. bigboundingbox.pdf kerns its Calibri by eight pairs in one short
+ * line, and set without them the line came out 0.67pt longer than the page's
+ * and no longer fit the cell it was measured into. Each pair is the median of
+ * every nudge the page gives it.
+ *
+ * A wider gap is the white between two words, where the page moves the pen
+ * instead of showing a space; the face's space is the lower quartile of them,
+ * which a justified line's stretched gaps do not reach.
+ *
+ * @param pages The runs each page set, in the order they were painted.
+ * @returns Per face, its word gap and its kerning pairs.
+ */
+export function pageSpacing(pages: ReadonlyArray<ReadonlyArray<TextRun>>): PageSpacing {
+  const gaps = new Map<string, Array<number>>();
+  // Each nudge in thousandths of an em, and in points, which is what says
+  // whether it is a kern or a producer's rounding.
+  const nudges = new Map<string, Map<string, Array<[number, number]>>>();
+  // …and the nudges beside a space, in points: no face is kerned against its
+  // space, so a page that nudges those too is spacing its letters out.
+  const beside = new Map<string, Array<number>>();
   for (const runs of pages) {
     for (let i = 1; i < runs.length; i++) {
       const a = runs[i - 1]!;
@@ -111,21 +145,112 @@ function wordGaps(pages: ReadonlyArray<ReadonlyArray<TextRun>>): Map<string, num
       if (b.angleDeg !== undefined || a.fontSizePt !== b.fontSizePt || !(a.fontSizePt > 0))
         continue;
       if (Math.abs(a.y - b.y) > a.fontSizePt * SAME_LINE_EM) continue;
-      if (/\s$/u.test(a.text) || /^\s/u.test(b.text)) continue;
+      // A pair painted right to left meets the other way round; a space the
+      // run brings is a gap it measures itself.
+      if (isRightToLeft(a.text) || isRightToLeft(b.text)) continue;
+      const left = [...a.text].at(-1);
+      const right = [...b.text][0];
+      if (left === undefined || right === undefined) continue;
       const gap = ((b.x - a.endX) / a.fontSizePt) * 1000;
-      if (gap < MIN_WORD_GAP || gap > MAX_WORD_GAP) continue;
-      let list = samples.get(name);
-      if (!list) samples.set(name, (list = []));
-      list.push(gap);
+      if (/\s/u.test(left) || /\s/u.test(right)) {
+        if (gap > MIN_KERN && gap < MAX_KERN) {
+          let list = beside.get(name);
+          if (!list) beside.set(name, (list = []));
+          list.push(b.x - a.endX);
+        }
+        continue;
+      }
+      if (gap >= MIN_WORD_GAP && gap <= MAX_WORD_GAP) {
+        let list = gaps.get(name);
+        if (!list) gaps.set(name, (list = []));
+        list.push(gap);
+      } else if (gap > MIN_KERN && gap < MAX_KERN) {
+        let pairs = nudges.get(name);
+        if (!pairs) nudges.set(name, (pairs = new Map()));
+        const pair = `${left}${right}`;
+        let list = pairs.get(pair);
+        if (!list) pairs.set(pair, (list = []));
+        list.push([gap, b.x - a.endX]);
+      }
     }
   }
-  const out = new Map<string, number>();
-  for (const [name, list] of samples) {
+  const wordGaps = new Map<string, number>();
+  for (const [name, list] of gaps) {
     if (list.length < MIN_GAP_SAMPLES) continue;
     list.sort((p, q) => p - q);
-    out.set(name, list[Math.floor(list.length / 4)]!);
+    wordGaps.set(name, list[Math.floor(list.length / 4)]!);
   }
-  return out;
+  const kerning = new Map<string, Map<string, number>>();
+  for (const [name, pairs] of nudges) {
+    if (
+      tracked(
+        [...pairs.values()].flat().map(([, points]) => points),
+        beside.get(name) ?? [],
+      )
+    ) {
+      continue;
+    }
+    const kept = new Map<string, number>();
+    for (const [pair, list] of pairs) {
+      const inEm = median(list.map(([em]) => em));
+      const inPt = median(list.map(([, points]) => points));
+      if (Math.abs(inEm) < MIN_KERN_VALUE || Math.abs(inPt) < MIN_KERN_PT) continue;
+      // A kern is the same every time the pair meets; a rounding is not. One
+      // sighting says nothing unless it is too wide to be a rounding at all.
+      const steady =
+        list.length >= 2 && list.every(([, points]) => Math.abs(points - inPt) <= TWIP_PT);
+      if (steady || Math.abs(inPt) >= SURE_KERN_PT) kept.set(pair, inEm);
+    }
+    // A face nudged in fewer pairs than this was not kerned: its producer
+    // rounded, and the pairs are its rounding.
+    if (kept.size >= MIN_KERNED_PAIRS) kerning.set(name, kept);
+  }
+  return { wordGaps, kerning };
+}
+
+/**
+ * Whether a face's nudges are TRACKING rather than kerning: one amount between
+ * nearly every two letters, and beside its spaces too, where no face is kerned.
+ * bug1157493.pdf sets a line of Courier half a tenth of an em tight, every
+ * letter and every space alike; read as kerning pairs, its letters closed up
+ * and its spaces did not.
+ *
+ * @param nudges The face's nudges between letters, in points.
+ * @param beside Its nudges beside a space, in points.
+ */
+function tracked(nudges: ReadonlyArray<number>, beside: ReadonlyArray<number>): boolean {
+  if (beside.length < MIN_TRACKED_SPACES || nudges.length === 0) return false;
+  const typical = median([...nudges, ...beside]);
+  if (Math.abs(typical) < MIN_KERN_PT) return false;
+  const near = (points: number): boolean => Math.abs(points - typical) <= TWIP_PT;
+  const all = [...nudges, ...beside];
+  return (
+    beside.filter(near).length >= MIN_TRACKED_SPACES &&
+    all.filter(near).length >= all.length * TRACKED_SHARE
+  );
+}
+
+/** How many nudges beside spaces, and what share of all, make a face tracked. */
+const MIN_TRACKED_SPACES = 2;
+const TRACKED_SHARE = 0.8;
+
+/**
+ * The faces a page KERNED: those with kerning pairs (see {@link pageSpacing},
+ * which keeps a face's pairs only where there are enough of them to say it was
+ * kerning and not an accident of how its strings were cut).
+ *
+ * @param spacing How the pages space their faces (see {@link pageSpacing}).
+ * @returns The run font names of the kerned faces.
+ */
+export function kernedFaces(spacing: PageSpacing): Set<string> {
+  return new Set(spacing.kerning.keys());
+}
+
+/** The middle of some numbers: the mean of the middle two where they are even. */
+function median(values: ReadonlyArray<number>): number {
+  const sorted = [...values].sort((p, q) => p - q);
+  const mid = sorted.length / 2;
+  return sorted.length % 2 === 1 ? sorted[Math.floor(mid)]! : (sorted[mid - 1]! + sorted[mid]!) / 2;
 }
 
 /** Two runs within this much of an em of each other's baseline share a line. */
@@ -134,6 +259,39 @@ const SAME_LINE_EM = 0.1;
 /** A gap between words: wider than a kern, narrower than a column's white. */
 const MIN_WORD_GAP = 100;
 const MAX_WORD_GAP = 600;
+
+/**
+ * A nudge inside a word, in thousandths of an em: kerning tightens a pair by as
+ * much as a quarter of an em and opens one by far less — a gap wider than this
+ * is a space the page did not draw.
+ */
+const MIN_KERN = -250;
+const MAX_KERN = 60;
+
+/** A nudge smaller than this is the rounding of a producer's positions, not a kern. */
+const MIN_KERN_VALUE = 2;
+
+/**
+ * …and so is one smaller than a twip and a half, in points: Word lays a line
+ * out in twips and writes the difference from the face's own widths as a
+ * nudge. annotation-highlight.pdf's Calibri is nudged three to six thousandths
+ * of an em between letters no kerning table pairs, and taken for kerns they
+ * moved its words a fraction of a pixel off the page's.
+ */
+const MIN_KERN_PT = 0.075;
+
+/** A twip, in points: the grid a Word page's positions are rounded to. */
+const TWIP_PT = 0.05;
+
+/**
+ * A nudge this wide is a kern seen once: rounding moves a letter a twip or
+ * two, and bug793632.pdf's Calibri is nudged two twips either way — "st" in
+ * and "on" out — once each, by no kerning at all.
+ */
+const SURE_KERN_PT = 0.15;
+
+/** How many pairs make a face one the page kerned. */
+const MIN_KERNED_PAIRS = 2;
 
 /** How many gaps it takes to say how wide a face's space is. */
 const MIN_GAP_SAMPLES = 3;
@@ -175,7 +333,11 @@ function gather(face: Gathered, font: ContentFont, program: FaceProgram, code: n
 }
 
 /** A face's gathered glyphs as {@link FaceOutlines}, where it is one to embed. */
-function outlinesOf(face: Gathered, gap: number | undefined): FaceOutlines | undefined {
+function outlinesOf(
+  face: Gathered,
+  gap: number | undefined,
+  kerning: ReadonlyMap<string, number> | undefined,
+): FaceOutlines | undefined {
   if (face.shaped || face.sought === 0 || face.missed > face.sought * MAX_MISSED_SHARE) {
     return undefined;
   }
@@ -186,8 +348,14 @@ function outlinesOf(face: Gathered, gap: number | undefined): FaceOutlines | und
   if (!glyphs.has(' ')) glyphs.set(' ', { outline: [], advance: spaceAdvance(face, gap) });
   if (!glyphs.has('\u00a0')) glyphs.set('\u00a0', glyphs.get(' ')!);
   const { yMin, yMax } = extent(glyphs);
+  // The pairs whose two glyphs the face carries: a kern for a letter drawn in
+  // another face would move nothing of this one's.
+  const pairs = new Map(
+    [...(kerning ?? [])].filter(([pair]) => [...pair].every((c) => glyphs.has(c))),
+  );
   return {
     glyphs,
+    ...(pairs.size > 0 ? { kerning: pairs } : {}),
     ...(face.fsType !== undefined ? { fsType: face.fsType } : {}),
     // The slot a run in the face looks the face up in, whatever the program
     // calls itself: bug900822.pdf sets `LucidaSansUnicode,Bold` in the

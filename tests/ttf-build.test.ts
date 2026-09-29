@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import type { GlyphSeg } from '@/core/font';
+import type { BuiltFace, GlyphSeg } from '@/core/font';
 import { buildTrueType, editableEmbedding, parseTtf } from '@/core/font';
 import { outlineSource } from '@/pdf-reader/glyf-outline';
 
@@ -39,8 +39,9 @@ const ARCH: ReadonlyArray<GlyphSeg> = [
   { op: 'close' },
 ];
 
-function build(fsType = 8): Uint8Array {
+function build(fsType = 8, kerning: BuiltFace['kerning'] = undefined): Uint8Array {
   return buildTrueType({
+    ...(kerning ? { kerning } : {}),
     family: 'Test Face',
     bold: true,
     italic: false,
@@ -163,6 +164,38 @@ describe('a TrueType font built from outlines', () => {
       sum = (sum + ((word | (bytes[i + 3] ?? 0)) >>> 0)) >>> 0;
     }
     expect(sum).toBe(0xb1b0afba);
+  });
+
+  it('kerns the pairs it is given, by glyph and in the order a search expects', () => {
+    const font = build(8, [
+      { left: 0x4f, right: 0x41, value: -40 }, // O A
+      { left: 0x41, right: 0x4f, value: -60.4 }, // A O
+      { left: 0x41, right: 0x42, value: -10 }, // no B in the face: nothing to kern
+    ]);
+    const at = tableAt(font, 'kern');
+    const view = new DataView(font.buffer);
+    expect(view.getUint16(at + 2)).toBe(1); // one subtable
+    expect(view.getUint16(at + 8)).toBe(0x0001); // horizontal, format 0
+    expect(view.getUint16(at + 10)).toBe(2); // the two pairs whose glyphs it holds
+    const pairs = [0, 1].map((i) => {
+      const entry = at + 18 + i * 6;
+      return [view.getUint16(entry), view.getUint16(entry + 2), view.getInt16(entry + 4)];
+    });
+    // A is glyph 2 and O glyph 3: (2,3) sorts before (3,2).
+    expect(pairs).toEqual([
+      [2, 3, -60],
+      [3, 2, -40],
+    ]);
+    // …and the same pairs as GPOS's `kern` feature, which is what a shaper reads.
+    const kerning = parseTtf(font).kerning;
+    expect(kerning.get('2,3')).toBe(-60);
+    expect(kerning.get('3,2')).toBe(-40);
+    expect(kerning.size).toBe(2);
+  });
+
+  it('writes no kerning tables for a face kerned by nothing', () => {
+    expect(() => tableAt(build(), 'kern')).toThrow();
+    expect(() => tableAt(build(), 'GPOS')).toThrow();
   });
 
   it('builds the same bytes from the same face', () => {

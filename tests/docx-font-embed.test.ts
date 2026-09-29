@@ -183,6 +183,45 @@ describe('a document that embeds the faces it is set in (§17.8.1)', () => {
     expect(view.getUint16(os2 + 8)).toBe(8);
   });
 
+  it('carries the pairs the source kerned the face by, in a kern table', () => {
+    const flow = documentIn(
+      [{ face: 'inter-regular', text: 'AV' }],
+      new Map([['inter-regular', face('AV ', { kerning: new Map([['AV', -80]]) })]]),
+    );
+    const font = embeddedFont(writeDocx(flow).bytes, 'Regular');
+    const view = new DataView(font.buffer, font.byteOffset, font.byteLength);
+    let kern = -1;
+    for (let i = 0; i < view.getUint16(4); i++) {
+      const at = 12 + i * 16;
+      if (String.fromCharCode(...font.subarray(at, at + 4)) === 'kern')
+        kern = view.getUint32(at + 8);
+    }
+    expect(kern).toBeGreaterThan(0);
+    const parsed = parseTtf(font);
+    const [a, v] = ['A', 'V'].map((c) => parsed.glyphForCodepoint(c.codePointAt(0)!));
+    expect(view.getUint16(kern + 10)).toBe(1); // one pair
+    expect([
+      view.getUint16(kern + 18),
+      view.getUint16(kern + 20),
+      view.getInt16(kern + 22),
+    ]).toEqual([a, v, -80]);
+  });
+
+  it('writes a run that asks to be kerned with w:kern, where the schema puts it (§17.3.2.19)', () => {
+    const { doc } = readDocx(
+      buildDocxFromBody(
+        '<w:p><w:r><w:rPr><w:color w:val="FF0000"/><w:kern w:val="2"/><w:sz w:val="24"/></w:rPr>' +
+          '<w:t>AV</w:t></w:r></w:p>',
+      ),
+    );
+    const bytes = writeDocx(doc).bytes;
+    const body = decode(OpcPackage.open(bytes).getMainDocument().data);
+    expect(body).toContain('<w:color w:val="FF0000"/><w:kern w:val="2"/><w:sz w:val="24"/>');
+    const again = readDocx(bytes).doc.body[0];
+    if (again?.kind !== 'paragraph') throw new Error('a paragraph');
+    expect(again.paragraph.runs[0]?.properties.kerningMinPt).toBe(1);
+  });
+
   it('writes the same package from the same document', () => {
     const flow = documentIn(
       [{ face: 'inter-regular', text: 'Hi' }],

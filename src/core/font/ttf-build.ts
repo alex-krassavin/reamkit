@@ -62,7 +62,24 @@ export interface BuiltFace {
    * the program the outlines came from.
    */
   readonly fsType: number;
+  /** The pairs the face is kerned by: how far the second glyph moves in towards the first. */
+  readonly kerning?: ReadonlyArray<BuiltKernPair>;
 }
+
+/** One kerning pair of a {@link BuiltFace}, by the characters it joins. */
+export interface BuiltKernPair {
+  /** The code point of the glyph on the left, and of the one after it. */
+  readonly left: number;
+  readonly right: number;
+  /** The adjustment to the left glyph's advance, in thousandths of an em — negative tightens. */
+  readonly value: number;
+}
+
+/**
+ * The most pairs a `kern` subtable holds: its length is a 16-bit count of bytes,
+ * six to a pair after a fourteen-byte header.
+ */
+const MAX_KERN_PAIRS = Math.floor((0xffff - 14) / 6);
 
 /** OS/2 `fsType` bits (ISO/IEC 14496-22, OS/2 table). */
 const USAGE_BITS = 0x000e;
@@ -156,6 +173,7 @@ export function buildTrueType(face: BuiltFace): Uint8Array {
     ['head', headTable(face, bounds)],
     ['hhea', hheaTable(face, encoded, advances, metrics)],
     ['hmtx', hmtxTable(encoded, advances)],
+    ...kerningTables(face),
     ['loca', locaTable(encoded)],
     ['maxp', maxpTable(encoded)],
     ['name', nameTable(face)],
@@ -619,6 +637,147 @@ function locaTable(glyphs: ReadonlyArray<EncodedGlyph>): Uint8Array {
     at += g.bytes.length;
   }
   out.u32(at);
+  return out.data;
+}
+
+/**
+ * The face's kerning pairs by glyph — the first glyph of each character — in
+ * the order a binary search expects them, less those of glyphs it does not
+ * hold and those that move nothing.
+ */
+function glyphPairs(face: BuiltFace): Array<[number, number, number]> {
+  const glyphOf = new Map<number, number>();
+  face.glyphs.forEach((g, i) => {
+    for (const cp of g.codePoints) if (!glyphOf.has(cp)) glyphOf.set(cp, i + 1);
+  });
+  const byGlyphs = new Map<number, [number, number, number]>();
+  for (const pair of face.kerning ?? []) {
+    const left = glyphOf.get(pair.left);
+    const right = glyphOf.get(pair.right);
+    const value = Math.round(pair.value);
+    if (left === undefined || right === undefined || value === 0) continue;
+    const key = left * 0x10000 + right;
+    if (!byGlyphs.has(key)) byGlyphs.set(key, [left, right, clamp(value, -0x8000, 0x7fff)]);
+  }
+  return [...byGlyphs.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .slice(0, MAX_KERN_PAIRS)
+    .map(([, pair]) => pair);
+}
+
+/**
+ * The face's kerning, twice over: GPOS's `kern` feature, which is what a
+ * shaper reads — Word's own, DirectWrite, HarfBuzz — and the legacy `kern`
+ * table, for what reads nothing else. Word kerned the page's pairs from the
+ * legacy table alone not at all: both are written, and a shaper that finds
+ * GPOS leaves the other be.
+ *
+ * @returns The tables to add, or none where the face is kerned by no pair
+ *          whose glyphs it holds.
+ */
+function kerningTables(face: BuiltFace): Array<[string, Uint8Array]> {
+  const pairs = glyphPairs(face);
+  if (pairs.length === 0) return [];
+  return [
+    ['GPOS', gposTable(pairs)],
+    ['kern', kernTable(pairs)],
+  ];
+}
+
+/** `kern` version 0 with one horizontal format 0 subtable. */
+function kernTable(pairs: ReadonlyArray<[number, number, number]>): Uint8Array {
+  const entrySelector = Math.floor(Math.log2(pairs.length));
+  const searchRange = 2 ** entrySelector * 6;
+  const length = 14 + pairs.length * 6;
+  const out = new Writer(4 + length);
+  out.u16(0); // version
+  out.u16(1); // nTables
+  out.u16(0); // subtable version
+  out.u16(length);
+  out.u16(0x0001); // coverage: horizontal, format 0
+  out.u16(pairs.length);
+  out.u16(searchRange);
+  out.u16(entrySelector);
+  out.u16(pairs.length * 6 - searchRange);
+  for (const [left, right, value] of pairs) {
+    out.u16(left);
+    out.u16(right);
+    out.i16(value);
+  }
+  return out.data;
+}
+
+/**
+ * GPOS 1.0 with one feature, `kern`, under the default script and Latin: one
+ * pair-adjustment lookup (type 2, format 1) moving the first glyph's advance.
+ */
+function gposTable(pairs: ReadonlyArray<[number, number, number]>): Uint8Array {
+  const byLeft = new Map<number, Array<[number, number]>>();
+  for (const [left, right, value] of pairs) {
+    byLeft.set(left, [...(byLeft.get(left) ?? []), [right, value]]);
+  }
+  const lefts = [...byLeft.keys()].sort((a, b) => a - b);
+  const pairPosHeader = 10 + lefts.length * 2;
+  const coverageSize = 4 + lefts.length * 2;
+  const pairSetsSize = lefts.reduce((n, left) => n + 2 + byLeft.get(left)!.length * 4, 0);
+  // Header, ScriptList (two records and their shared script and default
+  // language system), FeatureList, LookupList, then the pair-adjustment
+  // subtable: a fixed 62 bytes before it.
+  const PAIR_POS_AT = 62;
+  const out = new Writer(PAIR_POS_AT + pairPosHeader + coverageSize + pairSetsSize);
+  out.u16(1); // majorVersion
+  out.u16(0); // minorVersion
+  out.u16(10); // scriptListOffset
+  out.u16(36); // featureListOffset
+  out.u16(50); // lookupListOffset
+  // ScriptList at 10: DFLT and latn, sorted by tag, one script table between them.
+  out.u16(2);
+  for (const tag of ['DFLT', 'latn']) {
+    out.bytes([...tag].map((c) => c.charCodeAt(0)));
+    out.u16(14);
+  }
+  out.u16(4); // Script at 24: defaultLangSysOffset
+  out.u16(0); // langSysCount
+  out.u16(0); // LangSys at 28: lookupOrderOffset
+  out.u16(0xffff); // requiredFeatureIndex: none
+  out.u16(1); // featureIndexCount
+  out.u16(0); // → feature 0
+  // FeatureList at 36: `kern` → lookup 0.
+  out.u16(1);
+  out.bytes([...'kern'].map((c) => c.charCodeAt(0)));
+  out.u16(8);
+  out.u16(0); // Feature at 44: featureParamsOffset
+  out.u16(1); // lookupIndexCount
+  out.u16(0); // → lookup 0
+  // LookupList at 50: one lookup, pair adjustment.
+  out.u16(1);
+  out.u16(4);
+  out.u16(2); // Lookup at 54: lookupType — pair adjustment
+  out.u16(0); // lookupFlag
+  out.u16(1); // subTableCount
+  out.u16(PAIR_POS_AT - 54);
+  // PairPos format 1 at 62.
+  out.u16(1); // posFormat
+  out.u16(pairPosHeader); // coverageOffset
+  out.u16(0x0004); // valueFormat1: XAdvance
+  out.u16(0); // valueFormat2
+  out.u16(lefts.length); // pairSetCount
+  let at = pairPosHeader + coverageSize;
+  for (const left of lefts) {
+    out.u16(at);
+    at += 2 + byLeft.get(left)!.length * 4;
+  }
+  out.u16(1); // Coverage format 1
+  out.u16(lefts.length);
+  for (const left of lefts) out.u16(left);
+  for (const left of lefts) {
+    const set = [...byLeft.get(left)!].sort((a, b) => a[0] - b[0]);
+    out.u16(set.length);
+    for (const [right, value] of set) {
+      out.u16(right);
+      out.i16(value);
+    }
+  }
   return out.data;
 }
 

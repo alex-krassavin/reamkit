@@ -1816,7 +1816,7 @@ function runXml(run: Run, state: WriteState, scope: PartScope): string {
 // §17.3.2 — run properties as a delta from the resolved defaults.
 function rPrXml(r: ResolvedRunProperties, state?: WriteState): string {
   // §17.3.2.28 CT_RPr is a SEQUENCE, and a reader may drop what arrives out of
-  // it: rFonts, b, i, strike, color, sz, u, shd, vertAlign, rtl, lang. Written
+  // it: rFonts, b, i, strike, color, kern, sz, u, shd, vertAlign, rtl, lang. Written
   // in the old order — `w:u` ahead of `w:rFonts` — LibreOffice ignored the
   // underline outright, so annotation-squiggly.pdf's wavy blue rule was in the
   // package and on no page.
@@ -1838,6 +1838,11 @@ function rPrXml(r: ResolvedRunProperties, state?: WriteState): string {
   if (states('italic')) out.push(toggle('w:i', r.italic), toggle('w:iCs', r.italic));
   if (states('strike')) out.push(toggle('w:strike', r.strike));
   if (states('colorHex')) out.push(`<w:color w:val="${r.colorHex}"/>`);
+  // §17.3.2.19 `w:kern` — after the colour and before the size, the schema's
+  // place for it; half-points, like the size.
+  if (r.kerningMinPt !== undefined && states('kerningMinPt')) {
+    out.push(`<w:kern w:val="${Math.round(r.kerningMinPt * 2)}"/>`);
+  }
   if (states('fontSizePt')) {
     // §17.3.2.38 w:sz — half-points.
     const half = Math.round(r.fontSizePt * 2);

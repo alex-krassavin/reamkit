@@ -95,6 +95,49 @@ describe('the outlines a PDF face drew its characters with', () => {
     expect(face?.glyphs.get(' ')?.advance).toBeCloseTo(300, 6);
   });
 
+  it('reads the pairs a page kerns a face by off the nudges of its TJ arrays', () => {
+    // §9.4.3 — a number in a TJ array moves the pen back that many thousandths
+    // of an em: 80 between H and i is a kern of -80.
+    const parsed = parseTtf(ROBOTO);
+    const [h, i] = ['H', 'i'].map((c) => hex4(parsed.glyphForCodepoint(c.codePointAt(0)!)));
+    const cids = [h!, i!].map((x) => parseInt(x, 16));
+    const flow = Ream.parse(identityPdf(`[<${h!}> 80 <${i!}> 60 <${h!}>] TJ`, cids, 'Hi')).flow;
+    const face = flow.faceOutlines?.get('roboto');
+    expect(face?.kerning?.get('Hi')).toBeCloseTo(-80, 6);
+    expect(face?.kerning?.get('iH')).toBeCloseTo(-60, 6);
+    // §17.3.2.19 — and a run set in a face the page kerned asks to be kerned.
+    const runs = flow.body.flatMap((el) => (el.kind === 'paragraph' ? el.paragraph.runs : []));
+    expect(runs.length).toBeGreaterThan(0);
+    for (const run of runs) expect(run.properties.kerningMinPt).toBe(1);
+  });
+
+  it('takes a nudge under a twip and a half for rounding, not a kern', () => {
+    // Five thousandths of an em at 10pt is 0.05pt: Word writes the difference
+    // between its twip grid and the face's widths that way, between any letters.
+    const parsed = parseTtf(ROBOTO);
+    const [h, i] = ['H', 'i'].map((c) => hex4(parsed.glyphForCodepoint(c.codePointAt(0)!)));
+    const cids = [h!, i!].map((x) => parseInt(x, 16));
+    const flow = Ream.parse(
+      identityPdf(`[<${h!}> 5 <${i!}> 5 <${h!}>] TJ`, cids, 'Hi', ROBOTO, 10),
+    ).flow;
+    expect(flow.faceOutlines?.get('roboto')?.kerning).toBeUndefined();
+    const runs = flow.body.flatMap((el) => (el.kind === 'paragraph' ? el.paragraph.runs : []));
+    for (const run of runs) expect(run.properties.kerningMinPt).toBeUndefined();
+  });
+
+  it('takes one nudge between every two letters and beside every space for tracking, not kerning', () => {
+    // A page that sets a line tight moves the pen back the same amount after
+    // every glyph, its spaces too — and no face is kerned against its space.
+    const parsed = parseTtf(ROBOTO);
+    const [h, i, sp] = ['H', 'i', ' '].map((c) =>
+      hex4(parsed.glyphForCodepoint(c.codePointAt(0)!)),
+    );
+    const cids = [h!, i!, sp!].map((x) => parseInt(x, 16));
+    const line = [h, i, sp, h, i, sp, h, i].map((g) => `<${g!}>`).join(' 50 ');
+    const flow = Ream.parse(identityPdf(`[${line}] TJ`, cids, 'Hi ')).flow;
+    expect(flow.faceOutlines?.get('roboto')?.kerning).toBeUndefined();
+  });
+
   it('draws the accented letter a CFF program composes of two glyphs (seac)', () => {
     // TN 5177 Appendix C — `eacute` is `adx ady bchar achar endchar`: the e,
     // and the acute moved by (adx, ady). Drawn as nothing, the é embedded as a
@@ -305,8 +348,9 @@ function identityPdf(
   cids: ReadonlyArray<number>,
   text: string,
   program: Uint8Array = ROBOTO,
+  size = 40,
 ): Uint8Array {
-  const content = `BT /F0 40 Tf 20 40 Td ${show} ET`;
+  const content = `BT /F0 ${String(size)} Tf 20 40 Td ${show} ET`;
   const pairs = cids.map((cid, i) => `<${hex4(cid)}> <${hex4(text.codePointAt(i)!)}>`).join('\n');
   const toUnicode =
     '/CIDInit /ProcSet findresource begin 12 dict begin begincmap\n' +

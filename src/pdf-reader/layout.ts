@@ -42,7 +42,7 @@ import { collectEmbeddedFonts } from './embedded-fonts';
 import { collectFaceFamilies } from './font';
 import { collectPageImages } from './images';
 import { extractPageText } from './text';
-import { faceOutlinesOf } from './face-outlines';
+import { faceOutlinesOf, kernedFaces, pageSpacing } from './face-outlines';
 import { collectPageVectors } from './vector';
 import { markDrawnRules } from './text-rules';
 import { regionsOf } from './regions';
@@ -144,6 +144,8 @@ export function reconstructByLayout(
   // §9.9 — the codes each font paints, for the faces a writer may embed.
   const painted: ShownCodes = new Map();
   const extracted = pages.map((page) => extractPageText(file, page, painted));
+  // §9.4.3 — how the page spaces each face: between words, and inside them.
+  const spacing = pageSpacing(extracted);
   const onSheets = extracted.map((runs, i) => placeRuns(runs, sheets[i]!));
   // §17.6.20 — …and a page whose words run DOWN its sheet is read in the frame
   // where they stand upright, and set back on the sheet turned: a viewer turns
@@ -990,7 +992,8 @@ export function reconstructByLayout(
           ])
         : undefined,
       collectFaceFamilies(file, pages),
-      faceOutlinesOf(painted, extracted),
+      faceOutlinesOf(painted, spacing),
+      kernedFaces(spacing),
     ),
     losses: dedupeLosses(losses),
   };
