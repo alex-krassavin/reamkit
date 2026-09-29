@@ -2890,11 +2890,13 @@ function layoutShapeBlock(
   // as three stacked lines that the warp then bent as a block.
   const warp = text?.warp;
   if (text && text.content.length > 0) {
-    const innerWidth = warp
-      ? Number.MAX_SAFE_INTEGER
-      : vertical
-        ? Math.max(1, heightPt - insetTopPt - insetBottomPt)
-        : Math.max(1, widthPt - insetLeftPt - insetRightPt);
+    // …and neither does a box told not to (§20.1.2.1.1 `@wrap="none"`).
+    const innerWidth =
+      warp || text.noWrap === true
+        ? Number.MAX_SAFE_INTEGER
+        : vertical
+          ? Math.max(1, heightPt - insetTopPt - insetBottomPt)
+          : Math.max(1, widthPt - insetLeftPt - insetRightPt);
     const spacing = new SpacingStack(collapsesSpacing(options));
     for (const el of text.content) {
       // What is not a paragraph keeps no space of its own for the next to share.

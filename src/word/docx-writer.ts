@@ -52,6 +52,7 @@ import type {
   ShapeBlock,
   ShapeFill,
   ShapeGeometry,
+  ShapeGroupChild,
   ShapeLine,
   ShapeTextBody,
   ShapeTransform,
@@ -1362,19 +1363,15 @@ function shapeDrawingXml(
   const cy = Math.round(shape.height * EMU_PER_PT);
   const id = ++state.drawingSeq;
   const descr = shape.altText ? ` descr="${escapeAttr(shape.altText)}"` : '';
-  const spPr =
-    `<wps:spPr>${xfrmXml(shape.transform, cx, cy)}${geomXml(shape.geometry)}` +
-    `${fillXml(shape.fill)}${shape.line ? lineXml(shape.line) : ''}</wps:spPr>`;
-  const txbx = shape.text ? txbxXml(shape.text, losses, state, scope) : '';
+  const members = shape.children ?? [];
   const graphic =
     '<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">' +
-    `<a:graphicData uri="${WPS_URI}">` +
-    '<wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">' +
-    '<wps:cNvSpPr/>' +
-    spPr +
-    txbx +
-    bodyPrXml(shape.text) +
-    '</wps:wsp></a:graphicData></a:graphic>';
+    (members.length > 0
+      ? `<a:graphicData uri="${WPG_URI}">` +
+        groupXml('wpg:wgp', members, { x: 0, y: 0, cx, cy }, losses, state, scope)
+      : `<a:graphicData uri="${WPS_URI}">` +
+        wspXml(shape, cx, cy, undefined, losses, state, scope)) +
+    '</a:graphicData></a:graphic>';
   return drawingFrame(
     shape.float,
     cx,
@@ -1386,13 +1383,124 @@ function shapeDrawingXml(
   );
 }
 
+/**
+ * `wps:wsp` — one shape: its box, geometry, fill and outline, and the text it
+ * holds. `id` is its own `wps:cNvPr` inside a group, where the members name
+ * themselves; a shape alone is named by the frame's `wp:docPr`.
+ */
+function wspXml(
+  shape: ShapeBlock,
+  cx: number,
+  cy: number,
+  member: { readonly id: number; readonly x: number; readonly y: number } | undefined,
+  losses: Array<Loss>,
+  state: WriteState,
+  scope: PartScope,
+): string {
+  const spPr =
+    `<wps:spPr>${xfrmXml(shape.transform, cx, cy, member)}${geomXml(shape.geometry)}` +
+    `${fillXml(shape.fill)}${shape.line ? lineXml(shape.line) : ''}</wps:spPr>`;
+  const txbx = shape.text ? txbxXml(shape.text, losses, state, scope) : '';
+  return (
+    `<wps:wsp xmlns:wps="${WPS_URI}">` +
+    (member ? `<wps:cNvPr id="${member.id}" name="Shape ${member.id}"/>` : '') +
+    '<wps:cNvSpPr/>' +
+    spPr +
+    txbx +
+    bodyPrXml(shape.text) +
+    '</wps:wsp>'
+  );
+}
+
+const WPG_URI = 'http://schemas.microsoft.com/office/word/2010/wordprocessingGroup';
+
+/**
+ * §20.5.2.17 `wpg:wgp` / `wpg:grpSp` — a group: its box, and its members in
+ * the order they are painted. The members are placed in a child space the
+ * same as the box, so a member's offset from the group's corner is its offset
+ * in the file. The inverse of drawing-parser's `groupChildren`.
+ *
+ * Written as one shape, the group came back an empty box: a figure's paths
+ * and labels were thrown away with it.
+ */
+function groupXml(
+  tag: 'wpg:wgp' | 'wpg:grpSp',
+  members: ReadonlyArray<ShapeGroupChild>,
+  box: { readonly x: number; readonly y: number; readonly cx: number; readonly cy: number },
+  losses: Array<Loss>,
+  state: WriteState,
+  scope: PartScope,
+): string {
+  const ns = tag === 'wpg:wgp' ? ` xmlns:wpg="${WPG_URI}"` : '';
+  const xfrm =
+    `<a:xfrm><a:off x="${box.x}" y="${box.y}"/><a:ext cx="${box.cx}" cy="${box.cy}"/>` +
+    `<a:chOff x="0" y="0"/><a:chExt cx="${box.cx}" cy="${box.cy}"/></a:xfrm>`;
+  const inner = members.map((m) => memberXml(m, losses, state, scope)).join('');
+  return `<${tag}${ns}><wpg:cNvGrpSpPr/><wpg:grpSpPr>${xfrm}</wpg:grpSpPr>${inner}</${tag}>`;
+}
+
+/**
+ * One member of a group: a group of its own, a picture (`pic:pic`, a shape
+ * whose fill is the picture — how the reader brings one in), or a shape.
+ */
+function memberXml(
+  member: ShapeGroupChild,
+  losses: Array<Loss>,
+  state: WriteState,
+  scope: PartScope,
+): string {
+  const s = member.shape;
+  const x = Math.round(member.xPt * EMU_PER_PT);
+  const y = Math.round(member.yPt * EMU_PER_PT);
+  const cx = Math.round(s.width * EMU_PER_PT);
+  const cy = Math.round(s.height * EMU_PER_PT);
+  if (s.children !== undefined && s.children.length > 0) {
+    return groupXml('wpg:grpSp', s.children, { x, y, cx, cy }, losses, state, scope);
+  }
+  const id = ++state.drawingSeq;
+  if (s.fill.kind !== 'picture') {
+    return wspXml(s, cx, cy, { id, x, y }, losses, state, scope);
+  }
+  const relId =
+    s.fill.imageResource !== undefined ? mediaRelId(s.fill.imageResource, state, scope) : undefined;
+  if (relId === undefined) {
+    losses.push({
+      severity: 'dropped',
+      feature: FEATURES.images,
+      detail: imageRefusal(s.fill.imageResource, state),
+    });
+    return '';
+  }
+  const alpha =
+    s.fill.alpha !== undefined && s.fill.alpha < 1
+      ? `<a:alphaModFix amt="${String(Math.round(Math.max(0, s.fill.alpha) * 100000))}"/>`
+      : '';
+  return (
+    '<pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">' +
+    `<pic:nvPicPr><pic:cNvPr id="${id}" name="Image ${id}"/><pic:cNvPicPr/></pic:nvPicPr>` +
+    `<pic:blipFill><a:blip r:embed="${relId}">${alpha}</a:blip>${srcRectXml(s.fill.imageCrop)}` +
+    '<a:stretch><a:fillRect/></a:stretch></pic:blipFill>' +
+    `<pic:spPr>${xfrmXml(s.transform, cx, cy, { x, y })}` +
+    '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic>'
+  );
+}
+
 // §20.1.7.6 a:xfrm — rotation/flips plus the off+ext the reader uses as a size
-// fallback. Always emitted so a re-read recovers the box even without extent.
-function xfrmXml(t: ShapeTransform | undefined, cx: number, cy: number): string {
+// fallback. Always emitted so a re-read recovers the box even without extent;
+// a group's member states where in the group it stands.
+function xfrmXml(
+  t: ShapeTransform | undefined,
+  cx: number,
+  cy: number,
+  at?: { readonly x: number; readonly y: number },
+): string {
   const rot = t?.rotation60k !== undefined ? ` rot="${t.rotation60k}"` : '';
   const flipH = t?.flipH ? ' flipH="1"' : '';
   const flipV = t?.flipV ? ' flipV="1"' : '';
-  return `<a:xfrm${rot}${flipH}${flipV}><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm>`;
+  return (
+    `<a:xfrm${rot}${flipH}${flipV}><a:off x="${at?.x ?? 0}" y="${at?.y ?? 0}"/>` +
+    `<a:ext cx="${cx}" cy="${cy}"/></a:xfrm>`
+  );
 }
 
 /**
@@ -1563,8 +1671,10 @@ function bodyPrXml(text: ShapeTextBody | undefined): string {
   const ins = (v: number | undefined, name: string): string =>
     v !== undefined ? ` ${name}="${Math.round(v * EMU_PER_PT)}"` : '';
   const anchor = text.anchor ? ` anchor="${text.anchor}"` : '';
+  const wrap = text.noWrap === true ? ' wrap="none"' : '';
   return (
     '<wps:bodyPr' +
+    wrap +
     ins(text.insetLeft, 'lIns') +
     ins(text.insetTop, 'tIns') +
     ins(text.insetRight, 'rIns') +

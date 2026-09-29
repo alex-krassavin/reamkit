@@ -1385,6 +1385,13 @@ export interface ShapeTextBody {
   readonly insetBottom?: Pt;
   readonly anchor?: 't' | 'ctr' | 'b'; // vertical anchor
   /**
+   * §20.1.2.1.1 `a:bodyPr @wrap="none"` — the lines run as far as their words
+   * do, whatever the box's width. A label placed where a page set it is sized
+   * to the words it was measured from, and set in a face a little wider it
+   * broke inside its one word.
+   */
+  readonly noWrap?: boolean;
+  /**
    * §20.1.10.83 ST_TextVerticalType (`a:bodyPr @vert`) — text set along the
    * box's long axis rather than across it. `vert` reads top-to-bottom (turned a
    * quarter clockwise), `vert270` bottom-to-top.
