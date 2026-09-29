@@ -1189,7 +1189,77 @@ function emitPageContent(
     lastColor = '';
     lastTc = 0;
   };
-  const emitOneLine = (cmd: TextLineItem) => {
+  // A TURNED line whose glyphs one text matrix cannot set is set flat, token
+  // by token, inside a CTM that turns it about its own origin — so its tabs,
+  // its stretched spaces and the rules drawn under it turn with it. Turned by
+  // its matrix alone, a line of tab-separated figures running down a sheet
+  // came back with every figure run up against the one before. Its links turn
+  // too: an annotation's rectangle is the box its turned corners stand in.
+  const emitTurned = (cmd: TextLineItem): void => {
+    if (inBT) {
+      out.push('ET');
+      inBT = false;
+    }
+    const rad = ((cmd.rotationDeg ?? 0) * Math.PI) / 180;
+    const cos = Math.cos(rad);
+    const sin = Math.sin(rad);
+    const ox = cmd.originX;
+    const oy = H - cmd.baselineY;
+    out.push('q');
+    out.push(
+      `${formatNumber(cos)} ${formatNumber(sin)} ${formatNumber(-sin)} ${formatNumber(cos)} ` +
+        `${formatNumber(ox - ox * cos + oy * sin)} ${formatNumber(oy - ox * sin - oy * cos)} cm`,
+    );
+    lastFont = '';
+    lastFauxWidth = 0;
+    lastStroke = undefined;
+    lastTz = 100;
+    lastSize = -1;
+    lastColor = '';
+    lastTc = 0;
+    const from = links.length;
+    const { rotationDeg: _turned, ...flat } = cmd;
+    out.push('BT');
+    inBT = true;
+    emitOneLine(flat);
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- `emitOneLine` may close text mode through a closure; flow analysis cannot see it.
+    if (inBT) {
+      out.push('ET');
+      inBT = false;
+    }
+    out.push('Q');
+    lastFont = '';
+    lastFauxWidth = 0;
+    lastStroke = undefined;
+    lastTz = 100;
+    lastSize = -1;
+    lastColor = '';
+    lastTc = 0;
+    for (let k = from; k < links.length; k++) {
+      const link = links[k]!;
+      const [x0, y0, x1, y1] = link.rect;
+      const corners = [
+        [x0, y0],
+        [x1, y0],
+        [x1, y1],
+        [x0, y1],
+      ].map(([x, y]) => [
+        ox + (x! - ox) * cos - (y! - oy) * sin,
+        oy + (x! - ox) * sin + (y! - oy) * cos,
+      ]);
+      const xs = corners.map((c) => c[0]!);
+      const ys = corners.map((c) => c[1]!);
+      links[k] = {
+        ...link,
+        rect: [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)],
+      };
+    }
+  };
+  const emitOneLine = (cmd: TextLineItem): void => {
+    if (cmd.rotationDeg && cmd.warp === undefined && !settableInOneMatrix(cmd.line)) {
+      emitTurned(cmd);
+      return;
+    }
     const line = cmd.line;
     const originX = cmd.originX;
     const baselineY = H - cmd.baselineY; // top-left frame → PDF y-up
@@ -1929,6 +1999,34 @@ function rotateAboutCm(cx: number, cy: number, deg: number): string {
   return (
     `${formatNumber(c)} ${formatNumber(s)} ${formatNumber(-s)} ${formatNumber(c)} ` +
     `${formatNumber(cx - cx * c + cy * s)} ${formatNumber(cy - cx * s - cy * c)} cm`
+  );
+}
+
+/**
+ * Whether a line is ONE text matrix and a run of glyphs: nothing in it placed
+ * on its own — a tab, a stretched space, a picture, a formula, a right-to-left
+ * run, a rise, a faked italic — and nothing drawn beside its glyphs, a run's
+ * shading, a highlight or a rule. Only such a line can be turned by its matrix
+ * alone; any other is placed token by token in page space.
+ *
+ * @param line The laid-out line.
+ * @returns True when a single `Tm` sets the whole of it.
+ */
+function settableInOneMatrix(line: Line): boolean {
+  return (
+    computeJustifyExtra(line) === 0 &&
+    line.tokens.every(
+      (t) =>
+        t.kind === 'text' &&
+        t.tab !== true &&
+        t.bidiLevel % 2 === 0 &&
+        t.risePt === undefined &&
+        t.synthetic?.italic !== true &&
+        t.highlight !== true &&
+        t.resolvedRun.shadingColorHex === undefined &&
+        t.resolvedRun.underline === 'none' &&
+        !t.resolvedRun.strike,
+    )
   );
 }
 

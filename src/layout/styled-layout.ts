@@ -92,6 +92,7 @@ import type { PdfEncryptOptions } from '@/pdf/encryption';
 import type { StructNode, StructType } from '@/pdf/struct-tree';
 
 import type { MetaPicture } from '@/core/metafile/picture';
+import type { Sheet } from '@/layout/turned-section';
 import { ResourceStore, halfPtToPt, pt } from '@/core/ir';
 import { headingLevelOf } from '@/core/outline';
 import { createFontMeasure, hasSubstitutable, shapeText, substituteLetters } from '@/core/font';
@@ -131,6 +132,7 @@ import {
   lineEndPaths,
 } from '@/core/drawingml/shape-render';
 import { StructTreeBuilder } from '@/pdf/struct-tree';
+import { floatIntoFrame, turnOntoSheet } from '@/layout/turned-section';
 
 /**
  * PDF/A conformance string: part 1 (ISO 19005-1, PDF 1.4) / 2 (ISO 19005-2) / 3
@@ -1209,6 +1211,10 @@ export function layoutStyledDocument(
       sectionIdx++;
     }
     const ctx = sectionCtxs[sectionIdx]!;
+    // §17.6.20 — a drawing anchored in a section whose lines run down the
+    // sheet stands on the SHEET, upright, while the body it belongs to is laid
+    // out in the text's frame and turned: its anchor is restated in the frame.
+    const own = ctx.sheet ? floatIntoFrame(el, ctx.sheet) : el;
     const width = ctx.columns ? ctx.columns[0]!.widthPt : ctx.contentWidth;
     const box: RelativeBox = {
       pageWidthPt: ctx.pageWidth,
@@ -1223,7 +1229,7 @@ export function layoutStyledDocument(
       return layoutFrameBlock(group, ctx.options ?? options, fontResources, imageResources, width);
     if (bodyFrames.continued.has(idx)) return emptyBlock(options);
     return layoutBodyElement(
-      el,
+      own,
       ctx.options ?? options,
       fontResources,
       imageResources,
@@ -1514,6 +1520,14 @@ export interface SectionRenderCtx {
    * paragraph in it. Absent on a bare context built outside a layout run.
    */
   readonly options?: StyledRenderOptions;
+  /**
+   * §17.6.20 — the sheet a section whose lines run DOWN it prints on. Such a
+   * section's body is laid out in the frame its text reads in, which the
+   * geometry above describes — the sheet turned back a quarter — and turned
+   * onto this sheet page by page, while its header and footer are laid out
+   * on the sheet itself (see ./turned-section). Absent ⇒ the frame is the sheet.
+   */
+  readonly sheet?: Sheet;
 }
 
 // Pick the final list of sections to render. Precedence:
@@ -1603,6 +1617,41 @@ function buildSectionContext(
   // moved its body 36pt down a 297pt page — two pages for the reference's one.
   const headerBottom = headerHeight > 0 ? dims.headerOffsetPt + headerHeight : 0;
   const marginTop = Math.max(dims.marginTop, headerBottom);
+  // §17.6.20 — lines that run DOWN the sheet are laid out in the frame the
+  // text reads in: the sheet turned back a quarter, as wide as the sheet is
+  // tall. The sheet's top margin is where each line starts and its right one
+  // where the first line stands; the bands above stay on the sheet.
+  if (section.properties.textDirection !== undefined) {
+    const sheet: Sheet = {
+      width: dims.pageWidth,
+      height: dims.pageHeight,
+      marginLeft: dims.marginLeft,
+      marginRight: dims.marginRight,
+      marginTop,
+      marginBottom: dims.marginBottom,
+    };
+    const across = sheet.height - sheet.marginTop - sheet.marginBottom;
+    const turnedColumns = buildColumnGeometry(section.properties.columns, across);
+    return {
+      endIndex: section.endIndex,
+      properties: section.properties,
+      pageWidth: sheet.height,
+      pageHeight: sheet.width,
+      marginLeft: sheet.marginTop,
+      marginTop: sheet.marginRight,
+      marginBottom: sheet.marginLeft,
+      contentWidth: across,
+      pageContentHeight: sheet.width - sheet.marginRight - sheet.marginLeft,
+      ...(turnedColumns ? { columns: turnedColumns } : {}),
+      headerSet,
+      footerSet,
+      titlePg: section.properties.titlePg === true,
+      evenAndOddHeaders: section.properties.evenAndOddHeaders === true,
+      continuous: section.properties.sectionStart === 'continuous',
+      options: secOptions,
+      sheet,
+    };
+  }
   return {
     endIndex: section.endIndex,
     properties: section.properties,
@@ -8220,24 +8269,30 @@ class PageAssembler {
         render: footer.renderDynamic,
       });
     }
+    // §17.6.20 — a section whose lines run down the sheet was laid out in the
+    // frame its text reads in, and everything but the bands turns onto the
+    // sheet here; the header and the footer were laid out on the sheet.
+    const sheet = this.ctx.sheet;
+    const onSheet = (items: ReadonlyArray<PageItem>): ReadonlyArray<PageItem> =>
+      sheet ? items.map((item) => turnOntoSheet(item, sheet.width)) : items;
     this.pages.push({
       commands: [
         // §17.2.1 — the page background is under everything, paper and all.
-        ...this.pageBackgroundItems(),
-        ...this.pageBorderItems(),
-        ...this.columnSeparatorItems(),
+        ...onSheet(this.pageBackgroundItems()),
+        ...onSheet(this.pageBorderItems()),
+        ...onSheet(this.columnSeparatorItems()),
         ...header.commands,
         // §20.4.2.3 — what the page puts behind its content paints before all
         // of it, in this order, rather than riding the passes where every
         // shape lands on top of every image.
-        ...PageAssembler.byZ(this.floatsBehind).map((item) => ({ ...item, behind: true })),
-        ...this.current,
-        ...PageAssembler.byZ(this.floatsFront),
-        ...this.renderNotesBand(),
+        ...onSheet(PageAssembler.byZ(this.floatsBehind).map((item) => ({ ...item, behind: true }))),
+        ...onSheet(this.current),
+        ...onSheet(PageAssembler.byZ(this.floatsFront)),
+        ...onSheet(this.renderNotesBand()),
         ...footer.commands,
       ],
-      width: pt(this.ctx.pageWidth),
-      height: pt(this.ctx.pageHeight),
+      width: pt(sheet?.width ?? this.ctx.pageWidth),
+      height: pt(sheet?.height ?? this.ctx.pageHeight),
     });
     this.current = [];
     this.floatsBehind = [];
@@ -8514,6 +8569,7 @@ function paginateSections(
     if ((here.columns?.length ?? 1) < 2) return;
     if (!next?.continuous) return;
     if (next.pageWidth !== here.pageWidth || next.pageHeight !== here.pageHeight) return;
+    if ((next.sheet === undefined) !== (here.sheet === undefined)) return;
     const end = Math.min(here.endIndex, blocks.length);
     asm.beginBalancedBand(blocksHeight(blocks.slice(fromBlock, end)));
   };
@@ -8530,10 +8586,12 @@ function paginateSections(
       // of differing column counts and printed five pages of one line each,
       // where LibreOffice fits the lot on one. Word makes the break a page
       // break anyway when the paper changes, since a page has one size.
+      // …and a page has one direction for its lines (§17.6.20).
       const staysOnPage =
         next.continuous &&
         next.pageWidth === asm.ctx.pageWidth &&
-        next.pageHeight === asm.ctx.pageHeight;
+        next.pageHeight === asm.ctx.pageHeight &&
+        (next.sheet === undefined) === (asm.ctx.sheet === undefined);
       if (staysOnPage) {
         // §17.6.4 — the band's whole height, so a multi-column one can be
         // balanced: every block from here to the section's end.
