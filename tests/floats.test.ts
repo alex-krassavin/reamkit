@@ -232,9 +232,14 @@ const shapeX = (laid: ReturnType<typeof layoutOf>): number => {
 };
 
 describe('a drawing anchored inside a table cell (§20.4.2.4)', () => {
-  // The table starts at the left margin (72pt) and the cell keeps Word's
-  // default 5.4pt of padding, so a cell-relative offset lands 77.4pt further
-  // right than the same offset read against the page.
+  // The table starts at the left margin (72pt) — Word 2013's placement; an
+  // older document's table stands out by its cell margin (see
+  // table-compat-outdent.test.ts) — and the cell keeps Word's default 5.4pt
+  // of padding, so a cell-relative offset lands 77.4pt further right than
+  // the same offset read against the page.
+  const WORD_2013 =
+    '<w:compat><w:compatSetting w:name="compatibilityMode" ' +
+    'w:uri="http://schemas.microsoft.com/office/word" w:val="15"/></w:compat>';
   const AT_100 =
     '<wp:positionH relativeFrom="page"><wp:posOffset>1270000</wp:posOffset></wp:positionH>' +
     '<wp:positionV relativeFrom="page"><wp:posOffset>635000</wp:posOffset></wp:positionV>' +
@@ -246,7 +251,8 @@ describe('a drawing anchored inside a table cell (§20.4.2.4)', () => {
   });
 
   it('measures its position in the CELL, which is what layoutInCell means', () => {
-    expect(shapeX(layoutOf(buildDocxFromBody(cellFloat(AT_100))))).toBeCloseTo(177.4, 0);
+    const docx = buildDocxFromBody(cellFloat(AT_100), { settingsXml: WORD_2013 });
+    expect(shapeX(layoutOf(docx))).toBeCloseTo(177.4, 0);
   });
 
   it('…and reaches past the table to the page when layoutInCell is off', () => {

@@ -45,5 +45,6 @@ export function flowRenderOptions(flow: FlowDoc): FlowRenderOptions {
     ...(flow.pageBackgroundFill ? { pageBackgroundFill: flow.pageBackgroundFill } : {}),
     ...(flow.gutterAtTop ? { gutterAtTop: true } : {}),
     ...(flow.typesetBy ? { typesetBy: flow.typesetBy } : {}),
+    ...(flow.compatibilityMode !== undefined ? { compatibilityMode: flow.compatibilityMode } : {}),
   };
 }

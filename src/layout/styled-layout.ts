@@ -440,6 +440,12 @@ export interface StyledRenderOptions {
    */
   readonly gutterAtTop?: boolean;
   /**
+   * [MS-DOCX] `compatibilityMode` — the version of Word whose layout the
+   * document asks for; a Word document that states none is an older Word's
+   * (see {@link legacyTableOutdent}).
+   */
+  readonly compatibilityMode?: number;
+  /**
    * §7.6 PDF encryption (AES-256, R6). Only honoured on the ASYNC conversion
    * path (WebCrypto); mutually exclusive with `pdfA` (ISO 19005 forbids
    * `/Encrypt`) and with signatures (v1).
@@ -7151,7 +7157,8 @@ function layoutTableBlock(
   // narrow table's alignment shares out.
   const xOffsetPt =
     (table.properties.indentPt ?? 0) +
-    tableXOffset(table.properties.alignment, contentWidth, totalWidthPt);
+    tableXOffset(table.properties.alignment, contentWidth, totalWidthPt) -
+    legacyTableOutdent(table, rows, options);
   return {
     kind: 'table',
     ...(table.properties.float ? { float: table.properties.float } : {}),
@@ -7188,6 +7195,36 @@ function growRowsForMerges(rows: Array<RowLayout>): void {
       if (deficit > 0.01) rows[last] = { ...rows[last]!, heightPt: rows[last]!.heightPt + deficit };
     }
   }
+}
+
+/**
+ * [MS-DOCX] `compatibilityMode` — how far a table stands out past its indent
+ * in a document laid out as Word 2010 and earlier lay it out. There the
+ * indent places the first cell's TEXT, not the table's edge, so the table
+ * stands out by that cell's left margin. Measured in Word for Mac: with
+ * first-cell margins of 5.4, 15 and 20pt, the text stands at the margin in a
+ * document of mode 14 and in one that states no mode, and 5.4, 15 and 20pt in
+ * at mode 15. A 36pt `w:tblInd` puts the text 36pt in, not 41.4. A centred
+ * table does not move. Only a Word document's table moves; a spreadsheet has
+ * no such history.
+ *
+ * @param table   The table.
+ * @param rows    Its laid-out rows, the first cell's margin resolved.
+ * @param options Render options: whose document, and which mode.
+ * @returns The points to move the table left by, 0 where it stays.
+ */
+function legacyTableOutdent(
+  table: Table,
+  rows: ReadonlyArray<RowLayout>,
+  options: StyledRenderOptions,
+): number {
+  if (options.typesetBy !== 'word' || (options.compatibilityMode ?? 0) >= 15) return 0;
+  if ((table.properties.alignment ?? 'left') !== 'left' || table.properties.float) return 0;
+  const first = rows[0];
+  // A row that starts some columns in (§17.4.14 `w:gridBefore`) has no cell
+  // at the table's edge to line up.
+  if (!first || first.columnXOffsets[0] !== 0) return 0;
+  return first.cells[0]?.padLeftPt ?? 0;
 }
 
 // ECMA-376 §17.4.27 (w:jc) — horizontal placement of a table narrower than the
