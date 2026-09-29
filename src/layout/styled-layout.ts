@@ -565,6 +565,8 @@ interface ChartBlockLaidOut {
   readonly resolvedAlignment: 'left' | 'center' | 'right' | 'both' | 'distribute';
   readonly spacingBeforePt: number;
   readonly spacingAfterPt: number;
+  /** The part of {@link spacingAfterPt} that is the line a spacing of more lines adds (see pictureLineExtra), not space. */
+  readonly lineExtraPt?: number;
   readonly altText?: string;
 }
 
@@ -601,6 +603,8 @@ interface ImageBlockLaidOut {
   };
   readonly spacingBeforePt: number;
   readonly spacingAfterPt: number;
+  /** The part of {@link spacingAfterPt} that is the line a spacing of more lines adds (see pictureLineExtra), not space. */
+  readonly lineExtraPt?: number;
   readonly altText?: string;
 }
 
@@ -1416,12 +1420,13 @@ export function layoutStyledDocument(
                   sectionCtx.pageContentHeight,
                 ),
               );
-              const heightPt = noteBlocks.reduce(
-                (sum, b) =>
-                  sum +
-                  (b.kind === 'paragraph' ? b.spacingBeforePt + b.heightPt + b.spacingAfterPt : 0),
-                0,
-              );
+              const spacing = new SpacingStack(collapsesSpacing(sectionCtx.options ?? options));
+              const heightPt = noteBlocks.reduce((sum, b) => {
+                if (b.kind !== 'paragraph') return sum;
+                const before = spacing.open(b.spacingBeforePt);
+                spacing.close(b.spacingAfterPt);
+                return sum + before + b.heightPt + b.spacingAfterPt;
+              }, 0);
               laid = { blocks: noteBlocks, heightPt };
             }
             byId.set(id, laid);
@@ -1545,6 +1550,8 @@ export function layoutStyledDocument(
     bookmarks,
     reflowParagraph,
     backgroundImageOf(options, imageResources),
+    collapsesSpacing(options),
+    options.compatibilityMode,
   );
 
   return {
@@ -1928,7 +1935,7 @@ function layoutHeaderSet(
         imageResources,
         relativeBox,
       );
-      measured = blocksHeight(blocks);
+      measured = blocksHeight(blocks, collapsesSpacing(options));
       return markPagination(
         drawBlocksSequentially(
           blocks,
@@ -1938,6 +1945,7 @@ function layoutHeaderSet(
           contentWidth,
           undefined,
           bandMargins,
+          collapsesSpacing(options),
         ),
       );
     };
@@ -1975,8 +1983,59 @@ function balancedColumnHeight(bandHeightPt: number, colCount: number, roomPt: nu
   return Math.min(roomPt, bandHeightPt / colCount);
 }
 
-/** Total laid-out height of a run of blocks, paragraph spacing included. */
-function blocksHeight(blocks: ReadonlyArray<LaidOutBlock>): number {
+/**
+ * §17.3.1.33 — the space between paragraphs down one story (a page, a cell, a
+ * band, a box). Where the document is set as Word sets it, two paragraphs
+ * stand the LARGER of the first's space after and the second's space before
+ * apart, not the two together. Measured in Word for Mac, in modes 14 and 15
+ * alike: 10pt after and 10pt before stand 10pt apart; 10 and 24 stand 24,
+ * whichever comes first; 6 and 12 stand 12 either way. An empty paragraph
+ * between takes its share of both sides. Elsewhere the two add up.
+ */
+class SpacingStack {
+  /** The space after the last block, which a paragraph right below may share. */
+  private shared = 0;
+
+  constructor(private readonly collapse: boolean) {}
+
+  /**
+   * @param beforePt A block's own space before.
+   * @returns The room to open above it.
+   */
+  open(beforePt: number): number {
+    const room = this.collapse ? Math.max(0, beforePt - this.shared) : beforePt;
+    this.shared = 0;
+    return room;
+  }
+
+  /** @param spacingPt The space a block just left below itself, as far as a paragraph may share it. */
+  close(spacingPt: number): void {
+    this.shared = spacingPt;
+  }
+}
+
+/** Whether a layout stacks paragraph spacing as Word does (see {@link SpacingStack}). */
+function collapsesSpacing(options: StyledRenderOptions): boolean {
+  return options.typesetBy === 'word';
+}
+
+/** A block's space after, less the line a picture's spacing adds under it: the part a paragraph below shares. */
+function sharedAfter(block: {
+  readonly spacingAfterPt: number;
+  readonly lineExtraPt?: number;
+}): number {
+  return block.spacingAfterPt - (block.lineExtraPt ?? 0);
+}
+
+/**
+ * Total laid-out height of a run of blocks, paragraph spacing included.
+ *
+ * @param blocks   The blocks, in order.
+ * @param collapse Whether their spacing stacks as Word stacks it (see {@link SpacingStack}).
+ * @returns The height in points.
+ */
+function blocksHeight(blocks: ReadonlyArray<LaidOutBlock>, collapse = false): number {
+  const spacing = new SpacingStack(collapse);
   return blocks.reduce((sum, b) => {
     // §20.4.2.3 — an ANCHORED drawing is out of the flow: it sits at its own
     // offset and grows nothing. Counted, it made fdo78420's header band 400pt
@@ -1991,10 +2050,13 @@ function blocksHeight(blocks: ReadonlyArray<LaidOutBlock>): number {
     // own, spaced as that paragraph is — the pagination spends that space, and
     // a band that did not count it began the body under Bug51170.docx's
     // header logo 10pt higher up than Word.
-    return (
-      sum +
-      ('spacingBeforePt' in b ? b.spacingBeforePt + b.heightPt + b.spacingAfterPt : b.heightPt)
-    );
+    if (!('spacingBeforePt' in b)) {
+      spacing.close(0);
+      return sum + b.heightPt;
+    }
+    const before = spacing.open(b.spacingBeforePt);
+    spacing.close(sharedAfter(b));
+    return sum + before + b.heightPt + b.spacingAfterPt;
   }, 0);
 }
 
@@ -2032,7 +2094,7 @@ function layoutFooterSet(
       // the BOTTOM of the band, so the band's own height is what puts its top.
       // An anchored drawing adds nothing to that height (blocksHeight): counted,
       // fdo80895.docx's footer ellipse lifted the whole band 26pt off the floor.
-      const totalHeight = blocksHeight(blocks);
+      const totalHeight = blocksHeight(blocks, collapsesSpacing(options));
       measured = totalHeight;
       return markPagination(
         drawBlocksSequentially(
@@ -2043,6 +2105,7 @@ function layoutFooterSet(
           contentWidth,
           undefined,
           bandMargins,
+          collapsesSpacing(options),
         ),
       );
     };
@@ -2699,6 +2762,7 @@ function layoutImageBlock(
     heightPt = reservedH;
     drawInset = box;
   }
+  const lineExtraPt = image.float ? 0 : pictureLineExtra(image.paragraphProperties, options);
   const res = image.resource ? imageResources?.get(image.resource) : undefined;
   const resolvedAlignment = image.paragraphProperties.alignment ?? 'left';
   return {
@@ -2716,9 +2780,8 @@ function layoutImageBlock(
     ...(image.flipV ? { flipV: true } : {}),
     ...(drawInset ? { drawInset } : {}),
     spacingBeforePt: image.paragraphProperties.spacingBefore ?? 0,
-    spacingAfterPt:
-      (image.paragraphProperties.spacingAfter ?? 0) +
-      (image.float ? 0 : pictureLineExtra(image.paragraphProperties, options)),
+    spacingAfterPt: (image.paragraphProperties.spacingAfter ?? 0) + lineExtraPt,
+    ...(lineExtraPt > 0 ? { lineExtraPt } : {}),
     ...(image.altText ? { altText: image.altText } : {}),
     ...(image.float ? { float: image.float } : {}),
   };
@@ -2831,7 +2894,10 @@ function layoutShapeBlock(
       : vertical
         ? Math.max(1, heightPt - insetTopPt - insetBottomPt)
         : Math.max(1, widthPt - insetLeftPt - insetRightPt);
+    const spacing = new SpacingStack(collapsesSpacing(options));
     for (const el of text.content) {
+      // What is not a paragraph keeps no space of its own for the next to share.
+      if (el.kind !== 'paragraph') spacing.close(0);
       // A picture standing alone in a text box is a paragraph the reader
       // collapsed to an image BLOCK. Skipped with the tables, it vanished:
       // WPGbodyPr.docx sets one inside its outer circle and we drew the
@@ -2947,7 +3013,8 @@ function layoutShapeBlock(
       // above it. Counted in the box's height but never left on the page, the
       // paragraphs of dml-groupshape-capitalization.docx's caption ran together
       // where both references space them out.
-      const before = textLines.length > 0 ? blk.spacingBeforePt : 0;
+      const opened = spacing.open(blk.spacingBeforePt);
+      const before = textLines.length > 0 ? opened : 0;
       if (before > 0) {
         const last = textLines.length - 1;
         textLineGaps.set(last, (textLineGaps.get(last) ?? 0) + before);
@@ -2962,6 +3029,7 @@ function layoutShapeBlock(
         textLineGaps.set(last, (textLineGaps.get(last) ?? 0) + blk.spacingAfterPt);
       }
       textHeightPt += blk.spacingAfterPt;
+      spacing.close(blk.spacingAfterPt);
     }
   }
 
@@ -3174,6 +3242,7 @@ function layoutMetafileBlock(
     heightPt / 2,
   );
   const pp = image.paragraphProperties;
+  const lineExtraPt = image.float ? 0 : pictureLineExtra(pp, options);
   return {
     kind: 'chart',
     widthPt,
@@ -3181,7 +3250,8 @@ function layoutMetafileBlock(
     layout,
     resolvedAlignment: pp.alignment ?? 'left',
     spacingBeforePt: pp.spacingBefore ?? 0,
-    spacingAfterPt: (pp.spacingAfter ?? 0) + (image.float ? 0 : pictureLineExtra(pp, options)),
+    spacingAfterPt: (pp.spacingAfter ?? 0) + lineExtraPt,
+    ...(lineExtraPt > 0 ? { lineExtraPt } : {}),
     figureRole: 'Image',
     ...(image.altText ? { altText: image.altText } : {}),
     ...(image.float ? { float: image.float } : {}),
@@ -4598,9 +4668,12 @@ function drawBlocksSequentially(
   structId?: number,
   // §20.4.3.1 — the margin box a keyword-positioned drawing centres itself in.
   bandMargins?: { readonly top: number; readonly bottom: number },
+  // Whether paragraph spacing stacks as Word stacks it (see SpacingStack).
+  collapse = false,
 ): Array<PageItem> {
   const out: Array<PageItem> = [];
   let cursorY = startY;
+  const spacing = new SpacingStack(collapse);
   // §20.4.2.3 `@behindDoc` — a drawing that sits BEHIND the text sits behind
   // everything else in the band too, whatever order it was written in. Such a
   // drawing is out of the flow, so drawing it first costs the cursor nothing.
@@ -4641,22 +4714,25 @@ function drawBlocksSequentially(
         emitRowChunk(out, row, tableX, cursorY, pageHeight, block.colCount);
         cursorY -= row.heightPt;
       }
+      spacing.close(0);
       continue;
     }
     // A chart is a band's content too: chart-in-footer.docx puts one in its
     // footer and we printed an empty page. Its primitives live in a local y-up
     // frame, the same one the body's pagination places.
     if (block.kind === 'chart') {
-      cursorY -= block.spacingBeforePt + block.heightPt;
+      cursorY -= spacing.open(block.spacingBeforePt) + block.heightPt;
       const offset = alignmentOffset(block.resolvedAlignment, block.widthPt, contentWidth);
       out.push(...chartPageItems(block, startX + offset, cursorY, pageHeight, structId));
       cursorY -= block.spacingAfterPt;
+      spacing.close(sharedAfter(block));
       continue;
     }
     // …and a first-page header is very often nothing BUT the crest.
     if (block.kind === 'image') {
-      cursorY -= block.spacingBeforePt;
       const anchored = bandAnchor(block.float, block.widthPt, contentWidth, startX);
+      cursorY -=
+        anchored === undefined ? spacing.open(block.spacingBeforePt) : block.spacingBeforePt;
       const offset =
         anchored ?? alignmentOffset(block.resolvedAlignment, block.widthPt, contentWidth);
       const top =
@@ -4694,6 +4770,7 @@ function drawBlocksSequentially(
       // instead, each pushing the other off the bottom of the page.
       if (anchored === undefined) cursorY -= block.heightPt;
       cursorY -= block.spacingAfterPt;
+      if (anchored === undefined) spacing.close(sharedAfter(block));
       continue;
     }
     // A shape — in a band that is nearly always §17.3.1.11's framed paragraph,
@@ -4701,8 +4778,9 @@ function drawBlocksSequentially(
     // anchor across the band's width, since that is the whole point of the
     // frame: FDO73546 numbers its pages this way and we numbered none.
     if (block.kind === 'shape') {
-      cursorY -= block.spacingBeforePt;
       const anchored = bandAnchor(block.float, block.widthPt, contentWidth, startX);
+      cursorY -=
+        anchored === undefined ? spacing.open(block.spacingBeforePt) : block.spacingBeforePt;
       const offset =
         anchored ?? alignmentOffset(block.resolvedAlignment, block.widthPt, contentWidth);
       const top =
@@ -4712,9 +4790,10 @@ function drawBlocksSequentially(
       emitShapeItems(block, startX + offset, top - block.heightPt, out, pageHeight, structId);
       if (anchored === undefined) cursorY -= block.heightPt;
       cursorY -= block.spacingAfterPt;
+      if (anchored === undefined) spacing.close(block.spacingAfterPt);
       continue;
     }
-    cursorY -= block.spacingBeforePt;
+    cursorY -= spacing.open(block.spacingBeforePt);
     // §17.3.1.24/31 — a band's paragraphs are framed and shaded like any
     // other. SdtContent.docx keeps its whole page in a header whose one
     // paragraph is ruled off underneath, and we drew the words alone.
@@ -4748,6 +4827,7 @@ function drawBlocksSequentially(
       ),
     );
     cursorY -= block.spacingAfterPt;
+    spacing.close(block.spacingAfterPt);
   }
   return out;
 }
@@ -7768,8 +7848,10 @@ function layoutTableCell(
   let contentHeightPt = 0;
   let clipped = false;
   let pendingGapPt = 0;
+  const collapse = collapsesSpacing(options);
   const openParagraph = (spacingBeforePt: number): void => {
-    const gap = pendingGapPt + spacingBeforePt;
+    // Word's, the larger of the two (see SpacingStack).
+    const gap = collapse ? Math.max(pendingGapPt, spacingBeforePt) : pendingGapPt + spacingBeforePt;
     pendingGapPt = 0;
     if (gap <= 0) return;
     lineGaps.set(lines.length, (lineGaps.get(lines.length) ?? 0) + gap);
@@ -7861,7 +7943,8 @@ function layoutTableCell(
           lines.push(line);
           contentHeightPt += computeLineHeight(line, block.resolved);
         }
-        contentHeightPt += block.spacingAfterPt;
+        // Its space after is the gap before whatever follows, as a paragraph's
+        // is; counted here as well, it stood twice under the picture.
         pendingGapPt = block.spacingAfterPt;
       } else if (el.kind === 'shape' && !isOutOfFlowFloat(el.shape.float)) {
         // …and a lone SHAPE in a cell reaches the layout the same way. It is
@@ -8175,6 +8258,59 @@ class PageAssembler {
   current: Array<PageItem> = [];
   pendingPageBreak = false;
   cursorY: number;
+  /** Whether paragraph spacing stacks as Word stacks it (see {@link SpacingStack}). */
+  collapseSpacing = false;
+  /**
+   * Where the last block's space after ended, on which page, and how much of
+   * it a paragraph right below may share — nothing once the cursor has moved
+   * on, to a new column or page or past a table.
+   */
+  private spacingMark:
+    | { readonly y: number; readonly page: ReadonlyArray<PageItem>; readonly shared: number }
+    | undefined = undefined;
+
+  /**
+   * Whether the next block opens a section on a page of its own (the
+   * document's first included), whose space before Word keeps at the top.
+   */
+  sectionStart = true;
+  /**
+   * Whether a paragraph that breaks to a new page by its own
+   * `w:pageBreakBefore` keeps its space before there — Word 2010 and earlier
+   * (compatibilityMode below 15, or none) keep it; Word 2013 drops it.
+   */
+  keepsBeforeAtOwnBreak = false;
+
+  /**
+   * §17.3.1.33 — the room to open above a block, where the spacing stacks as
+   * Word stacks it (see {@link SpacingStack}): the space after the block right
+   * above it shared, and nothing at all at the top of a page or column. Word
+   * for Mac drops a 24pt space before there whether the paragraph ran over
+   * onto the page, broke to it after a `w:br w:type="page"` or ran into the
+   * next column, in every mode; it keeps it for the first paragraph of the
+   * document and of a section, and — below mode 15 — for a paragraph that
+   * breaks to the page by its own `w:pageBreakBefore`.
+   *
+   * @param beforePt     A block's own space before.
+   * @param opensSection Whether the block is the first of a section on a page of its own.
+   * @param ownBreak     Whether the block broke to this page by its own `w:pageBreakBefore`.
+   * @returns The room to open above it.
+   */
+  openBefore(beforePt: number, opensSection = false, ownBreak = false): number {
+    const mark = this.spacingMark;
+    this.spacingMark = undefined;
+    if (!this.collapseSpacing) return beforePt;
+    if (!this.colHasContent()) {
+      return opensSection || (ownBreak && this.keepsBeforeAtOwnBreak) ? beforePt : 0;
+    }
+    if (!mark || mark.page !== this.current || mark.y !== this.cursorY) return beforePt;
+    return Math.max(0, beforePt - mark.shared);
+  }
+
+  /** @param sharedPt The space after the block just placed, as far as a paragraph below may share it. */
+  closeAfter(sharedPt: number): void {
+    this.spacingMark = { y: this.cursorY, page: this.current, shared: sharedPt };
+  }
 
   /**
    * §17.6.4 multi-column flow: content fills column after column before the page
@@ -8670,6 +8806,8 @@ class PageAssembler {
           this.ctx.pageHeight,
           this.ctx.contentWidth,
           structId,
+          undefined,
+          this.collapseSpacing,
         ),
       );
       cursor -= note.heightPt;
@@ -9020,6 +9158,8 @@ function keptTogetherHeight(
   blocks: ReadonlyArray<LaidOutBlock>,
   from: number,
   end: number,
+  // Whether paragraph spacing stacks as Word stacks it (see SpacingStack).
+  collapse = false,
 ): number | undefined {
   const first = blocks[from];
   if (first?.kind !== 'paragraph') return undefined;
@@ -9038,7 +9178,9 @@ function keptTogetherHeight(
     const next = i < end ? blocks[i] : undefined;
     if (next?.kind === 'paragraph') {
       if (next.resolved.pageBreakBefore || next.pageBreakBefore) break;
-      height += current.spacingAfterPt + next.spacingBeforePt;
+      height += collapse
+        ? Math.max(current.spacingAfterPt, next.spacingBeforePt)
+        : current.spacingAfterPt + next.spacingBeforePt;
       if (next.resolved.keepNext) {
         height += next.heightPt;
         current = next;
@@ -9084,9 +9226,15 @@ function paginateSections(
   // §17.2.1 — the resource name of a PICTURE page background: the resource
   // table is the only thing that knows it, and it lives a caller away.
   backgroundImage?: { name: string; widthPt: number; heightPt: number },
+  // Whether paragraph spacing stacks as Word stacks it (see SpacingStack).
+  collapseSpacing = false,
+  // [MS-DOCX] compatibilityMode — the Word whose page tops the spacing follows.
+  compatibilityMode?: number,
 ): Array<LaidOutPage> {
   if (sectionCtxs.length === 0) return [];
   const asm = new PageAssembler(sectionCtxs, builder, notes, bookmarkPositions, backgroundImage);
+  asm.collapseSpacing = collapseSpacing;
+  asm.keepsBeforeAtOwnBreak = (compatibilityMode ?? 0) < 15;
 
   // §17.6.4 — a multi-column section that ENDS at a continuous break has its
   // columns evened out: the break says "carry on down this page", so the
@@ -9101,7 +9249,7 @@ function paginateSections(
     if (next.pageWidth !== here.pageWidth || next.pageHeight !== here.pageHeight) return;
     if ((next.sheet === undefined) !== (here.sheet === undefined)) return;
     const end = Math.min(here.endIndex, blocks.length);
-    asm.beginBalancedBand(blocksHeight(blocks.slice(fromBlock, end)));
+    asm.beginBalancedBand(blocksHeight(blocks.slice(fromBlock, end), collapseSpacing));
   };
   balanceIfEndsContinuous(0);
 
@@ -9126,7 +9274,7 @@ function paginateSections(
         // §17.6.4 — the band's whole height, so a multi-column one can be
         // balanced: every block from here to the section's end.
         const end = Math.min(next.endIndex, blocks.length);
-        asm.startBandSection(next, blocksHeight(blocks.slice(blockIdx, end)));
+        asm.startBandSection(next, blocksHeight(blocks.slice(blockIdx, end), collapseSpacing));
         continue;
       }
       // Forced: a section owns a page even when the body it holds draws
@@ -9159,10 +9307,15 @@ function paginateSections(
       asm.restartPageNumbers(asm.ctx);
       asm.pageInSection = 0;
       asm.cursorY = asm.pageTopY();
+      asm.sectionStart = true;
       balanceIfEndsContinuous(blockIdx);
     }
 
     const block = blocks[blockIdx]!;
+    // A drawing anchored out of the flow opens nothing: the paragraph it hangs
+    // off, placed after it, is still the section's first.
+    const opensSection = asm.sectionStart;
+    if (!('float' in block && isOutOfFlowFloat(block.float))) asm.sectionStart = false;
     // A forced page break (w:br w:type="page") carried by the previous block:
     // start this block on a fresh page.
     if (asm.pendingPageBreak) {
@@ -9176,11 +9329,12 @@ function paginateSections(
     // A non-list-item block ends any open list run (tagged PDF).
     if (builder && !(block.kind === 'paragraph' && block.list)) asm.listStack.length = 0;
     if (block.kind === 'paragraph') {
+      const ownBreak = block.resolved.pageBreakBefore && asm.pageHasContent();
       if ((block.resolved.pageBreakBefore || block.pageBreakBefore) && asm.pageHasContent()) {
         asm.flushPage();
       }
       const columnInUse = asm.colHasContent();
-      asm.cursorY -= block.spacingBeforePt;
+      asm.cursorY -= asm.openBefore(block.spacingBeforePt, opensSection, ownBreak);
       // §17.3.1.14/15 — a paragraph that keeps its lines together, or keeps with
       // the start of the next, goes whole to the next column where this one
       // cannot hold what it keeps: a heading is not left at the foot of a page
@@ -9188,7 +9342,7 @@ function paginateSections(
       // page would hold it all, and break it there. It moves the way a first
       // line that runs past the foot does, its space before spent here. Not
       // beside a float, whose exclusions shape lines the count cannot foresee.
-      const kept = keptTogetherHeight(blocks, blockIdx, asm.ctx.endIndex);
+      const kept = keptTogetherHeight(blocks, blockIdx, asm.ctx.endIndex, collapseSpacing);
       if (
         kept !== undefined &&
         columnInUse &&
@@ -9423,6 +9577,7 @@ function paginateSections(
         );
       }
       asm.cursorY -= pb.spacingAfterPt;
+      asm.closeAfter(pb.spacingAfterPt);
       if (pb.pageBreakAfter) asm.pendingPageBreak = true;
     } else if (block.kind === 'image') {
       const figId = builder ? createFigure(builder, block.altText, 'Image') : undefined;
@@ -9473,7 +9628,7 @@ function paginateSections(
           asm.excludeFloat(block.float, fx, fy, block.widthPt, block.heightPt);
         }
       } else {
-        asm.cursorY -= block.spacingBeforePt;
+        asm.cursorY -= asm.openBefore(block.spacingBeforePt, opensSection);
         if (asm.cursorY - block.heightPt < asm.bottomLimit() && asm.colHasContent())
           asm.advanceColumn();
         asm.cursorY -= block.heightPt;
@@ -9484,6 +9639,7 @@ function paginateSections(
         const offset = alignmentOffset(block.resolvedAlignment, block.widthPt, asm.colWidth());
         emitImageAt(asm.colLeft() + offset, asm.cursorY + block.heightPt, asm.current);
         asm.cursorY -= block.spacingAfterPt;
+        asm.closeAfter(sharedAfter(block));
       }
     } else if (block.kind === 'shape') {
       // Shapes are atomic — never split across asm.pages.
@@ -9505,13 +9661,14 @@ function paginateSections(
           asm.excludeFloat(block.float, fx, fy, block.widthPt, block.heightPt);
         }
       } else {
-        asm.cursorY -= block.spacingBeforePt;
+        asm.cursorY -= asm.openBefore(block.spacingBeforePt, opensSection);
         if (asm.cursorY - block.heightPt < asm.bottomLimit() && asm.colHasContent())
           asm.advanceColumn();
         asm.cursorY -= block.heightPt;
         const offset = alignmentOffset(block.resolvedAlignment, block.widthPt, asm.colWidth());
         emitShapeAt(asm.colLeft() + offset, asm.cursorY, asm.current);
         asm.cursorY -= block.spacingAfterPt;
+        asm.closeAfter(block.spacingAfterPt);
       }
     } else if (block.kind === 'chart') {
       // Charts are atomic. Their primitives are in a local y-up frame; the
@@ -9539,13 +9696,14 @@ function paginateSections(
           asm.excludeFloat(block.float, fx, fy, block.widthPt, block.heightPt);
         }
       } else {
-        asm.cursorY -= block.spacingBeforePt;
+        asm.cursorY -= asm.openBefore(block.spacingBeforePt, opensSection);
         if (asm.cursorY - block.heightPt < asm.bottomLimit() && asm.colHasContent())
           asm.advanceColumn();
         asm.cursorY -= block.heightPt;
         const offset = alignmentOffset(block.resolvedAlignment, block.widthPt, asm.colWidth());
         emitChartAt(asm.colLeft() + offset, asm.cursorY, asm.current);
         asm.cursorY -= block.spacingAfterPt;
+        asm.closeAfter(sharedAfter(block));
       }
     } else {
       const colCount = block.rows.reduce(
