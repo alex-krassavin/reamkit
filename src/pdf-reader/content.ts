@@ -332,6 +332,8 @@ export interface VectorPlacement {
   readonly dash?: ReadonlyArray<number>;
   /** §8.4.3.3 — the stroke's cap, where it is not the butt cap every line starts with. */
   readonly cap?: 'round' | 'square';
+  /** §11.6.4.4 `/CA` — how opaque the stroke is, when the page asked for less than all. */
+  readonly strokeAlpha?: number;
   readonly mcid?: number;
 }
 
@@ -469,6 +471,7 @@ interface TextState {
   fillGradient: ShapeGradient | undefined; // current non-stroking shading pattern (EP16c)
   fillPattern: string | undefined; // §8.7.3 non-stroking TILING pattern resource name
   fillAlpha: number; // §11.6.4.4 `/ca` — how opaque the non-stroking paint is
+  strokeAlpha: number; // §11.6.4.4 `/CA` — how opaque the stroking paint is
   fillDarkens: boolean; // §11.3.5 `/BM` Multiply or Darken — the paint only darkens
   blendMode: string | undefined; // §11.3.5 `/BM` — a blend nothing here can perform
   softMask: boolean; // §11.6.5 `/SMask` — the paint fades from place to place
@@ -497,6 +500,7 @@ function initialState(): TextState {
     fillGradient: undefined,
     fillPattern: undefined,
     fillAlpha: 1,
+    strokeAlpha: 1,
     fillDarkens: false,
     blendMode: undefined,
     softMask: false,
@@ -687,6 +691,7 @@ export function interpretContent(
         ...(stroke && state.dash.length > 0 ? { dash: ctmDash() } : {}),
         ...(stroke && state.lineCap === 1 ? { cap: 'round' as const } : {}),
         ...(stroke && state.lineCap === 2 ? { cap: 'square' as const } : {}),
+        ...(stroke && state.strokeAlpha < 1 ? { strokeAlpha: state.strokeAlpha } : {}),
         ...(mcid !== undefined ? { mcid } : {}),
       });
     }
@@ -1170,6 +1175,7 @@ export function interpretContent(
           if (paint.lineWidth !== undefined) state.lineWidth = paint.lineWidth;
           if (paint.dash !== undefined) state.dash = paint.dash;
           if (paint.lineCap !== undefined) state.lineCap = paint.lineCap;
+          if (paint.strokeAlpha !== undefined) state.strokeAlpha = paint.strokeAlpha;
         }
         break;
       }

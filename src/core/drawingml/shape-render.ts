@@ -248,12 +248,32 @@ export function buildStroke(line: ShapeLine | undefined): StrokeStyle | undefine
     custom ?? (line.dash && line.dash !== 'solid' ? dashPattern(line.dash, widthPt) : undefined);
   // DrawingML 'flat' cap is PDF butt; round/square map straight through.
   const cap: StrokeStyle['cap'] | undefined = line.cap === 'flat' ? 'butt' : line.cap;
+  // §20.1.2.3.1 — a stroke has no opacity here, so a line drawn part-way
+  // through is drawn as the colour it comes to over white, which is what the
+  // .docx reader handed on before it kept the opacity apart.
+  const colorHex = line.colorHex ?? '000000';
   return {
-    colorHex: line.colorHex ?? '000000',
+    colorHex:
+      line.alpha !== undefined && line.alpha < 1 ? overWhite(colorHex, line.alpha) : colorHex,
     widthPt,
     ...(dash ? { dash } : {}),
     ...(cap ? { cap } : {}),
   };
+}
+
+/** A 6-hex colour drawn at `alpha` over white, as the opaque colour it comes to. */
+function overWhite(hex: string, alpha: number): string {
+  const n = parseInt(hex, 16);
+  if (Number.isNaN(n)) return hex;
+  const a = Math.max(0, Math.min(1, alpha));
+  return [16, 8, 0]
+    .map((shift) =>
+      Math.round(255 - (255 - ((n >> shift) & 255)) * a)
+        .toString(16)
+        .padStart(2, '0'),
+    )
+    .join('')
+    .toUpperCase();
 }
 
 // Dash patterns expressed in multiples of the line width (a common rendering

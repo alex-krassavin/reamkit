@@ -453,6 +453,8 @@ export function shapeBlock(
           // every line starts with: a line that states none is capped SQUARE
           // in a .docx, and each dash of a pattern grows by the pen's width.
           cap: v.cap ?? 'flat',
+          // §11.6.4.4 — a pen the page set to show through what it crosses.
+          ...(v.strokeAlpha !== undefined ? { alpha: v.strokeAlpha } : {}),
         }
       : undefined;
   // §20.4.2.3 — anchored to the PAGE at the position it was drawn at, y flipped

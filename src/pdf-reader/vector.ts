@@ -260,6 +260,8 @@ export interface PdfVector {
   readonly dash?: ReadonlyArray<number>;
   /** §8.4.3.3 — the stroke's cap, where it is not the butt cap. */
   readonly cap?: 'round' | 'square';
+  /** §11.6.4.4 `/CA` — how opaque the stroke is, where less than all. */
+  readonly strokeAlpha?: number;
   readonly minX: number;
   readonly minY: number;
   readonly maxX: number;
@@ -423,6 +425,7 @@ export function collectPageVectors(
             ...(v.lineWidth !== undefined ? { lineWidth: v.lineWidth } : {}),
             ...(v.dash !== undefined ? { dash: v.dash } : {}),
             ...(v.cap !== undefined ? { cap: v.cap } : {}),
+            ...(v.strokeAlpha !== undefined ? { strokeAlpha: v.strokeAlpha } : {}),
           }
         : {}),
       ...b,

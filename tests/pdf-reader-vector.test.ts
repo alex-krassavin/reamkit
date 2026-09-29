@@ -9,6 +9,7 @@ import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
 import type { PdfImage } from '@/pdf-reader/images';
+import type { PdfVector } from '@/pdf-reader/vector';
 import { Ream } from '@/core/converter/ream';
 import { interpretContent } from '@/pdf-reader/content';
 import { PdfFile } from '@/pdf-reader/document';
@@ -695,7 +696,7 @@ describe('the pen is as wide as the page says (§8.4.3.2)', () => {
 describe('a dashed pen (§8.4.3.6)', () => {
   const stroke = (stream: string) =>
     interpretContent(new TextEncoder().encode(stream), NO_FONTS).vectors[0];
-  const lineOf = (v: NonNullable<ReturnType<typeof stroke>>) => {
+  const lineOf = (v: Pick<PdfVector, 'segs' | 'lineWidth' | 'dash' | 'cap' | 'strokeAlpha'>) => {
     const el = shapeBlock({
       orderKey: [0],
       segs: v.segs,
@@ -703,6 +704,7 @@ describe('a dashed pen (§8.4.3.6)', () => {
       ...(v.lineWidth !== undefined ? { lineWidth: v.lineWidth } : {}),
       ...(v.dash !== undefined ? { dash: v.dash } : {}),
       ...(v.cap !== undefined ? { cap: v.cap } : {}),
+      ...(v.strokeAlpha !== undefined ? { strokeAlpha: v.strokeAlpha } : {}),
       minX: 0,
       minY: 0,
       maxX: 100,
@@ -739,6 +741,22 @@ describe('a dashed pen (§8.4.3.6)', () => {
     expect(lineOf(stroke('0 0 m 100 0 l S')!)?.cap).toBe('flat');
     expect(lineOf(stroke('1 J 0 0 m 100 0 l S')!)?.cap).toBe('round');
     expect(lineOf(stroke('2 J 0 0 m 100 0 l S')!)?.cap).toBe('square');
+  });
+
+  it('draws a pen the page set to show through at its opacity (§11.6.4.4)', () => {
+    // inks_basic.pdf draws a black ink line at `/CA 0.45`, and at full strength
+    // the grey stroke the page shows came back black.
+    const pdf = assemble([
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Contents 4 0 R ' +
+        '/Resources << /ExtGState << /R0 << /CA 0.45 >> >> >> >>',
+      '<< /Length 31 >>\nstream\n20 w /R0 gs 50 60 m 280 60 l S\nendstream',
+    ]);
+    const file = PdfFile.parse(pdf);
+    const [v] = collectPageVectors(file, file.pages()[0]!, []).vectors;
+    expect(v?.strokeAlpha).toBe(0.45);
+    expect(lineOf(v!)?.alpha).toBe(0.45);
   });
 
   it('takes the pen a named graphics state sets (§8.4.5)', () => {

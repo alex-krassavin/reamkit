@@ -491,7 +491,14 @@ export function buildAlphaMap(file: PdfFile, resources: PdfDict | undefined): Ma
     const dash = Array.isArray(d) ? dashLengths(file.resolve(d[0] ?? PDF_NULL)) : undefined;
     const lc = file.resolve(state.get('LC') ?? PDF_NULL);
     const lineCap = lc === 0 || lc === 1 || lc === 2 ? lc : undefined;
-    const statesPen = lineWidth !== undefined || dash !== undefined || lineCap !== undefined;
+    const caStroke = file.resolve(state.get('CA') ?? PDF_NULL);
+    const strokeAlpha =
+      typeof caStroke === 'number' && caStroke >= 0 && caStroke <= 1 ? caStroke : undefined;
+    const statesPen =
+      lineWidth !== undefined ||
+      dash !== undefined ||
+      lineCap !== undefined ||
+      strokeAlpha !== undefined;
     if (alpha === undefined && mode === undefined && !statesMask && !statesPen) continue;
     out.set(name, {
       ...(alpha !== undefined ? { alpha } : {}),
@@ -501,6 +508,7 @@ export function buildAlphaMap(file: PdfFile, resources: PdfDict | undefined): Ma
       ...(lineWidth !== undefined ? { lineWidth } : {}),
       ...(dash !== undefined ? { dash } : {}),
       ...(lineCap !== undefined ? { lineCap } : {}),
+      ...(strokeAlpha !== undefined ? { strokeAlpha } : {}),
     });
   }
   return out;
@@ -536,6 +544,8 @@ export interface GsPaint {
   readonly dash?: ReadonlyArray<number>;
   /** §8.4.5 `/LC` — the line cap: 0 butt, 1 round, 2 projecting square. */
   readonly lineCap?: number;
+  /** §11.6.4.4 `/CA` — the constant STROKE alpha, where the state names one. */
+  readonly strokeAlpha?: number;
 }
 
 /**

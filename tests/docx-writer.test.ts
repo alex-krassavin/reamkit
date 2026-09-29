@@ -5,6 +5,7 @@ import { buildTinyPng } from './fixtures/build-png';
 import type { FlowDoc } from '@/core/ir/flow';
 import { Ream } from '@/core/converter/ream';
 import { OpcPackage } from '@/core/opc';
+import { buildStroke } from '@/core/drawingml/shape-render';
 import { writeDocx } from '@/word/docx-writer';
 import { readDocx } from '@/word/docx-reader';
 import { FLOAT_CARRIER, shapeBlock } from '@/pdf-reader/flow-build';
@@ -263,6 +264,14 @@ describe('docx writer (E-DOCX D2 skeleton)', () => {
     if (nested?.kind !== 'table') throw new Error('expected nested table');
     const innerCell = nested.table.rows[0]!.cells[0]!.content[0]!;
     expect(innerCell.kind === 'paragraph' && innerCell.paragraph.runs[0]!.text).toBe('inner');
+  });
+
+  it('draws a line part-way through as the colour it comes to over white', () => {
+    // A stroke has no opacity in the PDF this renders, and the line is kept as
+    // its own colour and opacity now: drawn at full strength, black at 45%
+    // would print black.
+    expect(buildStroke({ colorHex: '000000', alpha: 0.45 })?.colorHex).toBe('8C8C8C');
+    expect(buildStroke({ colorHex: '000000' })?.colorHex).toBe('000000');
   });
 
   it('writes back how a picture is drawn: crop, turn, flip and opacity', () => {
@@ -554,7 +563,7 @@ describe('docx writer (E-DOCX D2 skeleton)', () => {
     '<pic:blipFill><a:blip r:embed="rIdImg"/></pic:blipFill></pic:pic>' +
     '</a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>';
 
-  it('writes a line’s own dash pattern back (§20.1.8.21 a:custDash)', () => {
+  it('writes a line’s own dash pattern and opacity back (§20.1.8.21 a:custDash)', () => {
     // Read and never written, a custom pattern came back solid — from a .docx
     // read and saved again, and from every dashed line a PDF draws.
     const shape =
@@ -566,7 +575,8 @@ describe('docx writer (E-DOCX D2 skeleton)', () => {
       '<wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">' +
       '<wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="12700"/></a:xfrm>' +
       '<a:prstGeom prst="line"><a:avLst/></a:prstGeom>' +
-      '<a:ln w="12700" cap="flat"><a:solidFill><a:srgbClr val="000000"/></a:solidFill>' +
+      '<a:ln w="12700" cap="flat"><a:solidFill><a:srgbClr val="000000"><a:alpha val="45000"/>' +
+      '</a:srgbClr></a:solidFill>' +
       '<a:custDash><a:ds d="300000" sp="100000"/><a:ds d="100000" sp="100000"/></a:custDash></a:ln>' +
       '</wps:spPr><wps:bodyPr/></wps:wsp>' +
       '</a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>';
@@ -574,8 +584,10 @@ describe('docx writer (E-DOCX D2 skeleton)', () => {
     const xml = new TextDecoder().decode(
       OpcPackage.open(writeDocx(flow).bytes).getMainDocument().data,
     );
+    // …and its opacity, which went the same way.
     expect(xml).toContain(
-      '<a:ln w="12700" cap="flat"><a:solidFill><a:srgbClr val="000000"/></a:solidFill>' +
+      '<a:ln w="12700" cap="flat"><a:solidFill><a:srgbClr val="000000"><a:alpha val="45000"/>' +
+        '</a:srgbClr></a:solidFill>' +
         '<a:custDash><a:ds d="300000" sp="100000"/><a:ds d="100000" sp="100000"/></a:custDash></a:ln>',
     );
   });

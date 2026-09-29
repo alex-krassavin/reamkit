@@ -1368,7 +1368,7 @@ function lineXml(l: ShapeLine): string {
           : '';
   const inner: Array<string> = [];
   if (l.fill === 'none') inner.push('<a:noFill/>');
-  else if (l.colorHex) inner.push(`<a:solidFill><a:srgbClr val="${l.colorHex}"/></a:solidFill>`);
+  else if (l.colorHex) inner.push(`<a:solidFill>${srgbXml(l.colorHex, l.alpha)}</a:solidFill>`);
   // §20.1.8.21 — the author's own pattern wins over a preset beside it, in
   // thousandths of a percent of the line's width, a dash and a space a pair.
   const custom = l.customDash ?? [];
