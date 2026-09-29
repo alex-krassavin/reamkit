@@ -4,9 +4,14 @@
 // put alpha. The fixtures below are hand-assembled byte for byte, because a
 // baseline JPEG small enough to read is small enough to write.
 
+import { unzlibSync } from 'fflate';
 import { describe, expect, it } from 'vitest';
 
+import { prepareImage } from '@/core/images';
+import { PdfFile } from '@/pdf-reader/document';
+import { decodePdfImage } from '@/pdf-reader/image-decode';
 import { decodeJpeg } from '@/pdf-reader/jpeg';
+import { name, stream } from '@/pdf/objects';
 
 const seg = (marker: number, body: ReadonlyArray<number>): Array<number> => [
   0xff,
@@ -75,5 +80,78 @@ describe('baseline JPEG decoder (ITU-T T.81)', () => {
   it('declines a truncated stream instead of throwing', () => {
     const cut = flatGrayJpeg().slice(0, 40);
     expect(() => decodeJpeg(cut)).not.toThrow();
+  });
+});
+
+/**
+ * The same flat block four times over — an 8x8 JPEG of four inks, each at the
+ * tone 143 — with Adobe's APP14 marker naming `transform` where one is given.
+ */
+function flatCmykJpeg(transform?: number): Uint8Array {
+  const adobe =
+    transform === undefined
+      ? []
+      : seg(0xee, [...[0x41, 0x64, 0x6f, 0x62, 0x65], 0x00, 0x64, 0, 0, 0, 0, transform]);
+  return new Uint8Array([
+    0xff,
+    0xd8, // SOI
+    ...adobe,
+    ...seg(0xdb, [0x00, ...new Array<number>(64).fill(8)]),
+    // SOF0: 8x8, four components, every one at full resolution on table 0.
+    ...seg(0xc0, [8, 0, 8, 0, 8, 4, 1, 0x11, 0, 2, 0x11, 0, 3, 0x11, 0, 4, 0x11, 0]),
+    ...seg(0xc4, oneCodeTable(0x00, 0x04)),
+    ...seg(0xc4, oneCodeTable(0x10, 0x00)),
+    ...seg(0xda, [4, 1, 0x00, 2, 0x00, 3, 0x00, 4, 0x00, 0x00, 0x3f, 0x00]),
+    // `0 1111 0` for each of the four blocks, one after another.
+    0x79,
+    0xe7,
+    0x9e,
+    0xff,
+    0xd9, // EOI
+  ]);
+}
+
+describe('a JPEG of four inks (§8.6.4.4)', () => {
+  it('decodes them as the CMYK the stream stores', () => {
+    const out = decodeJpeg(flatCmykJpeg(0));
+    expect(out?.components).toBe(4);
+    expect([...out!.samples.subarray(0, 4)]).toEqual([143, 143, 143, 143]);
+  });
+
+  it('undoes Adobe’s YCCK transform', () => {
+    // Transform 2: cyan, magenta and yellow are coded as YCbCr of their
+    // complements; black is as it is.
+    const out = decodeJpeg(flatCmykJpeg(2));
+    expect([...out!.samples.subarray(0, 4)]).toEqual([91, 128, 86, 143]);
+  });
+
+  it('gives the picture back in the colours its inks paint', () => {
+    // Carried as it was, a PDF's CMYK JPEG is read by every viewer in Adobe's
+    // inverted convention: cmykjpeg.pdf's beach photograph came back black.
+    const file = PdfFile.parse(
+      new TextEncoder().encode('%PDF-1.7\ntrailer\n<< /Size 1 >>\n%%EOF\n'),
+    );
+    const rgbOf = (decode?: Array<number>): Array<number> => {
+      const decoded = decodePdfImage(
+        file,
+        stream(
+          {
+            Width: 8,
+            Height: 8,
+            ColorSpace: name('DeviceCMYK'),
+            BitsPerComponent: 8,
+            Filter: name('DCTDecode'),
+            ...(decode ? { Decode: decode } : {}),
+          },
+          flatCmykJpeg(0),
+        ),
+      );
+      if (!decoded.ok || decoded.format !== 'png') return [];
+      return [...unzlibSync(prepareImage(decoded.bytes).data).subarray(0, 3)];
+    };
+    // 143 of 255 of every ink: (1 − 0.56)² of white.
+    expect(rgbOf()).toEqual([49, 49, 49]);
+    // …and a `/Decode` that inverts the inks is honoured, as for any CMYK image.
+    expect(rgbOf([1, 0, 1, 0, 1, 0, 1, 0])).toEqual([80, 80, 80]);
   });
 });

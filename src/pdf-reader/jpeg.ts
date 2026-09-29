@@ -8,17 +8,20 @@
 // plans that way — the JPEG is the wash and the mask is the line work — and
 // unmasked it renders as a dark rectangle.
 //
-// Scope is the sequential baseline (SOF0/SOF1), 8-bit, one to three components,
-// which is what a PDF producer writes. Progressive (SOF2), arithmetic coding
-// and the lossless modes decline, and the caller carries the JPEG through
-// untouched exactly as before.
+// Scope is the sequential baseline (SOF0/SOF1), 8-bit, one, three or four
+// components, which is what a PDF producer writes. Progressive (SOF2),
+// arithmetic coding and the lossless modes decline, and the caller carries the
+// JPEG through untouched exactly as before.
 
-/** A decoded JPEG: 8-bit interleaved samples, one or three components. */
+/** A decoded JPEG: 8-bit interleaved samples, one, three or four components. */
 export interface DecodedJpeg {
   readonly width: number;
   readonly height: number;
-  /** 1 = grayscale, 3 = RGB (already converted from YCbCr where it applies). */
-  readonly components: 1 | 3;
+  /**
+   * 1 = grayscale, 3 = RGB (already converted from YCbCr where it applies),
+   * 4 = CMYK as the stream stores it (converted from YCCK where it applies).
+   */
+  readonly components: 1 | 3 | 4;
   /** `width * height * components` bytes, row-major. */
   readonly samples: Uint8Array;
 }
@@ -161,7 +164,7 @@ function readFrame(
   const width = be16(bytes, p + 3);
   const count = bytes[p + 5]!;
   if (width <= 0 || height <= 0 || width * height > MAX_PIXELS) return undefined;
-  if (count !== 1 && count !== 3) return undefined; // grayscale or YCbCr/RGB only
+  if (count !== 1 && count !== 3 && count !== 4) return undefined; // gray, YCbCr/RGB, CMYK
 
   const comps: Array<Component> = [];
   let maxH = 1;
@@ -475,9 +478,27 @@ function assemble(
     }
   }
   if (n === 1) return { width, height, components: 1, samples };
+  // Adobe APP14 transform 2 — the four components are YCCK: the ink of cyan,
+  // magenta and yellow coded as YCbCr of their complements, and black as is.
+  if (n === 4) {
+    if (adobeTransform === 2) ycckToCmyk(samples);
+    return { width, height, components: 4, samples };
+  }
   // §A.11 — three components are YCbCr unless Adobe says transform 0 (RGB).
   if (adobeTransform !== 0) ycbcrToRgb(samples);
   return { width, height, components: 3, samples };
+}
+
+/** Adobe's YCCK → CMYK, in place: the YCbCr → RGB conversion, complemented. */
+function ycckToCmyk(s: Uint8Array): void {
+  for (let i = 0; i < s.length; i += 4) {
+    const y = s[i]!;
+    const cb = s[i + 1]! - 128;
+    const cr = s[i + 2]! - 128;
+    s[i] = 255 - clamp(y + 1.402 * cr);
+    s[i + 1] = 255 - clamp(y - 0.344136 * cb - 0.714136 * cr);
+    s[i + 2] = 255 - clamp(y + 1.772 * cb);
+  }
 }
 
 /** ITU-T T.871 §7 — the JFIF YCbCr → RGB conversion, in place. */

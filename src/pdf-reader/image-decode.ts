@@ -93,6 +93,12 @@ export function decodePdfImage(file: PdfFile, stream: PdfStream, fillHex?: strin
   // has to be taken apart and given back as a PNG. §8.9.5.4.
   if (last === 'DCTDecode' || last === 'DCT') {
     const jpegBytes = applyChainExceptLast(filters, stream.data);
+    // A JPEG of four inks cannot travel as it is: the PDF states them as the
+    // ink they are, and a picture file of CMYK is read by every viewer as
+    // Adobe's INVERTED convention — cmykjpeg.pdf's beach photograph came back
+    // a black rectangle. Its colours are worked out here instead.
+    const inks = cmykJpeg(file, d, jpegBytes, width, height);
+    if (inks) return inks;
     const masked = hasSMask(file, d) ? maskedJpeg(file, d, jpegBytes, width, height) : undefined;
     if (masked) return masked;
     const degraded = hasSMask(file, d)
@@ -687,7 +693,7 @@ function maskedJpeg(
   height: number,
 ): DecodedImage | undefined {
   const image = decodeJpeg(jpegBytes);
-  if (!image) return undefined;
+  if (!image || image.components === 4) return undefined;
   const alpha = decodeSMask(file, d, image.width, image.height);
   if (!alpha) return undefined;
   const color: RawColor =
@@ -743,10 +749,44 @@ function decodeSMask(file: PdfFile, d: PdfDict, width: number, height: number): 
 /** A DCT-coded mask decoded to samples, or `undefined` past the baseline decoder. */
 function jpegSamples(bytes: Uint8Array): RawColor | undefined {
   const decoded = decodeJpeg(bytes);
-  if (!decoded) return undefined;
+  if (!decoded || decoded.components === 4) return undefined;
   return decoded.components === 1
     ? { color: 'gray', samples: decoded.samples }
     : { color: 'rgb', samples: decoded.samples };
+}
+
+/**
+ * §8.6.4.4 — a four-ink JPEG taken apart and given back as the colours it
+ * paints, through the image's colour space and its `/Decode` (§8.9.5.2) as any
+ * other sampled CMYK image is, with an `/SMask` folded in where it has one.
+ *
+ * @returns The picture as a PNG, or `undefined` where the JPEG is not four
+ *          inks or is past the baseline decoder — it then travels as it is.
+ */
+function cmykJpeg(
+  file: PdfFile,
+  d: PdfDict,
+  jpegBytes: Uint8Array,
+  width: number,
+  height: number,
+): DecodedImage | undefined {
+  const image = decodeJpeg(jpegBytes);
+  if (image?.components !== 4) return undefined;
+  const cs = resolveColorSpace(file, d.get('ColorSpace') ?? d.get('CS'));
+  const inks: ColorSpace = cs?.components === 4 ? cs : { kind: 'cmyk', components: 4 };
+  const px = image.width * image.height;
+  const color = toColor(inks, Uint16Array.from(image.samples), px, 8, decodeArrayOf(file, d));
+  const alpha = hasSMask(file, d) ? decodeSMask(file, d, image.width, image.height) : undefined;
+  const { color: pngColor, samples } = alpha
+    ? combineAlpha(color, alpha)
+    : { color: color.color, samples: color.samples };
+  return {
+    ok: true,
+    bytes: encodePng(image.width, image.height, pngColor, samples),
+    format: 'png',
+    widthPx: width,
+    heightPx: height,
+  };
 }
 
 function combineAlpha(color: RawColor, alpha: Alpha): { color: PngColor; samples: Uint8Array } {
