@@ -1742,6 +1742,17 @@ export interface SectionProperties {
    */
   readonly sectionStart?: 'continuous' | 'nextPage' | 'oddPage' | 'evenPage';
   /**
+   * §17.6.20 `w:textDirection` — which way the section's lines run. `tbRl`
+   * sets each line top to bottom and the next one to the left of it: the
+   * text turned a quarter clockwise on the sheet, which is how a viewer shows
+   * a page turned by `/Rotate 90` whose words stood upright in its box. Word
+   * lays a section out that way for `btLr` as well, so the layout reads both
+   * alike. Only the body's text turns: the headers, the footers and every
+   * drawing anchored to the page keep the sheet's own axes. Absent ⇒ left to
+   * right, top to bottom.
+   */
+  readonly textDirection?: 'tbRl' | 'btLr';
+  /**
    * §17.6.5 `w:docGrid` — the line grid a `lines`/`linesAndChars` section rules
    * its text onto, as the pitch in points. Every line of the section's text is
    * as tall as a whole number of these, however tall its own font makes it.

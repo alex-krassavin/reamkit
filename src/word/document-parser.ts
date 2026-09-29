@@ -432,6 +432,7 @@ function parseSectPrNode(sectPr: PoNode): SectionProperties {
   let sectionStart: 'continuous' | 'nextPage' | 'oddPage' | 'evenPage' | undefined;
   let pageBorders: SectionProperties['pageBorders'];
   let gridLinePitchPt: Pt | undefined;
+  let textDirection: SectionProperties['textDirection'];
   const headers: Array<HeaderFooterReference> = [];
   const footers: Array<HeaderFooterReference> = [];
 
@@ -523,6 +524,11 @@ function parseSectPrNode(sectPr: PoNode): SectionProperties {
       const val = poAttr(child, 'val');
       sectionStart =
         val === 'continuous' || val === 'oddPage' || val === 'evenPage' ? val : 'nextPage';
+    } else if (poIs(child, 'w:textDirection')) {
+      // §17.6.20 — the section's lines run down the sheet, each to the left
+      // of the one before. `lrTb`, the default, says nothing.
+      const val = poAttr(child, 'val');
+      if (val === 'tbRl' || val === 'btLr') textDirection = val;
     }
   }
 
@@ -538,6 +544,7 @@ function parseSectPrNode(sectPr: PoNode): SectionProperties {
     ...(sectionStart ? { sectionStart } : {}),
     ...(pageBorders ? { pageBorders } : {}),
     ...(gridLinePitchPt !== undefined ? { gridLinePitchPt } : {}),
+    ...(textDirection ? { textDirection } : {}),
   };
 }
 

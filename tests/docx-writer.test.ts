@@ -1027,7 +1027,8 @@ describe('what a reader can actually draw', () => {
       '<w:tc><w:tcPr><w:tcW w:w="2500" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>a</w:t></w:r></w:p></w:tc>' +
       '<w:tc><w:tcPr><w:tcW w:w="2500" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>b</w:t></w:r></w:p></w:tc>' +
       '</w:tr></w:tbl>' +
-      '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/></w:sectPr>';
+      '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:titlePg/>' +
+      '<w:textDirection w:val="tbRl"/></w:sectPr>';
     const { doc: flow } = readDocx(buildDocxFromBody(source));
     const xml = decode(OpcPackage.open(writeDocx(flow).bytes).getMainDocument().data);
     // §17.3.1.26, §17.3.2.28, §17.6.17, §17.4.60, §17.4.82, §17.4.70 — the
@@ -1078,6 +1079,7 @@ describe('what a reader can actually draw', () => {
         'w:pgMar',
         'w:cols',
         'w:titlePg',
+        'w:textDirection',
         'w:bidi',
         'w:docGrid',
       ],

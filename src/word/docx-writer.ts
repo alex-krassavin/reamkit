@@ -2034,7 +2034,7 @@ function rawRFontsXml(fonts: FontFamilyMap): string {
 }
 
 // §17.6.17 — the section. Header/footer references first (Word's child order),
-// then page size/margins, columns and the titlePg toggle.
+// then page size/margins, columns, the titlePg toggle and the text direction.
 function sectPrXml(s: SectionProperties, hf: HeaderFooterRefs): string {
   const parts: Array<string> = [];
   for (const h of hf.headers) {
@@ -2066,6 +2066,9 @@ function sectPrXml(s: SectionProperties, hf: HeaderFooterRefs): string {
   }
   if (s.columns) parts.push(colsXml(s.columns));
   if (s.titlePg) parts.push('<w:titlePg/>');
+  // §17.6.20 — which way the lines run, after the title-page toggle as
+  // CT_SectPr orders them.
+  if (s.textDirection) parts.push(`<w:textDirection w:val="${s.textDirection}"/>`);
   if (parts.length === 0) return '';
   return `<w:sectPr>${parts.join('')}</w:sectPr>`;
 }
