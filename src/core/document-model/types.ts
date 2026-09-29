@@ -282,6 +282,17 @@ export interface ParagraphProperties {
    */
   readonly pageBreakBefore?: boolean;
   /**
+   * ECMA-376 Part 1 §17.3.1.14 — `w:keepNext`. The paragraph stands on the
+   * same page as the start of the one after it: a heading is not left at the
+   * foot of a page with its text on the next.
+   */
+  readonly keepNext?: boolean;
+  /**
+   * ECMA-376 Part 1 §17.3.1.15 — `w:keepLines`. The paragraph's lines stand on
+   * one page, wherever one page holds them all.
+   */
+  readonly keepLines?: boolean;
+  /**
    * ECMA-376 Part 1 §17.3.1.44 — `w:widowControl`. When on, a page or column
    * break that would leave the paragraph's first line alone at the foot of one
    * page, or its last line alone at the head of the next, is moved so that

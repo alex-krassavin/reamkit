@@ -225,6 +225,16 @@ export function parseParagraphProperties(
     if (v !== undefined) out.pageBreakBefore = v;
   }
 
+  // §17.3.1.14/15 — `w:keepNext`, `w:keepLines`: Word's own headings set both.
+  if ('w:keepNext' in el) {
+    const v = parseToggle(el['w:keepNext']);
+    if (v !== undefined) out.keepNext = v;
+  }
+  if ('w:keepLines' in el) {
+    const v = parseToggle(el['w:keepLines']);
+    if (v !== undefined) out.keepLines = v;
+  }
+
   // §17.3.1.44 — `w:widowControl`, and `w:val="0"` is how a style turns off
   // what Word applies to every paragraph that does not say.
   if ('w:widowControl' in el) {

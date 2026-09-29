@@ -66,6 +66,8 @@ const SPRM_P_DYA_AFTER = 0xa414; // space after (twips)
 const SPRM_P_F_IN_TABLE = 0x2416; // paragraph is in a table
 const SPRM_P_F_TTP = 0x2417; // table terminating paragraph (end of row)
 const SPRM_P_F_WIDOW_CONTROL = 0x2431; // widow and orphan control
+const SPRM_P_F_KEEP = 0x2405; // keep the paragraph's lines together
+const SPRM_P_F_KEEP_FOLLOW = 0x2406; // keep the paragraph with the next
 const SPRM_T_DEF_TABLE = 0xd608; // table definition (cell boundaries + descriptors)
 const SPRM_T_DEF_TABLE_SHD = 0xd612; // per-cell shading array (Shd: cvFore/cvBack/ipat)
 const MAX_ROW_CELLS = 256; // a row's cell count is small; guard a crafted huge array
@@ -167,6 +169,10 @@ export interface DocParaProps {
   readonly listIlvl?: number;
   /** `sprmPFWidowControl` — no first or last line left alone on a page. */
   readonly widowControl?: boolean;
+  /** `sprmPFKeepFollow` — on the same page as the start of the next paragraph. */
+  readonly keepNext?: boolean;
+  /** `sprmPFKeep` — every line on one page. */
+  readonly keepLines?: boolean;
 }
 
 /** One maximal same-formatting run of text, or an embedded picture. */
@@ -702,6 +708,8 @@ function decodePapxGrpprl(d: Uint8Array): DocParaProps {
   let listIlfo: number | undefined;
   let listIlvl: number | undefined;
   let widowControl: boolean | undefined;
+  let keepNext: boolean | undefined;
+  let keepLines: boolean | undefined;
   for (const s of sprms(d)) {
     switch (s.sprm) {
       case SPRM_P_JC:
@@ -730,6 +738,12 @@ function decodePapxGrpprl(d: Uint8Array): DocParaProps {
         break;
       case SPRM_P_F_WIDOW_CONTROL:
         widowControl = d[s.op] !== 0;
+        break;
+      case SPRM_P_F_KEEP_FOLLOW:
+        keepNext = d[s.op] !== 0;
+        break;
+      case SPRM_P_F_KEEP:
+        keepLines = d[s.op] !== 0;
         break;
       case SPRM_T_DEF_TABLE: {
         // The operand is itcMac (u8), (itcMac+1) cell-boundary positions, then the
@@ -783,6 +797,8 @@ function decodePapxGrpprl(d: Uint8Array): DocParaProps {
     ...(listIlfo !== undefined ? { listIlfo } : {}),
     ...(listIlvl !== undefined ? { listIlvl } : {}),
     ...(widowControl !== undefined ? { widowControl } : {}),
+    ...(keepNext !== undefined ? { keepNext } : {}),
+    ...(keepLines !== undefined ? { keepLines } : {}),
   };
 }
 

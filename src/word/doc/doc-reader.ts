@@ -547,6 +547,8 @@ function toParaProperties(p: DocParaProps): ParagraphProperties {
     ...(p.spaceBeforeTwips !== undefined ? { spacingBefore: pt(p.spaceBeforeTwips / 20) } : {}),
     ...(p.spaceAfterTwips !== undefined ? { spacingAfter: pt(p.spaceAfterTwips / 20) } : {}),
     ...(p.widowControl !== undefined ? { widowControl: p.widowControl } : {}),
+    ...(p.keepNext !== undefined ? { keepNext: p.keepNext } : {}),
+    ...(p.keepLines !== undefined ? { keepLines: p.keepLines } : {}),
   };
 }
 

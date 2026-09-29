@@ -1975,11 +1975,13 @@ function runShdXml(fill: string): string {
 function pPrBody(p: ResolvedParagraphProperties): string {
   // §17.3.1.26 CT_PPrBase is a SEQUENCE, and Word enforces it: a child out of
   // order is a file it refuses or a property it drops on the floor. The order
-  // below is the schema's — pageBreakBefore, widowControl, numPr, pBdr, shd,
-  // tabs, bidi, spacing, ind, jc, outlineLvl — and it is not the order these
-  // were written in until now: `w:pBdr` and `w:tabs` were appended after
-  // `w:jc`, which LibreOffice reads anyway and Word does not.
+  // below is the schema's — keepNext, keepLines, pageBreakBefore, widowControl,
+  // numPr, pBdr, shd, tabs, bidi, spacing, ind, jc, outlineLvl — and it is not
+  // the order these were written in until now: `w:pBdr` and `w:tabs` were
+  // appended after `w:jc`, which LibreOffice reads anyway and Word does not.
   const out: Array<string> = [];
+  if (p.keepNext) out.push('<w:keepNext/>');
+  if (p.keepLines) out.push('<w:keepLines/>');
   if (p.pageBreakBefore) out.push('<w:pageBreakBefore/>');
   // §17.3.1.44 — on is what the styles part states, so only off is said here.
   if (p.widowControl === false) out.push('<w:widowControl w:val="0"/>');

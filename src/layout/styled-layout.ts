@@ -8601,6 +8601,71 @@ class PageAssembler {
   };
 }
 
+/**
+ * §17.3.1.14/15 — the height a paragraph needs in one column: all of its lines
+ * where it keeps them together, and where it keeps with the next, the whole of
+ * every paragraph in the chain it heads and as much of the block after as has
+ * to stand beside it — a paragraph's first line, or its first two (all of a
+ * short one) where its own widow control would not leave one alone; a table's
+ * first row; a picture. The space between them counts, the chain's own space
+ * before does not. A chain is decided at its head: one that follows a
+ * paragraph kept with it moved with that paragraph or not at all, and asks
+ * only whether its own lines stay together.
+ *
+ * @param blocks The section's blocks.
+ * @param from   The paragraph asked about.
+ * @param end    The section's end: nothing is kept with what lies past it.
+ * @returns The height, or undefined where the paragraph asks for neither.
+ */
+function keptTogetherHeight(
+  blocks: ReadonlyArray<LaidOutBlock>,
+  from: number,
+  end: number,
+): number | undefined {
+  const first = blocks[from];
+  if (first?.kind !== 'paragraph') return undefined;
+  const before = blocks[from - 1];
+  const inChain =
+    before?.kind === 'paragraph' &&
+    before.resolved.keepNext &&
+    !before.pageBreakAfter &&
+    !first.resolved.pageBreakBefore &&
+    !first.pageBreakBefore;
+  const keepsNext = first.resolved.keepNext && !inChain;
+  if (!keepsNext && !first.resolved.keepLines) return undefined;
+  let height = first.heightPt;
+  let current: ParagraphBlock = first;
+  for (let i = from + 1; keepsNext && current.resolved.keepNext && !current.pageBreakAfter; i++) {
+    const next = i < end ? blocks[i] : undefined;
+    if (next?.kind === 'paragraph') {
+      if (next.resolved.pageBreakBefore || next.pageBreakBefore) break;
+      height += current.spacingAfterPt + next.spacingBeforePt;
+      if (next.resolved.keepNext) {
+        height += next.heightPt;
+        current = next;
+        continue;
+      }
+      const count = next.lines.length;
+      const stays = next.resolved.keepLines
+        ? count
+        : next.resolved.widowControl
+          ? count <= 3
+            ? count
+            : 2
+          : 1;
+      for (const line of next.lines.slice(0, stays)) {
+        height += computeLineHeight(line, next.resolved);
+      }
+    } else if (next?.kind === 'table' && !next.float) {
+      height += current.spacingAfterPt + (next.rows[0]?.heightPt ?? 0);
+    } else if (next?.kind === 'image' && !next.float) {
+      height += current.spacingAfterPt + next.heightPt;
+    }
+    break;
+  }
+  return height;
+}
+
 function paginateSections(
   blocks: ReadonlyArray<LaidOutBlock>,
   sectionCtxs: ReadonlyArray<SectionRenderCtx>,
@@ -8715,7 +8780,24 @@ function paginateSections(
       if ((block.resolved.pageBreakBefore || block.pageBreakBefore) && asm.pageHasContent()) {
         asm.flushPage();
       }
+      const columnInUse = asm.colHasContent();
       asm.cursorY -= block.spacingBeforePt;
+      // §17.3.1.14/15 — a paragraph that keeps its lines together, or keeps with
+      // the start of the next, goes whole to the next column where this one
+      // cannot hold what it keeps: a heading is not left at the foot of a page
+      // with its text on the next. Word and LibreOffice move it even where no
+      // page would hold it all, and break it there. It moves the way a first
+      // line that runs past the foot does, its space before spent here. Not
+      // beside a float, whose exclusions shape lines the count cannot foresee.
+      const kept = keptTogetherHeight(blocks, blockIdx, asm.ctx.endIndex);
+      if (
+        kept !== undefined &&
+        columnInUse &&
+        asm.exclusions.length === 0 &&
+        kept > asm.cursorY - asm.bottomLimit()
+      ) {
+        asm.advanceColumn();
+      }
       // Float text wrapping: when the paragraph overlaps an exclusion, re-wrap
       // it with per-line widths (the source paragraph re-lays at the column
       // width); the line loop below adds the matching x offsets.
