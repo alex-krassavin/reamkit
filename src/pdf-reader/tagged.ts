@@ -212,6 +212,14 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
   const setting = new Map<BodyElement, Setting>();
   // …and the page each element begins on, which the tree does not say either.
   const pageOf = new Map<BodyElement, number>();
+  /** The highest baseline a page's own paragraphs stand on, page space (y up). */
+  const highestOf = (own: ReadonlyArray<BodyElement>): number | undefined => {
+    const tops = own.flatMap((el) => {
+      const set = setting.get(el);
+      return set ? [set.top] : [];
+    });
+    return tops.length > 0 ? Math.max(...tops) : undefined;
+  };
   /** The lowest baseline a page's own paragraphs reach, page space (y up). */
   const lowestOf = (own: ReadonlyArray<BodyElement>): number | undefined => {
     const bottoms = own.flatMap((el) => {
@@ -533,6 +541,7 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
   const bottom = measured?.margins?.bottom ?? 0;
   // Taken before the spacing below re-writes the paragraphs it spaces.
   const ends = byPage.map((own) => lowestOf(own));
+  const tops = byPage.map((own) => highestOf(own));
   // Where each section ends: a page whose numbering starts again opens one.
   const sectionsFrom = (numbering?.runs ?? []).map((run) => run.from).filter((from) => from > 0);
   const endsAt: Array<{ at: number; from: number }> = [];
@@ -564,7 +573,14 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
     const lead = own.findIndex((el) => !floats(el));
     const set = lead >= 0 ? setting.get(own[lead]!) : undefined;
     const fresh = index === 0 || opens || sectionsFrom.includes(index);
-    if (fresh && set !== undefined && measured?.margins) {
+    // …where what the tree names first IS the page's first line. A tree may
+    // open a page anywhere on it: chrome-text-selection-markedContent.pdf's
+    // opens with the guidance box from the foot of its sidebar, and spaced
+    // down to where that box stands, the whole report began at the foot of
+    // its first sheet.
+    const highest = tops[index];
+    const first = set !== undefined && highest !== undefined && set.top >= highest - set.size;
+    if (fresh && first && measured?.margins) {
       const gap = height - top - (set.top + set.size * ASCENDER);
       if (gap > 1) own[lead] = spacedBefore(own[lead]!, gap);
     }

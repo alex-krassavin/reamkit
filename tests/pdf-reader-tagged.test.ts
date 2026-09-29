@@ -75,6 +75,32 @@ const pageBreaksIn = (flow: { body: ReadonlyArray<BodyElement> }): number =>
   flow.body.filter((b) => b.kind === 'paragraph' && b.paragraph.properties.pageBreakBefore === true)
     .length;
 
+/**
+ * The same PDF with its /Document element naming its children in reverse, as
+ * an incremental update (§7.5.6): a tree that opens its page away from the top.
+ */
+function lowFirst(pdf: Uint8Array): Uint8Array {
+  const text = Array.from(pdf, (b) => String.fromCharCode(b)).join('');
+  const size = /\/Size (\d+)/u.exec(text)![1]!;
+  const root = /\/Root (\d+ \d+ R)/u.exec(text)![1]!;
+  const prev = /startxref\s+(\d+)\s+%%EOF\s*$/u.exec(text)![1]!;
+  const doc = /(\d+) 0 obj\s*<<\/Type \/StructElem \/S \/Document ([^]*?)\/K \[([^\]]*)\]>>/u.exec(
+    text,
+  )!;
+  const kids = doc[3]!
+    .trim()
+    .split(/(?<=R)\s+/u)
+    .reverse()
+    .join(' ');
+  const offset = text.length;
+  let out = `${text}${doc[1]!} 0 obj\n<</Type /StructElem /S /Document ${doc[2]!}/K [${kids}]>>\nendobj\n`;
+  const xref = out.length;
+  out +=
+    `xref\n${doc[1]!} 1\n${String(offset).padStart(10, '0')} 00000 n \ntrailer\n` +
+    `<</Size ${size} /Root ${root} /Prev ${prev}>>\nstartxref\n${String(xref)}\n%%EOF\n`;
+  return Uint8Array.from(out, (c) => c.charCodeAt(0));
+}
+
 describe('the pages a tagged document is set on (§14.8)', () => {
   it('opens a page of its own where the source page ended short', async () => {
     // bug793632.pdf is four pages of a line each — three of front matter and
@@ -90,6 +116,24 @@ describe('the pages a tagged document is set on (§14.8)', () => {
       'Page three.',
     ]);
     expect(pageBreaksIn(flow)).toBe(2);
+  });
+
+  it('spaces a page’s first element down only where it is the page’s first line', async () => {
+    // A tree may open a page anywhere on it: chrome-text-selection-markedContent.pdf
+    // names the guidance box at the foot of its sidebar first, and spaced down
+    // to where that box stands, the whole report began at the foot of its
+    // sheet. Here the tree is re-ordered to name the LOWER paragraph first.
+    const pdf = await Ream.parse(
+      buildDocxFromBody(
+        para('Top line') +
+          '<w:p><w:pPr><w:spacing w:before="6000"/></w:pPr><w:r><w:t>Low line</w:t></w:r></w:p>',
+      ),
+    ).convert('pdf', { fonts: FONTS, tagged: true });
+    const flow = reconstructTaggedPdf(PdfFile.parse(lowFirst(pdf)))?.doc;
+    const first = flow?.body.find((b) => b.kind === 'paragraph' && b.paragraph.runs.length > 0);
+    if (first?.kind !== 'paragraph') throw new Error('expected a paragraph');
+    expect(first.paragraph.runs.map((r) => r.text).join('')).toBe('Low line');
+    expect(first.paragraph.properties.spacingBefore ?? 0).toBe(0);
   });
 
   it('lets the words of a page they filled run on, as the paper broke them', async () => {
