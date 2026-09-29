@@ -1742,7 +1742,6 @@ function rPrXml(r: ResolvedRunProperties, state?: WriteState): string {
   // out as the string "undefined": `<w:color w:val="undefined"/>` in the foot
   // of every reconstructed PDF, which is not a colour and not valid markup.
   const states = <TKey extends keyof ResolvedRunProperties>(key: TKey): boolean =>
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
     r[key] !== undefined && r[key] !== DEFAULT_RUN[key];
   const fonts = rFontsXml(r.fontFamily, state);
   if (fonts) out.push(fonts);
@@ -2063,6 +2062,14 @@ function sectPrXml(s: SectionProperties, hf: HeaderFooterRefs): string {
       `<w:pgMar w:top="${twips(m.top)}" w:right="${twips(m.right)}"` +
         ` w:bottom="${twips(m.bottom)}" w:left="${twips(m.left)}"${header}${footer}/>`,
     );
+  }
+  // §17.6.12 — how the section numbers its pages, and from what. Left out,
+  // front matter numbered i, ii, iii printed 1, 2, 3 and the body went on
+  // counting from there instead of starting again at 1.
+  if (s.pageNumberFormat !== undefined || s.pageNumberStart !== undefined) {
+    const fmt = s.pageNumberFormat !== undefined ? ` w:fmt="${s.pageNumberFormat}"` : '';
+    const start = s.pageNumberStart !== undefined ? ` w:start="${String(s.pageNumberStart)}"` : '';
+    parts.push(`<w:pgNumType${fmt}${start}/>`);
   }
   if (s.columns) parts.push(colsXml(s.columns));
   if (s.titlePg) parts.push('<w:titlePg/>');

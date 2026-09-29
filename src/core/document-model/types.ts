@@ -1705,6 +1705,12 @@ export interface SectionProperties {
    * printed with. Absent ⇒ the count carries on from the section before.
    */
   readonly pageNumberStart?: number;
+  /**
+   * §17.6.12 `w:pgNumType w:fmt` — how a PAGE field prints the section's page
+   * numbers (§17.18.59): `lowerRoman` numbers a book's front matter i, ii,
+   * iii before its body starts again at 1. Absent ⇒ decimal.
+   */
+  readonly pageNumberFormat?: NumberingFormat;
   /** §17.6.8 `w:lnNumType` — line numbers printed in the margin beside the text. */
   readonly lineNumbering?: {
     /** Print every `countBy`-th line (default 1). */

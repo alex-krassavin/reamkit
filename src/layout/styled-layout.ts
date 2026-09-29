@@ -37,6 +37,7 @@ import type {
   ImageCrop,
   MathNode,
   Numbering,
+  NumberingFormat,
   Paragraph,
   PictureOutline,
   RelativeSize,
@@ -109,7 +110,7 @@ import {
   greedyBreakLines,
   splitCjkSegment,
 } from '@/core/line-breaker';
-import { applyNumbering, applyNumberingToHeadersFooters } from '@/core/numbering';
+import { applyNumbering, applyNumberingToHeadersFooters, formatCounter } from '@/core/numbering';
 import {
   DEFAULT_RESOLVED_PARAGRAPH,
   DEFAULT_RESOLVED_RUN,
@@ -1710,10 +1711,11 @@ type HfBand = 'default' | 'first' | 'even';
 // (the byte-identical fast path). A band containing PAGE/NUMPAGES fields is
 // DYNAMIC: it re-lays out per page once pagination knows both numbers
 // (§17.16.5.33/.35) — substitution changes text widths, so this is an honest
-// re-layout, not a glyph swap. w:pgNumType start offsets are not applied (v1).
+// re-layout, not a glyph swap. The page's number arrives as the section prints
+// it (§17.6.12: its own start, and its own numerals).
 interface HfBandEntry {
   readonly commands: Array<PageItem>;
-  readonly renderDynamic?: (pageNumber: number, totalPages: number) => Array<PageItem>;
+  readonly renderDynamic?: (pageText: string, totalPages: number) => Array<PageItem>;
   /** Laid-out height of the band, so the body can be kept clear of it. */
   readonly heightPt?: number;
 }
@@ -1781,11 +1783,11 @@ function layoutHeaderSet(
     if (contentHasPageFields(content)) {
       // Measure once with placeholder values so the height is known before the
       // first page is composed; the per-page render replaces the commands.
-      render(substitutePageFields(content, 1, 1));
+      render(substitutePageFields(content, '1', 1));
       return {
         commands: [],
         heightPt: measured,
-        renderDynamic: (n, total) => render(substitutePageFields(content, n, total)),
+        renderDynamic: (page, total) => render(substitutePageFields(content, page, total)),
       };
     }
     const commands = render(content);
@@ -1880,7 +1882,7 @@ function layoutFooterSet(
     if (contentHasPageFields(content)) {
       return {
         commands: [],
-        renderDynamic: (n, total) => render(substitutePageFields(content, n, total)),
+        renderDynamic: (page, total) => render(substitutePageFields(content, page, total)),
       };
     }
     return { commands: render(content) };
@@ -1899,11 +1901,25 @@ function contentHasPageFields(content: ReadonlyArray<BodyElement>): boolean {
   return false;
 }
 
+/**
+ * §17.6.12 — a page's number as its section prints it: in the numerals
+ * `w:pgNumType w:fmt` names (§17.18.59), decimal where it names none. A format
+ * that has no numeral for the number — a roman zero — prints it in digits.
+ *
+ * @param pageNumber The page's number in its section's count.
+ * @param format     The section's page-number format.
+ * @returns The text a PAGE field shows on that page.
+ */
+function pageNumberText(pageNumber: number, format: NumberingFormat | undefined): string {
+  const text = format === undefined ? '' : formatCounter(format, pageNumber);
+  return text !== '' ? text : String(pageNumber);
+}
+
 // Clone the band content with field runs' cached text replaced by the real
 // numbers for this page.
 function substitutePageFields(
   content: ReadonlyArray<BodyElement>,
-  pageNumber: number,
+  pageText: string,
   totalPages: number,
 ): ReadonlyArray<BodyElement> {
   return content.map((el) => {
@@ -1916,7 +1932,7 @@ function substitutePageFields(
         runs: el.paragraph.runs.map((r) =>
           r.field === undefined
             ? r
-            : { ...r, text: String(r.field === 'PAGE' ? pageNumber : totalPages) },
+            : { ...r, text: r.field === 'PAGE' ? pageText : String(totalPages) },
         ),
       },
     };
@@ -4896,6 +4912,17 @@ function collectFontResources(
   imageResources: ReadonlyMap<string, ImageResource>,
 ): Map<string, FontResource> {
   const used = new Map<string, { parsed: ParsedTtf; gids: Set<number> }>();
+  // §17.6.12 — a PAGE field prints in the numerals its section names, so
+  // every numeral a section may print goes into the subset with the digits:
+  // front matter numbered i, ii, iii needs its i, v and x.
+  const formats = new Set(
+    [options.section, ...(options.sections ?? []).map((sec) => sec.properties)].flatMap((p) =>
+      p?.pageNumberFormat !== undefined ? [p.pageNumberFormat] : [],
+    ),
+  );
+  const numerals = [...formats]
+    .map((fmt) => Array.from({ length: 200 }, (_, i) => formatCounter(fmt, i + 1)).join(''))
+    .join('');
   const addRun = (
     run: {
       text: string;
@@ -5016,7 +5043,10 @@ function collectFontResources(
           // A PAGE/NUMPAGES field renders substituted digits per page — make
           // sure every digit is in the subset, not just the cached result.
           if (run.field !== undefined) {
-            addRun({ text: `${run.text}0123456789`, properties: run.properties }, el.paragraph);
+            addRun(
+              { text: `${run.text}0123456789${numerals}`, properties: run.properties },
+              el.paragraph,
+            );
             continue;
           }
           // Note references and the note's own-number placeholder render
@@ -8221,9 +8251,10 @@ class PageAssembler {
    */
   readonly dynBands: Array<{
     pageIdx: number;
-    pageNumber: number;
+    /** §17.6.12 — the page's number as its section prints it. */
+    pageText: string;
     position: 'header' | 'footer';
-    render: (pageNumber: number, totalPages: number) => Array<PageItem>;
+    render: (pageText: string, totalPages: number) => Array<PageItem>;
   }> = [];
 
   /**
@@ -8253,10 +8284,12 @@ class PageAssembler {
     );
     const header = pickBand(this.ctx.headerSet, band);
     const footer = pickBand(this.ctx.footerSet, band);
+    // §17.6.12 — printed in the numerals the section numbers its pages in.
+    const pageText = pageNumberText(this.pageNumber, this.ctx.properties.pageNumberFormat);
     if (header.renderDynamic) {
       this.dynBands.push({
         pageIdx: this.pages.length,
-        pageNumber: this.pageNumber,
+        pageText,
         position: 'header',
         render: header.renderDynamic,
       });
@@ -8264,7 +8297,7 @@ class PageAssembler {
     if (footer.renderDynamic) {
       this.dynBands.push({
         pageIdx: this.pages.length,
-        pageNumber: this.pageNumber,
+        pageText,
         position: 'footer',
         render: footer.renderDynamic,
       });
@@ -9156,7 +9189,7 @@ function paginateSections(
   // dynamic bands and splice them where the static band would have sat
   // (header before the body content, footer after).
   for (const d of asm.dynBands) {
-    const cmds = d.render(d.pageNumber, asm.pages.length);
+    const cmds = d.render(d.pageText, asm.pages.length);
     const page = asm.pages[d.pageIdx]!;
     if (d.position === 'header') page.commands.unshift(...cmds);
     else page.commands.push(...cmds);

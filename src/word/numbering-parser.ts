@@ -43,7 +43,8 @@ const parser = new XMLParser({
   trimValues: false,
 });
 
-const FORMATS = new Set<NumberingFormat>([
+/** §17.18.59 ST_NumberFormat — the formats this reader knows by name. */
+export const FORMATS: ReadonlySet<NumberingFormat> = new Set<NumberingFormat>([
   'decimal',
   'decimalZero',
   'decimalFullWidth',

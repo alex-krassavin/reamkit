@@ -1027,7 +1027,8 @@ describe('what a reader can actually draw', () => {
       '<w:tc><w:tcPr><w:tcW w:w="2500" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>a</w:t></w:r></w:p></w:tc>' +
       '<w:tc><w:tcPr><w:tcW w:w="2500" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>b</w:t></w:r></w:p></w:tc>' +
       '</w:tr></w:tbl>' +
-      '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:titlePg/>' +
+      '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgNumType w:fmt="lowerRoman" w:start="3"/>' +
+      '<w:titlePg/>' +
       '<w:textDirection w:val="tbRl"/></w:sectPr>';
     const { doc: flow } = readDocx(buildDocxFromBody(source));
     const xml = decode(OpcPackage.open(writeDocx(flow).bytes).getMainDocument().data);
@@ -1077,6 +1078,7 @@ describe('what a reader can actually draw', () => {
         'w:type',
         'w:pgSz',
         'w:pgMar',
+        'w:pgNumType',
         'w:cols',
         'w:titlePg',
         'w:textDirection',
