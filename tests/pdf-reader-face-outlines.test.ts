@@ -10,8 +10,10 @@ import { describe, expect, it } from 'vitest';
 import type { GlyphSeg } from '@/core/font';
 import type { FaceOutlines } from '@/core/ir/flow';
 import { buildTrueType, parseTtf } from '@/core/font';
+import { OpcPackage } from '@/core/opc';
 import { Ream } from '@/core/converter/ream';
 import { outlineSource, sfntFsType, sfntSpaceAdvance } from '@/pdf-reader/glyf-outline';
+import { writeDocx } from '@/word/docx-writer';
 
 const ROBOTO = new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Regular.ttf'));
 
@@ -153,6 +155,20 @@ describe('the outlines a PDF face drew its characters with', () => {
     const runs = flow.body.flatMap((el) => (el.kind === 'paragraph' ? el.paragraph.runs : []));
     expect(runs.length).toBeGreaterThan(0);
     for (const run of runs) expect(run.properties.ligatures).toBe('standard');
+  });
+
+  it('asks for the layout of a current Word, the only one that forms them', () => {
+    // [MS-DOCX] compatibilityMode — Word opens a document that states none in
+    // Compatibility Mode, and forms no OpenType ligature there.
+    const parsed = parseTtf(ROBOTO);
+    const [fi, f, i] = ['\ufb01', 'f', 'i'].map((c) => parsed.glyphForCodepoint(c.codePointAt(0)!));
+    const show = `<${hex4(fi!)}${hex4(f!)}${hex4(i!)}> Tj`;
+    const flow = Ream.parse(identityPdf(show, [fi!, f!, i!], ['fi', 'f', 'i'])).flow;
+    expect(flow.compatibilityMode).toBe(15);
+    const settings = OpcPackage.open(writeDocx(flow).bytes).getPart('word/settings.xml');
+    expect(new TextDecoder().decode(settings)).toContain(
+      '<w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/>',
+    );
   });
 
   it('takes no ligature of more than letters, nor of letters the face never draws alone', () => {

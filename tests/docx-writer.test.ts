@@ -1196,6 +1196,20 @@ describe('the settings a document is set by (§17.15.1)', () => {
     expect(again.doNotExpandShiftReturn).toBe(true);
   });
 
+  it('keeps the version of Word the document is laid out for, last in w:compat', () => {
+    // [MS-DOCX] compatibilityMode — written without it, a Word 2013 document
+    // opened again in Compatibility Mode: laid out as Word 2007 laid it out.
+    const mode =
+      '<w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/>';
+    const source = buildDocxFromBody('<w:p><w:r><w:t>Body</w:t></w:r></w:p>', {
+      settingsXml: `<w:compat><w:doNotExpandShiftReturn/>${mode}</w:compat>`,
+    });
+    const written = writeDocx(readDocx(source).doc).bytes;
+    const settings = OpcPackage.open(written).getPart('word/settings.xml');
+    expect(decode(settings!)).toContain(`<w:compat><w:doNotExpandShiftReturn/>${mode}</w:compat>`);
+    expect(readDocx(written).doc.compatibilityMode).toBe(15);
+  });
+
   it('writes no settings part where the document states none', () => {
     const written = writeDocx(
       readDocx(buildDocxFromBody('<w:p><w:r><w:t>Body</w:t></w:r></w:p>')).doc,

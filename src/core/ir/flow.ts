@@ -167,4 +167,12 @@ export interface FlowDoc {
    * @w:gutter` reserves belongs to the TOP margin rather than the left.
    */
   readonly gutterAtTop?: boolean;
+  /**
+   * [MS-DOCX] `w:compatSetting` `compatibilityMode` — the version of Word
+   * whose layout the document asks for: 15 is Word 2013's, which every Word
+   * since sets a new document by. Word opens a document that states none in
+   * Compatibility Mode, and forms there none of the OpenType ligatures its
+   * faces carry.
+   */
+  readonly compatibilityMode?: number;
 }

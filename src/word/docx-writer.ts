@@ -539,8 +539,10 @@ export function writeDocx(flow: FlowDoc): WriteResult {
  * the order CT_Settings declares them: `w:embedTrueTypeFonts` and
  * `w:saveSubsetFonts` (§17.15.1.42, .74) where the package embeds its faces,
  * `w:gutterAtTop` (§17.15.1.49), `w:evenAndOddHeaders` (§17.15.1.36, which a
- * section carries in the model), and §17.15.3.4's `w:doNotExpandShiftReturn`
- * inside `w:compat`.
+ * section carries in the model), and inside `w:compat` §17.15.3.4's
+ * `w:doNotExpandShiftReturn` before the version of Word the document is laid
+ * out for ([MS-DOCX] `w:compatSetting` `compatibilityMode`), which CT_Compat
+ * keeps last.
  *
  * @param flow        The document.
  * @param sections    The sections being written.
@@ -559,9 +561,16 @@ function settingsXml(
   if (sections.some((sec) => sec.properties.evenAndOddHeaders === true)) {
     parts.push('<w:evenAndOddHeaders/>');
   }
-  if (flow.doNotExpandShiftReturn === true) {
-    parts.push('<w:compat><w:doNotExpandShiftReturn/></w:compat>');
-  }
+  const compat = [
+    ...(flow.doNotExpandShiftReturn === true ? ['<w:doNotExpandShiftReturn/>'] : []),
+    ...(flow.compatibilityMode !== undefined
+      ? [
+          '<w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word"' +
+            ` w:val="${String(flow.compatibilityMode)}"/>`,
+        ]
+      : []),
+  ];
+  if (compat.length > 0) parts.push(`<w:compat>${compat.join('')}</w:compat>`);
   if (parts.length === 0) return undefined;
   return (
     '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +

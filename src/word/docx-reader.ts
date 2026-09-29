@@ -268,6 +268,9 @@ export function readDocx(docx: Uint8Array): ReadResult<FlowDoc> {
       ? { pageBackgroundColorHex: backgroundColorHex }
       : {}),
     ...(settings.gutterAtTop ? { gutterAtTop: true } : {}),
+    ...(settings.compatibilityMode !== undefined
+      ? { compatibilityMode: settings.compatibilityMode }
+      : {}),
   };
   return { doc, losses };
 }

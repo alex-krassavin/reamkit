@@ -1112,7 +1112,13 @@ export function buildFlowDoc(
     ...(embeddedFonts && embeddedFonts.size > 0 ? { embeddedFonts } : {}),
     ...(faceFamilies && faceFamilies.size > 0 ? { faceFamilies } : {}),
     ...(faceOutlines && faceOutlines.size > 0 ? { faceOutlines } : {}),
+    // A reconstruction was set by no older Word's rules, and only a current
+    // Word's layout forms the ligatures its embedded faces carry.
+    compatibilityMode: CURRENT_WORD_LAYOUT,
     styles: EMPTY_STYLE_SHEET,
     resources,
   };
 }
+
+/** [MS-DOCX] `compatibilityMode` 15 — Word 2013's layout, a current Word's. */
+const CURRENT_WORD_LAYOUT = 15;
