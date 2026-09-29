@@ -777,6 +777,44 @@ describe('a dashed pen (§8.4.3.6)', () => {
   });
 });
 
+describe('a path filled with a tiling pattern drawn in lines (§8.7.3)', () => {
+  /** A 30-point square filled with pattern `/P1`, whose tile is `tile`. */
+  const swatch = (tile: string, paintType: number, fill: string): Uint8Array => {
+    const content = `/Pattern cs ${fill} 10 10 30 30 re f`;
+    return assemble([
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Contents 4 0 R ' +
+        '/Resources << /Pattern << /P1 5 0 R >> >> >>',
+      `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+      `<< /Type /Pattern /PatternType 1 /PaintType ${String(paintType)} /TilingType 1 ` +
+        `/BBox [0 0 4 4] /XStep 4 /YStep 4 /Resources << >> /Length ${String(tile.length)} >>\n` +
+        `stream\n${tile}\nendstream`,
+    ]);
+  };
+  const fillOf = (pdf: Uint8Array): string | undefined => {
+    const file = PdfFile.parse(pdf);
+    return collectPageVectors(file, file.pages()[0]!, []).vectors[0]?.fillHex;
+  };
+
+  it('fills it with the pattern’s colour at the strength its tile covers', () => {
+    // issue11473.pdf fills four swatches with hatches and grids drawn in
+    // lines, and with nothing to lift them the swatches came back empty. Here
+    // a black bar covers half of each 4-point cell: a mid grey.
+    const hex = fillOf(swatch('0 0 4 2 re f', 2, '0 0 0 /P1 scn'));
+    expect(hex).toBeDefined();
+    const level = Number.parseInt(hex!.slice(0, 2), 16);
+    expect(level).toBeGreaterThan(96);
+    expect(level).toBeLessThan(160);
+  });
+
+  it('paints an uncoloured pattern in the colour `scn` gives it', () => {
+    const hex = fillOf(swatch('0 0 4 2 re f', 2, '1 0 0 /P1 scn'));
+    expect(hex?.slice(0, 2)).toBe('FF');
+    expect(hex?.slice(2)).not.toBe('0000');
+  });
+});
+
 describe('filled rules (E-PDF EP10)', () => {
   const fills = (stream: string) =>
     interpretContent(new TextEncoder().encode(stream), NO_FONTS).vectors;

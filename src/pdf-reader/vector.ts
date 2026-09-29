@@ -15,6 +15,7 @@ import {
   shadingTypeOf,
 } from './shading';
 import { appearanceContent, collectPageAppearances } from './annots';
+import { patternTint, tintedHex } from './pattern-tint';
 import { hiddenProperties, hiddenXObject } from './optional-content';
 import { buildFonts } from './text';
 import type { ColorSpaceInfo, GsPaint, PageGradient } from './shading';
@@ -80,6 +81,35 @@ function paintedVectors(
     };
     stateCache.set(resources, made);
     return made;
+  };
+  // §8.7.3 — a path filled with a TILING pattern is a picture of repeats,
+  // and where the picture is drawn in lines and dots rather than images
+  // nothing lifts it: its fill was dropped, and issue11473.pdf's four hatched
+  // swatches came back as four empty squares. Filled with the pattern's
+  // colour at the strength its tile covers — as type set in a pattern is
+  // (see `./pattern-tint`) — a hatch reads as the tone it gives the page.
+  const tints = new Map<PdfDict | undefined, Map<string, string | undefined>>();
+  const tinted = (resources: PdfDict | undefined, vector: VectorPlacement): VectorPlacement => {
+    const name = vector.patternName;
+    if (name === undefined) return vector;
+    // The same name means another pattern under other resources.
+    let known = tints.get(resources);
+    if (!known) tints.set(resources, (known = new Map()));
+    const key = `${name}\u0000${vector.patternPaint ?? ''}`;
+    let hex = known.get(key);
+    if (!known.has(key)) {
+      let tint: ReturnType<typeof patternTint>;
+      try {
+        tint = patternTint(file, resources, name, vector.patternPaint);
+      } catch {
+        tint = undefined;
+      }
+      hex = tint ? tintedHex(tint.colorHex, tint.coverage) : undefined;
+      known.set(key, hex);
+    }
+    if (hex === undefined) return vector;
+    const { patternName: _named, patternPaint: _paint, ...plain } = vector;
+    return { ...plain, fillHex: hex };
   };
   const walk = (
     resources: PdfDict | undefined,
@@ -165,7 +195,7 @@ function paintedVectors(
     for (const event of events) {
       if (out.length >= MAX_VECTORS) return;
       if (event.vector) {
-        out.push({ ...event.vector, orderKey: [...prefix, event.order] });
+        out.push({ ...tinted(resources, event.vector), orderKey: [...prefix, event.order] });
         continue;
       }
       // §9.6.5 — a Type 3 glyph is a content stream, and what it paints is

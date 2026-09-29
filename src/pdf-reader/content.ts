@@ -330,6 +330,8 @@ export interface VectorPlacement {
    * known by walking into it; the `fillHex` beside this is not the fill.
    */
   readonly patternName?: string;
+  /** §8.7.3.3 — the colour `scn` gave an uncoloured pattern, where it gave one. */
+  readonly patternPaint?: string;
   /** Stroke colour (6-hex), present iff the path is stroked (`S` / `s` / `B` / `b`) — EP11. */
   readonly strokeHex?: string;
   /** Stroke width in page-space points — EP11. */
@@ -476,6 +478,7 @@ interface TextState {
   lineCap: number; // §8.4.3.3 0 butt, 1 round, 2 projecting square
   fillGradient: PageGradient | undefined; // current non-stroking shading pattern (EP16c)
   fillPattern: string | undefined; // §8.7.3 non-stroking TILING pattern resource name
+  fillPatternPaint: string | undefined; // §8.7.3.3 the colour an uncoloured one is painted in
   fillAlpha: number; // §11.6.4.4 `/ca` — how opaque the non-stroking paint is
   strokeAlpha: number; // §11.6.4.4 `/CA` — how opaque the stroking paint is
   fillDarkens: boolean; // §11.3.5 `/BM` Multiply or Darken — the paint only darkens
@@ -505,6 +508,7 @@ function initialState(): TextState {
     lineCap: 0, // §8.4.3.3 butt
     fillGradient: undefined,
     fillPattern: undefined,
+    fillPatternPaint: undefined,
     fillAlpha: 1,
     strokeAlpha: 1,
     fillDarkens: false,
@@ -687,6 +691,9 @@ export function interpretContent(
         segs: path,
         ...(state.clip ? { clip: state.clip } : {}),
         ...(fill && state.fillPattern !== undefined ? { patternName: state.fillPattern } : {}),
+        ...(fill && state.fillPattern !== undefined && state.fillPatternPaint !== undefined
+          ? { patternPaint: state.fillPatternPaint }
+          : {}),
         ...(fill ? { fillHex: state.fillColor } : {}),
         ...(fill && state.fillAlpha < 1 ? { alpha: state.fillAlpha } : {}),
         ...(fill && state.fillDarkens ? { darkens: true } : {}),
@@ -1034,6 +1041,11 @@ export function interpretContent(
         if (named !== undefined) {
           state.fillGradient = shadings.get(named);
           state.fillPattern = state.fillGradient ? undefined : named;
+          // §8.7.3.3 — the components before the name are the colour an
+          // UNCOLOURED pattern is painted in, in the space under the pattern.
+          const components = operands.filter((o): o is number => typeof o === 'number');
+          state.fillPatternPaint =
+            components.length > 0 ? spaceColor(components, undefined) : undefined;
           break;
         }
         const hex = colorOfOperands(operands, state.fillSpace);
