@@ -258,7 +258,11 @@ export class PdfFile {
       return;
     }
     // A leaf /Page (or an untyped node with no kids).
-    const media = mediaBox ?? DEFAULT_MEDIA_BOX;
+    // §7.7.3.3 — a media box with no area bounds nothing: a viewer shows such a
+    // page at the size a page has when it states none. Taken at its word,
+    // boundingBox_invalid.pdf's first page was a sheet of no size, every word
+    // on it stood outside it, and the page came back blank.
+    const media = mediaBox !== undefined && hasArea(mediaBox) ? mediaBox : DEFAULT_MEDIA_BOX;
     out.push({
       dict: node,
       mediaBox: media,
@@ -751,6 +755,11 @@ export type { PdfArray };
  * bug1844576.pdf is 612×792 of paper cropped to 181×53.75, and read as its
  * media box the form on it arrived a fifth of the way down a letter page.
  */
+/** Whether a rectangle bounds anything: a point or a line is no page. */
+function hasArea([x0, y0, x1, y1]: Rectangle): boolean {
+  return Math.abs(x1 - x0) > 1 && Math.abs(y1 - y0) > 1;
+}
+
 function shownBox(media: Rectangle, crop: Rectangle | undefined): Rectangle {
   if (!crop) return media;
   const [mx0, my0, mx1, my1] = media;

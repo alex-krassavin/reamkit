@@ -1154,6 +1154,20 @@ describe('placed reconstruction (E-PDF EP4)', () => {
     expect(shape.shape.float?.posV?.offsetPt).toBeCloseTo(110, 3);
   });
 
+  it('gives a page whose media box bounds nothing the size a page has when it states none', () => {
+    // boundingBox_invalid.pdf's first page is `/MediaBox [0 0 0 0]`. Every
+    // viewer shows it as a Letter sheet with its words on it; taken at its
+    // word, the sheet had no size and every word stood outside it.
+    const pdf = onePagePdf('/MediaBox [0 0 0 0]', 'BT /F1 20 Tf 72 700 Td (Empty) Tj ET');
+    const flowed = reconstructByLayout(PdfFile.parse(pdf));
+    expect(
+      paragraphs(flowed.doc).map((p) => p.paragraph.runs.map((r) => r.text).join('')),
+    ).toContain('Empty');
+    expect([flowed.doc.section?.pageSize?.width, flowed.doc.section?.pageSize?.height]).toEqual([
+      612, 792,
+    ]);
+  });
+
   it('sets words that run UP the sheet across it, and says so', () => {
     // No section runs its lines up a sheet — Word and LibreOffice set a
     // section down it or across it — so /Rotate 270 over upright words is
