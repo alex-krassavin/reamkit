@@ -75,6 +75,22 @@ describe('docx writer (E-DOCX D2 skeleton)', () => {
     expect(r1.verticalAlign).toBe('superscript');
   });
 
+  it('writes a line spaced in lines back in 240ths of a line, as it was read (§17.3.1.33)', () => {
+    // Word's own Normal sets its lines 1.08 apart (259); written as twelfths
+    // of a point it came back 0.65 of a line (155), each line over the last.
+    for (const [line, rule] of [
+      [259, 'auto'],
+      [360, 'auto'],
+      [300, 'exact'],
+    ] as const) {
+      const body = `<w:p><w:pPr><w:spacing w:line="${line}" w:lineRule="${rule}"/></w:pPr><w:r><w:t>x</w:t></w:r></w:p>`;
+      const written = writeDocx(readDocx(buildDocxFromBody(body)).doc).bytes;
+      expect(decode(OpcPackage.open(written).getMainDocument().data)).toContain(
+        `<w:spacing w:line="${line}" w:lineRule="${rule}"/>`,
+      );
+    }
+  });
+
   it('omits default-valued properties (no rPr/pPr noise for plain text)', () => {
     const { doc: flow } = readDocx(buildDocxFromBody('<w:p><w:r><w:t>plain</w:t></w:r></w:p>'));
     const xml = new TextDecoder().decode(

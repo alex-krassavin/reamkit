@@ -2013,11 +2013,12 @@ function spacingXml(p: ResolvedParagraphProperties): string {
       p.spacingLine !== DEFAULT_PARA.spacingLine) &&
     p.spacingLine > 0
   ) {
-    // §17.3.1.33: 'auto' line spacing is in 240ths (line units); exact/atLeast
-    // in twips. The reader stores spacingLine in points either way.
-    const lineVal =
-      p.spacingLineRule === 'auto' ? Math.round(p.spacingLine * 12) : twips(p.spacingLine);
-    attrs.push(`w:line="${lineVal}"`, `w:lineRule="${p.spacingLineRule}"`);
+    // §17.3.1.33: 'auto' line spacing is in 240ths of a line, exact/atLeast
+    // in twips — and the reader reads either as twips, so an 'auto' line is
+    // twelve points a single line (see the HTML writer's `line-height`), and
+    // the number goes back as it came. Written as twelfths, Word's own 1.08
+    // lines (259) came back as 0.65 of one (155), each line over the last.
+    attrs.push(`w:line="${twips(p.spacingLine)}"`, `w:lineRule="${p.spacingLineRule}"`);
   }
   return attrs.length > 0 ? `<w:spacing ${attrs.join(' ')}/>` : '';
 }
