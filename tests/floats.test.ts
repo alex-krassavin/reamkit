@@ -237,6 +237,67 @@ describe('floating drawings (wp:anchor, §20.4.2.3)', () => {
   });
 });
 
+describe('the text beside a float (§20.4.2.3 distL/distR)', () => {
+  // A 144pt box against the right margin of the fixture's Letter page with 1"
+  // margins: its left edge stands at 72 + 468 - 144.
+  const FLOAT_LEFT = 72 + 468 - 144;
+  const RIGHT_BOX =
+    '<wp:positionH relativeFrom="margin"><wp:align>right</wp:align></wp:positionH>' +
+    '<wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV>' +
+    '<wp:wrapSquare wrapText="bothSides"/>';
+  const words = Array.from({ length: 120 }, (_, i) => `w${String(i)}`).join(' ');
+  const justified = (pPr = ''): string =>
+    `<w:p><w:pPr>${pPr}<w:jc w:val="both"/></w:pPr><w:r><w:t>${words}</w:t></w:r></w:p>`;
+
+  /** Where the paragraph's first four lines end — all beside the 72pt box; a justified line runs to its measure. */
+  function rightEnds(body: string): Array<number> {
+    const lines = layoutOf(buildDocxFromBody(body)).pages[0]!.commands.filter(
+      (c) => c.type === 'line',
+    ) as unknown as Array<{
+      originX: number;
+      line: { availableWidthPt: number; tokens: ReadonlyArray<{ kind: string; text?: string }> };
+    }>;
+    const worded = lines.filter((l) =>
+      l.line.tokens.some((t) => t.kind === 'text' && (t.text ?? '').trim() !== ''),
+    );
+    expect(worded.length).toBeGreaterThan(4);
+    return worded.slice(0, 4).map((l) => l.originX + l.line.availableWidthPt);
+  }
+
+  it('ends a justified line at the float’s own stand-off and nowhere short of it', () => {
+    // Word: 0.15, 9.35 and 17.7pt short of a picture 0, 9 and 18pt off.
+    for (const end of rightEnds(anchoredShape(RIGHT_BOX) + justified())) {
+      expect(end).toBeCloseTo(FLOAT_LEFT, 3);
+    }
+    for (const end of rightEnds(anchoredShape(RIGHT_BOX, 'distL="114300"') + justified())) {
+      expect(end).toBeCloseTo(FLOAT_LEFT - 9, 3);
+    }
+  });
+
+  it('gives an indented first line the room its indent leaves, not the float’s whole gap', () => {
+    // tdf60351.docx's first line, indented 18pt, ran 18pt into the picture.
+    const ends = rightEnds(
+      anchoredShape(RIGHT_BOX, 'distL="114300"') + justified('<w:ind w:firstLine="360"/>'),
+    );
+    for (const end of ends) expect(end).toBeCloseTo(FLOAT_LEFT - 9, 3);
+  });
+
+  it('keeps 9pt either side of a VML shape whose style states no distance', () => {
+    // Word's own wrap format for such a shape reads 0, 0, 9, 9.
+    const vml =
+      '<w:p><w:r><w:pict><v:rect xmlns:v="urn:schemas-microsoft-com:vml" ' +
+      'xmlns:w10="urn:schemas-microsoft-com:office:word" style="position:absolute;' +
+      'margin-left:0;margin-top:0;width:144pt;height:144pt;z-index:1;' +
+      'mso-position-horizontal:right;mso-position-horizontal-relative:margin;' +
+      'mso-position-vertical-relative:text" fillcolor="#3366aa" stroked="f">' +
+      '<w10:wrap type="square"/></v:rect></w:pict></w:r></w:p>';
+    const { doc } = readDocx(buildDocxFromBody(vml + TEXT));
+    const shape = doc.body.find((el) => el.kind === 'shape');
+    const dist = shape?.kind === 'shape' ? shape.shape.float?.wrapDist : undefined;
+    expect(dist).toEqual({ topPt: 0, bottomPt: 0, leftPt: 9, rightPt: 9 });
+  });
+});
+
 // A one-cell table whose only paragraph carries an anchored shape (§20.4.2.4).
 const cellFloat = (posAndWrap: string, attrs = '') =>
   `<w:tbl>

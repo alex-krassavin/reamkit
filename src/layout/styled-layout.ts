@@ -914,9 +914,10 @@ const FOOTNOTE_SEPARATOR_HEIGHT = 10;
 // no `w:distance`: Word's own quarter inch.
 const LINE_NUMBER_GAP_PT = 18;
 
-// Float text wrapping: the gap between a side-wrapped float and the text
-// flowing beside it, and the floor below which line narrowing stops.
-const FLOAT_TEXT_GAP = 6;
+// Float text wrapping: the floor below which line narrowing stops. The gap
+// between a float and the text beside it is the float's own stand-off
+// (`FloatAnchor.wrapDist`) and nothing more: beside a picture 0, 9 and 18pt
+// off, Word ends a justified line 0.15, 9.35 and 17.7pt short of it.
 const MIN_WRAP_WIDTH = 36;
 
 // Out-of-flow floats: wrap none renders at its anchor with no text effect;
@@ -8666,8 +8667,8 @@ class PageAssembler {
     const e = this.exclusionAt(yTop, h);
     if (!e) return { width: full, xOffset: 0 };
     const cl = this.colLeft();
-    const leftRoom = e.x0 - FLOAT_TEXT_GAP - cl;
-    const rightRoom = cl + full - (e.x1 + FLOAT_TEXT_GAP);
+    const leftRoom = e.x0 - cl;
+    const rightRoom = cl + full - e.x1;
     // A float as wide as the column leaves no side to flow down: the line
     // belongs BELOW it, not squeezed into a 36pt gutter that would print on
     // top of the drawing. effect-extent-line-width.docx anchors a text box
@@ -8699,6 +8700,21 @@ class PageAssembler {
     if (this.exclusions.length === 0 || block.lines.length === 0) return undefined;
     const h0 = computeLineHeight(block.lines[0]!, block.resolved);
     if (h0 <= 0) return undefined;
+    // What a line holds is the room beside the float less the paragraph's own
+    // indents, which the placement adds to where the line starts: widths taken
+    // straight from the float set tdf60351.docx's first line, indented 18pt,
+    // 18pt into the picture beside it. On the float's left the line ends at
+    // the float or at the right indent, whichever comes first; on its right
+    // the right indent stands where it always does.
+    const p = block.resolved;
+    const full = this.colWidth();
+    const hold = (width: number, xOffset: number, first: boolean): number =>
+      Math.max(
+        1,
+        (xOffset > 0 ? width - p.indentRight : Math.min(width, full - p.indentRight)) -
+          p.indentLeft -
+          (first ? p.indentFirstLine : 0),
+      );
     const widths: Array<number> = [];
     let narrowed = false;
     let y = startY;
@@ -8707,14 +8723,14 @@ class PageAssembler {
       // A blocked line is not narrowed — it moves below the float whole, and
       // the placement loop is what moves it.
       if (g.blockedUntilYUp !== undefined) {
-        widths.push(this.colWidth());
+        widths.push(hold(full, 0, widths.length === 0));
         y = g.blockedUntilYUp - h0;
         if (y < this.bottomLimit()) break;
         continue;
       }
-      widths.push(g.width);
+      widths.push(hold(g.width, g.xOffset, widths.length === 0));
       // The pair is the same baseline's other half: both widths, one step down.
-      if (g.pair) widths.push(g.pair.width);
+      if (g.pair) widths.push(hold(g.pair.width, g.pair.xOffset, false));
       if (g.width < this.colWidth()) narrowed = true;
       // The scan stops at the first full-width line PAST the float — stopping
       // at any full-width line gave up before ever reaching one anchored part

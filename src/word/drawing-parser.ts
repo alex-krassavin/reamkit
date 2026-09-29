@@ -1600,6 +1600,16 @@ function vmlFloat(
     // box squeezed the sentence it is meant to sit behind into a column two
     // words wide, over two pages.
     wrap: vmlWrap(shape),
+    // §14.1.2.19 `mso-wrap-distance-*` — the stand-off the text keeps from a
+    // shape it wraps round. A style that states none is 9pt either side and
+    // none above or below, as Word reads it: its own wrap format for such a
+    // shape says so, and a justified line beside one ends 9.35pt short of it.
+    wrapDist: {
+      topPt: pt(prop('mso-wrap-distance-top') ?? 0),
+      bottomPt: pt(prop('mso-wrap-distance-bottom') ?? 0),
+      leftPt: pt(prop('mso-wrap-distance-left') ?? 9),
+      rightPt: pt(prop('mso-wrap-distance-right') ?? 9),
+    },
     // §14.1.2.2 `o:allowincell` — VML's spelling of `layoutInCell`: off, the
     // shape is placed against the page it names rather than the cell it sits
     // in (tdf129888vml.docx rules the page edge from inside a cell).
