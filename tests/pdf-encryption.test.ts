@@ -55,21 +55,24 @@ describe('PDF encryption — AES-256 / R6 (ISO 32000-2 §7.6)', () => {
     const inter = await hardHash(pwd, U.slice(40, 48), new Uint8Array(0));
     const fek = await aesCbcNoPadDecrypt(inter, new Uint8Array(16), UE);
     let sawContent = false;
-    const streamRe = />>\s*stream\r?\n/g;
+    const streamRe = /<<([^\n]*)>>\nstream\n/g;
     let m: RegExpExecArray | null;
     while ((m = streamRe.exec(text)) !== null) {
+      // Take exactly /Length bytes (the serializer always writes it). The
+      // ciphertext is random and may itself end in 0x0D or 0x0A, so trimming
+      // EOLs before `endstream` would eat real data.
+      const len = /\/Length (\d+)/.exec(m[1]!);
+      if (!len) throw new Error('stream without a direct /Length');
       const start = m.index + m[0].length;
-      let end = text.indexOf('endstream', start);
-      // The serializer writes one EOL between the data and `endstream`.
-      if (pdf[end - 1] === 0x0a) end--;
-      if (pdf[end - 1] === 0x0d) end--;
+      const end = start + Number(len[1]);
+      expect(text.startsWith('\nendstream', end)).toBe(true);
+      // Resume after the data, so the scan never matches inside ciphertext.
+      streamRe.lastIndex = end;
       const cipher = pdf.slice(start, end);
-      if (cipher.length < 32 || cipher.length % 16 !== 0) continue;
+      // AESV3: a 16-byte IV, then whole PKCS#7-padded blocks.
+      expect(cipher.length % 16).toBe(0);
       const plain = latin1(await decryptBytes(fek, cipher));
-      if (plain.includes('BT') && plain.includes('Tj')) {
-        sawContent = true;
-        break;
-      }
+      if (plain.includes('BT') && plain.includes('Tj')) sawContent = true;
     }
     expect(sawContent).toBe(true);
   });
