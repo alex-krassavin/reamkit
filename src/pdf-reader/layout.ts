@@ -153,6 +153,15 @@ export function reconstructByLayout(
   const extracted = pages.map((page) => extractPageText(file, page, painted));
   // §9.4.3 — how the page spaces each face: between words, and inside them.
   const spacing = pageSpacing(extracted);
+  // §9.9 — the faces the document carries, and the space each is set with
+  // there (see `fittedSpace`).
+  const outlines = faceOutlinesOf(painted, spacing);
+  const faceSpaces: FaceSpaces = new Map(
+    [...outlines].flatMap(([name, face]): Array<[string, number]> => {
+      const advance = face.glyphs.get(' ')?.advance;
+      return advance !== undefined ? [[name, advance]] : [];
+    }),
+  );
   const onSheets = extracted.map((runs, i) => placeRuns(runs, sheets[i]!));
   // §17.6.20 — …and a page whose words run DOWN its sheet is read in the frame
   // where they stand upright, and set back on the sheet turned: a viewer turns
@@ -515,7 +524,7 @@ export function reconstructByLayout(
             above = made.below;
             continue;
           }
-          const regionLines = groupIntoLines(region.runs, false, stepped).filter(
+          const regionLines = groupIntoLines(region.runs, false, stepped, faceSpaces).filter(
             (l) => l.text.length > 0,
           );
           // A sheet of a line or two shows no measure (see `MEASURE_LINES`):
@@ -701,7 +710,9 @@ export function reconstructByLayout(
         ...region.cells.map((c) => c.to),
       );
       const cells = region.cells.map((cell) => {
-        const lines = groupIntoLines(cell.runs, false, stepped).filter((l) => l.text.length > 0);
+        const lines = groupIntoLines(cell.runs, false, stepped, faceSpaces).filter(
+          (l) => l.text.length > 0,
+        );
         return { cell, lines };
       });
       if (cells.some((c) => c.lines.length === 0)) return undefined;
@@ -1152,7 +1163,7 @@ export function reconstructByLayout(
           ])
         : undefined,
       collectFaceFamilies(file, pages),
-      faceOutlinesOf(painted, spacing),
+      outlines,
       kernedFaces(spacing),
     ),
     losses: dedupeLosses(losses),
@@ -1772,7 +1783,12 @@ const BASELINE_STEP_EM = 0.05;
 // With `split`, a cluster is cut wherever a column-wide gap opens or a baseline
 // steps, so each piece keeps its own x and its own y instead of being dragged
 // against its neighbour.
-function groupIntoLines(runs: ReadonlyArray<TextRun>, split = false, stepped = false): Array<Line> {
+function groupIntoLines(
+  runs: ReadonlyArray<TextRun>,
+  split = false,
+  stepped = false,
+  spaces?: FaceSpaces,
+): Array<Line> {
   const sorted = [...runs].sort((a, b) => b.y - a.y || a.x - b.x);
   const clusters: Array<{ y: number; fontSize: number; runs: Array<TextRun> }> = [];
   for (const run of sorted) {
@@ -1790,7 +1806,7 @@ function groupIntoLines(runs: ReadonlyArray<TextRun>, split = false, stepped = f
   return clusters.flatMap((c) => {
     const ordered = c.runs;
     const fontSize = c.fontSize || 10;
-    if (!split) return [lineOf(ordered, c.y, fontSize, stepped, stops)];
+    if (!split) return [lineOf(ordered, c.y, fontSize, stepped, stops, spaces)];
     const pieces: Array<Array<TextRun>> = [[]];
     for (const run of ordered) {
       const prev = pieces[pieces.length - 1]!;
@@ -1834,6 +1850,7 @@ function groupIntoLines(runs: ReadonlyArray<TextRun>, split = false, stepped = f
         Math.max(...piece.map((r) => r.fontSizePt || 0)) || fontSize,
         stepped,
         stops,
+        spaces,
       ),
     );
   });
@@ -1954,6 +1971,7 @@ function lineOf(
   fontSize: number,
   stepped: boolean,
   shared: ReadonlyArray<number> = [],
+  spaces?: FaceSpaces,
 ): Line {
   // A page may do both. A LaTeX document writes its prose with spaces in it and
   // sets its mathematics by stepping — TeX's thin space is a sixth of an em and
@@ -1962,7 +1980,7 @@ function lineOf(
   // "f(x) = sin x + cos x". A line with no space in it anywhere was stepped
   // across, whatever the rest of the page does.
   const steppedLine = stepped || (runs.length > 1 && !runs.some((r) => SPACE.test(r.text)));
-  const { spans: ordered, stops, pieces } = lineSpans(runs, fontSize, steppedLine, shared);
+  const { spans: ordered, stops, pieces } = lineSpans(runs, fontSize, steppedLine, shared, spaces);
   // §9.4 — the runs came off the page in the order they were PAINTED, which is
   // left to right whatever the script. `logicalOrder` turned each run's own
   // letters back the right way round; the runs themselves are still in visual
@@ -2090,6 +2108,7 @@ function lineSpans(
   fontSize: number,
   stepped: boolean,
   shared: ReadonlyArray<number> = [],
+  spaces?: FaceSpaces,
 ): { spans: Array<TextSpan>; stops: Array<number>; pieces: Array<Extent> } {
   const spans: Array<TextSpan> = [];
   const stops: Array<number> = [];
@@ -2136,7 +2155,9 @@ function lineSpans(
         spans.push({ text: '\t' });
         stops.push(run.x);
         pieces.push({ from: Infinity, to: -Infinity });
-      } else spans.push(spaceAfter(spans[spans.length - 1]));
+      } else {
+        spans.push(fittedSpace(spaceAfter(spans[spans.length - 1]), prev, run, spaces));
+      }
     }
     // §9.3.1/§8.6.8 — the size and colour the page showed the glyphs at. The
     // tagged path has carried these since it learned to; this one never did, so
@@ -2168,6 +2189,67 @@ function lineSpans(
   }
   return { spans, stops, pieces };
 }
+
+/** Face name → the advance of the space the document sets it with, in thousandths of an em. */
+type FaceSpaces = ReadonlyMap<string, number>;
+
+/**
+ * §17.3.2.43 — a word space set as narrow as the page set it.
+ *
+ * TeX justifies a line by stretching its word spaces or SHRINKING them, and a
+ * line it shrank holds more than the same words with the face's own spaces:
+ * re-set with those, its last word no longer fits and goes to the next line,
+ * and the paragraph grows by a line. comments.pdf sets its 9pt Times with
+ * word spaces of 1.70 to 3.44 points against the face's 2.24, and every column
+ * of it ran one to four lines long. A space the page set narrower than the
+ * face's is set at that share of the face's width (`w:w`, whole percent
+ * rounded down, so the line still fits). A wider one is left alone: a line TeX
+ * stretched fits with the face's spaces too.
+ *
+ * The share of the glyph and not a spacing after it: LibreOffice lays no
+ * character spacing (§17.3.2.35) after the last character of a run, and a
+ * run that is one space has nothing else — Word and LibreOffice both narrow
+ * the glyph itself.
+ *
+ * Only in a face the document carries, whose space is known: a substitute's
+ * could be anything.
+ *
+ * @param space  The space as the line would have it.
+ * @param before The run the space follows.
+ * @param after  The run it precedes.
+ * @param spaces The space each face the document carries is set with.
+ * @returns The space, narrowed where the page set it narrower.
+ */
+function fittedSpace(
+  space: TextSpan,
+  before: TextRun,
+  after: TextRun,
+  spaces: FaceSpaces | undefined,
+): TextSpan {
+  // A space a run brings itself is the one written, and one more beside it
+  // collapses into it — which a space narrowed on its own would not.
+  if (spaces === undefined || /\s$/u.test(before.text) || /^\s/u.test(after.text)) return space;
+  const advance = before.fontName !== undefined ? spaces.get(before.fontName) : undefined;
+  const size = space.sizePt ?? before.fontSizePt;
+  if (advance === undefined || !(size > 0)) return space;
+  const own = (advance / 1000) * size;
+  const gap = after.x - before.endX;
+  if (gap > own - FIT_SLACK_PT) return space;
+  const share = Math.floor((gap / own) * 100) / 100;
+  return { ...space, widthScale: Math.max(share, 1 - MOST_SHRINK) };
+}
+
+/** A space this much narrower than the face's is the page's rounding, not a shrink. */
+const FIT_SLACK_PT = 0.02;
+
+/**
+ * The most of a space a line may take back. TeX shrinks a Times space by a
+ * quarter of itself and a Computer Modern one by a third — but the space after
+ * a word in type is written in the type's face, and comments.pdf sets its
+ * `primes` in 9pt Courier-wide cmtt9 and the space after it in Times: 2.25
+ * points of a 4.72-point space. A gap narrower still is not a word space.
+ */
+const MOST_SHRINK = 0.6;
 
 /**
  * §17.3.2.42 — a run set off the line's baseline, and smaller, as the script it

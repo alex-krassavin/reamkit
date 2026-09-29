@@ -114,6 +114,12 @@ export interface TextSpan {
   readonly script?: 'superscript' | 'subscript';
   /** §12.5.6.10 — a text-markup annotation marks these words. */
   readonly markup?: TextMarkup;
+  /**
+   * §17.3.2.43 — the share of their own width the characters are set at: a
+   * word space the page set narrower than the face's own (see `fittedSpace` in
+   * ./layout).
+   */
+  readonly widthScale?: number;
 }
 
 /**
@@ -148,6 +154,7 @@ export function paragraphFromRuns(
     italic?: boolean;
     script?: 'superscript' | 'subscript';
     markup?: TextMarkup;
+    widthScale?: number;
   }> = [];
   for (const s of spans) {
     const last = merged[merged.length - 1];
@@ -162,6 +169,7 @@ export function paragraphFromRuns(
       last.bold === s.bold &&
       last.italic === s.italic &&
       last.script === s.script &&
+      last.widthScale === s.widthScale &&
       sameMarkup(last.markup, s.markup)
     ) {
       last.text += s.text;
@@ -177,6 +185,7 @@ export function paragraphFromRuns(
         ...(s.italic !== undefined ? { italic: s.italic } : {}),
         ...(s.script !== undefined ? { script: s.script } : {}),
         ...(s.markup !== undefined ? { markup: s.markup } : {}),
+        ...(s.widthScale !== undefined ? { widthScale: s.widthScale } : {}),
       });
   }
   // Whitespace a page never drew — the gaps this reader put in — collapses to
@@ -244,6 +253,9 @@ export function paragraphFromRuns(
               ? { underlineColorHex: r.markup.underlineHex }
               : {}),
             ...(r.markup?.strike === true ? { strike: true } : {}),
+            // §17.3.2.43 `w:w` — a word space the page set narrower than the
+            // face's own.
+            ...(r.widthScale !== undefined ? { widthScale: r.widthScale } : {}),
           },
           ...(r.href ? { href: r.href } : {}),
         })),

@@ -9,6 +9,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { GlyphSeg } from '@/core/font';
 import type { FaceOutlines } from '@/core/ir/flow';
+import type { RunProperties } from '@/core/document-model';
 import { buildTrueType, parseTtf } from '@/core/font';
 import { OpcPackage } from '@/core/opc';
 import { Ream } from '@/core/converter/ream';
@@ -270,6 +271,65 @@ describe('the outlines a PDF face drew its characters with', () => {
 });
 
 /** The points an outline passes through, in thousandths of an em. */
+describe('a word space set as narrow as the page set it (§17.3.2.43)', () => {
+  const parsed = parseTtf(ROBOTO);
+  const [h, i] = ['H', 'i'].map((c) => parsed.glyphForCodepoint(c.codePointAt(0)!));
+  const hi = `<${hex4(h!)}${hex4(i!)}>`;
+  // The face's space at 40pt; "Hi" is 48 points wide there (/DW 600).
+  const own = (sfntSpaceAdvance(ROBOTO)! / 1000) * 40;
+  /** "Hi Hi", the second word set `gap` points after the first. */
+  const words = (gap: number): Uint8Array =>
+    identityPdf(`${hi} Tj ${String(48 + gap)} 0 Td ${hi} Tj`, [h!, i!], 'Hi');
+  const runs = (pdf: Uint8Array): Array<{ text: string; properties: RunProperties }> =>
+    Ream.parse(pdf).flow.body.flatMap((el) => (el.kind === 'paragraph' ? el.paragraph.runs : []));
+  const spaces = (pdf: Uint8Array): Array<RunProperties> =>
+    runs(pdf)
+      .filter((r) => r.text === ' ')
+      .map((r) => r.properties);
+  /** Whether the words came back as one run, the space as wide as the face's. */
+  const natural = (pdf: Uint8Array): boolean => {
+    const all = runs(pdf);
+    return (
+      all.map((r) => r.text).join('') === 'Hi Hi' &&
+      all.every((r) => r.properties.widthScale === undefined)
+    );
+  };
+
+  it('sets a space the page shrank at the share of the face’s it was set at', () => {
+    // TeX shrinks the spaces of a line it cannot fit otherwise, and re-set
+    // with the face's own the line's last word went to the next line.
+    const [space] = spaces(words(own * 0.705));
+    expect(space?.widthScale).toBe(0.7);
+  });
+
+  it('leaves a space the page stretched as wide as the face sets it', () => {
+    expect(natural(words(own * 1.4))).toBe(true);
+  });
+
+  it('writes the glyph narrowed, which Word and LibreOffice both lay out', async () => {
+    // A `w:spacing` after the space is what Word does too; LibreOffice lays no
+    // spacing after the last character of a run, and the space is one alone.
+    const docx = await Ream.parse(words(own * 0.705)).convert('docx');
+    const xml = new TextDecoder().decode(OpcPackage.open(docx).getMainDocument().data);
+    expect(xml).toMatch(/<w:w w:val="70"\/>(?:(?!<\/w:r>).)*<w:t xml:space="preserve"> <\/w:t>/u);
+  });
+
+  it('fits no space in a face the document does not carry', () => {
+    // Helvetica is the reader's own; what a reader of the .docx sets it in,
+    // and how wide its space is there, nobody here knows.
+    const content = 'BT /F0 40 Tf 20 40 Td (Hi) Tj 55 0 Td (Hi) Tj ET';
+    const pdf = assemble([
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 100] /Contents 4 0 R ' +
+        '/Resources << /Font << /F0 5 0 R >> >> >>',
+      `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+      '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+    ]);
+    expect(natural(pdf)).toBe(true);
+  });
+});
+
 function units(outline: ReadonlyArray<GlyphSeg>): Array<[number, number]> {
   return outline.flatMap(
     (seg): Array<[number, number]> =>
