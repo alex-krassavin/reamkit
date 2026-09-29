@@ -182,8 +182,6 @@ export type DrawingContent =
 // §20.4.2.3 — the anchor's placement: position children + wrap mode.
 function parseFloatAnchor(anchor: PoNode): FloatAnchor | undefined {
   if (!poIs(anchor, 'wp:anchor')) return undefined;
-  const behindRaw = poAttr(anchor, 'behindDoc');
-  const behind = behindRaw === '1' || behindRaw === 'true';
   let wrap: FloatAnchor['wrap'] = 'none';
   // §20.4.2.3 `@wrapText` — which side(s) the text may stand on. `bothSides`
   // is the default, and the one that fills the gap on EACH side of a drawing.
@@ -197,6 +195,14 @@ function parseFloatAnchor(anchor: PoNode): FloatAnchor | undefined {
     const side = poAttr(child, 'wrapText');
     wrapSide = side === 'left' || side === 'right' || side === 'largest' ? side : 'bothSides';
   }
+  // §20.4.2.3 `@behindDoc` — behind the text only where the text does not
+  // wrap round it. Word reads `behindDoc="1"` beside `wp:wrapTight` or
+  // `wp:wrapSquare` as a plain tight or square picture (its wrap format says
+  // so), and only beside `wp:wrapNone` as one behind the text. Taken at its
+  // word, tdf60351.docx's cover sank under its paragraph's white shading and
+  // lost its top half.
+  const behindRaw = poAttr(anchor, 'behindDoc');
+  const behind = (behindRaw === '1' || behindRaw === 'true') && wrap === 'none';
   const zOrder = poIntAttr(anchor, 'relativeHeight');
   // §20.4.3.3 — `leftMargin`/`rightMargin` name the margin band on that side,
   // the place a marginal note belongs.

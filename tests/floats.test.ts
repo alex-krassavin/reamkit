@@ -91,6 +91,29 @@ describe('floating drawings (wp:anchor, §20.4.2.3)', () => {
     );
   });
 
+  it('behindDoc puts a drawing behind the text only where the text does not wrap round it', () => {
+    // Word's own wrap format for behindDoc="1" beside wrapTight or wrapSquare
+    // is plain "tight" or "square", and "behind" only beside wrapNone: sunk
+    // behind the text, tdf60351.docx's cover lost its top half under its
+    // paragraph's white shading.
+    const behindWith = (wrap: string): boolean | undefined => {
+      const pos = PAGE_POS.replace('<wp:wrapNone/>', wrap);
+      const { doc } = readDocx(buildDocxFromBody(anchoredShape(pos, 'behindDoc="1"') + TEXT));
+      const el = doc.body[0]!;
+      if (el.kind !== 'shape') throw new Error('expected shape');
+      return el.shape.float?.behind;
+    };
+    expect(behindWith('<wp:wrapNone/>')).toBe(true);
+    expect(behindWith('<wp:wrapSquare wrapText="bothSides"/>')).toBeFalsy();
+    expect(
+      behindWith(
+        '<wp:wrapTight wrapText="bothSides"><wp:wrapPolygon edited="0"><wp:start x="0" y="0"/>' +
+          '<wp:lineTo x="21600" y="0"/><wp:lineTo x="21600" y="21600"/><wp:lineTo x="0" y="21600"/>' +
+          '<wp:lineTo x="0" y="0"/></wp:wrapPolygon></wp:wrapTight>',
+      ),
+    ).toBeFalsy();
+  });
+
   it('margin-relative vertical offsets hang off the top margin', () => {
     const pos =
       '<wp:positionH relativeFrom="margin"><wp:align>right</wp:align></wp:positionH>' +
