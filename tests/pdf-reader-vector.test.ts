@@ -1110,6 +1110,48 @@ describe('a line stroked with a shading pattern (§8.6.6.2)', () => {
   });
 });
 
+describe('the way an axial shading runs, on the page (§8.7.2)', () => {
+  /** A page filling one square with pattern `/P1`: `Coords` up the page, and `matrix`. */
+  const angleOf = (matrix: string): number | undefined => {
+    const content = '/Pattern cs /P1 scn 10 10 80 80 re f';
+    const objects = [
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Contents 4 0 R ' +
+        '/Resources << /Pattern << /P1 5 0 R >> >> >>',
+      `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+      `<< /Type /Pattern /PatternType 2 ${matrix} /Shading << /ShadingType 2 ` +
+        '/ColorSpace /DeviceRGB /Coords [0 0 0 100] ' +
+        '/Function << /FunctionType 2 /Domain [0 1] /C0 [0 1 0] /C1 [1 0 0] /N 1 >> >> >>',
+    ];
+    let pdf = '%PDF-1.7\n';
+    const offsets: Array<number> = [];
+    objects.forEach((body, i) => {
+      offsets.push(pdf.length);
+      pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+    });
+    const xref = pdf.length;
+    pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+    for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+    pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`;
+    const bytes = Uint8Array.from([...pdf].map((c) => c.charCodeAt(0)));
+    const shape = Ream.parse(bytes).flow.body.find((el) => el.kind === 'shape');
+    if (shape?.kind !== 'shape' || shape.shape.fill.kind !== 'gradient') return undefined;
+    return shape.shape.fill.gradient?.angle;
+  };
+
+  it('runs the way the pattern’s matrix carries it', () => {
+    // Up the page is 270° in DrawingML's y-down terms…
+    expect(angleOf('')).toBe(270);
+    // …and a matrix that turns y over runs it DOWN the page. gradientfill.pdf's
+    // pattern is set that way, and taken in its own space it ran red to green
+    // where the page runs green to red.
+    expect(angleOf('/Matrix [0.8 0 0 -0.8 0 100]')).toBe(90);
+    // A quarter turn runs it across.
+    expect(angleOf('/Matrix [0 1 -1 0 100 0]')).toBe(180);
+  });
+});
+
 describe('a shading stitched out of shadings (§7.10.4)', () => {
   /** A page filling one square with pattern `/P1`, whose function is `fn`. */
   const shaded = (fn: string): Uint8Array => {

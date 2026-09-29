@@ -113,7 +113,7 @@ function paintedVectors(
       // §8.7.4.5.3 — a function-based shading is a PICTURE, and the image pass
       // draws it. Counted here it was a loss the file did not have.
       if (sh && shadingTypeOf(file, sh) === 1) continue;
-      const gradient = sh ? gradientShading(file, sh) : undefined;
+      const gradient = sh ? gradientShading(file, sh, paint.ctm) : undefined;
       // §11.6.5 — under a soft mask the clip is not the extent: the MASK is,
       // and nothing here applies one. bug1721218_reduced.pdf fades a shadow out
       // under the router it draws, and painted to its clip that shadow arrived

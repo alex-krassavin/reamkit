@@ -20,6 +20,7 @@ import type { GradientStop, ShapeGradient } from '@/core/vector';
 import type { PdfDict, PdfValue } from '@/pdf/objects';
 
 import type { PdfFile } from './document';
+import type { Matrix } from './content';
 import { PDF_NULL, PdfHexString, PdfName, PdfStream } from '@/pdf/objects';
 
 /**
@@ -48,7 +49,11 @@ export function buildShadingMap(
     if (!(pat instanceof Map)) continue;
     const shading = dictOf(file.resolve(pat.get('Shading') ?? PDF_NULL));
     if (!shading) continue;
-    const gradient = parseShading(file, shading);
+    // §8.7.2 — the pattern's matrix carries its space onto the page's.
+    const m = numArray(file, pat.get('Matrix'));
+    const matrix: Matrix | undefined =
+      m && m.length >= 6 ? [m[0]!, m[1]!, m[2]!, m[3]!, m[4]!, m[5]!] : undefined;
+    const gradient = parseShading(file, shading, matrix);
     if (gradient) out.set(nm, gradient);
   }
   return out;
@@ -65,8 +70,12 @@ export function buildShadingMap(
  * @param sh   The shading dictionary.
  * @returns The gradient, or `undefined` for a type this does not read.
  */
-export function gradientShading(file: PdfFile, sh: PdfDict): ShapeGradient | undefined {
-  return parseShading(file, sh);
+export function gradientShading(
+  file: PdfFile,
+  sh: PdfDict,
+  ctm?: Matrix,
+): ShapeGradient | undefined {
+  return parseShading(file, sh, ctm);
 }
 
 /**
@@ -80,19 +89,28 @@ export function shadingTypeOf(file: PdfFile, sh: PdfDict): number {
   return numOf(file.get(sh, 'ShadingType'));
 }
 
-function parseShading(file: PdfFile, sh: PdfDict): ShapeGradient | undefined {
+function parseShading(file: PdfFile, sh: PdfDict, matrix?: Matrix): ShapeGradient | undefined {
   const type = numOf(file.get(sh, 'ShadingType'));
   if (type !== 2 && type !== 3) return undefined; // only axial (2) / radial (3)
   const stops = parseFunction(file, sh.get('Function'), shadingSpace(file, sh));
   if (!stops || stops.length === 0) return undefined;
   if (type === 3) return { kind: 'radial', stops };
   // Axial: the angle is the Coords direction, with y negated (PDF y-up → the
-  // DrawingML y-down convention the model stores).
+  // DrawingML y-down convention the model stores) — the direction on the PAGE,
+  // through the matrix that carries the shading's space there (§8.7.2): a
+  // pattern's `/Matrix`, or the CTM a bare `sh` paints under. Taken in the
+  // shading's own space, gradientfill.pdf's pattern — its matrix turns y over
+  // — ran red to green where the page runs green to red.
   const c = numArray(file, sh.get('Coords'));
-  const angle =
-    c && c.length >= 4
-      ? ((((Math.atan2(-(c[3]! - c[1]!), c[2]! - c[0]!) * 180) / Math.PI) % 360) + 360) % 360
-      : 0;
+  let angle = 0;
+  if (c && c.length >= 4) {
+    const dx = c[2]! - c[0]!;
+    const dy = c[3]! - c[1]!;
+    const [a, b, cc, d] = matrix ?? [1, 0, 0, 1];
+    const px = a * dx + cc * dy;
+    const py = b * dx + d * dy;
+    angle = ((((Math.atan2(-py, px) * 180) / Math.PI) % 360) + 360) % 360;
+  }
   return { kind: 'linear', angle, stops };
 }
 
