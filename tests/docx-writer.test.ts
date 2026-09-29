@@ -1150,6 +1150,28 @@ describe('what a reader can actually draw', () => {
   });
 });
 
+describe('the defaults a property stated nowhere takes (§17.7.5)', () => {
+  it("are stated in a styles part, so a reader does not take its own template's", () => {
+    // Without one, Word set every paragraph in its template's Normal: 8pt
+    // after each, lines 1.08 apart, and the model's own 11pt runs in 12.
+    const written = writeDocx(
+      readDocx(buildDocxFromBody('<w:p><w:r><w:t>Body</w:t></w:r></w:p>')).doc,
+    ).bytes;
+    const pkg = OpcPackage.open(written);
+    const styles = decode(pkg.getPart('word/styles.xml')!);
+    expect(styles).toContain(
+      '<w:rPrDefault><w:rPr><w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr></w:rPrDefault>',
+    );
+    expect(styles).toContain(
+      '<w:pPrDefault><w:pPr><w:spacing w:before="0" w:after="0" w:line="240" w:lineRule="auto"/></w:pPr></w:pPrDefault>',
+    );
+    expect(styles).toContain('<w:style w:type="paragraph" w:default="1" w:styleId="Normal">');
+    expect(decode(pkg.getPart('word/_rels/document.xml.rels')!)).toContain(
+      'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles"',
+    );
+  });
+});
+
 describe('the settings a document is set by (§17.15.1)', () => {
   it('writes them back, so a round trip keeps them', () => {
     // 20 of the corpus's .docx turn on headers of their own for the even

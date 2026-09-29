@@ -5,7 +5,8 @@
 // v1 contract (epics.md, variant A): the writer emits a DENORMALIZED but
 // valid document. FlowDoc's body carries RESOLVED properties (the stage-6
 // cascade is already collapsed), so what we write is direct formatting — no
-// named styles. The round-trip guarantee is therefore semantic, not textual:
+// named styles, only the defaults a property stated nowhere takes (see
+// `stylesXml`). The round-trip guarantee is therefore semantic, not textual:
 // readDocx(writeDocx(flow)) yields an equivalent FlowDoc, never the original
 // bytes. Anything the writer does not serialize yet is reported as a loss,
 // exactly like the other writers.
@@ -108,6 +109,10 @@ const REL_SETTINGS = 'http://schemas.openxmlformats.org/officeDocument/2006/rela
 const SETTINGS_CONTENT_TYPE =
   'application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml';
 const SETTINGS_PART = 'word/settings.xml';
+const REL_STYLES = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles';
+const STYLES_CONTENT_TYPE =
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml';
+const STYLES_PART = 'word/styles.xml';
 const REL_FOOTNOTES =
   'http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes';
 const REL_ENDNOTES = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/endnotes';
@@ -476,6 +481,19 @@ export function writeDocx(flow: FlowDoc): WriteResult {
     });
   }
 
+  // §17.7.5 — what a property stated nowhere is, stated (see `stylesXml`).
+  const stylesPart = {
+    path: STYLES_PART,
+    data: encoder.encode(stylesXml()),
+    contentType: STYLES_CONTENT_TYPE,
+  };
+  docScope.rels.push({
+    id: `rId${++docScope.relSeq}`,
+    type: REL_STYLES,
+    target: 'styles.xml',
+    targetMode: 'Internal',
+  });
+
   const partRelationships = [
     ...(docScope.rels.length > 0
       ? [{ sourcePart: 'word/document.xml', relationships: docScope.rels }]
@@ -490,6 +508,7 @@ export function writeDocx(flow: FlowDoc): WriteResult {
         data: encoder.encode(documentXml),
         contentType: DOC_CONTENT_TYPE,
       },
+      stylesPart,
       ...(numberingPart ? [numberingPart] : []),
       ...(fontTablePart ? [fontTablePart] : []),
       ...(settingsPart ? [settingsPart] : []),
@@ -547,6 +566,36 @@ function settingsXml(
   return (
     '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
     `<w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">${parts.join('')}</w:settings>`
+  );
+}
+
+/**
+ * §17.7.2 `w:styles` — what a property the document states nowhere IS: the
+ * values the model resolves an empty sheet to (`DEFAULT_RUN`, `DEFAULT_PARA`
+ * — the very values a run or paragraph is written without), as §17.7.5
+ * `w:docDefaults`, under an empty default paragraph style (§17.7.4.17).
+ *
+ * A package with no styles part leaves them to its reader, and Word fills
+ * them from its own template's Normal: 8pt after every paragraph, lines 1.08
+ * apart, runs in 12pt — so every paragraph of a reconstruction stood 8pt
+ * further down than its page set it, and a run of the model's own 11pt, which
+ * states no size, was set in 12.
+ */
+function stylesXml(): string {
+  const size = Math.round(DEFAULT_RUN.fontSizePt * 2);
+  const spacing =
+    `<w:spacing w:before="${twips(DEFAULT_PARA.spacingBefore)}"` +
+    ` w:after="${twips(DEFAULT_PARA.spacingAfter)}"` +
+    ` w:line="${twips(DEFAULT_PARA.spacingLine)}" w:lineRule="${DEFAULT_PARA.spacingLineRule}"/>`;
+  return (
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">' +
+    '<w:docDefaults>' +
+    `<w:rPrDefault><w:rPr><w:sz w:val="${size}"/><w:szCs w:val="${size}"/></w:rPr></w:rPrDefault>` +
+    `<w:pPrDefault><w:pPr>${spacing}</w:pPr></w:pPrDefault>` +
+    '</w:docDefaults>' +
+    '<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>' +
+    '</w:styles>'
   );
 }
 
