@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { buildDocxFromBody } from './fixtures/build-docx';
 import type { FetchLike } from '@/core/fonts/remote-fonts';
 import { convertDocxToPdf } from '@/core/converter';
+import { Ream } from '@/core/converter/ream';
 import { clearFontCache, fetchFontSet, resolveFamilyKey } from '@/core/fonts/remote-fonts';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -16,9 +17,15 @@ const latin1 = new TextDecoder('latin1');
 
 // A fake fetch that serves local Roboto bytes for any URL, recording the URLs
 // requested so we can assert the family/variant resolution without a network.
-function fakeFetch(record: Array<string>, opts: { failUrls?: RegExp } = {}): FetchLike {
+// `failUrls` are answered with an HTTP error; `rejectUrls` are never answered:
+// the request rejects, as fetch does offline or when a DNS lookup fails.
+function fakeFetch(
+  record: Array<string>,
+  opts: { failUrls?: RegExp; rejectUrls?: RegExp } = {},
+): FetchLike {
   return async (url: string) => {
     record.push(url);
+    if (opts.rejectUrls && opts.rejectUrls.test(url)) throw new TypeError('fetch failed');
     if (opts.failUrls && opts.failUrls.test(url)) {
       return { ok: false, arrayBuffer: async () => new ArrayBuffer(0) };
     }
@@ -113,5 +120,70 @@ describe('convertDocxToPdf (async, auto font via injected fetch)', () => {
     const docx = buildDocxFromBody('<w:p><w:r><w:t>x</w:t></w:r></w:p>');
     await convertDocxToPdf(docx, { fontFamily: 'Courier New', fontFetch: fakeFetch(urls) });
     expect(urls.every((u) => u.includes('/cousine/'))).toBe(true);
+  });
+});
+
+describe('a request that rejects (offline, a failed DNS lookup, a dropped connection)', () => {
+  it('is asked again by the next call, not answered with the same error for good', async () => {
+    clearFontCache();
+    const urls: Array<string> = [];
+    const offline = fetchFontSet({ family: 'Arial', fetch: fakeFetch(urls, { rejectUrls: /./ }) });
+    await expect(offline).rejects.toThrow(/Failed to download font from .*Arimo_400Regular\.ttf/);
+    // The network's own error stays readable underneath.
+    await expect(offline).rejects.toHaveProperty('cause.message', 'fetch failed');
+    // Back online, the next call downloads the face instead of re-throwing the blip.
+    const set = await fetchFontSet({ family: 'Arial', fetch: fakeFetch(urls) });
+    expect(set.regular).toBeInstanceOf(Uint8Array);
+    expect(urls.filter((u) => u.endsWith('Arimo_400Regular.ttf'))).toHaveLength(2);
+  });
+
+  it('costs a set only the best-effort faces it lost, as an HTTP error does', async () => {
+    clearFontCache();
+    const urls: Array<string> = [];
+    const set = await fetchFontSet({
+      family: 'Arial',
+      fetch: fakeFetch(urls, { rejectUrls: /Bold/ }),
+    });
+    expect(set.regular).toBeInstanceOf(Uint8Array);
+    expect(set.italic).toBeInstanceOf(Uint8Array);
+    expect(set.bold).toBeUndefined();
+    expect(set.boldItalic).toBeUndefined();
+    // …and the next call asks for them again.
+    const again = await fetchFontSet({ family: 'Arial', fetch: fakeFetch(urls) });
+    expect(again.bold).toBeInstanceOf(Uint8Array);
+    expect(again.boldItalic).toBeInstanceOf(Uint8Array);
+  });
+
+  it("costs a document a script's face as a font loss, not a throw", async () => {
+    clearFontCache();
+    const urls: Array<string> = [];
+    const docx = buildDocxFromBody('<w:p><w:r><w:t>hello مرحبا</w:t></w:r></w:p>');
+    const { bytes, losses } = await Ream.parse(docx).convertWithReport('pdf', {
+      fontFetch: fakeFetch(urls, { rejectUrls: /NotoSansArabic/ }),
+    });
+    expect(latin1.decode(bytes.subarray(0, 8))).toBe('%PDF-1.7');
+    expect(urls.some((u) => u.includes('NotoSansArabic'))).toBe(true);
+    expect(losses).toContainEqual(
+      expect.objectContaining({ feature: 'font', detail: expect.stringContaining('arabic') }),
+    );
+  });
+
+  it('is shared by every call waiting on it, as any download in flight is', async () => {
+    clearFontCache();
+    const urls: Array<string> = [];
+    const offline = fakeFetch(urls, { rejectUrls: /./ });
+    const lost = await Promise.allSettled([
+      fetchFontSet({ family: 'Arial', fetch: offline }),
+      fetchFontSet({ family: 'Arial', fetch: offline }),
+    ]);
+    expect(lost.map((r) => r.status)).toEqual(['rejected', 'rejected']);
+    expect(urls).toHaveLength(1);
+    // Asked again, the four faces are each downloaded once for both calls.
+    const online = fakeFetch(urls);
+    await Promise.all([
+      fetchFontSet({ family: 'Arial', fetch: online }),
+      fetchFontSet({ family: 'Arial', fetch: online }),
+    ]);
+    expect(urls).toHaveLength(5);
   });
 });
