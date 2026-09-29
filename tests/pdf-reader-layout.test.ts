@@ -1692,3 +1692,23 @@ describe('a sheet of a line or two shows no measure (§17.3.1)', () => {
     expect(texts(pdf)).toEqual(['aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii.']);
   });
 });
+
+describe('a word space is as wide as the type it stands in', () => {
+  it('sets the space it puts between two runs in the size of the first', () => {
+    // issue10665_reduced.pdf sets "78" and "110" twenty points apart in
+    // 60-point type, and a space at the document's default size between them
+    // closed them up to "78110".
+    const pdf = onePagePdf(
+      '/MediaBox [0 0 250 100]',
+      'BT /F1 60 Tf 20 25 Td (78) Tj 80 0 Td (110) Tj ET',
+    );
+    const runs = paragraphs(reconstructByLayout(PdfFile.parse(pdf)).doc).flatMap(
+      (p) =>
+        p.paragraph.runs as ReadonlyArray<{ text: string; properties: { fontSizePt?: number } }>,
+    );
+    expect(runs.map((r) => r.text).join('')).toBe('78 110');
+    // Set in the digits' own size, the space runs on with them as one run.
+    const spaced = runs.find((r) => r.text.includes(' '));
+    expect(spaced?.properties.fontSizePt).toBeCloseTo(60, 0);
+  });
+});

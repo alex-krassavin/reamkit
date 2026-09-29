@@ -14,6 +14,7 @@ import {
   paragraphFromRuns,
   sectionFromPdfPages,
   shapeBlock,
+  spaceAfter,
   withMeasuredMargins,
 } from './flow-build';
 import { displayOf, placeRuns, placeVectors } from './display';
@@ -146,7 +147,7 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
       const runs = runsOfMcid(page, mcid);
       const first = runs[0];
       if (last !== undefined && first !== undefined && spacedApart(last, first)) {
-        spans.push({ text: ' ' });
+        spans.push(spaceAfter(spans[spans.length - 1]));
       }
       for (const run of runs) spans.push(spanOf(run));
       last = runs[runs.length - 1] ?? last;
@@ -243,7 +244,7 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
     return groups.map((g) => ({
       spans: g.flatMap((l, i) =>
         i > 0 && !ends(g[i - 1]!.spans) && !opens(l.spans)
-          ? [{ text: ' ' }, ...l.spans]
+          ? [spaceAfter(g[i - 1]!.spans.at(-1)), ...l.spans]
           : [...l.spans],
       ),
       set: {

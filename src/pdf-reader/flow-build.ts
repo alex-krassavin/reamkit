@@ -66,6 +66,27 @@ export function paragraphBlock(text: string, outlineLevel?: number): BodyElement
 }
 
 /** One piece of reconstructed text, carrying any hyperlink (E-PDF EP8). */
+/**
+ * The space set between a span and what follows it, in the span's own size and
+ * face: a word space is as wide as the type it stands in.
+ *
+ * Written bare, the space took the document's default size, whatever the words
+ * around it were set at: issue10665_reduced.pdf sets "78" and "110" twenty
+ * points apart in 60-point type, and the eleven-point space between them closed
+ * them up to "78110"; in 7-point footnotes the same space is half as wide
+ * again as the page's, and pushes their lines over.
+ *
+ * @param before The span the space follows, where there is one.
+ * @returns The space.
+ */
+export function spaceAfter(before: TextSpan | undefined): TextSpan {
+  return {
+    text: ' ',
+    ...(before?.sizePt !== undefined ? { sizePt: before.sizePt } : {}),
+    ...(before?.fontName !== undefined ? { fontName: before.fontName } : {}),
+  };
+}
+
 export interface TextSpan {
   readonly text: string;
   readonly href?: string;
