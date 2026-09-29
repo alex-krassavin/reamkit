@@ -1163,12 +1163,37 @@ describe('the defaults a property stated nowhere takes (§17.7.5)', () => {
       '<w:rPrDefault><w:rPr><w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr></w:rPrDefault>',
     );
     expect(styles).toContain(
-      '<w:pPrDefault><w:pPr><w:spacing w:before="0" w:after="0" w:line="240" w:lineRule="auto"/></w:pPr></w:pPrDefault>',
+      '<w:pPrDefault><w:pPr><w:widowControl/><w:spacing w:before="0" w:after="0" w:line="240" w:lineRule="auto"/></w:pPr></w:pPrDefault>',
     );
     expect(styles).toContain('<w:style w:type="paragraph" w:default="1" w:styleId="Normal">');
     expect(decode(pkg.getPart('word/_rels/document.xml.rels')!)).toContain(
       'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles"',
     );
+  });
+});
+
+describe('widow control (§17.3.1.44)', () => {
+  it('is on where nothing says otherwise, and stays off where a paragraph or its style says so', () => {
+    const source = buildDocxFromBody(
+      '<w:p><w:r><w:t>Plain</w:t></w:r></w:p>' +
+        '<w:p><w:pPr><w:widowControl w:val="0"/></w:pPr><w:r><w:t>Off</w:t></w:r></w:p>' +
+        '<w:p><w:pPr><w:pStyle w:val="Loose"/></w:pPr><w:r><w:t>Styled</w:t></w:r></w:p>',
+      {
+        stylesXml:
+          '<w:style w:type="paragraph" w:styleId="Loose"><w:name w:val="Loose"/>' +
+          '<w:pPr><w:widowControl w:val="0"/></w:pPr></w:style>',
+      },
+    );
+    const widows = (doc: FlowDoc): Array<boolean | undefined> =>
+      doc.body.map((el) =>
+        el.kind === 'paragraph' ? el.paragraph.properties.widowControl : undefined,
+      );
+    const flow = readDocx(source).doc;
+    expect(widows(flow)).toEqual([true, false, false]);
+    const written = writeDocx(flow).bytes;
+    const body = decode(OpcPackage.open(written).getMainDocument().data);
+    expect(body.match(/<w:widowControl w:val="0"\/>/gu)).toHaveLength(2);
+    expect(widows(readDocx(written).doc)).toEqual([true, false, false]);
   });
 });
 

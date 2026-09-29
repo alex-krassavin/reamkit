@@ -71,6 +71,8 @@ export interface ResolvedParagraphProperties {
   readonly indentRight: Pt;
   readonly indentFirstLine: Pt;
   readonly pageBreakBefore: boolean;
+  /** §17.3.1.44 — no first or last line left alone on a page. */
+  readonly widowControl: boolean;
   /** §17.3.1.9 — drop the space between this paragraph and a same-styled neighbour. */
   readonly contextualSpacing: boolean;
   /** §17.3.1.37 — the paragraph's tab stops, in ascending position order. */
@@ -146,6 +148,9 @@ export const DEFAULT_RESOLVED_PARAGRAPH: ResolvedParagraphProperties = {
   indentRight: twipsToPt(0),
   indentFirstLine: twipsToPt(0),
   pageBreakBefore: false,
+  // §17.3.1.44 — on where nothing says otherwise: Word's Normal states no
+  // `w:widowControl` and keeps a paragraph's lines in twos across a page.
+  widowControl: true,
   contextualSpacing: false,
   tabs: [],
   bidi: false,

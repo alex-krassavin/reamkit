@@ -592,6 +592,9 @@ function settingsXml(
  */
 function stylesXml(): string {
   const size = Math.round(DEFAULT_RUN.fontSizePt * 2);
+  const widowControl = DEFAULT_PARA.widowControl
+    ? '<w:widowControl/>'
+    : '<w:widowControl w:val="0"/>';
   const spacing =
     `<w:spacing w:before="${twips(DEFAULT_PARA.spacingBefore)}"` +
     ` w:after="${twips(DEFAULT_PARA.spacingAfter)}"` +
@@ -601,7 +604,7 @@ function stylesXml(): string {
     '<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">' +
     '<w:docDefaults>' +
     `<w:rPrDefault><w:rPr><w:sz w:val="${size}"/><w:szCs w:val="${size}"/></w:rPr></w:rPrDefault>` +
-    `<w:pPrDefault><w:pPr>${spacing}</w:pPr></w:pPrDefault>` +
+    `<w:pPrDefault><w:pPr>${widowControl}${spacing}</w:pPr></w:pPrDefault>` +
     '</w:docDefaults>' +
     '<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>' +
     '</w:styles>'
@@ -1960,12 +1963,14 @@ function runShdXml(fill: string): string {
 function pPrBody(p: ResolvedParagraphProperties): string {
   // §17.3.1.26 CT_PPrBase is a SEQUENCE, and Word enforces it: a child out of
   // order is a file it refuses or a property it drops on the floor. The order
-  // below is the schema's — pageBreakBefore, numPr, pBdr, shd, tabs, bidi,
-  // spacing, ind, jc, outlineLvl — and it is not the order these were written
-  // in until now: `w:pBdr` and `w:tabs` were appended after `w:jc`, which
-  // LibreOffice reads anyway and Word does not.
+  // below is the schema's — pageBreakBefore, widowControl, numPr, pBdr, shd,
+  // tabs, bidi, spacing, ind, jc, outlineLvl — and it is not the order these
+  // were written in until now: `w:pBdr` and `w:tabs` were appended after
+  // `w:jc`, which LibreOffice reads anyway and Word does not.
   const out: Array<string> = [];
   if (p.pageBreakBefore) out.push('<w:pageBreakBefore/>');
+  // §17.3.1.44 — on is what the styles part states, so only off is said here.
+  if (p.widowControl === false) out.push('<w:widowControl w:val="0"/>');
   if (p.numbering) {
     // §17.3.1.19 — list membership; the marker itself comes from numbering.xml.
     out.push(

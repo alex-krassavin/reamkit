@@ -282,6 +282,13 @@ export interface ParagraphProperties {
    */
   readonly pageBreakBefore?: boolean;
   /**
+   * ECMA-376 Part 1 §17.3.1.44 — `w:widowControl`. When on, a page or column
+   * break that would leave the paragraph's first line alone at the foot of one
+   * page, or its last line alone at the head of the next, is moved so that
+   * neither stands alone. Word applies it wherever nothing says otherwise.
+   */
+  readonly widowControl?: boolean;
+  /**
    * ECMA-376 §17.3.1.6 — `w:bidi`. Sets the paragraph's base direction to RTL,
    * so the BiDi paragraph embedding level is 1 and default alignment is right.
    */

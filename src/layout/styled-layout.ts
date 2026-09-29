@@ -8208,6 +8208,39 @@ class PageAssembler {
   };
 
   /**
+   * The first of a paragraph's lines, from `from` on, that the current column
+   * no longer holds: each line is counted with the notes it brings onto the
+   * page, the way the line loop places it, and an explicit column break ends
+   * the column where it stands.
+   *
+   * @param pb   The paragraph being placed.
+   * @param from The first line not yet placed.
+   * @returns The index of the first line that does not stay in this column;
+   *          `pb.lines.length` when every one does.
+   */
+  firstLineOverflowing = (pb: ParagraphBlock, from: number): number => {
+    let y = this.cursorY;
+    let reserve = 0;
+    let notesOnPage = this.pageNotes.length > 0;
+    const counted = new Set<string>();
+    for (let i = from; i < pb.lines.length; i++) {
+      if (i > from && pb.columnBreakLines?.has(i)) return i;
+      const line = pb.lines[i]!;
+      const h = computeLineHeight(line, pb.resolved);
+      const notes = this.lineFootnotes(line).filter((x) => !counted.has(x.id));
+      const added =
+        notes.reduce((sum, x) => sum + x.heightPt, 0) +
+        (!notesOnPage && notes.length > 0 ? FOOTNOTE_SEPARATOR_HEIGHT : 0);
+      if (y - h < this.bottomLimit() + reserve + added) return i;
+      y -= h;
+      reserve += added;
+      if (notes.length > 0) notesOnPage = true;
+      for (const x of notes) counted.add(x.id);
+    }
+    return pb.lines.length;
+  };
+
+  /**
    * The notes band for the flushing page: separator rule + each note's blocks
    * stacked inside the reserved area. Tagged: each note is a Note→P element.
    */
@@ -8704,9 +8737,38 @@ function paginateSections(
       // Tagged PDF: a plain paragraph → one P (or heading) element; a list item
       // → an L/LI/LBody/P built on the nesting stack. Its lines all reference
       // the resulting leaf by MCID.
-      // Where the paragraph's own rules would go, and the page it started on.
-      const borderTopY = asm.cursorY;
-      const borderPage = asm.pages.length;
+      // Where the paragraph's own rules would go, and the page it started on —
+      // moved with it when its first line goes to the next column.
+      let borderTopY = asm.cursorY;
+      let borderPage = asm.pages.length;
+      // §17.3.1.44 — where the current column has to end for the paragraph's
+      // lines from `from` on, so that neither its first line stands alone at
+      // the foot of a column nor its last alone at the head of the next;
+      // undefined where the rest of it stays here or nothing asks for it. Not
+      // planned beside a float, whose exclusions shape lines the count cannot
+      // foresee.
+      const keptColumnEnd = (from: number): number | undefined => {
+        const n = pb.lines.length;
+        if (!pb.resolved.widowControl || n < 2 || asm.exclusions.length > 0) return undefined;
+        let end = asm.firstLineOverflowing(pb, from);
+        if (end >= n) return undefined;
+        if (n - end === 1) end--;
+        if (from === 0 && end === 1) end = 0;
+        // A column that holds nothing yet takes a line however the rest falls,
+        // or nothing would ever be placed.
+        if (end <= from) return asm.colHasContent() ? from : from + 1;
+        return end;
+      };
+      // The next column, for a line not placed yet: the paragraph's rules move
+      // with its first line.
+      const advanceBefore = (lineIdx: number): void => {
+        asm.advanceColumn();
+        if (lineIdx === 0) {
+          borderTopY = asm.cursorY;
+          borderPage = asm.pages.length;
+        }
+      };
+      let columnEnd = keptColumnEnd(0);
       let structId: number | undefined;
       let markerLblId: number | undefined;
       // §14.8.4.3.3 Lbl: the first line's leading marker tokens split into
@@ -8743,15 +8805,25 @@ function paginateSections(
       for (const [lineIdx, line] of pb.lines.entries()) {
         // §17.3.3.1 — the line after a column break starts the next column,
         // even when this one has room to spare.
-        if (pb.columnBreakLines?.has(lineIdx) && asm.colHasContent()) asm.advanceColumn();
+        if (pb.columnBreakLines?.has(lineIdx) && asm.colHasContent()) {
+          advanceBefore(lineIdx);
+          columnEnd = keptColumnEnd(lineIdx);
+        }
+        // §17.3.1.44 — …and so does the line the column has to end before, so
+        // that the paragraph's first or last line does not stand alone.
+        if (lineIdx === columnEnd && asm.colHasContent()) {
+          advanceBefore(lineIdx);
+          columnEnd = keptColumnEnd(lineIdx);
+        }
         const h = computeLineHeight(line, pb.resolved);
         let newNotes = asm.lineFootnotes(line);
         const addedReserve = (sub: typeof newNotes) =>
           sub.reduce((sum, x) => sum + x.heightPt, 0) +
           (asm.pageNotes.length === 0 && sub.length > 0 ? FOOTNOTE_SEPARATOR_HEIGHT : 0);
         if (asm.cursorY - h < asm.bottomLimit() + addedReserve(newNotes) && asm.colHasContent()) {
-          asm.advanceColumn();
+          advanceBefore(lineIdx);
           newNotes = asm.lineFootnotes(line); // reserve restarts on the fresh page
+          columnEnd = keptColumnEnd(lineIdx);
         }
         if (newNotes.length > 0) {
           asm.noteReserve += addedReserve(newNotes);

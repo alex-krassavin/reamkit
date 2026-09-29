@@ -282,6 +282,7 @@ function mergePar(
     indentRight: override.indentRight ?? base.indentRight,
     indentFirstLine: override.indentFirstLine ?? base.indentFirstLine,
     pageBreakBefore: override.pageBreakBefore ?? base.pageBreakBefore,
+    widowControl: override.widowControl ?? base.widowControl,
     contextualSpacing: override.contextualSpacing ?? base.contextualSpacing,
     // A paragraph's own stops REPLACE the style's — they are not merged.
     tabs: override.tabs ?? base.tabs,

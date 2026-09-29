@@ -65,6 +65,7 @@ const SPRM_P_DYA_BEFORE = 0xa413; // space before (twips)
 const SPRM_P_DYA_AFTER = 0xa414; // space after (twips)
 const SPRM_P_F_IN_TABLE = 0x2416; // paragraph is in a table
 const SPRM_P_F_TTP = 0x2417; // table terminating paragraph (end of row)
+const SPRM_P_F_WIDOW_CONTROL = 0x2431; // widow and orphan control
 const SPRM_T_DEF_TABLE = 0xd608; // table definition (cell boundaries + descriptors)
 const SPRM_T_DEF_TABLE_SHD = 0xd612; // per-cell shading array (Shd: cvFore/cvBack/ipat)
 const MAX_ROW_CELLS = 256; // a row's cell count is small; guard a crafted huge array
@@ -164,6 +165,8 @@ export interface DocParaProps {
   readonly listIlfo?: number;
   /** `sprmPIlvl` — list level (0–8). */
   readonly listIlvl?: number;
+  /** `sprmPFWidowControl` — no first or last line left alone on a page. */
+  readonly widowControl?: boolean;
 }
 
 /** One maximal same-formatting run of text, or an embedded picture. */
@@ -698,6 +701,7 @@ function decodePapxGrpprl(d: Uint8Array): DocParaProps {
   let cellShadings: Array<string | undefined> | undefined;
   let listIlfo: number | undefined;
   let listIlvl: number | undefined;
+  let widowControl: boolean | undefined;
   for (const s of sprms(d)) {
     switch (s.sprm) {
       case SPRM_P_JC:
@@ -723,6 +727,9 @@ function decodePapxGrpprl(d: Uint8Array): DocParaProps {
         break;
       case SPRM_P_F_TTP:
         rowEnd = d[s.op] !== 0;
+        break;
+      case SPRM_P_F_WIDOW_CONTROL:
+        widowControl = d[s.op] !== 0;
         break;
       case SPRM_T_DEF_TABLE: {
         // The operand is itcMac (u8), (itcMac+1) cell-boundary positions, then the
@@ -775,6 +782,7 @@ function decodePapxGrpprl(d: Uint8Array): DocParaProps {
     ...(cellShadings ? { cellShadings } : {}),
     ...(listIlfo !== undefined ? { listIlfo } : {}),
     ...(listIlvl !== undefined ? { listIlvl } : {}),
+    ...(widowControl !== undefined ? { widowControl } : {}),
   };
 }
 

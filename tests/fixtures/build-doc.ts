@@ -41,6 +41,7 @@ export interface DocParaFormat {
   readonly spaceAfterTwips?: number;
   readonly inTable?: boolean; // sprmPFInTable — the paragraph is a table cell
   readonly rowEnd?: boolean; // sprmPFTtp — the row's terminating paragraph
+  readonly widowControl?: boolean; // sprmPFWidowControl
   readonly cellEdgesTwips?: ReadonlyArray<number>; // sprmTDefTable cell boundaries
   // Per-cell TC80 descriptors (DOC-11): borders (each a Brc80) + vertical merge.
   readonly cellTc?: ReadonlyArray<{
@@ -483,6 +484,7 @@ function buildPapxGrpprl(run: DocParaFormat): Uint8Array {
   if (run.indentFirstTwips !== undefined) sprm(0x8411, ...i16(run.indentFirstTwips)); // sprmPDxaLeft1
   if (run.spaceBeforeTwips !== undefined) sprm(0xa413, ...i16(run.spaceBeforeTwips)); // sprmPDyaBefore
   if (run.spaceAfterTwips !== undefined) sprm(0xa414, ...i16(run.spaceAfterTwips)); // sprmPDyaAfter
+  if (run.widowControl !== undefined) sprm(0x2431, run.widowControl ? 1 : 0); // sprmPFWidowControl
   // sprmTDefTable (a long-operand sprm) goes before the table flags so the reader
   // must skip its 2-byte-length operand correctly to still reach sprmPFTtp.
   if (run.cellEdgesTwips) {

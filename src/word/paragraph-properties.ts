@@ -225,6 +225,13 @@ export function parseParagraphProperties(
     if (v !== undefined) out.pageBreakBefore = v;
   }
 
+  // §17.3.1.44 — `w:widowControl`, and `w:val="0"` is how a style turns off
+  // what Word applies to every paragraph that does not say.
+  if ('w:widowControl' in el) {
+    const v = parseToggle(el['w:widowControl']);
+    if (v !== undefined) out.widowControl = v;
+  }
+
   // ECMA-376 §17.3.1.6 — w:bidi is a toggle setting the paragraph base
   // direction to RTL.
   if ('w:bidi' in el) {

@@ -546,6 +546,7 @@ function toParaProperties(p: DocParaProps): ParagraphProperties {
     ...(p.indentFirstTwips !== undefined ? { indentFirstLine: pt(p.indentFirstTwips / 20) } : {}),
     ...(p.spaceBeforeTwips !== undefined ? { spacingBefore: pt(p.spaceBeforeTwips / 20) } : {}),
     ...(p.spaceAfterTwips !== undefined ? { spacingAfter: pt(p.spaceAfterTwips / 20) } : {}),
+    ...(p.widowControl !== undefined ? { widowControl: p.widowControl } : {}),
   };
 }
 
