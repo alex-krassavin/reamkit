@@ -5,9 +5,9 @@
 
 import { IDENTITY, interpretContent, multiply } from './content';
 import { buildContentFont } from './font';
-import { collectPageAppearances } from './annots';
+import { appearanceContent, collectPageAppearances } from './annots';
 import { textMarkupOf } from './annot-draw';
-import { patternTint } from './pattern-tint';
+import { patternTint, tintedHex } from './pattern-tint';
 import { hiddenProperties, hiddenXObject } from './optional-content';
 import { buildColorSpaceMap, buildShadingMap } from './shading';
 import type { Quad, TextMarkup, TextMarkupAnnot } from './annot-draw';
@@ -37,17 +37,19 @@ export function extractPageText(file: PdfFile, page: PdfPage): Array<TextRun> {
   // it draws are the page's words too: a field's value, a button's caption.
   // Only its ARTWORK was being lifted, so 160F-2019.pdf's reset button arrived
   // as a tinted rectangle with nothing written on it.
+  const own = runs.length;
   for (const appearance of collectPageAppearances(file, page)) {
     collectRuns(
       file,
       appearance.resources ?? page.resources,
-      file.streamData(appearance.stream),
+      appearanceContent(file, appearance),
       appearance.ctm,
       1,
       new Set([appearance.stream]),
       runs,
     );
   }
+  for (let i = own; i < runs.length; i++) runs[i] = { ...runs[i]!, annotation: true };
   const links = collectLinks(file, page);
   const marks = collectTextMarkup(file, page);
   const shown = withoutRestrikes(runs);
@@ -331,18 +333,6 @@ function withPatternColour(
   } finally {
     visiting.delete(stream);
   }
-}
-
-/** A colour laid over white paper at `coverage` strength, as a 6-hex string. */
-function tintedHex(colorHex: string, coverage: number): string {
-  const k = Math.min(1, Math.max(0, coverage));
-  if (k >= 1) return colorHex;
-  const channel = (at: number): string => {
-    const c = Number.parseInt(colorHex.slice(at, at + 2), 16);
-    const mixed = Math.round(255 - (255 - (Number.isFinite(c) ? c : 0)) * k);
-    return mixed.toString(16).toUpperCase().padStart(2, '0');
-  };
-  return `${channel(0)}${channel(2)}${channel(4)}`;
 }
 
 /**

@@ -40,12 +40,16 @@ export interface PatternTint {
  * @param file      The owning file.
  * @param resources The resources the pattern is named in.
  * @param name      The pattern's resource name.
+ * @param paint     §8.7.3.3 — the colour an UNCOLOURED pattern (`/PaintType
+ *                  2`) is painted in, which the page gives with `scn` and its
+ *                  own content may not state.
  * @returns Its colour and coverage, or `undefined` when neither can be told.
  */
 export function patternTint(
   file: PdfFile,
   resources: PdfDict | undefined,
   name: string,
+  paint?: string,
 ): PatternTint | undefined {
   if (!resources) return undefined;
   const patterns = file.get(resources, 'Pattern');
@@ -58,9 +62,26 @@ export function patternTint(
   const marks: Array<VectorPlacement> = [];
   const colours: Array<string> = [];
   collect(file, stream, resources, marks, colours, 0, new Set());
-  const colorHex = colours[0];
+  const colorHex = file.get(stream.dict, 'PaintType') === 2 ? paint : (colours[0] ?? paint);
   if (colorHex === undefined) return undefined;
   return { colorHex, coverage: sample(marks, cell) };
+}
+
+/**
+ * A colour laid over white paper at `coverage` strength, as a 6-hex string.
+ *
+ * @param colorHex The colour at full strength.
+ * @param coverage How much of the paper it covers, `0..1`.
+ */
+export function tintedHex(colorHex: string, coverage: number): string {
+  const k = Math.min(1, Math.max(0, coverage));
+  if (k >= 1) return colorHex;
+  const channel = (at: number): string => {
+    const c = Number.parseInt(colorHex.slice(at, at + 2), 16);
+    const mixed = Math.round(255 - (255 - (Number.isFinite(c) ? c : 0)) * k);
+    return mixed.toString(16).toUpperCase().padStart(2, '0');
+  };
+  return `${channel(0)}${channel(2)}${channel(4)}`;
 }
 
 /** The cell a tile repeats on: `/XStep` × `/YStep` from the `/BBox`'s corner. */

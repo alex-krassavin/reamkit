@@ -12,7 +12,7 @@ import { describe, expect, it } from 'vitest';
 import { buildXlsx } from './fixtures/build-xlsx';
 import { Ream } from '@/core/converter/ream';
 import { familiesInFlow } from '@/core/fonts/families';
-import { resolveFamilyStyle } from '@/core/fonts';
+import { knowsFamily, resolveFamilyStyle } from '@/core/fonts';
 
 const families = (bytes: Uint8Array): Array<string> =>
   [...familiesInFlow(Ream.parse(bytes).flow)].sort();
@@ -86,6 +86,41 @@ describe('the families a PDF names (E-FONT F3)', () => {
     expect(resolveFamilyStyle('NimbusSanL-Regu').key).toBe('arimo');
     // A name that says nothing still says nothing.
     expect(resolveFamilyStyle('SomeFoundryFace').key).toBe('arimo');
+  });
+});
+
+describe('the sans families a PDF names (E-FONT F3)', () => {
+  it('knows them, so a descriptor’s flags do not outvote the name', () => {
+    // bug898853.pdf flags its FrutigerLTStd-Light Serif; a sans the tables do
+    // not know is indistinguishable from a name that says nothing.
+    expect(knowsFamily('FrutigerLTStd-Light')).toBe(true);
+    expect(knowsFamily('HelveticaNeue-Bold')).toBe(true);
+    expect(knowsFamily('ArialMT')).toBe(true);
+    expect(knowsFamily('Roboto')).toBe(true);
+    expect(resolveFamilyStyle('FrutigerLTStd-Light').key).toBe('arimo');
+    // A name that says nothing still says nothing.
+    expect(knowsFamily('SomeFoundryFace')).toBe(false);
+  });
+
+  it('takes a sans family’s mono or slab cut for the class it names', () => {
+    expect(resolveFamilyStyle('ArialMonospacedMT').key).toBe('cousine');
+    expect(resolveFamilyStyle('FiraSansSlab-Regular').key).toBe('tinos');
+    // A family named for its fixed pitch is a typewriter face, whatever the
+    // descriptor says: bug1539074.pdf's LucidaTypewriter came back a sans.
+    expect(resolveFamilyStyle('Roboto Mono').key).toBe('cousine');
+    expect(resolveFamilyStyle('IBM Plex Mono').key).toBe('cousine');
+    expect(resolveFamilyStyle('LucidaTypewriter-Extend_850').key).toBe('cousine');
+    expect(resolveFamilyStyle('Monospace821BT').key).toBe('cousine');
+    // A whole-name sans is not its slab: that leaves the descriptor its say.
+    expect(knowsFamily('RobotoSlab-Regular')).toBe(false);
+  });
+
+  it('knows the serif families a producer names by stem', () => {
+    // bug1937438_af_from_latex.pdf's STIXTwoText came back a sans, and
+    // bug1811668_reduced.pdf's `Minion Pro` lost the stem it was known by
+    // with its `Pro`.
+    expect(resolveFamilyStyle('STIXTwoText-Bold').key).toBe('tinos');
+    expect(resolveFamilyStyle('Minion Pro').key).toBe('tinos');
   });
 });
 

@@ -4,6 +4,7 @@
 // any lifted image bytes (EP6) in the resource store the writers embed from.
 
 import { displayOf } from './display';
+import { gradientOverBox } from './shading';
 import type {
   BodyElement,
   CustomPathCmd,
@@ -15,7 +16,7 @@ import type {
   ShapeLine,
   TextOutline,
 } from '@/core/document-model';
-import type { FlowDoc } from '@/core/ir/flow';
+import type { FaceFamily, FlowDoc } from '@/core/ir/flow';
 import type { FontRegistry } from '@/core/font';
 import type { Loss, Pt } from '@/core/ir';
 
@@ -65,6 +66,27 @@ export function paragraphBlock(text: string, outlineLevel?: number): BodyElement
 }
 
 /** One piece of reconstructed text, carrying any hyperlink (E-PDF EP8). */
+/**
+ * The space set between a span and what follows it, in the span's own size and
+ * face: a word space is as wide as the type it stands in.
+ *
+ * Written bare, the space took the document's default size, whatever the words
+ * around it were set at: issue10665_reduced.pdf sets "78" and "110" twenty
+ * points apart in 60-point type, and the eleven-point space between them closed
+ * them up to "78110"; in 7-point footnotes the same space is half as wide
+ * again as the page's, and pushes their lines over.
+ *
+ * @param before The span the space follows, where there is one.
+ * @returns The space.
+ */
+export function spaceAfter(before: TextSpan | undefined): TextSpan {
+  return {
+    text: ' ',
+    ...(before?.sizePt !== undefined ? { sizePt: before.sizePt } : {}),
+    ...(before?.fontName !== undefined ? { fontName: before.fontName } : {}),
+  };
+}
+
 export interface TextSpan {
   readonly text: string;
   readonly href?: string;
@@ -101,7 +123,14 @@ export function paragraphFromRuns(
   outlineLevel?: number,
   placement?: Pick<
     ParagraphProperties,
-    'alignment' | 'spacingBefore' | 'indentLeft' | 'indentFirstLine' | 'tabs'
+    | 'alignment'
+    | 'spacingBefore'
+    | 'spacingLine'
+    | 'spacingLineRule'
+    | 'indentLeft'
+    | 'indentRight'
+    | 'indentFirstLine'
+    | 'tabs'
   >,
 ): BodyElement {
   const merged: Array<{
@@ -182,8 +211,13 @@ export function paragraphFromRuns(
             ...(r.sizePt !== undefined ? { fontSizePt: pt(r.sizePt) } : {}),
             ...(r.colorHex !== undefined ? { colorHex: r.colorHex } : {}),
             // §17.3.2.26 `w:rFonts` — the face by name, which is how the layout
-            // finds a program the document itself carries.
-            ...(r.fontName !== undefined ? { fontFamily: { ascii: r.fontName } } : {}),
+            // finds a program the document itself carries. Every character the
+            // page drew in it, not only the ASCII ones: an accent or a curly
+            // quote reads the `hAnsi` slot, and left empty it went to the
+            // reader's default face mid-word.
+            ...(r.fontName !== undefined
+              ? { fontFamily: { ascii: r.fontName, hAnsi: r.fontName } }
+              : {}),
             // §9.3.6 / §21.1.2.3.9 — the page drew a line round these glyphs.
             ...(r.outline !== undefined ? { textOutline: r.outline } : {}),
             ...(r.bold ? { bold: true } : {}),
@@ -222,6 +256,25 @@ function sameMarkup(a: TextMarkup | undefined, b: TextMarkup | undefined): boole
     a?.strike === b?.strike
   );
 }
+
+/**
+ * The height of a line that carries nothing to read: one twip, the least
+ * §17.3.1.33 can state. Zero is not a height a writer states at all — it is
+ * read as "no line spacing given", and the reader's single spacing comes back.
+ */
+export const CARRIER_LINE_PT = pt(0.05);
+
+/**
+ * §17.3.1.33 — the paragraph a floating mark is anchored in, which takes no
+ * room: the mark stands where the page drew it and the line carrying it is on
+ * no page. Left at a reader's single spacing, every rule and fill an invoice
+ * draws was a blank line in the flow, and the text under it moved down a line
+ * for each.
+ */
+export const FLOAT_CARRIER: ParagraphProperties = {
+  spacingLine: CARRIER_LINE_PT,
+  spacingLineRule: 'exact',
+};
 
 /**
  * Store a {@link PdfImage}'s bytes (content-addressed dedup) and build the image
@@ -266,13 +319,16 @@ export function imageBlock(
       ...(image.rotationDeg !== undefined
         ? { rotation60k: Math.round(-image.rotationDeg * 60000) }
         : {}),
+      // §20.1.7.6 — a flip is applied before the turn, which is how the page's
+      // matrix is taken apart (see `geometry` in ./images).
+      ...(image.flipV === true ? { flipV: true } : {}),
       // §20.1.8.55 — the box above is what the clip left showing, so the source
       // must be cut to match it or the whole picture squeezes into it.
       ...(image.crop ? { crop: image.crop } : {}),
       // §20.1.8.4 `a:alphaModFix` — the page asked for the picture to be seen
       // through, and a format that can say so should say so.
       ...(image.alpha !== undefined ? { alpha: image.alpha } : {}),
-      paragraphProperties: {},
+      paragraphProperties: float ? FLOAT_CARRIER : {},
       ...(alt ? { altText: alt } : {}),
     },
   };
@@ -303,7 +359,15 @@ export function positionedText(
   zOrder: number,
   rotation60k?: number,
 ): BodyElement {
-  const paragraph = paragraphFromRuns(spans);
+  // §17.3.1.33 — the line stands EXACTLY as tall as its box, so its baseline
+  // falls where an exact line's does, four fifths down (`BASELINE_AT`) — which
+  // is where the box was measured to put it. Left to single spacing the face's
+  // own ascent placed it, a tenth of an em too high: bug1724918.pdf's "hello"
+  // and "world" rode up against the tops of the fields they are typed in.
+  const paragraph = paragraphFromRuns(spans, undefined, {
+    spacingLine: pt(Math.max(1, box.height)),
+    spacingLineRule: 'exact',
+  });
   return {
     kind: 'shape',
     shape: {
@@ -330,7 +394,11 @@ export function positionedText(
         insetRight: pt(0),
         insetBottom: pt(0),
       },
-      paragraphProperties: {},
+      // The box floats, so the paragraph that carries it takes no room, as a
+      // placed drawing's does (`FLOAT_CARRIER`). Floats in a row share one
+      // carrier, the first one's: left at single spacing it is a blank line,
+      // and every line under it moves down one.
+      paragraphProperties: FLOAT_CARRIER,
     },
   };
 }
@@ -403,13 +471,25 @@ export function shapeBlock(
   const alpha = v.alpha !== undefined ? { alpha: v.alpha } : {};
   const fill: ShapeFill =
     v.gradient !== undefined
-      ? { kind: 'gradient', gradient: v.gradient, ...alpha }
+      ? { kind: 'gradient', gradient: gradientOverBox(v.gradient, v), ...alpha }
       : v.fillHex !== undefined
         ? { kind: 'solid', colorHex: v.fillHex, ...alpha }
         : { kind: 'none' };
+  const dash = v.strokeHex !== undefined && v.dash !== undefined ? penDash(v.dash, pen) : [];
   const line: ShapeLine | undefined =
     v.strokeHex !== undefined
-      ? { width: pt(pen), colorHex: v.strokeHex, fill: 'solid' }
+      ? {
+          width: pt(pen),
+          colorHex: v.strokeHex,
+          fill: 'solid',
+          ...(dash.length > 0 ? { customDash: dash } : {}),
+          // §8.4.3.3 — the page's cap, stated even where it is the butt cap
+          // every line starts with: a line that states none is capped SQUARE
+          // in a .docx, and each dash of a pattern grows by the pen's width.
+          cap: v.cap ?? 'flat',
+          // §11.6.4.4 — a pen the page set to show through what it crosses.
+          ...(v.strokeAlpha !== undefined ? { alpha: v.strokeAlpha } : {}),
+        }
       : undefined;
   // §20.4.2.3 — anchored to the PAGE at the position it was drawn at, y flipped
   // from PDF's upward axis.
@@ -444,7 +524,7 @@ export function shapeBlock(
       geometry: { kind: 'custom', custom: { pathWidth: w, pathHeight: h, commands } },
       fill,
       ...(line ? { line } : {}),
-      paragraphProperties: {},
+      paragraphProperties: float ? FLOAT_CARRIER : {},
     },
   };
 }
@@ -489,6 +569,153 @@ export function sectionFromPdfPages(pages: ReadonlyArray<PdfPage>): SectionPrope
 }
 
 /**
+ * §8.4.3.6 — a page's dash pattern as DrawingML states one (§20.1.8.21
+ * `a:custDash`): dash and gap in turn, as multiples of the pen's width.
+ *
+ * An odd count of lengths runs twice before it repeats, so the dashes and the
+ * gaps trade places the second time round; written out once more, the pairs
+ * come out even. A dash of no length is a DOT, drawn by the pen's cap alone —
+ * which no .docx line carries — so it is set a pen's width long and the gap
+ * after it gives that back, keeping the pattern's period.
+ *
+ * @param dash The lengths in page-space points.
+ * @param pen  The pen's width in points.
+ * @returns The pattern in pen widths, or an empty array for a solid line.
+ */
+function penDash(dash: ReadonlyArray<number>, pen: number): Array<number> {
+  if (dash.length === 0 || !(pen > 0)) return [];
+  const even = dash.length % 2 === 1 ? [...dash, ...dash] : [...dash];
+  const out = even.map((n) => n / pen);
+  for (let i = 0; i < out.length; i += 2) {
+    if (out[i]! > 0) continue;
+    out[i] = 1;
+    out[i + 1] = Math.max(out[i + 1]! - 1, MIN_DASH_GAP);
+  }
+  return out;
+}
+
+/** The least gap a dash pattern keeps, in pen widths, so a dotted line stays dotted. */
+const MIN_DASH_GAP = 0.5;
+
+/** What the measure gives back, so the widest line still fits when re-set. */
+const SLACK = 0.01;
+
+/** How much of the sheet a margin down the page may take. */
+const DEEPEST_MARGIN = 0.5;
+
+/** How many lines a sheet must hold before where they end says where its measure does. */
+export const MEASURE_LINES = 3;
+
+/**
+ * How far in, as a share of the sheet, a right margin the lines do not show
+ * may come: what a sheet of a line or two is re-set across is at least the
+ * rest of it.
+ */
+export const GUESSED_MARGIN = 1 / 3;
+
+/** The narrowest measure a sheet's own lines may leave, as a share of the sheet. */
+const NARROWEST_MEASURE = 0.2;
+
+/**
+ * The lines a sheet's runs stand on — baselines further apart than half the
+ * size of the type on them — and how many of them END at the sheet's right
+ * edge, within an em of the farthest: the lines a measure broke, or a margin
+ * justified, rather than the ones their author stopped.
+ */
+function linesOf(runs: ReadonlyArray<TextRun>): { count: number; atEdge: number } {
+  const ink = runs
+    .filter((r) => r.text.trim() !== '')
+    .map((r) => ({ y: r.y, end: r.endX, size: r.fontSizePt || 10 }))
+    .sort((a, b) => b.y - a.y);
+  const lines: Array<{ y: number; end: number; size: number }> = [];
+  for (const at of ink) {
+    const last = lines[lines.length - 1];
+    if (last !== undefined && last.y - at.y <= Math.max(last.size, at.size) / 2) {
+      last.end = Math.max(last.end, at.end);
+      last.size = Math.max(last.size, at.size);
+    } else lines.push({ ...at });
+  }
+  const edge = Math.max(...lines.map((l) => l.end));
+  return {
+    count: lines.length,
+    atEdge: lines.filter((l) => edge - l.end <= l.size).length,
+  };
+}
+
+/**
+ * The white, in ems of the text, a running foot keeps above it — which is
+ * what the reader asked of it before it took the line for a foot at all.
+ */
+const FOOT_CLEAR_EM = 2;
+
+/**
+ * §17.3.1.33 — where the baseline of an EXACT line stands in its box, from the
+ * top. LibreOffice puts it at four fifths of the height; Word at the height
+ * less the face's descent, which for the faces documents use is within a tenth
+ * of a line of the same place.
+ */
+export const BASELINE_AT = 0.8;
+
+/** A line's box where no pitch was measured: the ordinary single spacing, in ems. */
+export const NATURAL_LINE_EM = 1.2;
+
+/**
+ * How far above its baseline the first line's BOX reaches, as a fraction of the
+ * size — which is what the top margin has to leave room for. The lines are set
+ * in exact boxes (see `groupIntoParagraphs`), so this is where the box's top
+ * stands, not where a face's ascender happens to.
+ */
+const ASCENDER = BASELINE_AT * NATURAL_LINE_EM;
+
+/**
+ * And how far below its baseline the last line's box reaches. A box set half
+ * as deep again as its size reaches three tenths of it down; measured to a
+ * face's descender instead, bug1337429.pdf's last line did not fit the sheet
+ * it was drawn on and went to a second one.
+ */
+const DESCENDER = (1 - BASELINE_AT) * 1.5;
+
+/**
+ * How small, against the document's own text, type may be set and still be
+ * read as text rather than as a mark the producer left on the sheet.
+ */
+const LEGIBLE_SHARE = 0.25;
+
+/**
+ * The size a document's text is set in: the middle of every size its runs
+ * carry.
+ *
+ * @param pageRuns Each page's runs.
+ * @returns The size, in points; 0 where no run states one.
+ */
+export function textSizeOf(pageRuns: ReadonlyArray<ReadonlyArray<TextRun>>): number {
+  const sizes = pageRuns
+    .flat()
+    .map((r) => r.fontSizePt)
+    .filter((s) => s > 0)
+    .sort((a, b) => a - b);
+  return sizes[Math.floor(sizes.length / 2)] ?? 0;
+}
+
+/**
+ * Whether a run is set too small to be read, beside the text of its document —
+ * a mark the producer leaves on the sheet, not a line of the page.
+ *
+ * TCPDF signs the last page of everything it makes "Powered by TCPDF
+ * (www.tcpdf.org)" in type one point high, three points from the corner of the
+ * paper. Taken for text it was the leftmost and the lowest thing on the page:
+ * the margins came in at the edge of the sheet and every line of basicapi.pdf
+ * and alphatrans.pdf was set against it.
+ *
+ * @param run      The run.
+ * @param textSize The size the document's text is set in (see {@link textSizeOf}).
+ * @returns `true` where the run is a mark rather than text.
+ */
+export function tooSmallToRead(run: TextRun, textSize: number): boolean {
+  return run.fontSizePt > 0 && run.fontSizePt < textSize * LEGIBLE_SHARE;
+}
+
+/**
  * The margins the SOURCE used, measured off where its words actually sit.
  *
  * A PDF states none — text is placed anywhere on the MediaBox — so the reader
@@ -505,21 +732,12 @@ export function sectionFromPdfPages(pages: ReadonlyArray<PdfPage>): SectionPrope
  * @param section  The section the page box gave, or `undefined`.
  * @param shown    Each page as it is shown, for its own width and height.
  * @param pageRuns Each page's runs, already placed on the shown page.
+ * @param pageMarks Each page's pictures, which the measure has to hold.
+ * @param foot     The running foot lifted off the pages, as the first page
+ *                 showed it — the band the text block stands above.
  * @returns The section with measured margins, or `section` when nothing is
  *          measurable.
  */
-/** What the measure gives back, so the widest line still fits when re-set. */
-const SLACK = 0.01;
-
-/** How much of the sheet a margin down the page may take. */
-const DEEPEST_MARGIN = 0.5;
-
-/** How far a face's ascender stands above its baseline, as a fraction of the size. */
-const ASCENDER = 0.8;
-
-/** And its descender below — the two together are a little over one em. */
-const DESCENDER = 0.22;
-
 export function withMeasuredMargins(
   section: SectionProperties | undefined,
   shown: ReadonlyArray<{ width: number; height: number }>,
@@ -527,16 +745,19 @@ export function withMeasuredMargins(
   pageMarks: ReadonlyArray<
     ReadonlyArray<{ x: number; y: number; widthPt: number; heightPt: number }>
   > = [],
+  foot: ReadonlyArray<TextRun> = [],
 ): SectionProperties | undefined {
   if (!section?.pageSize) return section;
   const width = section.pageSize.width as number;
   const height = section.pageSize.height as number;
   const lefts: Array<number> = [];
-  const rights: Array<number> = [];
+  const rights: Array<{ value: number; full: boolean; edged: boolean }> = [];
   const tops: Array<number> = [];
   const bottoms: Array<number> = [];
-  pageRuns.forEach((runs, i) => {
+  const textSize = textSizeOf(pageRuns);
+  pageRuns.forEach((all, i) => {
     const page = shown[i];
+    const runs = all.filter((r) => r.annotation !== true && !tooSmallToRead(r, textSize));
     if (!page || runs.length === 0) return;
     let minX = Infinity;
     let maxX = -Infinity;
@@ -582,6 +803,7 @@ export function withMeasuredMargins(
     // business: bug1883609.pdf heads its form with a banner that runs wider
     // than the words under it, and measured to the banner every line of the
     // form moved out to meet it.
+    const textEnd = maxX;
     for (const mark of pageMarks[i] ?? []) {
       if (!Number.isFinite(mark.x) || !Number.isFinite(mark.y)) continue;
       maxX = Math.max(maxX, mark.x + mark.widthPt);
@@ -589,7 +811,18 @@ export function withMeasuredMargins(
     }
     if (!Number.isFinite(minX) || !Number.isFinite(minY)) return;
     lefts.push(minX);
-    rights.push(page.width - maxX);
+    const lines = linesOf(runs);
+    rights.push({
+      value: page.width - maxX,
+      // A sheet of a line or two says where THOSE lines end, not where the
+      // measure does: a chapter opens on a page of its own, and basicapi.pdf's
+      // two headings of a sheet each voted the right margin in to a third of
+      // the paper, where its contents line — 504 points across — could not be
+      // set. What a sheet's pictures reach it still says.
+      full: lines.count >= MEASURE_LINES || maxX > textEnd,
+      // …and a measure is only SEEN where more than one line runs to it.
+      edged: lines.atEdge >= 2 && maxX <= textEnd,
+    });
     // Runs carry a BASELINE, and a margin is to the top of the LINE.
     //
     // Measured to the baseline, every converted PDF came back a whole ascender
@@ -614,23 +847,57 @@ export function withMeasuredMargins(
   // pulled ninety points up, into the panel it stands below.
   const clamp = (v: number, span: number, most = 1 / 3): Pt =>
     pt(Math.max(0, Math.min(v, span * most)));
+  // §17.6.13 — a running foot stands IN the bottom margin, so the margin
+  // reaches no higher than the white above it: the text block may come down
+  // to there on any page, whether or not the pages at hand fill it. A chapter
+  // opens on a sheet of its own, and measured to where basicapi.pdf's three
+  // short sheets end, its bottom margin came out at half the paper. And the
+  // band is set where the page set it: the foot's distance from the edge of
+  // the sheet is its own.
+  const inked = foot.filter((r) => r.text.trim() !== '');
+  const footTop = Math.max(...inked.map((r) => r.y + r.fontSizePt * ASCENDER));
+  const footBottom = Math.min(...inked.map((r) => r.y - r.fontSizePt * DESCENDER));
+  const floor = inked.length > 0 ? footTop + textSize * FOOT_CLEAR_EM : Infinity;
+  // Across the sheet the LEFTMOST page decides, the way the tightest page
+  // decides down it: a margin is a wall the text may not cross, and a page
+  // that happens to set its last lines on the right — a receipt's payment
+  // history, ending in a right-hand column — has no left edge to speak of.
+  // Taking the middle of two put the wall three hundred points in and threw
+  // the whole receipt off the right edge of the sheet.
+  const left = clamp(Math.min(...lefts), width);
+  // A third of the sheet is as far in as a GUESS may bring the right margin.
+  // Sheets whose lines run to one edge are not guessing — the measure broke
+  // them there — and may bring it in as far as that, so long as a fifth of
+  // the sheet is left to set in. bug1057544.pdf sets its paragraph in a
+  // column a quarter of the sheet wide, and held to a third the column came
+  // back twice as wide, in two lines where the page has four. A sheet whose
+  // widest line is the only one that long has shown no measure at all:
+  // issue10529.pdf's one long line, measured to, wrapped in the wider face
+  // it is re-set in.
+  const voters = rights.filter((r) => r.full);
+  const farthest =
+    voters.length > 0 && voters.every((r) => r.edged)
+      ? Math.max(width * GUESSED_MARGIN, width * (1 - NARROWEST_MEASURE) - left)
+      : width * GUESSED_MARGIN;
   return {
     ...section,
     margins: {
-      // Across the sheet the LEFTMOST page decides, the way the tightest page
-      // decides down it: a margin is a wall the text may not cross, and a page
-      // that happens to set its last lines on the right — a receipt's payment
-      // history, ending in a right-hand column — has no left edge to speak of.
-      // Taking the middle of two put the wall three hundred points in and threw
-      // the whole receipt off the right edge of the sheet.
-      left: clamp(Math.min(...lefts), width),
+      left,
       // The right margin gives back a little of what it measured. The page was
       // set in faces this reader does not have, and re-setting it in
       // substitutes cannot come out narrower everywhere — so a measure exactly
       // as wide as the widest line wraps that line's last word onto the next.
       // basicapi.pdf's contents line runs 504.5pt across a 504.5pt measure, and
       // its page number came back at the head of the line below.
-      right: clamp(median(rights) - width * SLACK, width),
+      right: pt(
+        Math.max(
+          0,
+          Math.min(
+            median((voters.length > 0 ? voters : rights).map((r) => r.value)) - width * SLACK,
+            farthest,
+          ),
+        ),
+      ),
       // Down the page the TIGHTEST page decides, not the middle one. A margin
       // is a wall the text may not cross, and the pages differ: the last one
       // ends early, and taking the middle of two puts the wall above the line
@@ -642,7 +909,8 @@ export function withMeasuredMargins(
       // have, and re-set in substitutes it cannot come out shorter everywhere.
       // A measure exactly as deep as the text block drops its last line onto a
       // sheet of its own.
-      bottom: clamp(Math.min(...bottoms) - height * SLACK, height, DEEPEST_MARGIN),
+      bottom: clamp(Math.min(...bottoms, floor) - height * SLACK, height, DEEPEST_MARGIN),
+      ...(inked.length > 0 ? { footer: clamp(footBottom, height, DEEPEST_MARGIN) } : {}),
     },
   };
 }
@@ -661,6 +929,7 @@ export function buildFlowDoc(
   embeddedFonts?: ReadonlyMap<string, FontRegistry>,
   sections: ReadonlyArray<Section> = [],
   headersFooters?: ReadonlyMap<string, ReadonlyArray<BodyElement>>,
+  faceFamilies?: ReadonlyMap<string, FaceFamily>,
 ): FlowDoc {
   return {
     kind: 'flow',
@@ -671,6 +940,7 @@ export function buildFlowDoc(
     ...(headersFooters && headersFooters.size > 0 ? { headersFooters } : {}),
     ...(section ? { section } : {}),
     ...(embeddedFonts && embeddedFonts.size > 0 ? { embeddedFonts } : {}),
+    ...(faceFamilies && faceFamilies.size > 0 ? { faceFamilies } : {}),
     styles: EMPTY_STYLE_SHEET,
     resources,
   };

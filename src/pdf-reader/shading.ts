@@ -20,7 +20,8 @@ import type { GradientStop, ShapeGradient } from '@/core/vector';
 import type { PdfDict, PdfValue } from '@/pdf/objects';
 
 import type { PdfFile } from './document';
-import { PDF_NULL, PdfName, PdfStream } from '@/pdf/objects';
+import type { Matrix } from './content';
+import { PDF_NULL, PdfHexString, PdfName, PdfStream } from '@/pdf/objects';
 
 /**
  * Resolve a page's `/Pattern` resources into gradient fills (E-PDF EP16c, ISO
@@ -38,8 +39,8 @@ import { PDF_NULL, PdfName, PdfStream } from '@/pdf/objects';
 export function buildShadingMap(
   file: PdfFile,
   resources: PdfDict | undefined,
-): Map<string, ShapeGradient> {
-  const out = new Map<string, ShapeGradient>();
+): Map<string, PageGradient> {
+  const out = new Map<string, PageGradient>();
   if (!resources) return out;
   const patterns = file.get(resources, 'Pattern');
   if (!(patterns instanceof Map)) return out;
@@ -48,10 +49,118 @@ export function buildShadingMap(
     if (!(pat instanceof Map)) continue;
     const shading = dictOf(file.resolve(pat.get('Shading') ?? PDF_NULL));
     if (!shading) continue;
-    const gradient = parseShading(file, shading);
+    // §8.7.2 — the pattern's matrix carries its space onto the page's.
+    const m = numArray(file, pat.get('Matrix'));
+    const matrix: Matrix | undefined =
+      m && m.length >= 6 ? [m[0]!, m[1]!, m[2]!, m[3]!, m[4]!, m[5]!] : undefined;
+    const gradient = parseShading(file, shading, matrix);
     if (gradient) out.set(nm, gradient);
   }
   return out;
+}
+
+/**
+ * §8.7.4.5.3 — where an axial shading's axis runs on the page, y up: its
+ * first stop at (x0, y0) and its last at (x1, y1).
+ */
+export interface GradientAxis {
+  readonly x0: number;
+  readonly y0: number;
+  readonly x1: number;
+  readonly y1: number;
+}
+
+/**
+ * A gradient as the page states it: the model's, and where its axis runs. A
+ * shape shows the part of the axis its box covers, and the model's gradient
+ * spans the box — see {@link gradientOverBox}.
+ */
+export type PageGradient = ShapeGradient & { readonly axis?: GradientAxis };
+
+/**
+ * A page's gradient as a shape filled with it shows it: its stops re-mapped
+ * from the whole axis to the part of it the shape's box covers.
+ *
+ * A DrawingML gradient spans the shape it fills, and a PDF shading spans its
+ * own axis, which may reach far past the shape: issue10572.pdf's pattern
+ * runs twenty-four stripes down 1800 points, of which its 450-point square
+ * shows six — spread over the square, all twenty-four came back as hairlines.
+ * Beyond either end of the axis the end colour carries on, as `/Extend` asks.
+ *
+ * @param g   The gradient, with its axis where the page states one.
+ * @param box The shape's box, in the same space as the axis.
+ * @returns The gradient as the shape shows it, with no axis.
+ */
+export function gradientOverBox(
+  g: PageGradient,
+  box: {
+    readonly minX: number;
+    readonly minY: number;
+    readonly maxX: number;
+    readonly maxY: number;
+  },
+): ShapeGradient {
+  const { axis, ...plain } = g;
+  if (!axis || g.kind !== 'linear' || g.stops.length === 0) return plain;
+  const dx = axis.x1 - axis.x0;
+  const dy = axis.y1 - axis.y0;
+  const len2 = dx * dx + dy * dy;
+  if (!(len2 > 0)) return plain;
+  const along = (x: number, y: number): number => ((x - axis.x0) * dx + (y - axis.y0) * dy) / len2;
+  const ts = [
+    along(box.minX, box.minY),
+    along(box.minX, box.maxY),
+    along(box.maxX, box.minY),
+    along(box.maxX, box.maxY),
+  ];
+  const t0 = Math.min(...ts);
+  const t1 = Math.max(...ts);
+  if (!(t1 - t0 > 1e-9)) return plain;
+  if (Math.abs(t0) < SPAN_NOISE && Math.abs(t1 - 1) < SPAN_NOISE) return plain;
+  const inner = g.stops.filter((st) => st.offset > t0 && st.offset < t1);
+  const stops: Array<GradientStop> = [
+    { offset: 0, colorHex: colorAlong(g.stops, t0, 'after') },
+    ...inner.map((st) => ({ offset: (st.offset - t0) / (t1 - t0), colorHex: st.colorHex })),
+    { offset: 1, colorHex: colorAlong(g.stops, t1, 'before') },
+  ];
+  return { ...plain, stops };
+}
+
+/** How near the box's span may come to the whole axis and be taken for it. */
+const SPAN_NOISE = 1e-3;
+
+/**
+ * A gradient's colour at `t` along it, its end colours carried on past either
+ * end. Where two stops share `t` the gradient changes colour AT it, and `side`
+ * says which of the two is wanted: the one the span after `t` starts with, or
+ * the one the span before it ends with. issue10572.pdf's square starts on such
+ * an edge, and taken from the wrong side its first stripe faded in from blue.
+ */
+function colorAlong(
+  stops: ReadonlyArray<GradientStop>,
+  t: number,
+  side: 'before' | 'after',
+): string {
+  const first = stops[0]!;
+  const last = stops[stops.length - 1]!;
+  if (t <= first.offset) return first.colorHex;
+  if (t >= last.offset) return last.colorHex;
+  const at = stops.filter((st) => Math.abs(st.offset - t) < 1e-9);
+  if (at.length > 0) return (side === 'after' ? at[at.length - 1]! : at[0]!).colorHex;
+  for (let i = 1; i < stops.length; i++) {
+    const b = stops[i]!;
+    if (t > b.offset) continue;
+    const a = stops[i - 1]!;
+    const span = b.offset - a.offset;
+    const f = span > 0 ? (t - a.offset) / span : 1;
+    const mix = (shift: number): number => {
+      const ca = (parseInt(a.colorHex, 16) >> shift) & 255;
+      const cb = (parseInt(b.colorHex, 16) >> shift) & 255;
+      return ca + (cb - ca) * f;
+    };
+    return hex255(mix(16), mix(8), mix(0));
+  }
+  return last.colorHex;
 }
 
 /**
@@ -65,8 +174,12 @@ export function buildShadingMap(
  * @param sh   The shading dictionary.
  * @returns The gradient, or `undefined` for a type this does not read.
  */
-export function gradientShading(file: PdfFile, sh: PdfDict): ShapeGradient | undefined {
-  return parseShading(file, sh);
+export function gradientShading(
+  file: PdfFile,
+  sh: PdfDict,
+  ctm?: Matrix,
+): PageGradient | undefined {
+  return parseShading(file, sh, ctm);
 }
 
 /**
@@ -80,20 +193,26 @@ export function shadingTypeOf(file: PdfFile, sh: PdfDict): number {
   return numOf(file.get(sh, 'ShadingType'));
 }
 
-function parseShading(file: PdfFile, sh: PdfDict): ShapeGradient | undefined {
+function parseShading(file: PdfFile, sh: PdfDict, matrix?: Matrix): PageGradient | undefined {
   const type = numOf(file.get(sh, 'ShadingType'));
   if (type !== 2 && type !== 3) return undefined; // only axial (2) / radial (3)
   const stops = parseFunction(file, sh.get('Function'), shadingSpace(file, sh));
   if (!stops || stops.length === 0) return undefined;
   if (type === 3) return { kind: 'radial', stops };
   // Axial: the angle is the Coords direction, with y negated (PDF y-up → the
-  // DrawingML y-down convention the model stores).
+  // DrawingML y-down convention the model stores) — the direction on the PAGE,
+  // through the matrix that carries the shading's space there (§8.7.2): a
+  // pattern's `/Matrix`, or the CTM a bare `sh` paints under. Taken in the
+  // shading's own space, gradientfill.pdf's pattern — its matrix turns y over
+  // — ran red to green where the page runs green to red.
   const c = numArray(file, sh.get('Coords'));
-  const angle =
-    c && c.length >= 4
-      ? ((((Math.atan2(-(c[3]! - c[1]!), c[2]! - c[0]!) * 180) / Math.PI) % 360) + 360) % 360
-      : 0;
-  return { kind: 'linear', angle, stops };
+  if (!c || c.length < 4) return { kind: 'linear', angle: 0, stops };
+  const [a, b, cc, d, e, f] = matrix ?? [1, 0, 0, 1, 0, 0];
+  const at = (x: number, y: number): [number, number] => [a * x + cc * y + e, b * x + d * y + f];
+  const [x0, y0] = at(c[0]!, c[1]!);
+  const [x1, y1] = at(c[2]!, c[3]!);
+  const angle = ((((Math.atan2(-(y1 - y0), x1 - x0) * 180) / Math.PI) % 360) + 360) % 360;
+  return { kind: 'linear', angle, stops, axis: { x0, y0, x1, y1 } };
 }
 
 // A 1-in / n-out function → colour stops. Recurses for the type-3 stitching case.
@@ -299,6 +418,19 @@ function colorOf(c: ReadonlyArray<number>, space?: ColorSpaceInfo): string {
   return spaceColor(c, space) ?? spaceColor(c, undefined) ?? grayHex(c[0] ?? 0);
 }
 
+/** §8.6.6.3 — an Indexed space's table: a string, a hex string or a stream. */
+function lookupBytes(file: PdfFile, v: PdfValue | undefined): Uint8Array | undefined {
+  const r = file.resolve(v ?? PDF_NULL);
+  if (r instanceof PdfHexString) return r.bytes;
+  if (typeof r === 'string') {
+    const out = new Uint8Array(r.length);
+    for (let i = 0; i < r.length; i++) out[i] = r.charCodeAt(i) & 0xff;
+    return out;
+  }
+  if (r instanceof PdfStream) return file.streamData(r);
+  return undefined;
+}
+
 /**
  * §8.6.8 — the colour a run of `sc` / `scn` components comes to.
  *
@@ -453,12 +585,31 @@ export function buildAlphaMap(file: PdfFile, resources: PdfDict | undefined): Ma
     const masked = statesMask
       ? file.resolve(state.get('SMask') ?? PDF_NULL) instanceof Map
       : undefined;
-    if (alpha === undefined && mode === undefined && !statesMask) continue;
+    // §8.4.5 `/LW` and `/D` — the pen, which a state may set as `w` and `d` do.
+    const lw = file.resolve(state.get('LW') ?? PDF_NULL);
+    const lineWidth = typeof lw === 'number' && lw >= 0 ? lw : undefined;
+    const d = file.resolve(state.get('D') ?? PDF_NULL);
+    const dash = Array.isArray(d) ? dashLengths(file.resolve(d[0] ?? PDF_NULL)) : undefined;
+    const lc = file.resolve(state.get('LC') ?? PDF_NULL);
+    const lineCap = lc === 0 || lc === 1 || lc === 2 ? lc : undefined;
+    const caStroke = file.resolve(state.get('CA') ?? PDF_NULL);
+    const strokeAlpha =
+      typeof caStroke === 'number' && caStroke >= 0 && caStroke <= 1 ? caStroke : undefined;
+    const statesPen =
+      lineWidth !== undefined ||
+      dash !== undefined ||
+      lineCap !== undefined ||
+      strokeAlpha !== undefined;
+    if (alpha === undefined && mode === undefined && !statesMask && !statesPen) continue;
     out.set(name, {
       ...(alpha !== undefined ? { alpha } : {}),
       ...(mode !== undefined ? { statesBlend: true, darkens } : {}),
       ...(blend !== undefined ? { blend } : {}),
       ...(masked !== undefined ? { masked } : {}),
+      ...(lineWidth !== undefined ? { lineWidth } : {}),
+      ...(dash !== undefined ? { dash } : {}),
+      ...(lineCap !== undefined ? { lineCap } : {}),
+      ...(strokeAlpha !== undefined ? { strokeAlpha } : {}),
     });
   }
   return out;
@@ -488,6 +639,29 @@ export interface GsPaint {
    * `false` where the state names `/None`, which takes a mask off.
    */
   readonly masked?: boolean;
+  /** §8.4.5 `/LW` — the line width, in user space. */
+  readonly lineWidth?: number;
+  /** §8.4.5 `/D` — the dash pattern's lengths, in user space; empty is solid. */
+  readonly dash?: ReadonlyArray<number>;
+  /** §8.4.5 `/LC` — the line cap: 0 butt, 1 round, 2 projecting square. */
+  readonly lineCap?: number;
+  /** §11.6.4.4 `/CA` — the constant STROKE alpha, where the state names one. */
+  readonly strokeAlpha?: number;
+}
+
+/**
+ * §8.4.3.6 — a dash array as a stroke can use it: lengths that are numbers and
+ * not negative, and none at all where every one is zero, which draws nothing
+ * and is solid by the spec's own reading.
+ *
+ * @param value The array, as the file states it.
+ * @returns The lengths, or an empty array for a solid line.
+ */
+export function dashLengths(value: unknown): ReadonlyArray<number> {
+  if (!Array.isArray(value)) return [];
+  const lengths = value.filter((n): n is number => typeof n === 'number' && n >= 0);
+  if (lengths.length !== value.length || lengths.every((n) => n === 0)) return [];
+  return lengths;
 }
 
 /**
@@ -572,10 +746,28 @@ function colorSpaceAt(file: PdfFile, cs: PdfValue, depth: number): ColorSpaceInf
     }
     return icc ? { ...base, icc } : base;
   }
-  if (head.value === 'Indexed') {
-    // §8.6.6.3 — one operand, an index into a table. Reading the table is the
-    // image path's business; a bare `sc` into one is rare and left alone.
-    return undefined;
+  if (head.value === 'Indexed' || head.value === 'I') {
+    // §8.6.6.3 — one operand, an index into a table of colours in the base
+    // space. Left unread, a fill set by `sc` kept whatever colour stood before
+    // it: IndexedCS_negative_and_high.pdf's eleven swatches all came back the
+    // pink the reference row above them ends on.
+    const base =
+      depth < MAX_ALTERNATE
+        ? colorSpaceAt(file, file.resolve(cs[1] ?? PDF_NULL), depth + 1)
+        : undefined;
+    const hival = file.resolve(cs[2] ?? PDF_NULL);
+    const table = lookupBytes(file, cs[3]);
+    if (!base || base.kind === 'tint' || typeof hival !== 'number' || !table) return undefined;
+    const transform: PdfFunction = ([index = 0]) => {
+      // An index is snapped to the table: below it to the first entry, past it
+      // — or between two, which only a whole number is not — to the nearest.
+      const at = Math.min(Math.max(0, Math.round(index)), Math.round(hival));
+      return Array.from(
+        { length: base.components },
+        (_, k) => (table[at * base.components + k] ?? 0) / 255,
+      );
+    };
+    return { kind: 'tint', components: 1, tint: { transform, alternate: base } };
   }
   if (head.value === 'CalRGB') {
     // §8.6.5.7 — three numbers through their gammas and the matrix into XYZ,

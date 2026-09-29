@@ -9,13 +9,19 @@ import { cffCidToGid, cffNameToGid, cffOutlineSource, openTypeCff } from './cff-
 import { type1Font } from './type1-outline';
 import { outlineSource, postGlyphNames } from './glyf-outline';
 import { standardFace, standardWidth } from './standard-widths';
-import { embeddedFontName, hasLiftableProgram } from './embedded-fonts';
+import { eachPageFont, embeddedFontName, hasLiftableProgram, programStyle } from './embedded-fonts';
 import { isZapfDingbats, zapfDingbatsChar } from './dingbats';
-import { baseEncodingTable, isStandardLatinFace, standardEncodingTable } from './encodings';
+import {
+  baseEncodingTable,
+  isStandardLatinFace,
+  macGlyphName,
+  standardEncodingTable,
+} from './encodings';
 import type { PdfDict, PdfValue } from '@/pdf/objects';
 import type { ContentFont, GlyphOutline, Matrix, PathSeg, Type3Face } from './content';
-import type { PdfFile } from './document';
-import { resolveFamilyStyle } from '@/core/fonts';
+import type { PdfFile, PdfPage } from './document';
+import type { FaceFamily } from '@/core/ir/flow';
+import { knowsFamily, resolveFamilyStyle } from '@/core/fonts';
 import { PDF_NULL, PdfName, PdfStream } from '@/pdf/objects';
 import { parseTtf } from '@/core/font/ttf-parser';
 
@@ -76,6 +82,18 @@ export function buildContentFont(file: PdfFile, fontDict: PdfDict): ContentFont 
   // Brotli-Prototype-FileA.pdf sets a floor plan's room names in one, and
   // "LIVING ROOM" and "DINING" never reached the page at all.
   const fromProgram = isType0 && toUnicode.size === 0 ? embeddedCmap(file, fontDict) : undefined;
+  // …and a program with no `cmap` still says, through the `/CIDToGIDMap`,
+  // whether its CIDs are CHARACTERS (see `unicodeCids`).
+  const fromCids =
+    isType0 && toUnicode.size === 0 && fromProgram === undefined
+      ? unicodeCids(file, fontDict)
+      : undefined;
+  // …and a font that embeds nothing, named for a face every machine carries,
+  // has its codes as glyph indices into THAT face (see `coreGlyphOrder`).
+  const fromCore =
+    isType0 && toUnicode.size === 0 && fromProgram === undefined && fromCids === undefined
+      ? coreGlyphOrder(file, fontDict)
+      : undefined;
   // …and a `/ToUnicode` that EXISTS may not cover the codes the page actually
   // shows. bug911034.pdf ships one describing 95 codes and then draws glyphs
   // 0x2000 upward out of a 222 KB Arial Unicode subset; every one of them
@@ -101,16 +119,35 @@ export function buildContentFont(file: PdfFile, fontDict: PdfDict): ContentFont 
   // marked unreadable it would take the words away and put nothing in their
   // place, which is how bug1151216.pdf's three lines of prices vanished.
   const glyphs = isType0 ? undefined : simpleGlyphs(file, fontDict);
+  // §9.6.6.4 — a glyph NAMED by its index (`g18`, `glyph152`) says nothing
+  // itself, and the program it indexes still does: its `cmap` maps characters
+  // onto those very glyphs, and read backwards it says what each one is.
+  // TAMReview.pdf sets its body in a Cambria subset named that way, and seven
+  // thousand of its nine thousand characters were traced as drawings instead
+  // of read — forty thousand shapes where a page of text stands.
+  let byIndex: ReadonlyMap<number, string> | undefined | null = null;
+  const numbering = isType0 ? undefined : numberingOf(differences(file, fontDict).values());
+  const fromIndex = (name: string): string | undefined => {
+    const gid = numberedGlyph(name, numbering);
+    if (gid === undefined) return undefined;
+    byIndex ??= programCharacters(file, fontDict);
+    return byIndex?.get(gid);
+  };
   const fromNames = !isType0
     ? namedGlyphs(file, fontDict, toUnicode.size > 0, {
         draws: (name) => glyphs?.byName(name) !== undefined,
         blank: (name) => glyphs?.blank(name) === true,
+        character: fromIndex,
       })
     : undefined;
   // The names themselves, not what they come to: a name that is no character
   // still selects a glyph, which is what the outline path draws.
   const glyphNames = isType0 ? new Map<number, string>() : differences(file, fontDict);
-  const unicode = fromProgram ?? (toUnicode.size > 0 ? toUnicode : (fromNames ?? toUnicode));
+  const unicode =
+    fromProgram ??
+    fromCids ??
+    fromCore ??
+    (toUnicode.size > 0 ? toUnicode : (fromNames ?? toUnicode));
 
   const bytesPerCode = codeBytes;
   // §9.6.6.4 — a simple TrueType whose program has NO `cmap`, and which names
@@ -131,7 +168,21 @@ export function buildContentFont(file: PdfFile, fontDict: PdfDict): ContentFont 
   // Annex D.2 — the encoding the codes are read through under /Differences.
   // Annex D.2 — the base encoding as glyph NAMES, which serve twice: the text a
   // code stands for, and the glyph it selects in a program addressed by name.
-  const baseNames = isType0 ? undefined : baseEncoding(file, fontDict);
+  //
+  // §9.6.6.1 — and a font that states no encoding is read through the one its
+  // program is built with. A NAME that is none of the encodings there are
+  // states nothing: bug859204.pdf embeds a Type 1 News Gothic under
+  // `/Encoding /NULL`, whose code 0x95 its program names `bullet` — read as
+  // Latin-1 it was a control character, and the list lost its bullet.
+  const stated = file.resolve(fontDict.get('Encoding') ?? PDF_NULL);
+  const statesEncoding =
+    stated instanceof Map ||
+    (stated instanceof PdfName && baseEncodingTable(stated.value) !== undefined);
+  const baseNames = isType0
+    ? undefined
+    : statesEncoding
+      ? baseEncoding(file, fontDict)
+      : (glyphs?.builtIn ?? baseEncoding(file, fontDict));
   const fromBase = new Map<number, string>();
   for (const [code, glyph] of baseNames ?? []) {
     const text = textForGlyphName(glyph);
@@ -169,6 +220,12 @@ export function buildContentFont(file: PdfFile, fontDict: PdfDict): ContentFont 
     // ordinary, and read as Latin-1 the space is a control and is dropped:
     // TAMReview.pdf's figure labels came back "SystemFeatures".
     fromNames?.get(code) ??
+    // §9.6.6.1 — a code the font's own `/Differences` name `.notdef` selects
+    // no glyph and is no character, whatever the base encoding would have
+    // made of it. issue11403_reduced.pdf writes a UTF-8 no-break space into
+    // a Helvetica that names both its bytes `.notdef`, and read through
+    // StandardEncoding the first came back an acute accent before the line.
+    (glyphNames.get(code) === NOTDEF ? '' : undefined) ??
     // Annex D.6 — the built-in encoding of a standard face that has one of its
     // own. ZapfDingbats is a font of PICTURES: its 0x4B is not the letter K but
     // `a38`, the six-pointed star, and read through the Latin encoding below —
@@ -213,7 +270,7 @@ export function buildContentFont(file: PdfFile, fontDict: PdfDict): ContentFont 
     ...(name !== undefined ? { name } : {}),
     // Map each code to Unicode; an unmapped code in a simple font falls back to
     // its Latin-1 character, a composite font's to nothing (no sensible guess).
-    decode: (codes) => codes.map((c) => readable(decodeOne(c))).join(''),
+    decode: (codes) => codes.map((c) => lettersOf(readable(decodeOne(c)))).join(''),
     width,
     ...style,
   };
@@ -262,6 +319,35 @@ function readable(text: string): string {
   return out;
 }
 
+/**
+ * Unicode's presentation forms of the Latin ligatures, U+FB00–U+FB06, as the
+ * letters they join.
+ *
+ * A producer maps a ligature glyph to its compatibility character, and carried
+ * as that the word neither searches nor edits as the letters it is — and a
+ * face with no such form sets it in another's, wider: copy_paste_ligatures.pdf
+ * is one line in Times, and its "ﬀﬁﬂﬃﬄﬅﬆ" pushed the line off its page. The long
+ * s of `ﬅ` is kept: it is a letter of its own.
+ */
+function lettersOf(text: string): string {
+  return LIGATURE.test(text) ? text.replace(LIGATURES, (c) => LATIN_LIGATURES.get(c) ?? c) : text;
+}
+
+const LIGATURE = /[\uFB00-\uFB06]/u;
+const LIGATURES = /[\uFB00-\uFB06]/gu;
+const LATIN_LIGATURES: ReadonlyMap<string, string> = new Map([
+  ['\uFB00', 'ff'],
+  ['\uFB01', 'fi'],
+  ['\uFB02', 'fl'],
+  ['\uFB03', 'ffi'],
+  ['\uFB04', 'ffl'],
+  ['\uFB05', '\u017Ft'],
+  ['\uFB06', 'st'],
+]);
+
+/** The glyph name that selects no glyph (§9.6.6.1). */
+const NOTDEF = '.notdef';
+
 /** The last Unicode code point in the BMP, and the surrogate block inside it. */
 const BMP_END = 0xffff;
 const SURROGATE_FIRST = 0xd800;
@@ -282,7 +368,135 @@ const SURROGATE_LAST = 0xdfff;
  */
 function embeddedCmap(file: PdfFile, fontDict: PdfDict): Map<number, string> | undefined {
   const cidFont = descendantFont(file, fontDict);
+  const byGlyph = programCharacters(file, cidFont);
+  if (byGlyph === undefined) return undefined;
+  const cidToGid = readCidToGid(file, cidFont);
+  if (!cidToGid) return byGlyph;
+  const out = new Map<number, string>();
+  cidToGid.forEach((gid, cid) => {
+    const text = byGlyph.get(gid);
+    if (text !== undefined) out.set(cid, text);
+  });
+  return out.size > 0 ? out : undefined;
+}
+
+/**
+ * §9.7.4 — the characters of a composite font that embeds no program, names a
+ * core face and states no `/ToUnicode`: its codes are glyph indices into the
+ * face the reader's machine carries under that name, and the core faces put
+ * their first 258 glyphs in the standard Macintosh order (the `post` table's
+ * format 1 names).
+ *
+ * issue11242_reduced.pdf shows "VAT Code" in a Verdana it does not embed.
+ * Nothing in the file says what its codes are but the face's own order, and
+ * read as characters they are "9$7&RGH"; read as nothing, the page came back
+ * blank. Only faces known to keep that order are read this way — a face's
+ * order is its own, and Calibri's is not this one.
+ *
+ * @param file     The owning file.
+ * @param fontDict The `/Type0` font dictionary.
+ * @returns Code → character, or `undefined` where the font is not such a one.
+ */
+function coreGlyphOrder(file: PdfFile, fontDict: PdfDict): Map<number, string> | undefined {
+  const encoding = asName(file.resolve(fontDict.get('Encoding') ?? PDF_NULL));
+  if (encoding !== 'Identity-H' && encoding !== 'Identity-V') return undefined;
+  const cidFont = descendantFont(file, fontDict);
+  if (asName(file.resolve(cidFont.get('Subtype') ?? PDF_NULL)) !== 'CIDFontType2') return undefined;
+  const map = file.resolve(cidFont.get('CIDToGIDMap') ?? PDF_NULL);
+  if (map !== PDF_NULL && !(map instanceof PdfName && map.value === 'Identity')) return undefined;
   const descriptor = file.resolve(cidFont.get('FontDescriptor') ?? PDF_NULL);
+  if (
+    descriptor instanceof Map &&
+    ['FontFile', 'FontFile2', 'FontFile3'].some((k) => descriptor.has(k))
+  )
+    return undefined;
+  const family = familyOfFace(asName(file.resolve(fontDict.get('BaseFont') ?? PDF_NULL)));
+  if (!CORE_FACES.has(family.toLowerCase().replace(/[^a-z]/gu, ''))) return undefined;
+  const out = new Map<number, string>();
+  for (let gid = 0; gid < MAC_GLYPHS; gid++) {
+    const name = macGlyphName(gid);
+    const text = name === undefined ? undefined : textForGlyphName(name);
+    if (text !== undefined && text !== '') out.set(gid, text);
+  }
+  return out;
+}
+
+/** The core faces whose first glyphs stand in the standard Macintosh order. */
+const CORE_FACES: ReadonlySet<string> = new Set([
+  'arial',
+  'timesnewroman',
+  'couriernew',
+  'verdana',
+  'tahoma',
+  'georgia',
+  'trebuchetms',
+]);
+
+/** How many glyphs the standard Macintosh order names. */
+const MAC_GLYPHS = 258;
+
+/**
+ * §9.7.4.2 — the CIDs of a composite font that ARE characters.
+ *
+ * A `/CIDToGIDMap` stream says the CID is not the glyph index, and TCPDF —
+ * with tFPDF and mPDF after it — makes it the character's own Unicode value,
+ * mapping every character of the face to its glyph whether the subset kept
+ * the glyph or not. Without a `/ToUnicode`, and with a subset that carries no
+ * `cmap`, that was the only statement of what the glyphs are and it went
+ * unread: bug1650302_reduced.pdf's "Výbava na přání" came back as drawings,
+ * the `ř` missing from them. Read as characters, the words come back.
+ *
+ * Only where the map itself says so. A producer that keeps the ORIGINAL
+ * glyph index as the CID routes it through a stream too, and read as Unicode
+ * complex_ttf_font.pdf's Arabic would come back as `$&')`. What tells the two
+ * apart is the space: a map of characters sends U+0020 to a glyph that draws
+ * nothing and no control character anywhere, where a map of indices sends 3 —
+ * the space in the fonts they come from — and 32 to a glyph with ink on it.
+ */
+function unicodeCids(file: PdfFile, fontDict: PdfDict): Map<number, string> | undefined {
+  const encoding = asName(file.resolve(fontDict.get('Encoding') ?? PDF_NULL));
+  if (encoding !== 'Identity-H' && encoding !== 'Identity-V') return undefined;
+  const cidFont = descendantFont(file, fontDict);
+  const cidToGid = readCidToGid(file, cidFont);
+  if (!cidToGid || cidToGid.slice(0, SPACE).some((gid) => gid !== 0)) return undefined;
+  const space = cidToGid[SPACE];
+  if (space === undefined || space === 0) return undefined;
+  const descriptor = file.resolve(cidFont.get('FontDescriptor') ?? PDF_NULL);
+  if (!(descriptor instanceof Map)) return undefined;
+  const program = file.resolve(descriptor.get('FontFile2') ?? PDF_NULL);
+  if (!(program instanceof PdfStream)) return undefined;
+  let blank: boolean;
+  try {
+    const glyf = outlineSource(file.streamData(program));
+    blank = glyf !== undefined && space < glyf.count && glyf.path(space) === undefined;
+  } catch {
+    return undefined;
+  }
+  if (!blank) return undefined;
+  const out = new Map<number, string>();
+  cidToGid.forEach((gid, cid) => {
+    if (gid !== 0 && !(cid >= SURROGATE_FIRST && cid <= SURROGATE_LAST)) {
+      out.set(cid, String.fromCharCode(cid));
+    }
+  });
+  return out;
+}
+
+/** U+0020, the one character whose glyph every text face leaves blank. */
+const SPACE = 0x20;
+
+/**
+ * The character each glyph of a font's embedded TrueType program stands for:
+ * its `cmap` read backwards.
+ *
+ * @param file  The document.
+ * @param owner The dictionary that holds the descriptor — the font itself, or
+ *              a composite font's descendant.
+ * @returns Glyph index → character, or `undefined` where there is no program
+ *          or it maps nothing.
+ */
+function programCharacters(file: PdfFile, owner: PdfDict): Map<number, string> | undefined {
+  const descriptor = file.resolve(owner.get('FontDescriptor') ?? PDF_NULL);
   if (!(descriptor instanceof Map)) return undefined;
   const program = file.resolve(descriptor.get('FontFile2') ?? PDF_NULL);
   if (!(program instanceof PdfStream)) return undefined;
@@ -305,15 +519,7 @@ function embeddedCmap(file: PdfFile, fontDict: PdfDict): Map<number, string> | u
     // (a non-breaking space onto the space), and the first is the plainer.
     if (gid > 0 && !byGlyph.has(gid)) byGlyph.set(gid, String.fromCodePoint(cp));
   }
-  if (byGlyph.size === 0) return undefined;
-  const cidToGid = readCidToGid(file, cidFont);
-  if (!cidToGid) return byGlyph;
-  const out = new Map<number, string>();
-  cidToGid.forEach((gid, cid) => {
-    const text = byGlyph.get(gid);
-    if (text !== undefined) out.set(cid, text);
-  });
-  return out.size > 0 ? out : undefined;
+  return byGlyph.size > 0 ? byGlyph : undefined;
 }
 
 /**
@@ -466,6 +672,7 @@ function simpleGlyphs(file: PdfFile, fontDict: PdfDict): SimpleGlyphs | undefine
   const typeOne = file.resolve(descriptor.get('FontFile') ?? PDF_NULL);
   const truetype = file.resolve(descriptor.get('FontFile2') ?? PDF_NULL);
   const compact = file.resolve(descriptor.get('FontFile3') ?? PDF_NULL);
+  const numbering = numberingOf(differences(file, fontDict).values());
   try {
     if (typeOne instanceof PdfStream) {
       const face = type1Font(file.streamData(typeOne));
@@ -487,7 +694,7 @@ function simpleGlyphs(file: PdfFile, fontDict: PdfDict): SimpleGlyphs | undefine
       // under Latin names.
       const named = postGlyphNames(bytes);
       const gidOf = (name: string): number | undefined => {
-        const gid = named?.get(name) ?? numberedGlyph(name);
+        const gid = named?.get(name) ?? numberedGlyph(name, numbering);
         return gid !== undefined && gid < glyf.count ? gid : undefined;
       };
       return {
@@ -511,7 +718,7 @@ function simpleGlyphs(file: PdfFile, fontDict: PdfDict): SimpleGlyphs | undefine
     if (!outlines) return undefined;
     const names = cffNameToGid(cff);
     const gidOf = (name: string): number | undefined => {
-      const gid = names?.get(name) ?? numberedGlyph(name);
+      const gid = names?.get(name) ?? numberedGlyph(name, numbering);
       return gid !== undefined && gid < outlines.count ? gid : undefined;
     };
     return {
@@ -536,9 +743,13 @@ function simpleGlyphs(file: PdfFile, fontDict: PdfDict): SimpleGlyphs | undefine
  * INDEX — `g24`, `glyph24`, `index24`, `cid24` — and that name is then the only
  * way back to the outline. bug1151216.pdf names them `g24`, `g381`, `g3`, and
  * its three lines of prices are drawn from nothing else.
+ *
+ * @param name      The glyph's name.
+ * @param numbering How the font writes the number, where its names say (see
+ *                  {@link numberingOf}); four digits are hexadecimal otherwise.
  */
-function numberedGlyph(name: string): number | undefined {
-  const hex = /^g([0-9a-f]{4})$/u.exec(name);
+function numberedGlyph(name: string, numbering?: 'hex' | 'decimal'): number | undefined {
+  const hex = numbering !== 'decimal' ? /^g([0-9a-f]{4})$/u.exec(name) : null;
   if (hex) return Number.parseInt(hex[1]!, 16);
   const m = /^(?:g|glyph|index|cid|G)(\d+)$/u.exec(name);
   const n = m ? Number(m[1]) : Number.NaN;
@@ -547,6 +758,34 @@ function numberedGlyph(name: string): number | undefined {
 
 /** No font holds more glyphs than this; a bigger number is not an index. */
 const MAX_GLYPH_INDEX = 65536;
+
+/**
+ * How a font's index names write their numbers, where its names say.
+ *
+ * A subsetter that pads the number to four digits writes it in hexadecimal —
+ * bug1027533.pdf's `g0024` is glyph 36 — and one that does not pad writes it
+ * in decimal. One name cannot tell the two apart: bug1151216.pdf names its
+ * glyphs `g24`, `g381` and `g1004`, and `g1004` is four digits either way.
+ * Read as hexadecimal it is glyph 4100, which no subset of a thousand glyphs
+ * holds: five of the file's codes drew nothing, fell back to Latin-1, and its
+ * prices came back "$@'' for 1" set over the glyphs that were drawn. The rest
+ * of the font's names say which it is — a leading zero or a letter is
+ * hexadecimal, a number of any length but four is decimal.
+ *
+ * @param names The glyph names the font's `/Differences` gives.
+ * @returns The numbering, or `undefined` where the names do not say.
+ */
+function numberingOf(names: Iterable<string>): 'hex' | 'decimal' | undefined {
+  let hex = false;
+  let decimal = false;
+  for (const name of names) {
+    const digits = /^g([0-9a-f]+)$/u.exec(name)?.[1];
+    if (digits === undefined) continue;
+    if (/[a-f]/u.test(digits) || (digits.length === 4 && digits.startsWith('0'))) hex = true;
+    else if (digits.length !== 4) decimal = true;
+  }
+  return hex === decimal ? undefined : hex ? 'hex' : 'decimal';
+}
 
 /** §9.7.4.2 `/CIDToGIDMap` — a stream of two-byte glyph indices, CID by CID. */
 function readCidToGid(file: PdfFile, cidFont: PdfDict): Array<number> | undefined {
@@ -605,13 +844,17 @@ function namedGlyphs(
   file: PdfFile,
   fontDict: PdfDict,
   statesUnicode: boolean,
-  glyph: { draws: (name: string) => boolean; blank: (name: string) => boolean },
+  glyph: {
+    draws: (name: string) => boolean;
+    blank: (name: string) => boolean;
+    character: (name: string) => string | undefined;
+  },
 ): Map<number, string> | undefined {
   const names = differences(file, fontDict);
   if (names.size === 0) return undefined;
   const out = new Map<number, string>();
   for (const [code, name] of names) {
-    const text = textForGlyphName(name);
+    const text = textForGlyphName(name) ?? glyph.character(name);
     if (text !== undefined) {
       out.set(code, text);
       continue;
@@ -772,8 +1015,12 @@ function differences(file: PdfFile, fontDict: PdfDict): Map<number, string> {
 function runFontName(file: PdfFile, fontDict: PdfDict, isType0: boolean): string | undefined {
   const name = embeddedFontName(file, fontDict);
   if (name === undefined || hasLiftableProgram(file, fontDict)) return name;
-  // A name the substitution knows already says what it is.
-  if (resolveFamilyStyle(name).key !== 'arimo') return name;
+  // A name the substitution knows already says what it is — a sans as much as
+  // a serif, and over flags that say otherwise: bug898853.pdf's descriptor
+  // calls its FrutigerLTStd-Light Serif, and read off the flag "Canadian" came
+  // back in a roman.
+  const face = familyOfFace(asName(file.resolve(fontDict.get('BaseFont') ?? PDF_NULL)));
+  if (knowsFamily(name) || knowsFamily(face)) return name;
   const owner = isType0 ? descendantFont(file, fontDict) : fontDict;
   const descriptor = file.resolve(owner.get('FontDescriptor') ?? PDF_NULL);
   if (!(descriptor instanceof Map)) return name;
@@ -781,6 +1028,136 @@ function runFontName(file: PdfFile, fontDict: PdfDict, isType0: boolean): string
   if ((flags & FLAG_FIXED_PITCH) !== 0) return `${name} monospace`;
   if ((flags & FLAG_SERIF) !== 0) return `${name} serif`;
   return name;
+}
+
+/**
+ * For every face a run may name, the family a word processor knows it by —
+ * keyed by the name the run carries (see {@link FaceFamily}).
+ *
+ * A PDF names the FACE and a .docx names a family: written as the face,
+ * `inter-semibold` was a font no reader has, and LibreOffice set the whole of
+ * an invoice drawn in Inter in its default serif. The family is the one the
+ * descriptor states (§9.8.1 `/FontFamily`) or, where it states none, the one
+ * the PostScript name is made of.
+ *
+ * @param file  The document.
+ * @param pages The pages whose faces are wanted.
+ * @returns Run font name → its family.
+ */
+export function collectFaceFamilies(
+  file: PdfFile,
+  pages: ReadonlyArray<PdfPage>,
+): Map<string, FaceFamily> {
+  const out = new Map<string, FaceFamily>();
+  eachPageFont(file, pages, (fontDict) => {
+    const isType0 = asName(file.resolve(fontDict.get('Subtype') ?? PDF_NULL)) === 'Type0';
+    const key = runFontName(file, fontDict, isType0);
+    if (key === undefined || out.has(key)) return;
+    const owner = isType0 ? descendantFont(file, fontDict) : fontDict;
+    const descriptor = file.resolve(owner.get('FontDescriptor') ?? PDF_NULL);
+    const stated =
+      descriptor instanceof Map ? file.resolve(descriptor.get('FontFamily') ?? PDF_NULL) : PDF_NULL;
+    const family =
+      typeof stated === 'string' && /^[\x20-\x7e]+$/u.test(stated.trim())
+        ? stated.trim()
+        : familyOfFace(cidFontName(file, fontDict, isType0));
+    if (family.length === 0) return;
+    const flags =
+      descriptor instanceof Map
+        ? asNumber(file.resolve(descriptor.get('Flags') ?? PDF_NULL), 0)
+        : 0;
+    out.set(key, { family, generic: genericOf(family, flags) });
+  });
+  return out;
+}
+
+/**
+ * §9.7.6.1 — a composite font's `/BaseFont` is its CIDFont's name, a hyphen and
+ * the name of the CMap it is encoded by (`HeiseiMin-W3-UniJIS-UCS2-H`); the
+ * face is the part before the CMap's.
+ */
+function cidFontName(file: PdfFile, fontDict: PdfDict, isType0: boolean): string {
+  const base = asName(file.resolve(fontDict.get('BaseFont') ?? PDF_NULL));
+  const cmap = isType0 ? asName(file.resolve(fontDict.get('Encoding') ?? PDF_NULL)) : '';
+  return cmap !== '' && base.endsWith(`-${cmap}`) ? base.slice(0, -cmap.length - 1) : base;
+}
+
+/**
+ * The family a PostScript face name is made of: `Inter-SemiBold` → `Inter`,
+ * `ArialMT` → `Arial`, `TimesNewRomanPS-BoldMT` → `Times New Roman`.
+ *
+ * §9.6.2.1 names a face `Family-Style` (Word writes `Family,Style`), with the
+ * family's words run together. What follows the separator is a style only if
+ * it is made of style words — `MS-Mincho` is a family of its own — and the
+ * words come apart where the capitals say they do.
+ */
+export function familyOfFace(baseFont: string): string {
+  const name = plainFace(baseFont);
+  const cut = /^(.+?)[-,]([^-,]+)$/u.exec(name);
+  const whole =
+    cut && STYLE_WORDS.test(cut[2]!)
+      ? cut[1]!
+      : cut
+        ? name.replace(/-/gu, ' ')
+        : (GLUED_STYLE.exec(name)?.[1] ?? name);
+  const family = whole.replace(/(?:PSMT|PS|MT)$/u, '') || whole;
+  return family
+    .replace(/([a-z])([A-Z])/gu, '$1 $2')
+    .replace(/([A-Z]+)([A-Z][a-z])/gu, '$1 $2')
+    .replace(/\bDeja Vu\b/u, 'DejaVu')
+    .replace(/\s+/gu, ' ')
+    .trim();
+}
+
+/**
+ * A face name with what producers write around it taken off: the subset tag
+ * (§9.6.4) and, after the face, the charset Acrobat's Office export appends
+ * (`Arial,Bold-WinCharSetFFFF`, `-H2`), the encoding a CIDFont was cut for
+ * (`-Identity-H`, `-OneByteIdentityH`), a serial number, and the slant or
+ * stretch an interpreter synthesised (`-Slant_167`, `-Extend_850`). Left on,
+ * bug900822.pdf's .docx asked for "Courier New,Bold Win Char Set FFFF", which
+ * no machine has, over the Courier New every machine does.
+ */
+function plainFace(baseFont: string): string {
+  let name = baseFont
+    .replace(/^[A-Z]{6}\+/u, '')
+    // ASCII punctuation only: `*Arial-68771-Identity-H`. A name in some
+    // other encoding read as Latin-1 is letters all the same.
+    .replace(/^[!-/:-@[-`{-~]+/u, '')
+    .trim();
+  for (let next = name.replace(PRODUCER_TAIL, ''); next !== name; ) {
+    name = next;
+    next = name.replace(PRODUCER_TAIL, '');
+  }
+  return name;
+}
+
+/** One piece of producer debris at the end of a face name (see `plainFace`). */
+const PRODUCER_TAIL =
+  /[-_](?:WinCharSet[0-9A-F]+|Identity-[HV]|OneByteIdentity[HV]|H\d+|\d+|(?:Slant|Extend)_\d+)$/iu;
+
+/**
+ * A style run on to a family with no separator — `CalibriBold` — which is the
+ * family's name only with the style taken off. Whether the face IS bold is the
+ * program's to say (see `faceStyle`): `NewBasrahBold` is a family of its own.
+ */
+const GLUED_STYLE =
+  /^(.*?[a-z])((?:Semi|Demi|Extra|Ultra)?(?:Bold|Black|Heavy)(?:Italic|Oblique)?|Italic|Oblique)$/u;
+
+/** A PostScript style part, made of nothing but style words (`SemiBoldItalic`, `BoldMT`, `Regu`). */
+const STYLE_WORDS =
+  /^(?:regular|regu|roman|book|normal|plain|medium|medi|light|thin|hairline|extra|ultra|semi|demi|bold|bd|black|heavy|italic|ital|it|oblique|obl|condensed|cond|narrow|compressed|extended|mt|ps)+$/iu;
+
+/** §17.8.3.10 — the kind of face a family is, from the descriptor or, failing that, its name. */
+function genericOf(family: string, flags: number): FaceFamily['generic'] {
+  // The flags speak for a family the tables do not know, as in `runFontName`.
+  if (!knowsFamily(family)) {
+    if ((flags & FLAG_FIXED_PITCH) !== 0) return 'modern';
+    if ((flags & FLAG_SERIF) !== 0) return 'roman';
+  }
+  const key = resolveFamilyStyle(family).key;
+  if (key === 'cousine') return 'modern';
+  return key === 'tinos' || key === 'caladea' ? 'roman' : 'swiss';
 }
 
 /** §9.8.2 `/Flags` — bit 1 is FixedPitch, bit 2 Serif (bits numbered from 1). */
@@ -842,12 +1219,26 @@ function faceStyle(
     // issue10519_reduced.pdf states `/FontWeight 0` on a face called
     // "Calibri,Bold", and taken at its word every bold word went light.
     const stated = typeof weightVal === 'number' && weightVal >= LIGHTEST_WEIGHT;
+    // §9.9 — where the descriptor is silent the PROGRAM is a witness too: its
+    // header states its own style (the `head` table's macStyle).
+    // bigboundingbox.pdf names its faces `CalibriBold` and `Calibri`, states
+    // no weight for either, and only the program says which is the bold cut.
+    // It says so for the Bold of a family and not for its SemiBold, which is
+    // a family of its own there — so the name `Inter-SemiBold` still counts,
+    // and `NewBasrahBold`, a family whose program says Regular, still does not.
+    //
+    // Nor does the flag outweigh a name that states a weight of its own under
+    // the bold one: bug898853.pdf sets "Canadian" in FrutigerLTStd-Light with
+    // ForceBold set, and read off the flag the light word came back heavy.
+    const own = programStyle(file, fontDict);
+    const forced = (flags & FLAG_FORCE_BOLD) !== 0 && !named.light;
     const bold = stated
       ? asNumber(weightVal, 0) >= BOLD_WEIGHT
-      : (flags & FLAG_FORCE_BOLD) !== 0 || named.bold;
+      : forced || own?.bold === true || named.bold;
     // The slant and the flag each state italic outright; where neither does,
-    // the name is the only witness left.
-    const italic = slant !== 0 || (flags & FLAG_ITALIC) !== 0 || named.italic;
+    // the program and the name are the witnesses left.
+    const italic =
+      slant !== 0 || (flags & FLAG_ITALIC) !== 0 || own?.italic === true || named.italic;
     return { ...(bold ? { bold: true } : {}), ...(italic ? { italic: true } : {}) };
   }
   return { ...(named.bold ? { bold: true } : {}), ...(named.italic ? { italic: true } : {}) };
@@ -862,14 +1253,17 @@ function faceStyle(
  * ArabicCIDTrueType.pdf — is not a bold cut of anything, and reading it as one
  * set two lines heavy that no reader sets heavy. `Times-Bold` is.
  */
-function styleFromName(baseFont: string): { bold: boolean; italic: boolean } {
+function styleFromName(baseFont: string): { bold: boolean; italic: boolean; light: boolean } {
   // §9.6.4 — six arbitrary capitals and a plus sign mark a subset, and they may
   // spell anything at all.
-  const name = baseFont.replace(/^[A-Z]{6}\+/u, '');
+  const name = plainFace(baseFont);
   const style = /[-,]([A-Za-z]+)$/u.exec(name)?.[1] ?? '';
+  const bold = /bold|black|heavy|semib|demi/iu.test(style);
   return {
-    bold: /bold|black|heavy|semib|demi/iu.test(style),
+    bold,
     italic: /italic|oblique/iu.test(style),
+    // A weight the name states at or under the medium one: `-Light`, `-Book`.
+    light: !bold && /light|thin|hairline|book|regular|roman|normal|medium/iu.test(style),
   };
 }
 

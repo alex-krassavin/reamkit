@@ -3,6 +3,178 @@
 All notable changes to **Ream** (`reamkit`) are documented here. The project
 follows [Semantic Versioning](https://semver.org/).
 
+## 1.30.0
+
+A release about four hundred pages and the `.docx` each one becomes.
+
+Until now a PDF read into a document was judged by a score over the pixels of a
+PDF written back out. This release judged it where it lands: every file of the
+pdf.js suite converted to `.docx` twice — by LibreOffice's own PDF import and by
+Ream — both drawn by the same LibreOffice, and set beside the source page. All
+four hundred were looked at, a sheet of twelve at a time.
+
+Two things came of looking rather than counting. The reference is wrong in
+places of its own: it draws a page's whole media box where a viewer shows the
+crop box, drops fill and stroke opacity and an image's colour key, fails on
+some JBIG2, and cannot show a text box turned by an angle once it is saved as
+`.docx` — its own package reopens with the words upright. Where it is, the
+source page decides, and several fixes below score farther from the reference
+and nearer the page. And the writer turned out to drop things the model has
+long carried: a picture's crop and turn, a fill's opacity, a line's own dash
+pattern — as much a loss on a `.docx` read and saved again as on a PDF.
+
+### Added
+
+- **Blocks set side by side read down each on its own.** An invoice sets its
+  dates and numbers in a stack of labels and values beside the address it
+  bills, each stack with its own leading, and read across every line caught a
+  line of the other into a row: bigboundingbox.pdf came back as "INVOICE →
+  Jun 3, 2013 → 23 Main Street" and ran onto a second page. A column is read
+  region by region now, and a band of blocks on different baselines is set as
+  the borderless table a writer would set it in, each block read down on its
+  own. Blocks whose lines do share their baselines stay one text, read across
+  on its stops.
+
+- **A dashed line keeps its pattern and its cap.** §8.4.3.6 — `d`, `J` and a
+  graphics state's `/D`, `/LC` and `/LW` are read, and a stroke becomes a line
+  with the page's own pattern (`a:custDash`, in pen widths) and cap; the butt
+  cap is stated too, since a `.docx` line that states none is capped square.
+  The writer writes `a:custDash` at all now — the reader always parsed it.
+
+- **Opacity survives the trip.** §11.6.4.4 — a fill's `/ca`, a stroke's `/CA`
+  and a picture drawn part-way through are written as `a:alpha` and
+  `a:alphaModFix`, and a line read from a `.docx` keeps its opacity apart from
+  its colour instead of fading twice. bug1755507.pdf's card no longer stands on
+  a solid black shadow, and inks_basic.pdf's grey ink line is grey.
+
+- **A picture keeps how it is drawn into its frame.** Its crop (`a:srcRect`),
+  turn and mirror (`a:xfrm`) are written; a cropped picture read from Word and
+  saved again no longer comes back whole and squeezed into the frame its crop
+  was sized for. §8.9.5 — a PDF image whose matrix mirrors it is a flip and
+  then a turn.
+
+- **A CMYK JPEG is given back in the colours its inks paint.** A PDF states a
+  four-component JPEG as ink, and a picture file of CMYK is read by every
+  viewer in Adobe's inverted convention, so cmykjpeg.pdf's photograph arrived
+  as a black rectangle. The baseline decoder takes four components and Adobe's
+  YCCK, and such a JPEG is re-coloured through the image's space and `/Decode`.
+
+- **An image's colour key leaves the samples it names unpainted** (§8.9.6.4),
+  held against the sample values before `/Decode`.
+
+- **What a form writes stands in its own box.** A button's caption, a field's
+  value, a tick and a free-text note are placed where the annotation stands,
+  above the box they are written on, instead of being read into the page's
+  lines: evaljs.pdf's "Execute" stood at the margin, two hundred points from
+  its button. A form that asks for its appearances rebuilt (`/NeedAppearances`,
+  §12.7.2) shows its fields' values rather than the stale text of the old
+  appearance; a free-text note with no appearance is drawn from its
+  `/Contents` (§12.5.6.6); an appearance paints inside its `/BBox`.
+
+- **A path filled with a pattern drawn in lines takes the pattern's tone.**
+  §8.7.3 — hatches and grids, which nothing lifted, are filled with the
+  pattern's colour at the strength its tile covers; an uncoloured pattern
+  (§8.7.3.3) in the colour `scn` gives it.
+
+### Fixed
+
+- **Text keeps the words it is.**
+  - A ligature is read as the letters it joins: "ﬁrst", "difﬁcult" and
+    "chaostreﬀ.at" were not the words they spell to a search or an edit, and a
+    face without the form set it in another's, wider.
+  - A word space inserted between runs takes the size and face of the words
+    around it: in 60-point type an eleven-point space closed "78 110" up to
+    "78110", and in small type it pushed lines over.
+  - A ToUnicode range is judged code by code (§9.10.3): TCPDF's `<0000>
+    <00ff> <0000>` left every Latin letter of basicapi.pdf unmapped.
+  - A glyph named by its index is read through its program's `cmap`, and the
+    number in its name in the numbering the font uses — decimal `g1004` is
+    not glyph 4100.
+  - A composite font's CIDs are read as characters where its `/CIDToGIDMap`
+    says so, and a non-embedded core face — Arial, Verdana, Times New Roman
+    and their like, `Identity-H` with no `/ToUnicode` — is read in its own
+    glyph order: issue11242_reduced.pdf reads "VAT Code" where it read
+    nothing.
+  - A font whose `/Encoding` names no encoding is read through its program's
+    own, and a code its `/Differences` leave `.notdef` is no character.
+  - Punctuation a font names no character for is read off the shape the page
+    draws — a dash, a colon, a full stop, a bracket — and traced glyphs that
+    stand together are drawn a word at a time, not a shape apiece
+    (TAMReview.pdf: 42,000 shapes to 2,600).
+  - A glyph kept before a dropped one in a TrueType subset is read to where
+    it really ends.
+  - Right-to-left text keeps its size, weight and face in the complex-script
+    slots Word reads it by, a right-to-left line ends on its left, and a
+    mixed run is put in reading order by the bidi rules (UAX #9).
+
+- **A face is named, weighted and classed the way it is.**
+  - A run names its font's family — `Inter`, not `inter-semibold`, which no
+    word processor has — without the producer's debris: `Courier
+    New,Bold-WinCharSetFFFF`, `-Identity-H`, a serial number or a synthesised
+    slant is not part of the family.
+  - A face is bold where its own program says so, and not where only the
+    ForceBold hint says so against a name that states `-Light`.
+  - A family the substitution tables know decides its class over the
+    descriptor's flags — for a sans as much as a serif — and a family named
+    for its fixed pitch (`Roboto Mono`, `LucidaTypewriter`) is a typewriter
+    face.
+
+- **A line stands where the page set it.**
+  - Every line is set in an exact box at the page's own pitch, and the white
+    before a paragraph is the gap less the boxes standing in it; a placed
+    line stands on the page's baseline, and the paragraph a floating mark is
+    anchored in takes no room.
+  - A gap that lands on a stop the lines around it share is a tab; a column
+    of figures ending together is set against its right edge; a ruled set of
+    paragraphs is ruled between its members; a rule drawn cell by cell is one
+    rule.
+  - A line has the spaces the page shows, once each; a line the page set in
+    one piece may run into the margin rather than wrap onto a page of its own;
+    a narrow column keeps its measure; a sheet of a line or two keeps a line
+    its next word would have fit on.
+  - Type too small to read — TCPDF's one-point "Powered by TCPDF" — is a mark
+    on the sheet, and measures nothing; a running foot is found under a
+    one-line sheet; the last text of a sheet, set far below the rest, stands
+    where the page set it; a blank page is still a page.
+  - A page number field keeps its size, and a one-line foot its side.
+
+- **Drawings are drawn as the page draws them.**
+  - The `v` and `y` curves are drawn (§8.5.2.2).
+  - An axial shading runs the way its matrix carries it onto the page, and a
+    shape shows only the part of its axis it covers: issue10572.pdf's six
+    stripes had come back as twenty-four hairlines.
+  - A fill set in an Indexed space is its table's colour; a line stroked with
+    a shading pattern takes the sweep's middle, not black.
+  - An inline image is read to where its own encoding ends, past an `EI` its
+    bytes happen to spell.
+  - JBIG2: the standard tables B.7 and B.10 are the spec's, and a symbol
+    dictionary starts from the statistics it names.
+
+- **A tagged document is read the way it means it.** §14.8 — its `/RoleMap`
+  is followed, inline elements (MathML among them) are a stretch of their
+  parent's line, an element's own text keeps its place among its children,
+  and a space stands between two stretches only where the page shows one.
+
+- **The `.docx` Word reads.**
+  - The properties of a paragraph are written in the order CT_PPrBase
+    demands; Word refuses or drops a child out of order.
+  - A float's z-order is ranked from Word's own floor, 0xF000000: numbered
+    from zero, the first two marks of every page came back over everything
+    drawn after them.
+  - A foot whose run names no face no longer throws.
+
+### Internals
+
+- **The stand.** `npm run stand` serves a bench at http://localhost:4477 and
+  `npm run stand:build -- <pdf…>` puts files on it: the source page, drawn to
+  its crop box, beside LibreOffice's `.docx` and ours, each drawn by the same
+  LibreOffice, with a map of where the two disagree. The list sorts worst
+  first; a pass over a corpus survives its slowest file and `--missing` picks
+  up where the last one stopped.
+- The visual harness can render the `.docx` we write (`--target docx`), and a
+  test walks the writer's own output against the sequence each property block
+  declares.
+
 ## 1.29.0
 
 A release about two invoices.

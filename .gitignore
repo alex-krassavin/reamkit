@@ -30,3 +30,6 @@ corpus/.vs-lo.log
 corpus/.pairs/
 # pages pulled aside to look at
 corpus/.look/
+# the pdf → docx stand: the files put on it are people's documents, the rest is its output
+stand/files/
+stand/out/

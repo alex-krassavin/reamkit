@@ -2,6 +2,7 @@ export {
   fetchFontSet,
   fetchScriptFont,
   isScriptKey,
+  knowsFamily,
   resolveFamilyKey,
   resolveFamilyStyle,
   clearFontCache,

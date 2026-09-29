@@ -37,6 +37,8 @@ import type {
   Comment,
   FloatAnchor,
   FontFamilyMap,
+  ImageBlock,
+  ImageCrop,
   Numbering,
   NumberingLevel,
   Paragraph,
@@ -59,7 +61,7 @@ import type {
 import type { ResolvedParagraphProperties, ResolvedRunProperties } from '@/core/style-cascade';
 import type { ShapeGradient } from '@/core/vector';
 import type { DocumentWriter, WriteResult } from '@/core/ir/adapters';
-import type { FlowDoc } from '@/core/ir/flow';
+import type { FaceFamily, FlowDoc } from '@/core/ir/flow';
 import type { Loss, ResourceId, ResourceStore } from '@/core/ir';
 import type { OpcPart, Relationship } from '@/core/opc';
 
@@ -95,6 +97,11 @@ const REL_HYPERLINK =
   'http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink';
 const REL_IMAGE = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/image';
 const NUMBERING_PART = 'word/numbering.xml';
+const REL_FONT_TABLE =
+  'http://schemas.openxmlformats.org/officeDocument/2006/relationships/fontTable';
+const FONT_TABLE_CONTENT_TYPE =
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.fontTable+xml';
+const FONT_TABLE_PART = 'word/fontTable.xml';
 const REL_FOOTNOTES =
   'http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes';
 const REL_ENDNOTES = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/endnotes';
@@ -221,6 +228,12 @@ interface WriteState {
   readonly charts?: ReadonlyMap<string, Chart>;
   readonly chartParts: Array<OpcPart>;
   chartSeq: number;
+  // The family each face a run names belongs to (a PDF's `Inter-SemiBold` is
+  // Word's `Inter`), and the families written, for the font table.
+  readonly faceFamilies?: ReadonlyMap<string, FaceFamily>;
+  readonly familiesUsed: Map<string, FaceFamily>;
+  // Every z-order the document's floats state, by rank (see `relativeHeight`).
+  readonly zRanks: ReadonlyMap<number, number>;
 }
 
 // Per-PART relationship scope (OPC §9.3 — rIds are scoped to their owning
@@ -264,6 +277,9 @@ export function writeDocx(flow: FlowDoc): WriteResult {
     chartParts: [],
     chartSeq: 0,
     ...(flow.charts ? { charts: flow.charts } : {}),
+    ...(flow.faceFamilies ? { faceFamilies: flow.faceFamilies } : {}),
+    familiesUsed: new Map(),
+    zRanks: zRanksOf(flow),
   };
   const docScope = newScope();
   const extraParts: Array<OpcPart> = [];
@@ -381,6 +397,26 @@ export function writeDocx(flow: FlowDoc): WriteResult {
   );
   emitCommentsExtended(flow.comments, commentParaIds, docScope, extraParts);
 
+  // §17.8.3 — the font table: every family the runs name, with the kind of
+  // face it is (§17.8.3.10), so a reader without it substitutes a face of the
+  // same kind instead of its default serif.
+  const fontTablePart =
+    state.familiesUsed.size > 0
+      ? {
+          path: FONT_TABLE_PART,
+          data: encoder.encode(fontTableXml(state.familiesUsed)),
+          contentType: FONT_TABLE_CONTENT_TYPE,
+        }
+      : undefined;
+  if (fontTablePart) {
+    docScope.rels.push({
+      id: `rId${++docScope.relSeq}`,
+      type: REL_FONT_TABLE,
+      target: 'fontTable.xml',
+      targetMode: 'Internal',
+    });
+  }
+
   const partRelationships = [
     ...(docScope.rels.length > 0
       ? [{ sourcePart: 'word/document.xml', relationships: docScope.rels }]
@@ -396,6 +432,7 @@ export function writeDocx(flow: FlowDoc): WriteResult {
         contentType: DOC_CONTENT_TYPE,
       },
       ...(numberingPart ? [numberingPart] : []),
+      ...(fontTablePart ? [fontTablePart] : []),
       ...extraParts,
       ...state.chartParts,
       ...state.mediaParts,
@@ -412,6 +449,74 @@ export function writeDocx(flow: FlowDoc): WriteResult {
   });
 
   return { bytes, losses };
+}
+
+// §17.8.3.9 CT_Font — family (§17.8.3.10) before pitch (§17.8.3.13), the
+// schema's order.
+function fontTableXml(families: ReadonlyMap<string, FaceFamily>): string {
+  const fonts = [...families.values()]
+    .map(
+      (f) =>
+        `<w:font w:name="${escapeAttr(f.family)}"><w:family w:val="${f.generic}"/>` +
+        `<w:pitch w:val="${f.generic === 'modern' ? 'fixed' : 'variable'}"/></w:font>`,
+    )
+    .join('');
+  return (
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    `<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">${fonts}</w:fonts>`
+  );
+}
+
+/**
+ * §20.4.2.3 `relativeHeight` — a float's z-order, written the way Word writes
+ * it: a rank over every z-order the document states, counted up from Word's
+ * own floor.
+ *
+ * The model's z-order is an ORDER, and may be any number. Written as it stood,
+ * a PDF's first two marks got 0 and 1 — which Word, and LibreOffice after it,
+ * read as "above everything": an "APPROVED" stamp's blue box came back over
+ * its own lettering. A tagged reading counts up from minus a million, and a
+ * negative number is not a value the attribute admits at all.
+ */
+function relativeHeight(zOrder: number | undefined, state: WriteState): number {
+  const rank = zOrder !== undefined ? state.zRanks.get(zOrder) : undefined;
+  // A float that states no order stands over those that do, in document order.
+  const at = rank ?? state.zRanks.size + ++state.drawingSeq;
+  const step = Math.max(1, Math.min(Z_STEP, Math.floor((Z_CEILING - Z_FLOOR) / Z_ROOM)));
+  return Math.min(Z_FLOOR + at * step, Z_CEILING);
+}
+
+/** Word's first float, and the highest value §20.4.2.3 lets a float take. */
+const Z_FLOOR = 0xf000000;
+const Z_CEILING = 0x1dffffff;
+/** …and the step Word counts up in, while there is room for it. */
+const Z_STEP = 1024;
+const Z_ROOM = 1 << 17;
+
+/** Every z-order the document's floats state, and each one's rank among them. */
+function zRanksOf(flow: FlowDoc): Map<number, number> {
+  const seen = new Set<number>();
+  const visit = (blocks: ReadonlyArray<BodyElement>): void => {
+    for (const el of blocks) {
+      const z =
+        el.kind === 'image'
+          ? el.image.float?.zOrder
+          : el.kind === 'shape'
+            ? el.shape.float?.zOrder
+            : el.kind === 'chart'
+              ? el.chart.float?.zOrder
+              : undefined;
+      if (z !== undefined && Number.isFinite(z)) seen.add(z);
+      if (el.kind === 'table') {
+        for (const row of el.table.rows) for (const cell of row.cells) visit(cell.content);
+      }
+    }
+  };
+  visit(flow.body);
+  for (const band of flow.headersFooters?.values() ?? []) visit(band);
+  for (const note of flow.footnotes?.values() ?? []) visit(note);
+  for (const note of flow.endnotes?.values() ?? []) visit(note);
+  return new Map([...seen].sort((a, b) => a - b).map((z, i) => [z, i] as const));
 }
 
 interface NoteConfig {
@@ -706,15 +811,27 @@ function emitBody(
   sectPrByClosingIndex: ReadonlyMap<number, string>,
 ): void {
   let carried: Array<string> = [];
+  // The paragraph the drawings are anchored in is the first one's own: a mark
+  // the page drew where it stands comes with a carrier that takes no room, and
+  // written bare the carrier took the reader's default line — a blank line in
+  // the flow for every run of rules and fills an invoice draws.
+  let carrier: ParagraphProperties | undefined;
   const flush = (): void => {
-    if (carried.length > 0) out.push(`<w:p>${carried.join('')}</w:p>`);
+    if (carried.length > 0) out.push(`<w:p>${pPrWithSect(carrier ?? {})}${carried.join('')}</w:p>`);
     carried = [];
+    carrier = undefined;
   };
   blocks.forEach((el, idx) => {
     const closing = sectPrByClosingIndex.get(idx);
     const anchored =
       closing === undefined ? floatingDrawingRun(el, losses, state, scope) : undefined;
     if (anchored !== undefined) {
+      carrier ??=
+        el.kind === 'image'
+          ? el.image.paragraphProperties
+          : el.kind === 'shape'
+            ? el.shape.paragraphProperties
+            : undefined;
       carried.push(anchored);
       return;
     }
@@ -744,6 +861,7 @@ function floatingDrawingRun(
       state,
       scope,
       el.image.float,
+      el.image,
     );
     if (drawing === '') {
       losses.push({
@@ -789,6 +907,7 @@ function emitBlock(
       state,
       scope,
       el.image.float,
+      el.image,
     );
     if (drawing) {
       // An image is emitted as a paragraph, so a closing section break rides
@@ -923,7 +1042,7 @@ function drawingFrame(
   // §20.4.2.3 — the z-order among the page's floats. A drawing that states none
   // still needs a number, and one that rises with document order keeps the
   // painting order the source had.
-  const z = float.zOrder ?? ++state.drawingSeq;
+  const z = relativeHeight(float.zOrder, state);
   const attrs =
     `${dist} simplePos="0" relativeHeight="${String(z)}"` +
     ` behindDoc="${float.behind ? '1' : '0'}" locked="0"` +
@@ -1011,6 +1130,7 @@ function drawingXml(
   state: WriteState,
   scope: PartScope,
   float?: FloatAnchor,
+  look?: PictureLook,
 ): string {
   if (resource === undefined) return '';
   const relId = mediaRelId(resource, state, scope);
@@ -1019,14 +1139,22 @@ function drawingXml(
   const cy = Math.round(heightPt * EMU_PER_PT);
   const id = ++state.drawingSeq;
   const descr = altText ? ` descr="${escapeAttr(altText)}"` : '';
+  // §20.1.8.4 / §20.1.8.55 / §20.1.7.6 — how the picture is drawn into its
+  // frame: how opaque, which part of the source, turned or mirrored. Read
+  // from a .docx and never written back, a cropped picture came back whole
+  // and squeezed into the frame its crop was sized for.
+  const alpha =
+    look?.alpha !== undefined && look.alpha < 1
+      ? `<a:alphaModFix amt="${String(Math.round(Math.max(0, look.alpha) * 100000))}"/>`
+      : '';
   const graphic =
     '<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">' +
     '<a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">' +
     '<pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">' +
     `<pic:nvPicPr><pic:cNvPr id="${id}" name="Image ${id}"/><pic:cNvPicPr/></pic:nvPicPr>` +
-    `<pic:blipFill><a:blip r:embed="${relId}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>` +
-    '<pic:spPr><a:xfrm><a:off x="0" y="0"/>' +
-    `<a:ext cx="${cx}" cy="${cy}"/></a:xfrm>` +
+    `<pic:blipFill><a:blip r:embed="${relId}">${alpha}</a:blip>${srcRectXml(look?.crop)}` +
+    '<a:stretch><a:fillRect/></a:stretch></pic:blipFill>' +
+    `<pic:spPr>${xfrmXml(look, cx, cy)}` +
     '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr>' +
     '</pic:pic></a:graphicData></a:graphic>';
   return drawingFrame(
@@ -1036,7 +1164,21 @@ function drawingXml(
     `<wp:docPr id="${id}" name="Image ${id}"${descr}/>`,
     graphic,
     state,
+    look?.rotation60k,
   );
+}
+
+/** What of a picture's own look the frame writes: its crop, turn, mirror and opacity. */
+type PictureLook = Pick<ImageBlock, 'crop' | 'rotation60k' | 'flipH' | 'flipV' | 'alpha'>;
+
+/** §20.1.8.55 `a:srcRect` — each edge cut away, in thousandths of a percent. */
+function srcRectXml(crop: ImageCrop | undefined): string {
+  if (!crop) return '';
+  const edge = (name: string, v: number): string =>
+    v > 0 ? ` ${name}="${String(Math.round(v * 100000))}"` : '';
+  const attrs =
+    edge('l', crop.left) + edge('t', crop.top) + edge('r', crop.right) + edge('b', crop.bottom);
+  return attrs === '' ? '' : `<a:srcRect${attrs}/>`;
 }
 
 // §20.4 wp:inline holding a wps:wsp — the inverse of drawing-parser's parseWsp.
@@ -1181,18 +1323,30 @@ function geomXml(g: ShapeGeometry): string {
 
 function fillXml(f: ShapeFill): string {
   if (f.kind === 'solid' && f.colorHex)
-    return `<a:solidFill><a:srgbClr val="${f.colorHex}"/></a:solidFill>`;
-  if (f.kind === 'gradient' && f.gradient) return gradFillXml(f.gradient);
+    return `<a:solidFill>${srgbXml(f.colorHex, f.alpha)}</a:solidFill>`;
+  if (f.kind === 'gradient' && f.gradient) return gradFillXml(f.gradient, f.alpha);
   return '<a:noFill/>';
+}
+
+/**
+ * §20.1.2.3.19 `a:srgbClr`, with the §20.1.2.3.1 `a:alpha` of a fill that is
+ * seen through. The model carried the opacity and the writer dropped it:
+ * bug1755507.pdf lays a card on a shadow painted at a fifth of full strength,
+ * and the shadow came back as a solid black slab around the card.
+ */
+function srgbXml(colorHex: string, alpha: number | undefined): string {
+  if (alpha === undefined || !(alpha < 1)) return `<a:srgbClr val="${colorHex}"/>`;
+  const val = Math.round(Math.max(0, alpha) * 100000);
+  return `<a:srgbClr val="${colorHex}"><a:alpha val="${String(val)}"/></a:srgbClr>`;
 }
 
 // A gradient fill → a:gradFill (EP16): stops as a:gs (@pos in 1000ths of a
 // percent), direction as a:lin (@ang in 60000ths of a degree) or a:path (radial).
-function gradFillXml(g: ShapeGradient): string {
+function gradFillXml(g: ShapeGradient, alpha?: number): string {
   const stops = g.stops
     .map((s) => {
       const pos = Math.round(Math.max(0, Math.min(1, s.offset)) * 100000);
-      return `<a:gs pos="${pos}"><a:srgbClr val="${s.colorHex}"/></a:gs>`;
+      return `<a:gs pos="${pos}">${srgbXml(s.colorHex, alpha)}</a:gs>`;
     })
     .join('');
   const dir =
@@ -1214,8 +1368,18 @@ function lineXml(l: ShapeLine): string {
           : '';
   const inner: Array<string> = [];
   if (l.fill === 'none') inner.push('<a:noFill/>');
-  else if (l.colorHex) inner.push(`<a:solidFill><a:srgbClr val="${l.colorHex}"/></a:solidFill>`);
-  if (l.dash) inner.push(`<a:prstDash val="${l.dash}"/>`);
+  else if (l.colorHex) inner.push(`<a:solidFill>${srgbXml(l.colorHex, l.alpha)}</a:solidFill>`);
+  // §20.1.8.21 — the author's own pattern wins over a preset beside it, in
+  // thousandths of a percent of the line's width, a dash and a space a pair.
+  const custom = l.customDash ?? [];
+  if (custom.length >= 2) {
+    const pairs: Array<string> = [];
+    for (let i = 0; i + 1 < custom.length; i += 2)
+      pairs.push(
+        `<a:ds d="${Math.round(custom[i]! * 100000)}" sp="${Math.round(custom[i + 1]! * 100000)}"/>`,
+      );
+    inner.push(`<a:custDash>${pairs.join('')}</a:custDash>`);
+  } else if (l.dash) inner.push(`<a:prstDash val="${l.dash}"/>`);
   return `<a:ln${w}${cap}>${inner.join('')}</a:ln>`;
 }
 
@@ -1304,6 +1468,10 @@ function tblPrXml(p: TableProperties): string {
   if (p.alignment && p.alignment !== 'left') out.push(`<w:jc w:val="${p.alignment}"/>`);
   const borders = bordersXml('w:tblBorders', p.borders);
   if (borders) out.push(borders);
+  // §17.4.53 — a FIXED table is laid out by its grid and nothing else. Left
+  // unsaid, a reader sizes the columns to their contents, and a receipt's
+  // last column came back too narrow for the number it was ruled to hold.
+  if (p.layout === 'fixed') out.push('<w:tblLayout w:type="fixed"/>');
   const margins = cellMarginsXml('w:tblCellMar', p.defaultCellMargins);
   if (margins) out.push(margins);
   return `<w:tblPr>${out.join('')}</w:tblPr>`;
@@ -1373,9 +1541,14 @@ function bordersXml(
   borders: CellBorders | undefined,
 ): string {
   if (!borders) return '';
-  const sides = BORDER_SIDES.map(([key, el]) => {
+  const sides = BORDER_SIDES.map(([key, name]) => {
     const b = borders[key];
     if (!b) return '';
+    // §17.3.1.24 CT_PBdr has no inside edges: the one between two paragraphs
+    // of a bordered set is §17.3.1.5 `w:between`, and a paragraph has no
+    // vertical inside edge at all. Written as `w:insideH` Word refuses the file.
+    if (tag === 'w:pBdr' && key === 'insideV') return '';
+    const el = tag === 'w:pBdr' && key === 'insideH' ? 'w:between' : name;
     // §17.4.x — w:sz in eighths of a point; the reader divides by 8.
     const sz = b.width !== undefined ? ` w:sz="${Math.round(b.width * 8)}"` : '';
     const color = b.colorHex !== undefined ? ` w:color="${b.colorHex}"` : '';
@@ -1489,10 +1662,19 @@ function runXml(run: Run, state: WriteState, scope: PartScope): string {
   if (run.math !== undefined) {
     return `<m:oMath xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math">${omathXml(run.math)}</m:oMath>`;
   }
-  const rPr = rPrXml(run.properties as ResolvedRunProperties);
+  const rPr = rPrXml(run.properties as ResolvedRunProperties, state);
   if (run.inlineImage !== undefined) {
     const img = run.inlineImage;
-    const drawing = drawingXml(img.resource, img.width, img.height, undefined, state, scope);
+    const drawing = drawingXml(
+      img.resource,
+      img.width,
+      img.height,
+      undefined,
+      state,
+      scope,
+      undefined,
+      img,
+    );
     if (drawing) return `<w:r>${rPr}${drawing}</w:r>`;
     // Unresolved inline image with no text and no break: nothing to emit.
     if (run.text === '' && !run.pageBreak) return '';
@@ -1517,9 +1699,21 @@ function runXml(run: Run, state: WriteState, scope: PartScope): string {
   // §17.16.19 `w:fldSimple` — a page number is not the text "1", it is the
   // number of the sheet it stands on. Written as text, the foot a PDF's every
   // page shares came back saying "Page 1 of 2" on the second page as well.
+  //
+  // §17.16.18 — written as a COMPLEX field, every piece of it a run in the
+  // run's own properties. Inside `w:fldSimple` LibreOffice sets the result in
+  // the paragraph's default size, and a receipt's "Page 1 of 2" came back with
+  // its two numbers half as large again as the words around them.
   if (run.field !== undefined && run.text !== '') {
-    const inner = `<w:r>${rPr}<w:t xml:space="preserve">${escapeXml(run.text)}</w:t></w:r>`;
-    return `<w:fldSimple w:instr=" ${run.field} ">${inner}</w:fldSimple>${brk}`;
+    const piece = (inner: string): string => `<w:r>${rPr}${inner}</w:r>`;
+    return (
+      piece('<w:fldChar w:fldCharType="begin"/>') +
+      piece(`<w:instrText xml:space="preserve"> ${run.field} </w:instrText>`) +
+      piece('<w:fldChar w:fldCharType="separate"/>') +
+      piece(`<w:t xml:space="preserve">${escapeXml(run.text)}</w:t>`) +
+      piece('<w:fldChar w:fldCharType="end"/>') +
+      brk
+    );
   }
   if (run.text === '') return brk ? `<w:r>${rPr}${brk}</w:r>` : '';
   // §17.3.3.30 — a TAB is an ELEMENT, not a character: written inside `w:t` it
@@ -1535,7 +1729,7 @@ function runXml(run: Run, state: WriteState, scope: PartScope): string {
 }
 
 // §17.3.2 — run properties as a delta from the resolved defaults.
-function rPrXml(r: ResolvedRunProperties): string {
+function rPrXml(r: ResolvedRunProperties, state?: WriteState): string {
   // §17.3.2.28 CT_RPr is a SEQUENCE, and a reader may drop what arrives out of
   // it: rFonts, b, i, strike, color, sz, u, shd, vertAlign, rtl, lang. Written
   // in the old order — `w:u` ahead of `w:rFonts` — LibreOffice ignored the
@@ -1550,15 +1744,20 @@ function rPrXml(r: ResolvedRunProperties): string {
   const states = <TKey extends keyof ResolvedRunProperties>(key: TKey): boolean =>
     // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
     r[key] !== undefined && r[key] !== DEFAULT_RUN[key];
-  const fonts = rFontsXml(r.fontFamily);
+  const fonts = rFontsXml(r.fontFamily, state);
   if (fonts) out.push(fonts);
-  if (states('bold')) out.push(toggle('w:b', r.bold));
-  if (states('italic')) out.push(toggle('w:i', r.italic));
+  // §17.3.2.2/§17.3.2.17/§17.3.2.39 — Word sets a complex script (Arabic,
+  // Hebrew, Thai) by its OWN weight, slant and size, and the run has one of
+  // each: stated for Latin text alone, ArabicCIDTrueType.pdf's 36pt lines came
+  // back at the reader's default ten.
+  if (states('bold')) out.push(toggle('w:b', r.bold), toggle('w:bCs', r.bold));
+  if (states('italic')) out.push(toggle('w:i', r.italic), toggle('w:iCs', r.italic));
   if (states('strike')) out.push(toggle('w:strike', r.strike));
   if (states('colorHex')) out.push(`<w:color w:val="${r.colorHex}"/>`);
   if (states('fontSizePt')) {
     // §17.3.2.38 w:sz — half-points.
-    out.push(`<w:sz w:val="${Math.round(r.fontSizePt * 2)}"/>`);
+    const half = Math.round(r.fontSizePt * 2);
+    out.push(`<w:sz w:val="${half}"/>`, `<w:szCs w:val="${half}"/>`);
   }
   // §17.3.2.40 — `w:u @w:color`, the rule's own colour where it has one: a
   // PDF's `/Underline` annotation states its colour and nothing else does.
@@ -1588,32 +1787,29 @@ function runShdXml(fill: string): string {
 // §17.3.1 — paragraph properties as a delta from the resolved defaults, the
 // INNER content of w:pPr (no wrapper, so a section break can be appended).
 function pPrBody(p: ResolvedParagraphProperties): string {
+  // §17.3.1.26 CT_PPrBase is a SEQUENCE, and Word enforces it: a child out of
+  // order is a file it refuses or a property it drops on the floor. The order
+  // below is the schema's — pageBreakBefore, numPr, pBdr, shd, tabs, bidi,
+  // spacing, ind, jc, outlineLvl — and it is not the order these were written
+  // in until now: `w:pBdr` and `w:tabs` were appended after `w:jc`, which
+  // LibreOffice reads anyway and Word does not.
   const out: Array<string> = [];
+  if (p.pageBreakBefore) out.push('<w:pageBreakBefore/>');
   if (p.numbering) {
     // §17.3.1.19 — list membership; the marker itself comes from numbering.xml.
     out.push(
       `<w:numPr><w:ilvl w:val="${p.numbering.ilvl}"/><w:numId w:val="${escapeAttr(p.numbering.numId)}"/></w:numPr>`,
     );
   }
-  if (p.outlineLevel !== undefined) out.push(`<w:outlineLvl w:val="${p.outlineLevel}"/>`);
-  if (p.pageBreakBefore) out.push('<w:pageBreakBefore/>');
-  if (p.bidi !== DEFAULT_PARA.bidi) out.push(toggle('w:bidi', p.bidi));
-  const ind = indXml(p);
-  if (ind) out.push(ind);
-  const spacing = spacingXml(p);
-  if (spacing) out.push(spacing);
-  if (JC.has(p.alignment) && p.alignment !== DEFAULT_PARA.alignment) {
-    out.push(`<w:jc w:val="${p.alignment}"/>`);
-  }
   // §17.3.1.24 `w:pBdr` — the rules the paragraph is drawn with. A PDF has no
   // paragraph borders and draws lines; the reconstruction gives the line to the
-  // paragraph it separates (see `pdf-reader/layout`), and written nowhere it
-  // came back as nothing at all.
+  // paragraph it separates (see `pdf-reader/layout`).
   const pBdr = bordersXml('w:pBdr', p.borders);
   if (pBdr) out.push(pBdr);
   // §17.3.1.38 `w:tabs` — the stops the paragraph's own tabs stand on. Without
   // them a tab falls to the default half-inch grid, which is not where the page
   // that was read set its second column.
+  //
   // The header and footer path hands this raw properties rather than resolved
   // ones, so the field the type promises may not be there.
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
@@ -1629,6 +1825,18 @@ function pPrBody(p: ResolvedParagraphProperties): string {
       .join('');
     out.push(`<w:tabs>${stops}</w:tabs>`);
   }
+  // A drawing's carrier and a band's lines come with RAW properties, where a
+  // direction nobody stated is absent — not the opposite of the default.
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+  if (p.bidi !== undefined && p.bidi !== DEFAULT_PARA.bidi) out.push(toggle('w:bidi', p.bidi));
+  const spacing = spacingXml(p);
+  if (spacing) out.push(spacing);
+  const ind = indXml(p);
+  if (ind) out.push(ind);
+  if (JC.has(p.alignment) && p.alignment !== DEFAULT_PARA.alignment) {
+    out.push(`<w:jc w:val="${p.alignment}"/>`);
+  }
+  if (p.outlineLevel !== undefined) out.push(`<w:outlineLvl w:val="${p.outlineLevel}"/>`);
   return out.join('');
 }
 
@@ -1701,13 +1909,37 @@ function spacingXml(p: ResolvedParagraphProperties): string {
   return attrs.length > 0 ? `<w:spacing ${attrs.join(' ')}/>` : '';
 }
 
-// §17.3.2.26 w:rFonts — only the slots that differ from the resolved default.
-function rFontsXml(fonts: FontFamilyMap): string {
+// §17.3.2.26 w:rFonts — only the slots that differ from the resolved default,
+// each named by its FAMILY where the source named a face (see FlowDoc
+// `faceFamilies`): a reader looks a font up by the name it was installed under.
+function rFontsXml(fonts: FontFamilyMap | undefined, state?: WriteState): string {
+  // A band's runs come with RAW properties, and a run that names no face has
+  // no font map at all: ZapfDingbats.pdf's foot threw here, and the whole
+  // package with it.
+  if (fonts === undefined) return '';
   const d = DEFAULT_RUN.fontFamily;
+  const family = (name: string): string => {
+    const known = state?.faceFamilies?.get(name);
+    if (known === undefined) return name;
+    state?.familiesUsed.set(known.family, known);
+    return known.family;
+  };
   const attrs: Array<string> = [];
-  if (fonts.ascii && fonts.ascii !== d.ascii) attrs.push(`w:ascii="${escapeAttr(fonts.ascii)}"`);
-  if (fonts.hAnsi && fonts.hAnsi !== d.hAnsi) attrs.push(`w:hAnsi="${escapeAttr(fonts.hAnsi)}"`);
-  if (fonts.cs && fonts.cs !== d.cs) attrs.push(`w:cs="${escapeAttr(fonts.cs)}"`);
+  if (fonts.ascii && fonts.ascii !== d.ascii)
+    attrs.push(`w:ascii="${escapeAttr(family(fonts.ascii))}"`);
+  if (fonts.hAnsi && fonts.hAnsi !== d.hAnsi)
+    attrs.push(`w:hAnsi="${escapeAttr(family(fonts.hAnsi))}"`);
+  // A face a PDF drew in drew EVERY character of the run — the Arabic and the
+  // Han as well as the Latin — so every slot a reader picks by script names it.
+  const face =
+    fonts.ascii !== undefined && state?.faceFamilies?.has(fonts.ascii) === true
+      ? family(fonts.ascii)
+      : undefined;
+  if (face !== undefined && fonts.eastAsia === undefined) {
+    attrs.push(`w:eastAsia="${escapeAttr(face)}"`);
+  }
+  if (fonts.cs && fonts.cs !== d.cs) attrs.push(`w:cs="${escapeAttr(family(fonts.cs))}"`);
+  else if (face !== undefined) attrs.push(`w:cs="${escapeAttr(face)}"`);
   return attrs.length > 0 ? `<w:rFonts ${attrs.join(' ')}/>` : '';
 }
 

@@ -27,6 +27,16 @@ import type { FontRegistry } from '@/core/font';
 import type { ResourceStore } from '@/core/ir/resources';
 
 /**
+ * A face's family as a word processor names it (ECMA-376 §17.8.3.9 `w:font`).
+ */
+export interface FaceFamily {
+  /** The family's own name: `Inter` for `Inter-SemiBold`, `Arial` for `ArialMT`. */
+  readonly family: string;
+  /** §17.8.3.10 `w:family` — the kind of face, for a reader that has to substitute. */
+  readonly generic: 'roman' | 'swiss' | 'modern';
+}
+
+/**
  * The semantic IR tree (ir-design §5): everything a reader extracts from the
  * document bytes, format-neutrally — the flow `body` plus its document-scoped
  * companions (styles, numbering, header/footer bands, notes, charts, binary
@@ -67,6 +77,14 @@ export interface FlowDoc {
   readonly resources: ResourceStore;
   /** Fonts embedded in the source document itself (docx fontTable), by name. */
   readonly embeddedFonts?: ReadonlyMap<string, FontRegistry>;
+  /**
+   * The family each face a run names belongs to, where the two are not the
+   * same name. A PDF names a FACE — `Inter-SemiBold` — where a word processor
+   * names a family and states the weight beside it (`Inter`, bold). The layout
+   * finds a document's own program by the face; a writer that hands the text
+   * to another program names the family, which is the name that program knows.
+   */
+  readonly faceFamilies?: ReadonlyMap<string, FaceFamily>;
   /** Document metadata from docProps/core.xml. */
   readonly info?: DocumentInfo;
   /** Document natural language hint (BCP-47), e.g. for tagged-PDF /Lang. */

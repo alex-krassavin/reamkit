@@ -64,6 +64,23 @@ describe('/ToUnicode CMap parser (E-PDF EP2)', () => {
     expect(map.get(0x0441)).toBe('\u{1d454}'); // 𝑔, at the end of the range
   });
 
+  it('judges U+0000 code by code in a range that starts on it', () => {
+    // TCPDF maps every code to itself, 256 at a time, and the first range
+    // starts at U+0000. Only code 0 is the unknown character; the rest are
+    // the Latin letters its pages are written in.
+    const cmap = [
+      'begincmap',
+      '1 begincodespacerange <0000> <FFFF> endcodespacerange',
+      '2 beginbfrange <0000> <00ff> <0000> <0100> <01ff> <0100> endbfrange',
+      'endcmap',
+    ].join('\n');
+    const { map } = parseToUnicodeCMap(new TextEncoder().encode(cmap));
+    expect(map.has(0x0000)).toBe(false);
+    expect(map.get(0x0043)).toBe('C');
+    expect(map.get(0x0068)).toBe('h');
+    expect(map.get(0x0101)).toBe('ā');
+  });
+
   it('parses an array-form bfrange', () => {
     const cmap = '1 beginbfrange <0001> <0002> [<0058> <0059>] endbfrange';
     const { map } = parseToUnicodeCMap(new TextEncoder().encode(cmap));
@@ -286,10 +303,32 @@ describe('the encoding a font is read through (Annex D.2)', () => {
     expect(standardFaceText('Helvetica', 'd0d1', dict)).toBe('•—');
   });
 
+  it('reads a code the font’s own /Differences leave .notdef as no character', () => {
+    // issue11403_reduced.pdf writes a UTF-8 no-break space (C2 A0) into a
+    // Helvetica whose /Differences name both bytes `.notdef`; read through
+    // StandardEncoding the C2 came back an acute accent before the line.
+    const dict = '/Encoding << /Type /Encoding /Differences [160 /.notdef 194 /.notdef] >>';
+    expect(standardFaceText('Helvetica', 'c2a02041', dict)).toBe(' A');
+  });
+
   it('leaves a face whose encoding nobody knows to Latin-1', () => {
     // A subset of some sans: its built-in encoding is in the program, and what
     // a producer meant by its high codes is nearly always Latin-1.
     expect(standardFaceText('ABCDEF+SomeSans', 'd0e9')).toBe('Ðé');
+  });
+});
+
+describe('a ligature is the letters it joins', () => {
+  it('reads the Latin presentation forms as their letters', () => {
+    // StandardEncoding sets `fi` at 0xAE and `fl` at 0xAF, and their names are
+    // the ligature forms U+FB01 and U+FB02. Kept as those, a word neither
+    // searches nor edits as itself — freeculture.pdf's "ﬁrst", "ofﬁce" — and
+    // a face without the form sets it in another's, wider:
+    // copy_paste_ligatures.pdf's one line ran off its page.
+    expect(standardFaceText('Times-Roman', '41AE42AF43')).toBe('AfiBflC');
+    // …the long s of `ﬅ` kept, a letter of its own.
+    const named = '/Encoding << /Differences [65 /ff /ffi /ffl /uniFB05 /uniFB06] >>';
+    expect(standardFaceText('Times-Roman', '4142434445', named)).toBe('ffffifflſtst');
   });
 });
 
@@ -348,6 +387,24 @@ describe('the face a run was shown in (§9.8.1)', () => {
     expect(styleOf('Helvetica', '/Flags 262176 /FontWeight 700').bold).toBe(true);
   });
 
+  it('lets a name that states a light weight overrule the ForceBold flag', () => {
+    // bug898853.pdf sets "Canadian" in FrutigerLTStd-Light — no /FontWeight,
+    // ForceBold set — and read off the flag the light word came back heavy.
+    expect(styleOf('FrutigerLTStd-Light', '/Flags 262178').bold).toBeUndefined();
+    expect(styleOf('FrutigerLTStd-Bold', '/Flags 262178').bold).toBe(true);
+  });
+
+  it('reads the class off a name the substitution knows, over the flags', () => {
+    // The same descriptor calls that Frutiger Serif, and read off the flag
+    // the sans came back in a roman.
+    const flow = Ream.parse(styledFontPdf('FrutigerLTStd-Light', '/Flags 262178')).flow;
+    const families = [...(flow.faceFamilies?.values() ?? [])];
+    expect(families.map((f) => f.generic)).toEqual(['swiss']);
+    // A name nobody knows still takes the class the flags state.
+    const unknown = Ream.parse(styledFontPdf('SomeFoundryFace', '/Flags 34')).flow;
+    expect([...(unknown.faceFamilies?.values() ?? [])].map((f) => f.generic)).toEqual(['roman']);
+  });
+
   it('takes a weight below 100 for no weight at all', () => {
     // §9.8.1 gives the weight as one of 100…900, and a producer writing
     // anything else has written a placeholder: issue10519_reduced.pdf states
@@ -364,6 +421,19 @@ describe('the face a run was shown in (§9.8.1)', () => {
     expect(styleOf('NewBasrahBold', '/Flags 4 /ItalicAngle 0').bold).toBeUndefined();
   });
 
+  it('takes the weight from the embedded program where the descriptor states none', () => {
+    // bigboundingbox.pdf names its faces `CalibriBold` and `Calibri` — no
+    // separator, no /FontWeight, no ForceBold — and every heading of its
+    // invoice came back light. The program's own header says which is bold.
+    const run = (program: string): boolean | undefined => {
+      const file = PdfFile.parse(identityHNoToUnicodePdf('Hi', program, 'SUBSET+RobotoBold'));
+      return extractPageText(file, file.pages()[0]!)[0]?.bold;
+    };
+    expect(run('Roboto-Bold.ttf')).toBe(true);
+    // …and a family whose program says Regular is regular, whatever it is called.
+    expect(run('Roboto-Regular.ttf')).toBeUndefined();
+  });
+
   it('falls back to the name only where there is no descriptor at all', () => {
     // §9.6.2.2 — a standard-14 font carries none, so the name is all there is.
     expect(styleOf('Helvetica-BoldOblique')).toEqual({ bold: true, italic: true });
@@ -378,8 +448,12 @@ describe('the face a run was shown in (§9.8.1)', () => {
  * TrueType: the codes are glyph indices, and the only place their Unicode is
  * written down is the font program's own `cmap`.
  */
-function identityHNoToUnicodePdf(word: string): Uint8Array {
-  const face = new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Regular.ttf'));
+function identityHNoToUnicodePdf(
+  word: string,
+  program = 'Roboto-Regular.ttf',
+  baseFont = 'Roboto',
+): Uint8Array {
+  const face = new Uint8Array(readFileSync(`tests/fixtures/fonts/${program}`));
   const gidOf = parseTtf(face).glyphForCodepoint;
   const codes = [...word].map((c) => gidOf(c.codePointAt(0)!));
   const hex = codes.map((g) => g.toString(16).padStart(4, '0')).join('');
@@ -390,9 +464,9 @@ function identityHNoToUnicodePdf(word: string): Uint8Array {
     '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] ' +
       '/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>',
     `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
-    '<< /Type /Font /Subtype /Type0 /BaseFont /Roboto /Encoding /Identity-H ' +
+    `<< /Type /Font /Subtype /Type0 /BaseFont /${baseFont} /Encoding /Identity-H ` +
       '/DescendantFonts [6 0 R] >>',
-    '<< /Type /Font /Subtype /CIDFontType2 /BaseFont /Roboto /DW 500 ' +
+    `<< /Type /Font /Subtype /CIDFontType2 /BaseFont /${baseFont} /DW 500 ` +
       '/CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> ' +
       '/FontDescriptor 7 0 R >>',
     `<< /Type /FontDescriptor /FontName /Roboto /Flags 4 /FontFile2 8 0 R >>`,
@@ -862,9 +936,10 @@ describe('the margins a page\u2019s words say it had', () => {
     const small = withMeasuredMargins(section, page, [[runAt(700, 10)]]);
     const large = withMeasuredMargins(section, page, [[runAt(700, 30)]]);
     // The same baseline in a bigger face starts higher up the page, so less
-    // paper is left above it.
-    expect((small?.margins?.top ?? 0) as number).toBeCloseTo(792 - 700 - 8, 3);
-    expect((large?.margins?.top ?? 0) as number).toBeCloseTo(792 - 700 - 24, 3);
+    // paper is left above it — as much as the exact box the line is set in
+    // reaches above its baseline: four fifths of a single-spaced line.
+    expect((small?.margins?.top ?? 0) as number).toBeCloseTo(792 - 700 - 9.6, 3);
+    expect((large?.margins?.top ?? 0) as number).toBeCloseTo(792 - 700 - 28.8, 3);
   });
 });
 
@@ -1220,6 +1295,37 @@ describe('an annotation the file drew no appearance for (§12.5.5)', () => {
     return collectPageVectors(file, file.pages()[0]!).vectors.length;
   };
 
+  it('sets a free-text note in the face its /DA names', () => {
+    // §12.5.6.6 — a free-text annotation IS its text. bug1865341.pdf's one
+    // note, "Załącznik", has no appearance, and the page came back blank.
+    const file = PdfFile.parse(
+      annotated([
+        '<< /Type /Annot /Subtype /FreeText /Rect [20 150 120 170] /DA (/Helv 10 Tf 0 g) ' +
+          '/Contents <FEFF005A0061014201050063007A006E0069006B> >>',
+      ]),
+    );
+    const text = extractPageText(file, file.pages()[0]!)
+      .map((r) => r.text)
+      .join('');
+    expect(text).toBe('Załącznik');
+  });
+
+  it('reads a right-to-left line with a full stop in it in reading order', () => {
+    // A line of Arabic painted glyph by glyph stands in visual order, and one
+    // with a full stop in it is MIXED: left as painted, every such line of
+    // freetext_no_appearance.pdf read back to front.
+    const file = PdfFile.parse(
+      annotated([
+        '<< /Type /Annot /Subtype /FreeText /Rect [20 150 180 170] /DA (/Helv 10 Tf 0 g) ' +
+          '/Contents <FEFF064506360649002E0020062506460647> >>',
+      ]),
+    );
+    const text = extractPageText(file, file.pages()[0]!)
+      .map((r) => r.text)
+      .join('');
+    expect(text).toBe('\u0645\u0636\u0649. \u0625\u0646\u0647');
+  });
+
   it('draws a ticked check box, and nothing for an unticked one', () => {
     // §12.7.4.2 — the state is `/AS`, or `/V` where the widget states none, and
     // `/Off` means nothing is drawn. checkbox_no_appearance.pdf is two boxes
@@ -1505,3 +1611,48 @@ function runsOf(content: string): Array<TextRun> {
   const file = PdfFile.parse(new TextEncoder().encode(pdf));
   return extractPageText(file, file.pages()[0]!);
 }
+
+describe('a composite font that names a system face and embeds nothing (§9.7.4)', () => {
+  /** A page showing `hex` in a non-embedded TrueType CIDFont named `face`. */
+  const shown = (face: string, hex: string): string | undefined => {
+    const content = `BT /F0 12 Tf 10 30 Td <${hex}> Tj ET`;
+    const objects = [
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 50] /Contents 4 0 R ' +
+        '/Resources << /Font << /F0 5 0 R >> >> >>',
+      `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+      `<< /Type /Font /Subtype /Type0 /BaseFont /${face} /Encoding /Identity-H /DescendantFonts [6 0 R] >>`,
+      `<< /Type /Font /Subtype /CIDFontType2 /BaseFont /${face} ` +
+        '/CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor 7 0 R >>',
+      `<< /Type /FontDescriptor /FontName /${face} /Flags 32 /Ascent 764 /Descent -206 ` +
+        '/CapHeight 727 /ItalicAngle 0 /StemV 80 /FontBBox [-550 -303 1707 1072] >>',
+    ];
+    let pdf = '%PDF-1.7\n';
+    const offsets: Array<number> = [];
+    objects.forEach((body, i) => {
+      offsets.push(pdf.length);
+      pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+    });
+    const xref = pdf.length;
+    pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+    for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+    pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`;
+    const file = PdfFile.parse(new TextEncoder().encode(pdf));
+    return extractPageText(file, file.pages()[0]!)[0]?.text;
+  };
+
+  it('reads its codes as the glyph order the core faces share', () => {
+    // issue11242_reduced.pdf shows "VAT Code" in a Verdana it does not embed,
+    // with no /ToUnicode: its codes are glyph indices into the system face,
+    // whose first 258 glyphs stand in the standard Macintosh order. Read as
+    // characters they are "9$7&RGH"; read as nothing, the page came back blank.
+    expect(shown('Verdana', '0039002400370026')).toBe('VATC');
+    expect(shown('Verdana-Bold', '00030039')).toBe(' V');
+  });
+
+  it('leaves a face nobody knows unread', () => {
+    // Its glyph order is its own, and guessing at it is inventing text.
+    expect(shown('SomeFoundryFace', '0039002400370026')).not.toBe('VATC');
+  });
+});

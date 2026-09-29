@@ -10,11 +10,12 @@
 // font falls back to Latin-1 with a half-em advance so text still surfaces.
 
 import { Lexer } from './lexer';
-import { cmykHex, grayHex, rgbHex, spaceColor } from './shading';
-import type { ColorSpaceInfo, GsPaint } from './shading';
+import { cmykHex, dashLengths, grayHex, rgbHex, spaceColor } from './shading';
+import type { ColorSpaceInfo, GsPaint, PageGradient } from './shading';
 import type { TextMarkup } from './annot-draw';
 import type { ShapeGradient } from '@/core/vector';
 import type { PdfDict, PdfStream, PdfValue } from '@/pdf/objects';
+import { analyzeString, bidiClass, hasBidiCharacters, reorderVisual } from '@/core/bidi';
 import { PDF_NULL, PdfHexString, PdfName } from '@/pdf/objects';
 
 /**
@@ -154,6 +155,12 @@ export interface TextRun {
    * leaves it to the picture.
    */
   readonly invisible?: boolean;
+  /**
+   * §12.5.5 — drawn by an annotation's appearance rather than by the page: a
+   * field's value, a button's caption, a tick. It stands in the annotation's
+   * box, which is placed where the page has it, not in the page's reading.
+   */
+  readonly annotation?: boolean;
   /**
    * §9.3.6 — the colour the glyphs are STROKED in, when the rendering mode
    * asks for a stroke, and how wide the pen is.
@@ -297,7 +304,7 @@ export interface VectorPlacement {
   /** Fill colour (6-hex), present iff the path is filled (`f` / `F` / `f*` / `B` / `b`). */
   readonly fillHex?: string;
   /** Shading pattern, present iff filled with one (EP16c). */
-  readonly gradient?: ShapeGradient;
+  readonly gradient?: PageGradient;
   /** §11.6.4.4 `/ca` — how opaque the fill is, when the page asked for less. */
   readonly alpha?: number;
   /**
@@ -323,10 +330,18 @@ export interface VectorPlacement {
    * known by walking into it; the `fillHex` beside this is not the fill.
    */
   readonly patternName?: string;
+  /** §8.7.3.3 — the colour `scn` gave an uncoloured pattern, where it gave one. */
+  readonly patternPaint?: string;
   /** Stroke colour (6-hex), present iff the path is stroked (`S` / `s` / `B` / `b`) — EP11. */
   readonly strokeHex?: string;
   /** Stroke width in page-space points — EP11. */
   readonly lineWidth?: number;
+  /** §8.4.3.6 — the stroke's dash lengths in page-space points, where it is dashed. */
+  readonly dash?: ReadonlyArray<number>;
+  /** §8.4.3.3 — the stroke's cap, where it is not the butt cap every line starts with. */
+  readonly cap?: 'round' | 'square';
+  /** §11.6.4.4 `/CA` — how opaque the stroke is, when the page asked for less than all. */
+  readonly strokeAlpha?: number;
   readonly mcid?: number;
 }
 
@@ -459,9 +474,13 @@ interface TextState {
   fillColor: string; // current non-stroking colour (6-hex), graphics state (EP10)
   strokeColor: string; // current stroking colour (6-hex), graphics state (EP11)
   lineWidth: number; // current line width in user-space units (EP11)
-  fillGradient: ShapeGradient | undefined; // current non-stroking shading pattern (EP16c)
+  dash: ReadonlyArray<number>; // §8.4.3.6 current dash lengths, user space; empty is solid
+  lineCap: number; // §8.4.3.3 0 butt, 1 round, 2 projecting square
+  fillGradient: PageGradient | undefined; // current non-stroking shading pattern (EP16c)
   fillPattern: string | undefined; // §8.7.3 non-stroking TILING pattern resource name
+  fillPatternPaint: string | undefined; // §8.7.3.3 the colour an uncoloured one is painted in
   fillAlpha: number; // §11.6.4.4 `/ca` — how opaque the non-stroking paint is
+  strokeAlpha: number; // §11.6.4.4 `/CA` — how opaque the stroking paint is
   fillDarkens: boolean; // §11.3.5 `/BM` Multiply or Darken — the paint only darkens
   blendMode: string | undefined; // §11.3.5 `/BM` — a blend nothing here can perform
   softMask: boolean; // §11.6.5 `/SMask` — the paint fades from place to place
@@ -485,9 +504,13 @@ function initialState(): TextState {
     fillColor: '000000',
     strokeColor: '000000',
     lineWidth: 1, // §8.4.3.2 default line width
+    dash: [], // §8.4.3.6 a solid line
+    lineCap: 0, // §8.4.3.3 butt
     fillGradient: undefined,
     fillPattern: undefined,
+    fillPatternPaint: undefined,
     fillAlpha: 1,
+    strokeAlpha: 1,
     fillDarkens: false,
     blendMode: undefined,
     softMask: false,
@@ -574,7 +597,7 @@ export function interpretContent(
   bytes: Uint8Array,
   fonts: ReadonlyMap<string, ContentFont>,
   initialCtm: Matrix = IDENTITY,
-  shadings: ReadonlyMap<string, ShapeGradient> = new Map(),
+  shadings: ReadonlyMap<string, PageGradient> = new Map(),
   alphas: ReadonlyMap<string, GsPaint> = new Map(),
   spaces: ReadonlyMap<string, ColorSpaceInfo> = new Map(),
   hiddenOc: ReadonlySet<string> = new Set(),
@@ -622,6 +645,22 @@ export function interpretContent(
     const [x, y] = toPage(e, f);
     path.push({ op: 'cubic', x1, y1, x2, y2, x, y });
   };
+  // The point a path stands at, in page space: where its last segment ended,
+  // or — after a `h` — where the subpath it closed began.
+  const currentPoint = (): { x: number; y: number } | undefined => {
+    for (let i = path.length - 1; i >= 0; i--) {
+      const seg = path[i]!;
+      if (seg.op === 'close') {
+        for (let k = i - 1; k >= 0; k--) {
+          const start = path[k]!;
+          if (start.op === 'move') return { x: start.x, y: start.y };
+        }
+        return undefined;
+      }
+      return { x: seg.x, y: seg.y };
+    }
+    return undefined;
+  };
   const rectTo = (x: number, y: number, w: number, h: number): void => {
     moveTo(x, y);
     lineTo(x + w, y);
@@ -636,6 +675,12 @@ export function interpretContent(
     const scale = Math.sqrt(Math.abs(m[0] * m[3] - m[1] * m[2])) || 1;
     return state.lineWidth * scale;
   };
+  // §8.4.3.6 — the dash lengths in page space, scaled as the width is.
+  const ctmDash = (): ReadonlyArray<number> => {
+    const m = state.ctm;
+    const scale = Math.sqrt(Math.abs(m[0] * m[3] - m[1] * m[2])) || 1;
+    return state.dash.map((n) => n * scale);
+  };
   // Emit the current path as a painted vector (§8.5.3): filled, stroked, or both.
   // `n` and clip operators paint nothing — they pass fill=stroke=false to clear.
   const paintPath = (fill: boolean, stroke: boolean): void => {
@@ -646,6 +691,9 @@ export function interpretContent(
         segs: path,
         ...(state.clip ? { clip: state.clip } : {}),
         ...(fill && state.fillPattern !== undefined ? { patternName: state.fillPattern } : {}),
+        ...(fill && state.fillPattern !== undefined && state.fillPatternPaint !== undefined
+          ? { patternPaint: state.fillPatternPaint }
+          : {}),
         ...(fill ? { fillHex: state.fillColor } : {}),
         ...(fill && state.fillAlpha < 1 ? { alpha: state.fillAlpha } : {}),
         ...(fill && state.fillDarkens ? { darkens: true } : {}),
@@ -653,6 +701,10 @@ export function interpretContent(
         ...(state.softMask ? { masked: true } : {}),
         ...(fill && state.fillGradient ? { gradient: state.fillGradient } : {}),
         ...(stroke ? { strokeHex: state.strokeColor, lineWidth: ctmLineWidth() } : {}),
+        ...(stroke && state.dash.length > 0 ? { dash: ctmDash() } : {}),
+        ...(stroke && state.lineCap === 1 ? { cap: 'round' as const } : {}),
+        ...(stroke && state.lineCap === 2 ? { cap: 'square' as const } : {}),
+        ...(stroke && state.strokeAlpha < 1 ? { strokeAlpha: state.strokeAlpha } : {}),
         ...(mcid !== undefined ? { mcid } : {}),
       });
     }
@@ -989,6 +1041,11 @@ export function interpretContent(
         if (named !== undefined) {
           state.fillGradient = shadings.get(named);
           state.fillPattern = state.fillGradient ? undefined : named;
+          // §8.7.3.3 — the components before the name are the colour an
+          // UNCOLOURED pattern is painted in, in the space under the pattern.
+          const components = operands.filter((o): o is number => typeof o === 'number');
+          state.fillPatternPaint =
+            components.length > 0 ? spaceColor(components, undefined) : undefined;
           break;
         }
         const hex = colorOfOperands(operands, state.fillSpace);
@@ -1001,8 +1058,18 @@ export function interpretContent(
       }
       case 'SCN':
       case 'SC': {
+        // §8.6.6.2 — a stroke in a Pattern space names its pattern too. A line
+        // takes one colour here, so a shading pattern gives the middle of its
+        // sweep, as it does to type: bug1019475_1.pdf rules the head of its
+        // page with twelve lines that fade from white to a pale blue-grey, and
+        // with the name passed over they kept the black a stroke starts on —
+        // a solid black block across the letterhead.
         const last = operands[operands.length - 1];
-        if (last instanceof PdfName) break;
+        if (last instanceof PdfName) {
+          const sweep = shadings.get(last.value);
+          if (sweep) state.strokeColor = midGradient(sweep);
+          break;
+        }
         const hex = colorOfOperands(operands, state.strokeSpace);
         if (hex !== undefined) state.strokeColor = hex;
         break;
@@ -1020,6 +1087,17 @@ export function interpretContent(
       case 'w':
         state.lineWidth = num(0); // §8.4.3.2 line width (user space)
         break;
+      case 'd':
+        // §8.4.3.6 — the dash pattern: its lengths and a phase. The phase is
+        // where along the pattern the line starts, which no .docx line states.
+        state.dash = dashLengths(operands[0]);
+        break;
+      case 'J': {
+        // §8.4.3.3 — the line cap.
+        const cap = num(0);
+        if (cap === 0 || cap === 1 || cap === 2) state.lineCap = cap;
+        break;
+      }
       // §8.5.2 path construction.
       case 'm':
         moveTo(num(0), num(1));
@@ -1029,6 +1107,23 @@ export function interpretContent(
         break;
       case 'c':
         curveTo(num(0), num(1), num(2), num(3), num(4), num(5));
+        break;
+      // §8.5.2.2 — the two curves that spell one control point by the point
+      // it coincides with: `v` starts at the current point, `y` ends at its
+      // own end. Passed over, the line after each joined the wrong corners:
+      // bug1755507.pdf draws its card's rounded corners with `v`, and the
+      // card came back as a skewed quadrilateral.
+      case 'v': {
+        const at = currentPoint();
+        if (at) {
+          const [x2, y2] = toPage(num(0), num(1));
+          const [x, y] = toPage(num(2), num(3));
+          path.push({ op: 'cubic', x1: at.x, y1: at.y, x2, y2, x, y });
+        }
+        break;
+      }
+      case 'y':
+        curveTo(num(0), num(1), num(2), num(3), num(2), num(3));
         break;
       case 're':
         rectTo(num(0), num(1), num(2), num(3));
@@ -1095,6 +1190,10 @@ export function interpretContent(
             state.blendMode = paint.blend;
           }
           if (paint.masked !== undefined) state.softMask = paint.masked;
+          if (paint.lineWidth !== undefined) state.lineWidth = paint.lineWidth;
+          if (paint.dash !== undefined) state.dash = paint.dash;
+          if (paint.lineCap !== undefined) state.lineCap = paint.lineCap;
+          if (paint.strokeAlpha !== undefined) state.strokeAlpha = paint.strokeAlpha;
         }
         break;
       }
@@ -1192,12 +1291,29 @@ function strokesText(mode: number): boolean {
  * ArabicCIDTrueType.pdf came out mirrored for exactly that reason: the reader
  * passed visual order through and the layout reversed it a second time.
  *
- * A run is reversed only when it is wholly right-to-left. Anything mixed — a
- * number inside an Arabic sentence runs left to right — needs the full bidi
- * algorithm, and guessing at it would be worse than leaving it alone.
+ * A run wholly right-to-left is simply reversed. A MIXED one — a full stop or
+ * a number inside an Arabic sentence — is put through the bidi algorithm's
+ * reordering (UAX #9 L2), which for the runs a line holds undoes itself: the
+ * painted order reordered is the reading order. Left alone, a note of
+ * freetext_no_appearance.pdf came back with every line that held a full stop
+ * reading back to front. The direction it is reordered in is the one most of
+ * its letters run in — the painted order says nothing about which comes first.
  */
 function logicalOrder(text: string): string {
-  return isRightToLeft(text) ? [...text].reverse().join('') : text;
+  if (isRightToLeft(text)) return [...text].reverse().join('');
+  if (!hasBidiCharacters(text)) return text;
+  const chars = [...text];
+  let rtl = 0;
+  let strong = 0;
+  for (const ch of chars) {
+    const type = bidiClass(ch.codePointAt(0) ?? 0);
+    if (type === 'R' || type === 'AL') rtl++;
+    if (type === 'R' || type === 'AL' || type === 'L') strong++;
+  }
+  const { levels } = analyzeString(text, rtl * 2 >= strong ? 'rtl' : 'ltr');
+  return reorderVisual(levels)
+    .map((i) => chars[i] ?? '')
+    .join('');
 }
 
 /**
@@ -1346,8 +1462,8 @@ function readValue(lexer: Lexer): PdfValue {
  * The bytes are binary and may hold `EI` themselves, so the end is found by
  * MEASURING where the dictionary says how much there is — an unfiltered image
  * is exactly `ceil(W · BPC · components / 8) · H` bytes — and only searched for
- * where a filter makes the length unknowable. images_1bit_grayscale.pdf draws
- * two of them and both were skipped over.
+ * where a filter makes the length unknowable (see {@link filteredEnd}).
+ * images_1bit_grayscale.pdf draws two of them and both were skipped over.
  */
 function readInlineImage(lexer: Lexer): InlineImage | undefined {
   const dict: PdfDict = new Map<string, PdfValue>();
@@ -1357,21 +1473,90 @@ function readInlineImage(lexer: Lexer): InlineImage | undefined {
     if (tok.kind === 'keyword' && tok.value === 'ID') break;
     if (tok.kind === 'name') dict.set(tok.value, readValue(lexer));
   }
-  // §8.9.7 — exactly ONE whitespace byte separates `ID` from the data.
-  const start = lexer.pos + 1;
+  // §8.9.7 — exactly ONE whitespace byte separates `ID` from the data, and
+  // §7.2.3 counts CR LF as one end of line. A filtered image is read by its
+  // own decoder from its first byte, and bug1065245.pdf writes `ID` CR LF:
+  // taken as one byte and data, the LF went in front of each JPEG's start
+  // marker and none of its three banners would decode. An unfiltered one is
+  // measured, and keeps the one byte the spec says.
   const measured = inlineLength(dict);
+  const crlf = lexer.byteAt(lexer.pos) === 0x0d && lexer.byteAt(lexer.pos + 1) === 0x0a;
+  const start = lexer.pos + (crlf && measured === undefined ? 2 : 1);
   let end = measured !== undefined ? start + measured : -1;
   if (end < 0 || end > lexer.length) {
-    end = lexer.indexOfAscii('EI', start);
+    end = filteredEnd(lexer, start, dict);
     if (end < 0) {
       lexer.pos = lexer.length;
       return undefined;
     }
   }
   const data = lexer.slice(start, Math.min(end, lexer.length));
-  const ei = lexer.indexOfAscii('EI', end);
+  const ei = lexer.indexOfKeyword('EI', end);
   lexer.pos = ei < 0 ? lexer.length : ei + 2;
   return { dict, data };
+}
+
+/**
+ * §8.9.7 — where a FILTERED inline image's bytes end, which the dictionary
+ * cannot say.
+ *
+ * Searched for as the first two bytes `EI`, the end fell inside the picture
+ * wherever its own bytes spelled them: a JPEG is dense with them, and
+ * bug1065245.pdf's three banners were each cut off a few hundred bytes in,
+ * would not decode, and were dropped — a blank sheet. So the data is read to
+ * where its OWN encoding ends: a JPEG at its end-of-image marker, hex text at
+ * `>`, base-85 at `~>`. Anything else ends at the first `EI` standing as a
+ * word of its own.
+ */
+function filteredEnd(lexer: Lexer, start: number, dict: PdfDict): number {
+  const f = dict.get('F') ?? dict.get('Filter');
+  const first = Array.isArray(f) ? f[0] : f;
+  const filter = first instanceof PdfName ? first.value : '';
+  if (filter === 'DCT' || filter === 'DCTDecode') {
+    const eoi = jpegEnd(lexer, start);
+    if (eoi !== undefined) return eoi;
+  } else if (filter === 'AHx' || filter === 'ASCIIHexDecode') {
+    const gt = lexer.indexOfAscii('>', start);
+    if (gt >= 0) return gt + 1;
+  } else if (filter === 'A85' || filter === 'ASCII85Decode') {
+    const tilde = lexer.indexOfAscii('~>', start);
+    if (tilde >= 0) return tilde + 2;
+  }
+  return lexer.indexOfKeyword('EI', start);
+}
+
+/**
+ * Where a JPEG that starts at `start` ends: past its end-of-image marker,
+ * found by walking its segments — a length-prefixed marker segment is stepped
+ * over whole, and the coded data after a start-of-scan is read to the next
+ * marker, where `FF` stands before anything but a stuffed `00` or a restart.
+ */
+function jpegEnd(lexer: Lexer, start: number): number | undefined {
+  if (lexer.byteAt(start) !== 0xff || lexer.byteAt(start + 1) !== 0xd8) return undefined;
+  let i = start + 2;
+  for (;;) {
+    if (lexer.byteAt(i) !== 0xff) return undefined;
+    let marker = lexer.byteAt(i + 1);
+    while (marker === 0xff) marker = lexer.byteAt(++i + 1);
+    if (marker < 0) return undefined;
+    if (marker === 0xd9) return i + 2;
+    if ((marker >= 0xd0 && marker <= 0xd7) || marker === 0x01) {
+      i += 2;
+      continue;
+    }
+    const hi = lexer.byteAt(i + 2);
+    const lo = lexer.byteAt(i + 3);
+    if (hi < 0 || lo < 0 || (hi << 8) + lo < 2) return undefined;
+    i += 2 + (hi << 8) + lo;
+    if (marker !== 0xda) continue;
+    for (;;) {
+      const b = lexer.byteAt(i);
+      if (b < 0) return undefined;
+      const next = lexer.byteAt(i + 1);
+      if (b === 0xff && next !== 0x00 && !(next >= 0xd0 && next <= 0xd7)) break;
+      i++;
+    }
+  }
 }
 
 /** How many bytes an UNFILTERED inline image's samples take, if that is known. */

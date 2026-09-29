@@ -14,10 +14,11 @@ import {
   gradientShading,
   shadingTypeOf,
 } from './shading';
-import { collectPageAppearances } from './annots';
+import { appearanceContent, collectPageAppearances } from './annots';
+import { patternTint, tintedHex } from './pattern-tint';
 import { hiddenProperties, hiddenXObject } from './optional-content';
 import { buildFonts } from './text';
-import type { ColorSpaceInfo, GsPaint } from './shading';
+import type { ColorSpaceInfo, GsPaint, PageGradient } from './shading';
 import type {
   ContentFont,
   ImagePlacement,
@@ -48,7 +49,7 @@ import { FEATURES } from '@/core/ir';
  */
 /** The name-keyed state a resource dictionary supplies to the interpreter. */
 interface ResourceMaps {
-  readonly shadings: ReadonlyMap<string, ShapeGradient>;
+  readonly shadings: ReadonlyMap<string, PageGradient>;
   readonly alphas: ReadonlyMap<string, GsPaint>;
   readonly spaces: ReadonlyMap<string, ColorSpaceInfo>;
 }
@@ -80,6 +81,35 @@ function paintedVectors(
     };
     stateCache.set(resources, made);
     return made;
+  };
+  // §8.7.3 — a path filled with a TILING pattern is a picture of repeats,
+  // and where the picture is drawn in lines and dots rather than images
+  // nothing lifts it: its fill was dropped, and issue11473.pdf's four hatched
+  // swatches came back as four empty squares. Filled with the pattern's
+  // colour at the strength its tile covers — as type set in a pattern is
+  // (see `./pattern-tint`) — a hatch reads as the tone it gives the page.
+  const tints = new Map<PdfDict | undefined, Map<string, string | undefined>>();
+  const tinted = (resources: PdfDict | undefined, vector: VectorPlacement): VectorPlacement => {
+    const name = vector.patternName;
+    if (name === undefined) return vector;
+    // The same name means another pattern under other resources.
+    let known = tints.get(resources);
+    if (!known) tints.set(resources, (known = new Map()));
+    const key = `${name}\u0000${vector.patternPaint ?? ''}`;
+    let hex = known.get(key);
+    if (!known.has(key)) {
+      let tint: ReturnType<typeof patternTint>;
+      try {
+        tint = patternTint(file, resources, name, vector.patternPaint);
+      } catch {
+        tint = undefined;
+      }
+      hex = tint ? tintedHex(tint.colorHex, tint.coverage) : undefined;
+      known.set(key, hex);
+    }
+    if (hex === undefined) return vector;
+    const { patternName: _named, patternPaint: _paint, ...plain } = vector;
+    return { ...plain, fillHex: hex };
   };
   const walk = (
     resources: PdfDict | undefined,
@@ -113,7 +143,7 @@ function paintedVectors(
       // §8.7.4.5.3 — a function-based shading is a PICTURE, and the image pass
       // draws it. Counted here it was a loss the file did not have.
       if (sh && shadingTypeOf(file, sh) === 1) continue;
-      const gradient = sh ? gradientShading(file, sh) : undefined;
+      const gradient = sh ? gradientShading(file, sh, paint.ctm) : undefined;
       // §11.6.5 — under a soft mask the clip is not the extent: the MASK is,
       // and nothing here applies one. bug1721218_reduced.pdf fades a shadow out
       // under the router it draws, and painted to its clip that shadow arrived
@@ -165,7 +195,7 @@ function paintedVectors(
     for (const event of events) {
       if (out.length >= MAX_VECTORS) return;
       if (event.vector) {
-        out.push({ ...event.vector, orderKey: [...prefix, event.order] });
+        out.push({ ...tinted(resources, event.vector), orderKey: [...prefix, event.order] });
         continue;
       }
       // §9.6.5 — a Type 3 glyph is a content stream, and what it paints is
@@ -208,7 +238,7 @@ function paintedVectors(
   collectPageAppearances(file, page).forEach((appearance, index) => {
     walk(
       appearance.resources ?? page.resources,
-      file.streamData(appearance.stream),
+      appearanceContent(file, appearance),
       appearance.ctm,
       1,
       [Number.MAX_SAFE_INTEGER, index],
@@ -244,7 +274,7 @@ export interface PdfVector {
   /** Present iff a qualifying solid fill survived (EP10). */
   readonly fillHex?: string;
   /** Present iff a shading-pattern fill survived (EP16c). */
-  readonly gradient?: ShapeGradient;
+  readonly gradient?: PageGradient;
   /** §11.6.4.4 — how opaque the fill is, when the page asked for less than all. */
   readonly alpha?: number;
   /**
@@ -256,6 +286,12 @@ export interface PdfVector {
   readonly strokeHex?: string;
   /** Stroke width in page-space points (EP11). */
   readonly lineWidth?: number;
+  /** §8.4.3.6 — the stroke's dash lengths in page-space points, where it is dashed. */
+  readonly dash?: ReadonlyArray<number>;
+  /** §8.4.3.3 — the stroke's cap, where it is not the butt cap. */
+  readonly cap?: 'round' | 'square';
+  /** §11.6.4.4 `/CA` — how opaque the stroke is, where less than all. */
+  readonly strokeAlpha?: number;
   readonly minX: number;
   readonly minY: number;
   readonly maxX: number;
@@ -417,6 +453,9 @@ export function collectPageVectors(
         ? {
             strokeHex: v.strokeHex,
             ...(v.lineWidth !== undefined ? { lineWidth: v.lineWidth } : {}),
+            ...(v.dash !== undefined ? { dash: v.dash } : {}),
+            ...(v.cap !== undefined ? { cap: v.cap } : {}),
+            ...(v.strokeAlpha !== undefined ? { strokeAlpha: v.strokeAlpha } : {}),
           }
         : {}),
       ...b,

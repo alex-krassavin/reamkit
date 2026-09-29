@@ -14,6 +14,11 @@
 //   npx tsx scripts/corpus/visual-diff.ts AverageTaxRates
 //   npx tsx scripts/corpus/visual-diff.ts corpus/external/lo-xlsx/tdf123353.xlsx
 //   npx tsx scripts/corpus/visual-diff.ts tdf58243 --pages 1,3 --dpi 130
+//
+// `--target docx` looks at the DOCX we write instead of the PDF: the package is
+// saved beside the picture so it can be opened in Word as well, and the picture
+// itself is LibreOffice's rendering of it — which is a reader, not the oracle.
+//   npx tsx scripts/corpus/visual-diff.ts Invoice.pdf --target docx
 
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
@@ -122,18 +127,35 @@ async function main(): Promise<void> {
   mkdirSync(workDir, { recursive: true });
   mkdirSync(outDir, { recursive: true });
 
-  const ourPdf = resolve(workDir, 'ours.pdf');
-  writeFileSync(
-    ourPdf,
-    await Ream.parse(new Uint8Array(readFileSync(input)), parseOptions(input)).convert('pdf', {
-      // The document's own families (see ./fonts). CJK included: the library
-      // fetches a face per SCRIPT now, which is also what pixel-scout measures —
-      // a host face substituted here instead showed a Japanese sheet in a Korean
-      // one, and read as missing glyphs the score never saw.
-      ...corpusFontOptions(),
-      fileName: basename(input),
-    }),
-  );
+  const target = arg('--target') === 'docx' ? 'docx' : 'pdf';
+  const doc = Ream.parse(new Uint8Array(readFileSync(input)), parseOptions(input));
+  // The DOCX we write is not a page: to be SEEN it has to be rendered by
+  // something that lays it out. LibreOffice is what this machine has, and it is
+  // a reader rather than an oracle — the package is written next to the picture
+  // so the same bytes can be opened in Word, which is the one that decides.
+  if (target === 'docx') {
+    const bytes = await doc.convert('docx');
+    const kept = resolve(outDir, `${name}.docx`);
+    writeFileSync(kept, bytes);
+    writeFileSync(resolve(workDir, 'ours.docx'), bytes);
+    console.log(`docx: ${kept}`);
+  }
+  const ourPdf =
+    target === 'docx'
+      ? referenceToPdf(resolve(workDir, 'ours.docx'), workDir)
+      : resolve(workDir, 'ours.pdf');
+  if (target === 'pdf')
+    writeFileSync(
+      ourPdf,
+      await doc.convert('pdf', {
+        // The document's own families (see ./fonts). CJK included: the library
+        // fetches a face per SCRIPT now, which is also what pixel-scout measures —
+        // a host face substituted here instead showed a Japanese sheet in a Korean
+        // one, and read as missing glyphs the score never saw.
+        ...corpusFontOptions(),
+        fileName: basename(input),
+      }),
+    );
   const ours = rasterize(ourPdf, 'ours');
   // A PDF is its own reference — the same oracle pixel-scout uses. Asking
   // LibreOffice to "convert" one runs it through Draw, which REDRAWS the page
@@ -163,7 +185,14 @@ async function main(): Promise<void> {
     const w = wa + GAP + wb;
 
     const layers: Array<Record<string, unknown>> = [
-      { input: label(`OURS  ${name}  page ${p}/${ours.length}`, wa || 1), top: 0, left: 0 },
+      {
+        input: label(
+          `OURS${target === 'docx' ? ' (.docx via LibreOffice)' : ''}  ${name}  page ${p}/${ours.length}`,
+          wa || 1,
+        ),
+        top: 0,
+        left: 0,
+      },
       {
         input: label(
           `${isPdf ? 'THE FILE ITSELF' : 'LIBREOFFICE'}  page ${p}/${refs.length}`,

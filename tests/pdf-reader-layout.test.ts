@@ -8,9 +8,12 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
+import type { BodyElement } from '@/core/document-model';
 import { Ream } from '@/core/converter/ream';
 import { PdfFile } from '@/pdf-reader/document';
-import { reconstructByLayout } from '@/pdf-reader/layout';
+import { BASELINE_AT, FLOAT_CARRIER, positionedText } from '@/pdf-reader/flow-build';
+import { drawnWords, endedParagraph, reconstructByLayout } from '@/pdf-reader/layout';
+import { extractPageText } from '@/pdf-reader/text';
 
 const FONTS = {
   regular: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Regular.ttf')),
@@ -228,10 +231,11 @@ describe('a paragraph keeps the indent the page set it with (§17.3.1.12)', () =
 
   it('keeps a list item whose marker line runs the full measure', () => {
     // A FULL line followed by an indented one is an item and its continuation,
-    // not two paragraphs.
+    // not two paragraphs. Full across the sheet: a sheet of two lines shows no
+    // measure of its own, and is re-set across the rest of the paper.
     const paras = parasOf(
       [
-        line(40, 360, 'A line of body text right across the measure'),
+        line(40, 360, 'A line of body text right across the whole of the measure'),
         line(55, 346, 'and its own second line, set in under it'),
       ].join('\n'),
     );
@@ -527,6 +531,27 @@ describe('a running foot is a foot, not a paragraph (§17.6.13)', () => {
     expect(line.paragraph.properties.tabs?.[0]).toMatchObject({ relativeTo: 'right' });
   });
 
+  it('sets a one-line foot against the far edge, where the page set it', () => {
+    // "Page 1 of 2" stands at the right margin of every page of a receipt. A
+    // paragraph is read as set to the right only when its left edge is ragged,
+    // which one line's is not, and the foot came back at the left margin.
+    const page = (n: number): string =>
+      [
+        ...Array.from(
+          { length: 8 },
+          (_, i) =>
+            `BT /F0 10 Tf 1 0 0 1 40 ${String(360 - i * 14)} Tm (body line ${String(i)}) Tj ET`,
+        ),
+        `BT /F0 8 Tf 1 0 0 1 220 20 Tm (Page ${String(n)} of 3) Tj ET`,
+      ].join('\n');
+    const doc = reconstructByLayout(PdfFile.parse(pages([page(1), page(2), page(3)]))).doc;
+    const part = doc.section?.footers[0]?.relationshipId;
+    const band = part !== undefined ? doc.headersFooters?.get(part) : undefined;
+    const line = band?.[0];
+    if (line?.kind !== 'paragraph') throw new Error('the band has a line');
+    expect(line.paragraph.properties.alignment).toBe('right');
+  });
+
   it('leaves the number alone where the foot says the SAME thing on every page', () => {
     // A page number is a number that CHANGES from page to page. ZapfDingbats.pdf
     // signs each sheet "© RenderX 2000", and read as a page number the year came
@@ -546,6 +571,51 @@ describe('a running foot is a foot, not a paragraph (§17.6.13)', () => {
     );
     expect(kept?.map((r) => r.text).join('')).toContain('2000');
     expect(kept?.some((r) => r.field === 'PAGE')).toBe(false);
+  });
+
+  /** A sheet of eight long lines, and two that open a chapter with its heading alone. */
+  const chapters = (footed = true): Uint8Array => {
+    const foot = (n: number): string =>
+      footed ? `BT /F0 10 Tf 1 0 0 1 200 20 Tm (page ${String(n)} / 3) Tj ET` : '';
+    const body = Array.from(
+      { length: 8 },
+      (_, i) =>
+        `BT /F0 10 Tf 1 0 0 1 40 ${String(360 - i * 14)} Tm (body line ${String(i)} runs on across the whole of the sheet) Tj ET`,
+    ).join('\n');
+    const heading = 'BT /F0 16 Tf 1 0 0 1 40 360 Tm (Chapter) Tj ET';
+    return pages([`${body}\n${foot(1)}`, `${heading}\n${foot(2)}`, `${heading}\n${foot(3)}`]);
+  };
+
+  it('finds the foot under a sheet of one line', () => {
+    // A chapter opens on a sheet of its own: its heading, and the page number
+    // under it. Asked for more lines than that, basicapi.pdf's "page 2 / 3"
+    // stayed in the body and came back half way up the sheet.
+    const doc = reconstructByLayout(PdfFile.parse(chapters())).doc;
+    const body = doc.body
+      .flatMap((b) => (b.kind === 'paragraph' ? b.paragraph.runs.map((r) => r.text) : []))
+      .join(' ');
+    expect(body).toContain('Chapter');
+    expect(body).not.toContain('page');
+    expect(doc.section?.footers).toHaveLength(1);
+  });
+
+  it('keeps the bottom margin down to the foot, and the foot where the page set it', () => {
+    // The foot stands IN the bottom margin, so the text block may reach down
+    // to the white above it however early the sheets at hand end. Measured to
+    // where the three sheets' text stops, the margin came out at half the paper.
+    const margins = reconstructByLayout(PdfFile.parse(chapters())).doc.section?.margins;
+    // The foot's box starts three tenths of its size under the baseline at 20.
+    expect(margins?.footer).toBeCloseTo(17, 0);
+    // …and the text may come down to two ems above its top (20 + 9.6 + 20).
+    expect(margins?.bottom).toBeLessThan(50);
+  });
+
+  it('takes the right margin from the sheets full enough to reach it', () => {
+    // A sheet of one heading says where the heading ends. Two of them voted
+    // the right margin in to a third of the paper, and the first sheet's long
+    // lines could not be set in what was left.
+    const margins = reconstructByLayout(PdfFile.parse(chapters(false))).doc.section?.margins;
+    expect(margins?.right).toBeLessThan(60);
   });
 
   it('leaves a last paragraph where the page put it', () => {
@@ -569,6 +639,214 @@ describe('a running foot is a foot, not a paragraph (§17.6.13)', () => {
       .flatMap((b) => (b.kind === 'paragraph' ? b.paragraph.runs.map((r) => r.text) : []))
       .join(' ');
     expect(body).toContain('line 8');
+  });
+});
+
+describe('the measure a narrow column shows (§17.6.11)', () => {
+  /** One page, 300 wide, in a face whose every glyph is half an em. */
+  const page = (lines: ReadonlyArray<string>): Uint8Array => {
+    const widths = Array.from({ length: 91 }, () => 500).join(' ');
+    const shown = lines
+      .map((text, i) => `BT /F0 10 Tf 20 ${String(360 - i * 12)} Td (${text}) Tj ET`)
+      .join('\n');
+    return onePagePdf('/MediaBox [0 0 300 400] /Resources << /Font << /F0 5 0 R >> >>', shown, [
+      '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /FirstChar 32 /LastChar 122 ' +
+        `/Widths [${widths}] >>`,
+    ]);
+  };
+  const right = (lines: ReadonlyArray<string>): number | undefined =>
+    reconstructByLayout(PdfFile.parse(page(lines))).doc.section?.margins?.right;
+
+  it('takes a column’s measure where its lines run to one edge', () => {
+    // bug1057544.pdf sets a paragraph in a column a quarter of the sheet wide;
+    // held to a third of the sheet, it came back in two lines where the page
+    // has four. Three lines here run to x = 120, a hundred points in.
+    const column = ['aaaaaaaaaaaaaaaaaaaa', 'bbbbbbbbbbbbbbbbbbbb', 'cccccccccccccccccccc', 'ddd'];
+    expect(right(column)).toBeGreaterThan(150);
+  });
+
+  it('keeps to a third of the sheet where one line alone reaches that far', () => {
+    // issue10529.pdf's one long line, measured to, wrapped in the wider face
+    // it is re-set in: a line no other runs to is no measure.
+    const loose = ['aaaaaaaaaaaaaaaaaaaa', 'bbb', 'ccc', 'ddd'];
+    expect(right(loose)).toBeLessThanOrEqual(100);
+  });
+});
+
+describe('the last text of a sheet, set far below the rest (§17.3.1.33)', () => {
+  const sheet = (lines: ReadonlyArray<[number, string]>): ReturnType<typeof reconstructByLayout> =>
+    reconstructByLayout(
+      PdfFile.parse(
+        onePagePdf(
+          '/MediaBox [0 0 300 400] /Resources << /Font << /F0 5 0 R >> >>',
+          lines
+            .map(([y, text]) => `BT /F0 10 Tf 1 0 0 1 40 ${String(y)} Tm (${text}) Tj ET`)
+            .join('\n'),
+          ['<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'],
+        ),
+      ),
+    );
+  const words = (els: ReadonlyArray<BodyElement>): string =>
+    els
+      .flatMap((b) => (b.kind === 'paragraph' ? b.paragraph.runs.map((r) => r.text) : []))
+      .join(' ');
+
+  it('stands where the page set it, not a third of the sheet below the rest', () => {
+    // bug1989304.pdf signs its sheet "World" at the foot; held to the third of
+    // the sheet a paragraph's spacing may say, it came back half way up.
+    const { doc } = sheet([
+      [360, 'first line'],
+      [346, 'second line'],
+      [20, 'signed at the foot'],
+    ]);
+    expect(words(doc.body)).not.toContain('signed');
+    const placed = doc.body.find(
+      (b) =>
+        b.kind === 'shape' && words(b.shape.text?.content ?? []).includes('signed at the foot'),
+    );
+    if (placed?.kind !== 'shape') throw new Error('the last line is placed');
+    // Its box stands on the baseline at 20, a quarter of the size below it.
+    expect(placed.shape.float?.posV?.offsetPt).toBeCloseTo(400 - 17.5 - 12.5, 0);
+  });
+
+  it('keeps text that has more after it in the flow', () => {
+    const { doc } = sheet([
+      [360, 'first line'],
+      [100, 'far below'],
+      [86, 'and more after it'],
+    ]);
+    expect(words(doc.body)).toContain('far below');
+  });
+});
+
+describe('a line the page set in one piece (§17.3.1.12)', () => {
+  /** A page 300 wide, in a face whose every glyph is half an em. */
+  const laidOut = (content: string): Array<{ text: string; right?: number }> => {
+    const widths = Array.from({ length: 91 }, () => 500).join(' ');
+    const doc = reconstructByLayout(
+      PdfFile.parse(
+        onePagePdf('/MediaBox [0 0 300 400] /Resources << /Font << /F0 5 0 R >> >>', content, [
+          '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /FirstChar 32 /LastChar 122 ' +
+            `/Widths [${widths}] >>`,
+        ]),
+      ),
+    ).doc;
+    return doc.body.flatMap((b) =>
+      b.kind === 'paragraph'
+        ? [
+            {
+              text: b.paragraph.runs.map((r) => r.text).join(''),
+              ...(b.paragraph.properties.indentRight !== undefined
+                ? { right: b.paragraph.properties.indentRight }
+                : {}),
+            },
+          ]
+        : [],
+    );
+  };
+
+  it('may run on into the margin rather than wrap when re-set', () => {
+    // bug1108301.pdf's one line ran nearly to the margin; re-set in a wider
+    // face its last word wrapped, and on a sheet fifty points tall it fell off
+    // the paper.
+    const [line] = laidOut(
+      'BT /F0 10 Tf 20 360 Td (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa) Tj ET',
+    );
+    expect(line?.right).toBeLessThan(0);
+    // …a sixth of its measure at most, and never past the edge of the sheet.
+    expect(line?.right).toBeGreaterThanOrEqual(-200 / 6 - 0.01);
+  });
+
+  it('keeps a paragraph the page wrapped, and a short line, to the measure', () => {
+    const content = [
+      'BT /F0 10 Tf 20 360 Td (aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa) Tj ET',
+      'BT /F0 10 Tf 20 348 Td (bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb) Tj ET',
+      'BT /F0 10 Tf 20 336 Td (cccc) Tj ET',
+      'BT /F0 10 Tf 20 300 Td (dddd) Tj ET',
+    ].join('\n');
+    for (const para of laidOut(content)) expect(para.right ?? 0).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe('the spaces a line has are the ones the page shows, once each', () => {
+  /**
+   * The text of a page set in Helvetica, whose space is `space` thousandths of
+   * an em and every other glyph half an em.
+   */
+  const line = (content: string, space = 0): string => {
+    const widths = Array.from({ length: 91 }, (_, i) => (i === 0 ? space : 500)).join(' ');
+    const doc = reconstructByLayout(
+      PdfFile.parse(
+        onePagePdf(
+          '/MediaBox [0 0 300 100] /Resources << /Font << /F0 5 0 R >> >>',
+          `BT /F0 20 Tf 10 60 Td ${content} ET`,
+          [
+            '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /FirstChar 32 /LastChar 122 ' +
+              `/Widths [${widths}] >>`,
+          ],
+        ),
+      ),
+    ).doc;
+    return doc.body
+      .flatMap((b) => (b.kind === 'paragraph' ? b.paragraph.runs.map((r) => r.text) : []))
+      .join('');
+  };
+
+  it('is no word space where the ink on either side of it closes up', () => {
+    // bug1046314.pdf maps a Thai mark of no width to U+0020, and "(คำแปล)" —
+    // one word — came back "(คำ แปล)".
+    expect(line('(ab) Tj ( ) Tj (cd) Tj')).toBe('abcd');
+  });
+
+  it('is a word space where it stands in a gap the page steps across', () => {
+    expect(line('[(ab) ( ) -200 (cd)] TJ')).toBe('ab cd');
+  });
+
+  it('joins a line the page ended with a space without a second one', () => {
+    // Twenty glyphs of a full first line, and a word too long for the room
+    // left on it: one paragraph, broken where the page broke it.
+    expect(line('(aaaa bbbb cccc dddd ) Tj 0 -24 Td (eeeeeeee) Tj', 250)).toBe(
+      'aaaa bbbb cccc dddd eeeeeeee',
+    );
+  });
+});
+
+describe('type too small to read is a mark on the sheet, not a line of it', () => {
+  // TCPDF signs the last page of everything it makes in one-point type, three
+  // points from the corner of the paper.
+  const signed = (): Uint8Array =>
+    onePagePdf(
+      '/MediaBox [0 0 300 400] /Resources << /Font << /F0 5 0 R >> >>',
+      [
+        ...Array.from(
+          { length: 8 },
+          (_, i) => `BT /F0 10 Tf 1 0 0 1 40 ${String(360 - i * 14)} Tm (line ${String(i)}) Tj ET`,
+        ),
+        'BT /F0 1 Tf 1 0 0 1 3 1 Tm (Powered by TCPDF) Tj ET',
+      ].join('\n'),
+      ['<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'],
+    );
+
+  it('measures the margins without it', () => {
+    // Taken for text it was the leftmost and lowest thing on the page, and
+    // every line of basicapi.pdf was set against the edge of the paper.
+    const margins = reconstructByLayout(PdfFile.parse(signed())).doc.section?.margins;
+    expect(margins?.left).toBeCloseTo(40, 0);
+    expect(margins?.bottom).toBeGreaterThan(100);
+  });
+
+  it('keeps it where the page put it, out of the flow', () => {
+    const doc = reconstructByLayout(PdfFile.parse(signed())).doc;
+    const text = (els: ReadonlyArray<BodyElement>): string =>
+      els
+        .flatMap((b) => (b.kind === 'paragraph' ? b.paragraph.runs.map((r) => r.text) : []))
+        .join('');
+    expect(text(doc.body)).not.toContain('Powered');
+    const stamp = doc.body.find(
+      (b) => b.kind === 'shape' && text(b.shape.text?.content ?? []).includes('Powered by TCPDF'),
+    );
+    if (stamp?.kind !== 'shape') throw new Error('the stamp is placed');
+    expect(stamp.shape.float?.posH?.offsetPt).toBeCloseTo(3, 0);
   });
 });
 
@@ -1091,5 +1369,445 @@ describe('heuristic layout reconstruction (E-PDF EP4)', () => {
     expect((section?.margins?.right as number) + (section?.margins?.left as number)).toBeLessThan(
       612 - 384,
     );
+  });
+});
+
+describe('a flowing reading re-sets the page where the page set it', () => {
+  /** A one-page letter-size sheet drawn in Helvetica, whose metrics every reader knows. */
+  const helvetica = (content: string): Uint8Array =>
+    onePagePdf('/MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >>', content, [
+      '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+    ]);
+  const textOf = (p: { paragraph: { runs: ReadonlyArray<{ text: string }> } }): string =>
+    p.paragraph.runs.map((r) => r.text).join('');
+
+  it('stands its lines EXACTLY as far apart as the page stood them (§17.3.1.33)', () => {
+    // An invoice sets its 9pt lines 13.5 apart. Left to a reader's single
+    // spacing they closed up to the substitute face's own leading, and every
+    // block of the page rose a little further than the one above it.
+    const doc = reconstructByLayout(
+      PdfFile.parse(
+        helvetica(
+          [
+            'BT /F1 9 Tf 1 0 0 1 45 700 Tm (Date due) Tj 1 0 0 1 108 700 Tm (August 12, 2026) Tj ET',
+            'BT /F1 9 Tf 1 0 0 1 45 686.5 Tm (Date paid) Tj 1 0 0 1 108 686.5 Tm (August 12, 2026) Tj ET',
+            'BT /F1 9 Tf 1 0 0 1 45 673 Tm (Receipt) Tj 1 0 0 1 108 673 Tm (2411) Tj ET',
+          ].join('\n'),
+        ),
+      ),
+    ).doc;
+    const paras = paragraphs(doc);
+    expect(paras).toHaveLength(3);
+    for (const p of paras)
+      expect(p.paragraph.properties).toMatchObject({ spacingLineRule: 'exact' });
+    // Baseline to baseline: what the box above leaves below its baseline, the
+    // white put before the next, and how far down its own box it stands.
+    const [a, b] = paras.map((p) => p.paragraph.properties as Record<string, number | undefined>);
+    const pitch =
+      (1 - BASELINE_AT) * a!.spacingLine! + (b!.spacingBefore ?? 0) + BASELINE_AT * b!.spacingLine!;
+    expect(pitch).toBeCloseTo(13.5, 1);
+  });
+
+  it('begins the page’s text where the page began it, not at the top margin', () => {
+    // A Stripe invoice sets one blank at the very corner of the sheet and its
+    // title forty points under it. The margin is measured to the blank, and
+    // set against it the whole page rose by the difference.
+    const doc = reconstructByLayout(
+      PdfFile.parse(
+        helvetica(
+          [
+            'BT /F1 12 Tf 1 0 0 1 0 779 Tm ( ) Tj ET',
+            'BT /F1 18 Tf 1 0 0 1 30 744 Tm (Invoice) Tj ET',
+            'BT /F1 9 Tf 1 0 0 1 30 714 Tm (Invoice number) Tj ET',
+          ].join('\n'),
+        ),
+      ),
+    ).doc;
+    const title = paragraphs(doc).find((p) => textOf(p) === 'Invoice');
+    const props = title?.paragraph.properties as Record<string, number | undefined> | undefined;
+    const top = doc.section?.margins?.top as number;
+    expect(top + (props?.spacingBefore ?? 0) + BASELINE_AT * (props?.spacingLine ?? 0)).toBeCloseTo(
+      792 - 744,
+      1,
+    );
+  });
+
+  it('stands a value on the stop its column shares, however short the gap to it (§17.3.1.38)', () => {
+    // "Date due" leaves its value a tab's width away; "Invoice number" leaves
+    // it less than two ems, which a word space could almost be. Both values
+    // stand at 108, and read as a space the second came back a word after its
+    // label instead of in the column.
+    const doc = reconstructByLayout(
+      PdfFile.parse(
+        helvetica(
+          [
+            'BT /F1 9 Tf 1 0 0 1 30 714 Tm (Invoice number) Tj 1 0 0 1 108 714 Tm (6VOBWUGP) Tj ET',
+            'BT /F1 9 Tf 1 0 0 1 30 700.5 Tm (Date due) Tj 1 0 0 1 108 700.5 Tm (August 12, 2026) Tj ET',
+          ].join('\n'),
+        ),
+      ),
+    ).doc;
+    const texts = paragraphs(doc).map(textOf);
+    expect(texts).toContain('Invoice number\t6VOBWUGP');
+    expect(texts).toContain('Date due\tAugust 12, 2026');
+  });
+
+  it('keeps a short line where its column starts, rather than reading it as centred', () => {
+    // "walonade@icloud.com" closes an address block at the x every line of it
+    // starts at; short, and near the middle of the sheet, it read as centred.
+    const long =
+      'This line runs the whole measure of the page from the left margin across to the right one, as prose does.';
+    const doc = reconstructByLayout(
+      PdfFile.parse(
+        helvetica(
+          [
+            'BT /F1 9 Tf 1 0 0 1 30 700 Tm (548 Market Street) Tj 1 0 0 1 250 700 Tm (Organization) Tj ET',
+            'BT /F1 9 Tf 1 0 0 1 250 686.5 Tm (Kazakhstan) Tj ET',
+            'BT /F1 9 Tf 1 0 0 1 250 673 Tm (someone@example.com) Tj ET',
+            `BT /F1 9 Tf 1 0 0 1 30 600 Tm (${long}) Tj ET`,
+          ].join('\n'),
+        ),
+      ),
+    ).doc;
+    const last = paragraphs(doc).find((p) => textOf(p) === 'someone@example.com');
+    expect(last?.paragraph.properties).not.toMatchObject({ alignment: 'center' });
+  });
+
+  it('sets a column of figures against its right edge, and states every width (§17.4.38)', () => {
+    // An invoice's "Qty" stands eight points left of the "1" under it and both
+    // END at the same place. Set from the left the "1" stood under the Q; and
+    // a table that states no widths is sized by its reader to its contents.
+    const doc = reconstructByLayout(
+      PdfFile.parse(
+        helvetica(
+          [
+            'BT /F1 8 Tf 1 0 0 1 45 700 Tm (Description) Tj ET',
+            'BT /F1 8 Tf 1 0 0 1 300 700 Tm (Qty) Tj ET',
+            'BT /F1 8 Tf 1 0 0 1 420 700 Tm (Amount) Tj ET',
+            'BT /F1 8 Tf 1 0 0 1 45 680 Tm (Max plan) Tj ET',
+            'BT /F1 8 Tf 1 0 0 1 308 680 Tm (1) Tj ET',
+            'BT /F1 8 Tf 1 0 0 1 411.984 680 Tm ($1,100.00) Tj ET',
+          ].join('\n'),
+        ),
+      ),
+    ).doc;
+    const table = doc.body.find((b) => b.kind === 'table');
+    if (table?.kind !== 'table') throw new Error('the rows are a table');
+    const alignment = (r: number, c: number): string | undefined => {
+      const el = table.table.rows[r]!.cells[c]!.content[0];
+      return el?.kind === 'paragraph' ? el.paragraph.properties.alignment : undefined;
+    };
+    expect(alignment(0, 0)).not.toBe('right');
+    expect([alignment(0, 1), alignment(1, 1)]).toEqual(['right', 'right']);
+    expect([alignment(0, 2), alignment(1, 2)]).toEqual(['right', 'right']);
+    expect(table.table.properties).toMatchObject({ layout: 'fixed', widthType: 'dxa' });
+    expect(table.table.rows[0]!.cells.every((c) => c.properties.width !== undefined)).toBe(true);
+  });
+
+  it('sets blocks with leading of their own side by side, as a table of one row', () => {
+    // An invoice's stack of labels beside the address it bills, each a point or
+    // three off the other's lines. Read across, "INVOICE → Jun 3, 2013 → 23
+    // Main Street" was one line of three different things.
+    const doc = reconstructByLayout(
+      PdfFile.parse(
+        helvetica(
+          [
+            'BT /F1 9 Tf 1 0 0 1 360 669.5 Tm (Invoice Date) Tj ET',
+            'BT /F1 9 Tf 1 0 0 1 360 658.8 Tm (Jun 3, 2013) Tj ET',
+            'BT /F1 9 Tf 1 0 0 1 360 640.9 Tm (Invoice Number) Tj ET',
+            'BT /F1 9 Tf 1 0 0 1 472 668.5 Tm (Orange Demo Inc.) Tj ET',
+            'BT /F1 9 Tf 1 0 0 1 472 655.5 Tm (23 Main Street) Tj ET',
+            'BT /F1 9 Tf 1 0 0 1 472 642.5 Tm (Central City) Tj ET',
+          ].join('\n'),
+        ),
+      ),
+    ).doc;
+    const table = doc.body.find((b) => b.kind === 'table');
+    if (table?.kind !== 'table') throw new Error('the band is a table');
+    expect(table.table.rows).toHaveLength(1);
+    const cells = table.table.rows[0]!.cells.map((c) =>
+      c.content.map((el) => (el.kind === 'paragraph' ? textOf(el) : '')),
+    );
+    expect(cells).toEqual([
+      ['Invoice Date', 'Jun 3, 2013', 'Invoice Number'],
+      ['Orange Demo Inc.', '23 Main Street', 'Central City'],
+    ]);
+    // …and read once: nothing of it is left in the body's own lines.
+    expect(paragraphs(doc).map(textOf).join(' ')).not.toContain('Invoice');
+  });
+
+  it('takes a rule drawn in pieces as one rule (§17.3.1.24)', () => {
+    // An invoice draws the rule under its headings cell by cell. Measured apart
+    // only the widest piece was long enough to be a rule: it moved with the
+    // row, and the rest stayed where the page drew them, through the figures.
+    const doc = reconstructByLayout(
+      PdfFile.parse(
+        helvetica(
+          [
+            'BT /F1 9 Tf 1 0 0 1 30 700 Tm (Description) Tj ET',
+            '0 0 0 RG 0.75 w 28 690 m 270 690 l S',
+            '0 0 0 RG 0.75 w 270 690 m 350 690 l S',
+            '0 0 0 RG 0.75 w 350 690 m 430 690 l S',
+            'BT /F1 9 Tf 1 0 0 1 30 677 Tm (Project management) Tj ET',
+          ].join('\n'),
+        ),
+      ),
+    ).doc;
+    const ruled = paragraphs(doc).find((p) => textOf(p) === 'Project management');
+    expect(ruled?.paragraph.properties.borders?.top?.style).toBe('single');
+    expect(doc.body.some((b) => b.kind === 'shape')).toBe(false);
+  });
+
+  it('rules EVERY member of a set of ruled lines, not only the first (§17.3.1.5)', () => {
+    // An invoice rules each line of its totals. Paragraphs with the same
+    // borders are one bordered set, ruled on its outside only, and read as
+    // five tops the totals came back with one rule over "Subtotal".
+    const doc = reconstructByLayout(
+      PdfFile.parse(
+        helvetica(
+          [
+            '0.92 0.92 0.92 RG 0.75 w 306 712 m 582 712 l S',
+            'BT /F1 9 Tf 1 0 0 1 306 700 Tm (Subtotal) Tj ET',
+            '0.92 0.92 0.92 RG 0.75 w 306 697.75 m 582 697.75 l S',
+            'BT /F1 9 Tf 1 0 0 1 306 685.75 Tm (Total) Tj ET',
+          ].join('\n'),
+        ),
+      ),
+    ).doc;
+    const ruled = paragraphs(doc).filter((p) => p.paragraph.properties.borders?.top !== undefined);
+    expect(ruled).toHaveLength(2);
+    for (const p of ruled) {
+      const borders = p.paragraph.properties.borders as Record<string, unknown>;
+      expect(borders.insideH).toEqual(borders.top);
+    }
+  });
+});
+
+describe('a right-to-left line ends on its left (§17.3.1.13)', () => {
+  it('reads a line short of the measure on the LEFT as the end of a paragraph', () => {
+    // ArabicCIDTrueType.pdf sets four lines flush right, each shorter than the
+    // one before. Read as left-to-right they all reached the measure — their
+    // right ends are where they start — and every pair ran together.
+    const measure = { left: 160, right: 510 };
+    const full = { x: 160, width: 350, fontSize: 36, text: 'انواع الخطوط العربية' };
+    const short = { x: 270, width: 240, fontSize: 36, text: 'انواع الخطوط العربية' };
+    expect(endedParagraph(short, { x: 258, width: 252 }, measure)).toBe(true);
+    expect(endedParagraph(full, { x: 270, width: 240 }, measure)).toBe(false);
+  });
+});
+
+describe('what a page draws for want of characters', () => {
+  /** A traced glyph: a box at (x, y), `w` wide and 7 tall. */
+  const glyph = (x: number, y: number, w = 4) => ({
+    orderKey: [x],
+    segs: [
+      { op: 'move' as const, x, y },
+      { op: 'line' as const, x: x + w, y },
+      { op: 'line' as const, x: x + w, y: y + 7 },
+      { op: 'close' as const },
+    ],
+    minX: x,
+    minY: y,
+    maxX: x + w,
+    maxY: y + 7,
+    fillHex: '231F20',
+    glyph: true,
+  });
+
+  it('draws a word of traced glyphs as one shape, and the next word as another', () => {
+    // TAMReview.pdf sets its body in a subset whose glyphs name nothing, and
+    // traced one glyph at a time it came back as forty-two thousand shapes —
+    // a package no reader opened in under three minutes.
+    const words = drawnWords([
+      glyph(10, 100),
+      glyph(14.5, 100),
+      glyph(19, 100),
+      glyph(40, 100),
+      glyph(44.5, 100),
+      glyph(10, 80),
+    ]);
+    expect(words).toHaveLength(3);
+    expect(words[0]).toMatchObject({ minX: 10, maxX: 23 });
+    expect(words[0]!.segs).toHaveLength(12);
+  });
+});
+
+describe('a blank page is still a page', () => {
+  it('keeps every sheet of a document that draws nothing on them', () => {
+    // doc_actions.pdf is three blank sheets, and came back as one.
+    const kids = [3, 4, 5];
+    const objects = [
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      `<< /Type /Pages /Kids [${kids.map((k) => `${String(k)} 0 R`).join(' ')}] /Count 3 >>`,
+      ...kids.map(() => '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>'),
+    ];
+    let pdf = '%PDF-1.7\n';
+    const offsets: Array<number> = [];
+    objects.forEach((body, i) => {
+      offsets.push(pdf.length);
+      pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+    });
+    const xref = pdf.length;
+    pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+    for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+    pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`;
+    const doc = reconstructByLayout(PdfFile.parse(new TextEncoder().encode(pdf))).doc;
+    const breaks = doc.body.filter(
+      (b) => b.kind === 'paragraph' && b.paragraph.properties.pageBreakBefore === true,
+    );
+    expect(breaks).toHaveLength(2);
+    // …and the first sheet holds a line of its own, so the second begins after it.
+    expect(
+      doc.body[0]?.kind === 'paragraph' && doc.body[0].paragraph.properties.pageBreakBefore,
+    ).not.toBe(true);
+  });
+});
+
+describe('a sheet of a line or two shows no measure (§17.3.1)', () => {
+  const COURIER =
+    '/MediaBox [0 0 612 792] /Resources << /Font << /F1 << /Type /Font /Subtype /Type1 ' +
+    '/BaseFont /Courier >> >> >>';
+  const texts = (pdf: Uint8Array): Array<string> =>
+    paragraphs(reconstructByLayout(PdfFile.parse(pdf)).doc).map((p) =>
+      p.paragraph.runs.map((r) => r.text).join(''),
+    );
+
+  it('keeps its lines as the page set them', () => {
+    // Its longest line reaches the edge only because it IS the edge.
+    // checkbox-bad-appearance.pdf sets "Checkbox 1 - not checked" over
+    // "Checkbox 2 - Checked", and run together the two came back side by side.
+    const pdf = onePagePdf(
+      COURIER,
+      'BT /F1 10 Tf 50 700 Td (Checkbox 1 - not checked) Tj 0 -12 Td (Checkbox 2 - Checked) Tj ET',
+    );
+    expect(texts(pdf)).toEqual(['Checkbox 1 - not checked', 'Checkbox 2 - Checked']);
+  });
+
+  it('still runs together the lines of a sheet that shows one', () => {
+    // Two lines out of three break at the same edge: that is the measure.
+    const pdf = onePagePdf(
+      COURIER,
+      'BT /F1 10 Tf 50 700 Td (aaaa bbbb cccc dddd) Tj 0 -12 Td (eeee ffff gggg hhhh) Tj ' +
+        '0 -12 Td (iiii.) Tj ET',
+    );
+    expect(texts(pdf)).toEqual(['aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii.']);
+  });
+});
+
+describe('a word space is as wide as the type it stands in', () => {
+  it('sets the space it puts between two runs in the size of the first', () => {
+    // issue10665_reduced.pdf sets "78" and "110" twenty points apart in
+    // 60-point type, and a space at the document's default size between them
+    // closed them up to "78110".
+    const pdf = onePagePdf(
+      '/MediaBox [0 0 250 100]',
+      'BT /F1 60 Tf 20 25 Td (78) Tj 80 0 Td (110) Tj ET',
+    );
+    const runs = paragraphs(reconstructByLayout(PdfFile.parse(pdf)).doc).flatMap(
+      (p) =>
+        p.paragraph.runs as ReadonlyArray<{ text: string; properties: { fontSizePt?: number } }>,
+    );
+    expect(runs.map((r) => r.text).join('')).toBe('78 110');
+    // Set in the digits' own size, the space runs on with them as one run.
+    const spaced = runs.find((r) => r.text.includes(' '));
+    expect(spaced?.properties.fontSizePt).toBeCloseTo(60, 0);
+  });
+});
+
+describe('a line set where the page set it', () => {
+  it('stands its baseline where its box was measured to put it (§17.3.1.33)', () => {
+    // The box is a line and a quarter of the size tall with its top an em
+    // over the baseline, which is where an EXACT line of that height puts it
+    // (`BASELINE_AT`). Left to single spacing the face's own ascent placed
+    // it, a tenth of an em too high: bug1724918.pdf's field values rode up
+    // against the tops of their fields.
+    const el = positionedText(
+      [{ text: 'world', sizePt: 12 }],
+      { x: 10, y: 10, width: 60, height: 15 },
+      { left: 0, top: 100 },
+      1,
+    );
+    if (el.kind !== 'shape') throw new Error('a positioned line is a shape');
+    const first = el.shape.text?.content[0];
+    if (first?.kind !== 'paragraph') throw new Error('holding a paragraph');
+    expect(first.paragraph.properties).toMatchObject({
+      spacingLine: 15,
+      spacingLineRule: 'exact',
+    });
+    expect(BASELINE_AT * 15).toBeCloseTo(12, 6);
+  });
+
+  it('is carried by a paragraph that takes no room', () => {
+    // Floats in a row share one carrier, the first one's; left at single
+    // spacing a placed line's was a blank line that moved everything under it.
+    const el = positionedText(
+      [{ text: 'world', sizePt: 12 }],
+      { x: 10, y: 10, width: 60, height: 15 },
+      { left: 0, top: 100 },
+      1,
+    );
+    if (el.kind !== 'shape') throw new Error('a positioned line is a shape');
+    expect(el.shape.paragraphProperties).toEqual(FLOAT_CARRIER);
+  });
+});
+
+describe('what an annotation writes stands in its own box (§12.5.5)', () => {
+  /**
+   * A page of one line of prose, and a push button whose appearance fills
+   * its box grey and writes "Execute" in it — evaljs.pdf's button.
+   */
+  const buttonPdf = (): Uint8Array => {
+    // A line under the button too, so the caption is not the page's last word
+    // (which is placed where it stands for a reason of its own).
+    const content =
+      'BT /F1 12 Tf 40 700 Td (A line of the page itself.) Tj 0 -600 Td (And one under it.) Tj ET';
+    const ap = '0.75 g 0 0 72 20 re f BT /F1 12 Tf 0 g 13 6 Td (Execute) Tj ET';
+    return onePagePdf(
+      '/MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> ' +
+        '/Annots [<< /Type /Annot /Subtype /Widget /FT /Btn /Rect [265 142 337 162] ' +
+        '/AP << /N 6 0 R >> >>]',
+      content,
+      [
+        '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+        '<< /Type /XObject /Subtype /Form /BBox [0 0 72 20] ' +
+          `/Resources << /Font << /F1 5 0 R >> >> /Length ${String(ap.length)} >>\n` +
+          `stream\n${ap}\nendstream`,
+      ],
+    );
+  };
+
+  it('marks the words an appearance writes as the annotation’s', () => {
+    const file = PdfFile.parse(buttonPdf());
+    const runs = extractPageText(file, file.pages()[0]!);
+    expect(runs.find((r) => r.text.includes('Execute'))?.annotation).toBe(true);
+    expect(runs.find((r) => r.text.includes('page itself'))?.annotation).toBeUndefined();
+  });
+
+  it('places them where the box stands, over the box they are written on', () => {
+    // Read into the page's lines, evaljs.pdf's "Execute" stood at the margin,
+    // two hundred points from its button; placed but keyed with the page's
+    // own words, it went under the grey of the button it names.
+    const body = reconstructByLayout(PdfFile.parse(buttonPdf())).doc.body;
+    const caption = body.find(
+      (b) =>
+        b.kind === 'shape' &&
+        b.shape.text?.content.some(
+          (p) => p.kind === 'paragraph' && p.paragraph.runs.some((r) => r.text === 'Execute'),
+        ),
+    );
+    if (caption?.kind !== 'shape') throw new Error('the caption is placed');
+    expect(caption.shape.float?.posH?.offsetPt).toBeCloseTo(278, 0);
+    const fills = body.filter(
+      (b) => b.kind === 'shape' && b.shape.text === undefined && b.shape.fill.kind === 'solid',
+    );
+    expect(fills.length).toBeGreaterThan(0);
+    for (const fill of fills) {
+      if (fill.kind !== 'shape') continue;
+      expect(caption.shape.float?.zOrder ?? -1).toBeGreaterThan(fill.shape.float?.zOrder ?? 0);
+    }
+    // The page's own line is still read as the page's.
+    expect(
+      paragraphs({ body }).some((p) => p.paragraph.runs.some((r) => r.text.includes('itself'))),
+    ).toBe(true);
   });
 });

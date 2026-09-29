@@ -174,11 +174,13 @@ describe('a right-to-left run comes back in logical order (§9.4)', () => {
     expect(runs[0]!.text).toBe('ب ا');
   });
 
-  it('leaves a mixed run alone, where only the bidi algorithm would do', () => {
-    // A number inside an Arabic sentence runs left to right; guessing at that
-    // would be worse than leaving it.
-    const runs = run('BT /F1 10 Tf 0 0 Td <010203> Tj ET', new Map([['F1', mapping('ا7ب')]]));
-    expect(runs[0]!.text).toBe('ا7ب');
+  it('puts a mixed run in reading order by the bidi rules (UAX #9 L2)', () => {
+    // Painted left to right: alef, 7, beh. Read right to left it is beh, 7,
+    // alef — and a number inside keeps its own left-to-right order.
+    const one = run('BT /F1 10 Tf 0 0 Td <010203> Tj ET', new Map([['F1', mapping('ا7ب')]]));
+    expect(one[0]!.text).toBe('ب7ا');
+    const two = run('BT /F1 10 Tf 0 0 Td <01020304> Tj ET', new Map([['F1', mapping('ا12ب')]]));
+    expect(two[0]!.text).toBe('ب12ا');
   });
 
   it('leaves a left-to-right run alone', () => {

@@ -9,6 +9,7 @@ import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
 import type { PdfImage } from '@/pdf-reader/images';
+import type { PdfVector } from '@/pdf-reader/vector';
 import { Ream } from '@/core/converter/ream';
 import { interpretContent } from '@/pdf-reader/content';
 import { PdfFile } from '@/pdf-reader/document';
@@ -16,6 +17,7 @@ import { reconstructByLayout } from '@/pdf-reader/layout';
 import { shapeBlock } from '@/pdf-reader/flow-build';
 import { collectPageVectors } from '@/pdf-reader/vector';
 import { collectPageImages } from '@/pdf-reader/images';
+import { extractPageText } from '@/pdf-reader/text';
 
 const FONTS = {
   regular: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Regular.ttf')),
@@ -156,8 +158,7 @@ function assemble(objects: ReadonlyArray<string>): Uint8Array {
  * A page whose only mark is a WIDGET annotation: nothing in its content stream,
  * a filled rectangle in the annotation's `/AP` `/N`.
  */
-function widgetOnlyPdf(): Uint8Array {
-  const ap = '0 0 1 rg 0 0 40 20 re f';
+function widgetOnlyPdf(ap = '0 0 1 rg 0 0 40 20 re f'): Uint8Array {
   const objects = [
     '<< /Type /Catalog /Pages 2 0 R >>',
     '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
@@ -253,6 +254,48 @@ describe('annotation appearances (§12.5.5)', () => {
     expect(box!.maxY).toBeCloseTo(80, 1);
   });
 
+  it('builds a text field from its value when the form asks (§12.7.2)', () => {
+    // bug1844583.pdf's form says `/NeedAppearances true`, and its field's
+    // stale appearance still reads "Dlrow Olleh" over the value "Hello World".
+    // The variable text is rebuilt from the value; the frame stays.
+    const ap = '0 G 0.5 0.5 99 19 re S /Tx BMC BT /Helv 12 Tf 2 6 Td (Dlrow Olleh) Tj ET EMC';
+    const content = '';
+    const file = PdfFile.parse(
+      assemble([
+        '<< /Type /Catalog /Pages 2 0 R /AcroForm << /NeedAppearances true ' +
+          '/DR << /Font << /Helv 6 0 R >> >> /DA (/Helv 12 Tf 0 g) >> >>',
+        '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+        '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Contents 4 0 R ' +
+          '/Annots [<< /Type /Annot /Subtype /Widget /FT /Tx /V (Hello World) ' +
+          '/Rect [50 60 150 80] /DA (/Helv 12 Tf 0 g) /AP << /N 5 0 R >> >>] >>',
+        `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+        `<< /Type /XObject /Subtype /Form /BBox [0 0 100 20] ` +
+          `/Resources << /Font << /Helv 6 0 R >> >> /Length ${String(ap.length)} >>\nstream\n${ap}\nendstream`,
+        '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+      ]),
+    );
+    const page = file.pages()[0]!;
+    const text = extractPageText(file, page)
+      .map((r) => r.text)
+      .join('');
+    expect(text).toContain('Hello World');
+    expect(text).not.toContain('Dlrow');
+    expect(collectPageVectors(file, page).vectors.some((v) => v.strokeHex !== undefined)).toBe(
+      true,
+    );
+  });
+
+  it('clips what an appearance paints to its /BBox (§8.10.1)', () => {
+    // bug1669099.pdf's form tool wrote each field's background in PAGE
+    // coordinates, far outside the forty-point box it paints in, and with a
+    // fill colour it never set: no viewer shows it, and painted anyway it came
+    // back as black slabs over the letterhead and the terms of payment.
+    const file = PdfFile.parse(widgetOnlyPdf('0 0 1 rg 0 0 40 20 re f 50 60 40 20 re f'));
+    const { vectors } = collectPageVectors(file, file.pages()[0]!);
+    expect(vectors).toHaveLength(1);
+    expect(vectors[0]!.maxX).toBeCloseTo(90, 1);
+  });
+
   it('paints no annotation the file marks hidden', () => {
     const hidden = new TextDecoder()
       .decode(widgetOnlyPdf())
@@ -336,6 +379,37 @@ describe('the guard on how much a page may paint', () => {
     expect(lifted.losses).toHaveLength(1);
     expect(lifted.losses[0]!.severity).toBe('dropped');
     expect(lifted.losses[0]!.detail).toContain('20000');
+  });
+});
+
+describe('the curves that name a control point by its neighbour (§8.5.2.2)', () => {
+  const curve = (stream: string) =>
+    interpretContent(new TextEncoder().encode(stream), NO_FONTS).vectors[0]?.segs[1];
+
+  it('starts a `v` curve at the current point', () => {
+    // bug1755507.pdf rounds its card's corners with `v`; passed over, the
+    // lines after them joined the wrong corners and the card came back skewed.
+    expect(curve('10 20 m 30 20 30 40 v S')).toEqual({
+      op: 'cubic',
+      x1: 10,
+      y1: 20,
+      x2: 30,
+      y2: 20,
+      x: 30,
+      y: 40,
+    });
+  });
+
+  it('ends a `y` curve at its own end', () => {
+    expect(curve('10 20 m 30 20 30 40 y S')).toEqual({
+      op: 'cubic',
+      x1: 30,
+      y1: 20,
+      x2: 30,
+      y2: 40,
+      x: 30,
+      y: 40,
+    });
   });
 });
 
@@ -619,6 +693,128 @@ describe('the pen is as wide as the page says (§8.4.3.2)', () => {
   });
 });
 
+describe('a dashed pen (§8.4.3.6)', () => {
+  const stroke = (stream: string) =>
+    interpretContent(new TextEncoder().encode(stream), NO_FONTS).vectors[0];
+  const lineOf = (v: Pick<PdfVector, 'segs' | 'lineWidth' | 'dash' | 'cap' | 'strokeAlpha'>) => {
+    const el = shapeBlock({
+      orderKey: [0],
+      segs: v.segs,
+      strokeHex: '000000',
+      ...(v.lineWidth !== undefined ? { lineWidth: v.lineWidth } : {}),
+      ...(v.dash !== undefined ? { dash: v.dash } : {}),
+      ...(v.cap !== undefined ? { cap: v.cap } : {}),
+      ...(v.strokeAlpha !== undefined ? { strokeAlpha: v.strokeAlpha } : {}),
+      minX: 0,
+      minY: 0,
+      maxX: 100,
+      maxY: 0,
+    });
+    return el.kind === 'shape' ? el.shape.line : undefined;
+  };
+
+  it('keeps the pattern the page dashes its line with, in the page’s space', () => {
+    // close-path-bug.pdf draws a four-point line four on, six off, and read
+    // without its pattern it came back solid.
+    const v = stroke('2 0 0 2 0 0 cm 2 w [2 3] 0 d 0 0 m 100 0 l S');
+    expect(v?.dash).toEqual([4, 6]);
+    // …as multiples of the pen, which is how DrawingML states one.
+    expect(lineOf(v!)?.customDash).toEqual([1, 1.5]);
+    // `[] 0 d` is solid again, and so is a pattern of nothing but zeros.
+    expect(stroke('[2 3] 0 d [] 0 d 0 0 m 100 0 l S')?.dash).toBeUndefined();
+    expect(stroke('[0 0] 0 d 0 0 m 100 0 l S')?.dash).toBeUndefined();
+  });
+
+  it('runs an odd pattern twice, and gives a dot a pen’s width', () => {
+    // [3] is three on and three off; [1 2 3] swaps dashes and gaps its second
+    // time round. A dash of no length is a dot the cap alone draws.
+    expect(lineOf(stroke('1 w [3] 0 d 0 0 m 100 0 l S')!)?.customDash).toEqual([3, 3]);
+    expect(lineOf(stroke('1 w [1 2 3] 0 d 0 0 m 100 0 l S')!)?.customDash).toEqual([
+      1, 2, 3, 1, 2, 3,
+    ]);
+    expect(lineOf(stroke('1 J 2 w [0 6] 0 d 0 0 m 100 0 l S')!)?.customDash).toEqual([1, 2]);
+  });
+
+  it('states the cap, the butt one included', () => {
+    // A .docx line that states no cap is capped square, and every dash of a
+    // pattern grows by the pen's width.
+    expect(lineOf(stroke('0 0 m 100 0 l S')!)?.cap).toBe('flat');
+    expect(lineOf(stroke('1 J 0 0 m 100 0 l S')!)?.cap).toBe('round');
+    expect(lineOf(stroke('2 J 0 0 m 100 0 l S')!)?.cap).toBe('square');
+  });
+
+  it('draws a pen the page set to show through at its opacity (§11.6.4.4)', () => {
+    // inks_basic.pdf draws a black ink line at `/CA 0.45`, and at full strength
+    // the grey stroke the page shows came back black.
+    const pdf = assemble([
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Contents 4 0 R ' +
+        '/Resources << /ExtGState << /R0 << /CA 0.45 >> >> >> >>',
+      '<< /Length 31 >>\nstream\n20 w /R0 gs 50 60 m 280 60 l S\nendstream',
+    ]);
+    const file = PdfFile.parse(pdf);
+    const [v] = collectPageVectors(file, file.pages()[0]!, []).vectors;
+    expect(v?.strokeAlpha).toBe(0.45);
+    expect(lineOf(v!)?.alpha).toBe(0.45);
+  });
+
+  it('takes the pen a named graphics state sets (§8.4.5)', () => {
+    // extgstate.pdf sets its pen in `/GS1`: ten points wide, round, and dashed
+    // so it draws two dots.
+    const pdf = assemble([
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Contents 4 0 R ' +
+        '/Resources << /ExtGState << /GS1 << /LW 10 /LC 1 /D [[0.1 180] 0] >> >> >> >>',
+      '<< /Length 30 >>\nstream\n/GS1 gs 50 60 m 280 60 l S\nendstream',
+    ]);
+    const file = PdfFile.parse(pdf);
+    const [v] = collectPageVectors(file, file.pages()[0]!, []).vectors;
+    expect(v?.lineWidth).toBe(10);
+    expect(v?.dash).toEqual([0.1, 180]);
+    expect(v?.cap).toBe('round');
+  });
+});
+
+describe('a path filled with a tiling pattern drawn in lines (§8.7.3)', () => {
+  /** A 30-point square filled with pattern `/P1`, whose tile is `tile`. */
+  const swatch = (tile: string, paintType: number, fill: string): Uint8Array => {
+    const content = `/Pattern cs ${fill} 10 10 30 30 re f`;
+    return assemble([
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Contents 4 0 R ' +
+        '/Resources << /Pattern << /P1 5 0 R >> >> >>',
+      `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+      `<< /Type /Pattern /PatternType 1 /PaintType ${String(paintType)} /TilingType 1 ` +
+        `/BBox [0 0 4 4] /XStep 4 /YStep 4 /Resources << >> /Length ${String(tile.length)} >>\n` +
+        `stream\n${tile}\nendstream`,
+    ]);
+  };
+  const fillOf = (pdf: Uint8Array): string | undefined => {
+    const file = PdfFile.parse(pdf);
+    return collectPageVectors(file, file.pages()[0]!, []).vectors[0]?.fillHex;
+  };
+
+  it('fills it with the pattern’s colour at the strength its tile covers', () => {
+    // issue11473.pdf fills four swatches with hatches and grids drawn in
+    // lines, and with nothing to lift them the swatches came back empty. Here
+    // a black bar covers half of each 4-point cell: a mid grey.
+    const hex = fillOf(swatch('0 0 4 2 re f', 2, '0 0 0 /P1 scn'));
+    expect(hex).toBeDefined();
+    const level = Number.parseInt(hex!.slice(0, 2), 16);
+    expect(level).toBeGreaterThan(96);
+    expect(level).toBeLessThan(160);
+  });
+
+  it('paints an uncoloured pattern in the colour `scn` gives it', () => {
+    const hex = fillOf(swatch('0 0 4 2 re f', 2, '1 0 0 /P1 scn'));
+    expect(hex?.slice(0, 2)).toBe('FF');
+    expect(hex?.slice(2)).not.toBe('0000');
+  });
+});
+
 describe('filled rules (E-PDF EP10)', () => {
   const fills = (stream: string) =>
     interpretContent(new TextEncoder().encode(stream), NO_FONTS).vectors;
@@ -801,6 +997,24 @@ describe('a picture the CTM turns and a clip cuts (§8.9.5, §8.5.4)', () => {
     ]);
   });
 
+  it('mirrors it as a flip, and then the turn', () => {
+    // A matrix that turns the square inside out draws the first row at the
+    // foot of the box, as bug1771477.pdf draws one of its pictures; read as a
+    // turn alone, a mirrored picture is written upside down.
+    const img = only('100 0 0 -60 40 90');
+    expect(img.flipV).toBe(true);
+    expect(img.rotationDeg).toBeUndefined();
+    expect([img.x, img.y, img.widthPt, img.heightPt]).toEqual([40, 30, 100, 60]);
+    // −100 across is the same flip turned half round.
+    const across = only('-100 0 0 60 140 30');
+    expect(across.flipV).toBe(true);
+    expect(Math.round(Math.abs(across.rotationDeg ?? 0))).toBe(180);
+    // A clip keeping the page's lower half keeps the picture's FIRST rows,
+    // and the crop is the source's, cut before any flip.
+    const cut = only('100 0 0 -60 40 90', '40 30 100 30 re W n ');
+    expect(cut.crop).toEqual({ left: 0, right: 0, top: 0, bottom: 0.5 });
+  });
+
   it('cuts it to a clip, on the picture\u2019s own edges', () => {
     // The left half and the top three quarters, of a picture placed square on.
     const img = only('100 0 0 100 0 0', '0 25 50 75 re W n ');
@@ -931,6 +1145,109 @@ describe('the CIE-based RGB space (§8.6.5.7)', () => {
   });
 });
 
+describe('a line stroked with a shading pattern (§8.6.6.2)', () => {
+  it('takes the middle of the sweep, not the black a stroke starts on', () => {
+    // bug1019475_1.pdf rules the head of its page with lines that fade from
+    // white to a pale blue-grey; with the pattern's name passed over they were
+    // drawn black, a solid block across the letterhead.
+    const content = '/Pattern CS /P1 SCN 4 w 10 50 m 90 50 l S';
+    const file = PdfFile.parse(
+      assemble([
+        '<< /Type /Catalog /Pages 2 0 R >>',
+        '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+        '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Contents 4 0 R ' +
+          '/Resources << /Pattern << /P1 5 0 R >> >> >>',
+        `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+        '<< /Type /Pattern /PatternType 2 /Shading << /ShadingType 2 /ColorSpace /DeviceRGB ' +
+          '/Coords [0 0 100 0] /Function << /FunctionType 2 /Domain [0 1] /C0 [1 0 0] /C1 [0 0 1] /N 1 >> >> >>',
+      ]),
+    );
+    expect(collectPageVectors(file, file.pages()[0]!).vectors[0]?.strokeHex).toBe('800080');
+  });
+});
+
+describe('the way an axial shading runs, on the page (§8.7.2)', () => {
+  /** A page filling one square with pattern `/P1`: `Coords` up the page, and `matrix`. */
+  const angleOf = (matrix: string): number | undefined => {
+    const content = '/Pattern cs /P1 scn 10 10 80 80 re f';
+    const objects = [
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Contents 4 0 R ' +
+        '/Resources << /Pattern << /P1 5 0 R >> >> >>',
+      `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+      `<< /Type /Pattern /PatternType 2 ${matrix} /Shading << /ShadingType 2 ` +
+        '/ColorSpace /DeviceRGB /Coords [0 0 0 100] ' +
+        '/Function << /FunctionType 2 /Domain [0 1] /C0 [0 1 0] /C1 [1 0 0] /N 1 >> >> >>',
+    ];
+    let pdf = '%PDF-1.7\n';
+    const offsets: Array<number> = [];
+    objects.forEach((body, i) => {
+      offsets.push(pdf.length);
+      pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+    });
+    const xref = pdf.length;
+    pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+    for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+    pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`;
+    const bytes = Uint8Array.from([...pdf].map((c) => c.charCodeAt(0)));
+    const shape = Ream.parse(bytes).flow.body.find((el) => el.kind === 'shape');
+    if (shape?.kind !== 'shape' || shape.shape.fill.kind !== 'gradient') return undefined;
+    return shape.shape.fill.gradient?.angle;
+  };
+
+  it('shows the part of the axis the shape covers, not the whole of it', () => {
+    // issue10572.pdf's pattern runs twenty-four stripes down 1800 points and
+    // its 450-point square shows six; spread over the square, all twenty-four
+    // came back as hairlines. Here the axis runs 0 → 400 up the page, green
+    // below 200 and blue above.
+    const colorsOf = (y: number): Array<string> => {
+      const content = `/Pattern cs /P1 scn 10 ${String(y)} 80 80 re f`;
+      const objects = [
+        '<< /Type /Catalog /Pages 2 0 R >>',
+        '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+        '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 400] /Contents 4 0 R ' +
+          '/Resources << /Pattern << /P1 5 0 R >> >> >>',
+        `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+        '<< /Type /Pattern /PatternType 2 /Shading << /ShadingType 2 /ColorSpace /DeviceRGB ' +
+          '/Coords [0 0 0 400] /Function << /FunctionType 3 /Domain [0 1] /Bounds [0.5] ' +
+          '/Encode [0 1 0 1] /Functions [<< /FunctionType 2 /Domain [0 1] /C0 [0 1 0] /C1 [0 1 0] /N 1 >> ' +
+          '<< /FunctionType 2 /Domain [0 1] /C0 [0 0 1] /C1 [0 0 1] /N 1 >>] >> >> >>',
+      ];
+      let pdf = '%PDF-1.7\n';
+      const offsets: Array<number> = [];
+      objects.forEach((body, i) => {
+        offsets.push(pdf.length);
+        pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+      });
+      const xref = pdf.length;
+      pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+      for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+      pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\nstartxref\n${String(xref)}\n%%EOF\n`;
+      const bytes = Uint8Array.from([...pdf].map((c) => c.charCodeAt(0)));
+      const shape = Ream.parse(bytes).flow.body.find((el) => el.kind === 'shape');
+      if (shape?.kind !== 'shape' || shape.shape.fill.kind !== 'gradient') return [];
+      return (shape.shape.fill.gradient?.stops ?? []).map((st) => st.colorHex);
+    };
+    // A square over 100 → 180 is all green…
+    expect([...new Set(colorsOf(100))]).toEqual(['00FF00']);
+    // …and one that starts ON the edge, at 200, is all blue: the colour it
+    // starts with is the one after the edge, not the one before it.
+    expect([...new Set(colorsOf(200))]).toEqual(['0000FF']);
+  });
+
+  it('runs the way the pattern’s matrix carries it', () => {
+    // Up the page is 270° in DrawingML's y-down terms…
+    expect(angleOf('')).toBe(270);
+    // …and a matrix that turns y over runs it DOWN the page. gradientfill.pdf's
+    // pattern is set that way, and taken in its own space it ran red to green
+    // where the page runs green to red.
+    expect(angleOf('/Matrix [0.8 0 0 -0.8 0 100]')).toBe(90);
+    // A quarter turn runs it across.
+    expect(angleOf('/Matrix [0 1 -1 0 100 0]')).toBe(180);
+  });
+});
+
 describe('a shading stitched out of shadings (§7.10.4)', () => {
   /** A page filling one square with pattern `/P1`, whose function is `fn`. */
   const shaded = (fn: string): Uint8Array => {
@@ -941,8 +1258,9 @@ describe('a shading stitched out of shadings (§7.10.4)', () => {
       '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Contents 4 0 R ' +
         '/Resources << /Pattern << /P1 5 0 R >> >> >>',
       `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+      // The axis spans the square, 10 → 90, so the square shows all of it.
       '<< /Type /Pattern /PatternType 2 /Shading << /ShadingType 2 /ColorSpace /DeviceRGB ' +
-        `/Coords [0 0 0 100] /Function ${fn} >> >>`,
+        `/Coords [0 10 0 90] /Function ${fn} >> >>`,
     ];
     let pdf = '%PDF-1.7\n';
     const offsets: Array<number> = [];

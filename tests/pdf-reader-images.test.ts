@@ -449,7 +449,7 @@ describe('image reconstruction end-to-end (E-PDF EP6)', () => {
     const doc = Ream.parse(
       shPdf(
         '20 20 60 60 re W n /Sh0 sh',
-        `/ShadingType 2 /ColorSpace ${spot} /Coords [0 0 100 0] ` +
+        `/ShadingType 2 /ColorSpace ${spot} /Coords [20 0 80 0] ` +
           '/Function << /FunctionType 2 /Domain [0 1] /C0 [0] /C1 [1] /N 1 >>',
       ),
     );
@@ -519,9 +519,11 @@ describe('image reconstruction end-to-end (E-PDF EP6)', () => {
  * `shading` — the smallest file that exercises the `sh` operator.
  */
 function shPdf(content: string, shading?: string, extraResources = ''): Uint8Array {
+  // The axis spans the clip every test paints, 20 → 80, so the clip shows the
+  // whole ramp and its ends are the ramp's own.
   const sh =
     shading ??
-    '/ShadingType 2 /ColorSpace /DeviceRGB /Coords [0 0 100 0] ' +
+    '/ShadingType 2 /ColorSpace /DeviceRGB /Coords [20 0 80 0] ' +
       '/Function << /FunctionType 2 /Domain [0 1] /C0 [1 0 0] /C1 [0 0 1] /N 1 >>';
   return onePagePdf(content, `/Shading << /Sh0 << ${sh} >> >> ${extraResources}`, [
     // The mask's own group, referenced by an /SMask; never walked when the

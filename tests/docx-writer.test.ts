@@ -5,8 +5,10 @@ import { buildTinyPng } from './fixtures/build-png';
 import type { FlowDoc } from '@/core/ir/flow';
 import { Ream } from '@/core/converter/ream';
 import { OpcPackage } from '@/core/opc';
+import { buildStroke } from '@/core/drawingml/shape-render';
 import { writeDocx } from '@/word/docx-writer';
 import { readDocx } from '@/word/docx-reader';
+import { FLOAT_CARRIER, shapeBlock } from '@/pdf-reader/flow-build';
 
 const decode = (b: Uint8Array) => new TextDecoder().decode(b);
 
@@ -264,6 +266,73 @@ describe('docx writer (E-DOCX D2 skeleton)', () => {
     expect(innerCell.kind === 'paragraph' && innerCell.paragraph.runs[0]!.text).toBe('inner');
   });
 
+  it('draws a line part-way through as the colour it comes to over white', () => {
+    // A stroke has no opacity in the PDF this renders, and the line is kept as
+    // its own colour and opacity now: drawn at full strength, black at 45%
+    // would print black.
+    expect(buildStroke({ colorHex: '000000', alpha: 0.45 })?.colorHex).toBe('8C8C8C');
+    expect(buildStroke({ colorHex: '000000' })?.colorHex).toBe('000000');
+  });
+
+  it('writes back how a picture is drawn: crop, turn, flip and opacity', () => {
+    // Read and never written, a cropped picture came back whole and squeezed
+    // into the frame its crop was sized for — the most common edit a picture
+    // in a document gets. A PDF's turned and clipped pictures went the same way.
+    const png = buildTinyPng(2, 2, [255, 0, 0, 255]);
+    const drawing =
+      '<w:r><w:drawing><wp:inline ' +
+      'xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">' +
+      '<wp:extent cx="914400" cy="685800"/><wp:docPr id="1" name="Pic"/>' +
+      '<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">' +
+      '<a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">' +
+      '<pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">' +
+      '<pic:blipFill><a:blip r:embed="rId20"/><a:srcRect l="25000" b="50000"/>' +
+      '<a:stretch><a:fillRect/></a:stretch></pic:blipFill>' +
+      '<pic:spPr><a:xfrm rot="5400000" flipV="1"><a:off x="0" y="0"/>' +
+      '<a:ext cx="914400" cy="685800"/></a:xfrm></pic:spPr>' +
+      '</pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>';
+    const { doc: flow } = readDocx(
+      buildDocxFromBody(`<w:p>${drawing}</w:p>`, {
+        images: { rId20: { contentType: 'image/png', bytes: png, extension: 'png' } },
+      }),
+    );
+    const xml = new TextDecoder().decode(
+      OpcPackage.open(writeDocx(flow).bytes).getMainDocument().data,
+    );
+    expect(xml).toContain('<a:srcRect l="25000" b="50000"/><a:stretch>');
+    expect(xml).toContain('<a:xfrm rot="5400000" flipV="1">');
+  });
+
+  it('writes a picture drawn part-way through (§20.1.8.4 a:alphaModFix)', () => {
+    // alphatrans.pdf lays a photograph in at half strength over three squares.
+    const png = buildTinyPng(1, 1, [0, 0, 255, 255]);
+    const drawing =
+      '<w:r><w:drawing><wp:inline ' +
+      'xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">' +
+      '<wp:extent cx="254000" cy="254000"/><wp:docPr id="1" name="Pic"/>' +
+      '<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">' +
+      '<a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">' +
+      '<pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">' +
+      '<pic:blipFill><a:blip r:embed="rId20"/></pic:blipFill>' +
+      '<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="254000" cy="254000"/></a:xfrm></pic:spPr>' +
+      '</pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>';
+    const { doc: flow } = readDocx(
+      buildDocxFromBody(`<w:p>${drawing}</w:p>`, {
+        images: { rId20: { contentType: 'image/png', bytes: png, extension: 'png' } },
+      }),
+    );
+    const faded = {
+      ...flow,
+      body: flow.body.map((b) =>
+        b.kind === 'image' ? { ...b, image: { ...b.image, alpha: 0.52 } } : b,
+      ),
+    };
+    const xml = new TextDecoder().decode(
+      OpcPackage.open(writeDocx(faded).bytes).getMainDocument().data,
+    );
+    expect(xml).toMatch(/<a:blip r:embed="rId\d+"><a:alphaModFix amt="52000"\/><\/a:blip>/u);
+  });
+
   it('round-trips an image: media part + blip rel, dimensions and alt text', () => {
     const png = buildTinyPng(2, 2, [255, 0, 0, 255]);
     const drawing =
@@ -493,6 +562,35 @@ describe('docx writer (E-DOCX D2 skeleton)', () => {
     '<pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">' +
     '<pic:blipFill><a:blip r:embed="rIdImg"/></pic:blipFill></pic:pic>' +
     '</a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>';
+
+  it('writes a line’s own dash pattern and opacity back (§20.1.8.21 a:custDash)', () => {
+    // Read and never written, a custom pattern came back solid — from a .docx
+    // read and saved again, and from every dashed line a PDF draws.
+    const shape =
+      '<w:p><w:r><w:drawing>' +
+      '<wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">' +
+      '<wp:extent cx="914400" cy="12700"/><wp:docPr id="1" name="Rule"/>' +
+      '<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">' +
+      '<a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">' +
+      '<wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">' +
+      '<wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="12700"/></a:xfrm>' +
+      '<a:prstGeom prst="line"><a:avLst/></a:prstGeom>' +
+      '<a:ln w="12700" cap="flat"><a:solidFill><a:srgbClr val="000000"><a:alpha val="45000"/>' +
+      '</a:srgbClr></a:solidFill>' +
+      '<a:custDash><a:ds d="300000" sp="100000"/><a:ds d="100000" sp="100000"/></a:custDash></a:ln>' +
+      '</wps:spPr><wps:bodyPr/></wps:wsp>' +
+      '</a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>';
+    const { doc: flow } = readDocx(buildDocxFromBody(shape));
+    const xml = new TextDecoder().decode(
+      OpcPackage.open(writeDocx(flow).bytes).getMainDocument().data,
+    );
+    // …and its opacity, which went the same way.
+    expect(xml).toContain(
+      '<a:ln w="12700" cap="flat"><a:solidFill><a:srgbClr val="000000"><a:alpha val="45000"/>' +
+        '</a:srgbClr></a:solidFill>' +
+        '<a:custDash><a:ds d="300000" sp="100000"/><a:ds d="100000" sp="100000"/></a:custDash></a:ln>',
+    );
+  });
 
   it('round-trips a DrawingML shape (preset geometry, fill, line)', () => {
     // A lone shape paragraph: the reader collapses it to a ShapeBlock, the
@@ -734,6 +832,24 @@ describe('a drawing that states where it goes is placed there (§20.4.2.3)', () 
     expect(xml).toContain(`<wp:extent cx="${String(40 * 12700)}" cy="${String(20 * 12700)}"/>`);
   });
 
+  it('draws a fill that is seen through as that transparent (§20.1.2.3.1)', () => {
+    // bug1755507.pdf lays a card on a shadow painted at a fifth of full
+    // strength: the model carried the alpha and the writer dropped it, and
+    // the shadow came back as a solid black slab around the card.
+    const shadow = {
+      ...floatingShape(0, 0),
+      fill: { kind: 'solid' as const, colorHex: '000000', alpha: 0.2 },
+    };
+    const bytes = writeDocx(docWith([{ kind: 'shape' as const, shape: shadow }])).bytes;
+    const xml = decode(OpcPackage.open(bytes).getMainDocument().data);
+    expect(xml).toContain('<a:srgbClr val="000000"><a:alpha val="20000"/></a:srgbClr>');
+    // …and reads back as the same colour at the same strength.
+    const again = readDocx(bytes).doc.body.find((b) => b.kind === 'shape');
+    if (again?.kind !== 'shape') throw new Error('expected a shape');
+    expect(again.shape.fill).toMatchObject({ kind: 'solid', colorHex: '000000' });
+    expect(again.shape.fill.alpha).toBeCloseTo(0.2, 3);
+  });
+
   it('leaves a drawing that states no placement inline', () => {
     const { float: _drop, ...flowing } = floatingShape(0, 0);
     const xml = xmlOf([{ kind: 'shape' as const, shape: flowing }]);
@@ -889,5 +1005,290 @@ describe('what a reader can actually draw', () => {
     expect([...at].sort((a, b) => a - b)).toEqual(at);
     // And the underline keeps the colour it was given.
     expect(rPr).toContain('w:color="4B99FF"');
+  });
+
+  it('writes every property block in the ORDER the schema states (§17.3.1.26)', () => {
+    // Word enforces the sequence CT_PPrBase declares and LibreOffice does not:
+    // a child out of order is a file Word refuses or a property it drops. The
+    // rules and the stops a reconstructed PDF carries were appended after
+    // `w:jc`, which is exactly the mistake this checks for — on the writer's
+    // own output, so no reader is needed to catch it.
+    const source =
+      '<w:p><w:pPr><w:pageBreakBefore/><w:pBdr><w:top w:val="single"/></w:pBdr>' +
+      '<w:tabs><w:tab w:val="left" w:pos="2000"/></w:tabs>' +
+      '<w:spacing w:before="120"/><w:ind w:left="240"/><w:jc w:val="center"/>' +
+      '<w:outlineLvl w:val="1"/></w:pPr>' +
+      '<w:r><w:rPr><w:b/><w:color w:val="FF0000"/><w:sz w:val="28"/></w:rPr>' +
+      '<w:t>a line the page set out</w:t></w:r></w:p>' +
+      '<w:tbl><w:tblPr><w:tblW w:w="5000" w:type="dxa"/><w:tblLayout w:type="fixed"/>' +
+      '<w:tblCellMar><w:left w:w="0" w:type="dxa"/></w:tblCellMar></w:tblPr>' +
+      '<w:tblGrid><w:gridCol w:w="2500"/><w:gridCol w:w="2500"/></w:tblGrid>' +
+      '<w:tr><w:trPr><w:trHeight w:val="300"/></w:trPr>' +
+      '<w:tc><w:tcPr><w:tcW w:w="2500" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>a</w:t></w:r></w:p></w:tc>' +
+      '<w:tc><w:tcPr><w:tcW w:w="2500" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>b</w:t></w:r></w:p></w:tc>' +
+      '</w:tr></w:tbl>' +
+      '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/></w:sectPr>';
+    const { doc: flow } = readDocx(buildDocxFromBody(source));
+    const xml = decode(OpcPackage.open(writeDocx(flow).bytes).getMainDocument().data);
+    // §17.3.1.26, §17.3.2.28, §17.6.17, §17.4.60, §17.4.82, §17.4.70 — the
+    // children each of these may hold, in the order they may hold them.
+    const SEQUENCES: Readonly<Record<string, ReadonlyArray<string>>> = {
+      'w:pPr': [
+        'w:pStyle',
+        'w:keepNext',
+        'w:keepLines',
+        'w:pageBreakBefore',
+        'w:numPr',
+        'w:pBdr',
+        'w:shd',
+        'w:tabs',
+        'w:bidi',
+        'w:spacing',
+        'w:ind',
+        'w:contextualSpacing',
+        'w:jc',
+        'w:outlineLvl',
+        'w:rPr',
+        'w:sectPr',
+      ],
+      'w:rPr': [
+        'w:rStyle',
+        'w:rFonts',
+        'w:b',
+        'w:bCs',
+        'w:i',
+        'w:iCs',
+        'w:strike',
+        'w:color',
+        'w:spacing',
+        'w:sz',
+        'w:szCs',
+        'w:highlight',
+        'w:u',
+        'w:shd',
+        'w:vertAlign',
+        'w:rtl',
+        'w:lang',
+      ],
+      'w:sectPr': [
+        'w:headerReference',
+        'w:footerReference',
+        'w:type',
+        'w:pgSz',
+        'w:pgMar',
+        'w:cols',
+        'w:titlePg',
+        'w:bidi',
+        'w:docGrid',
+      ],
+      'w:tblPr': [
+        'w:tblStyle',
+        'w:tblW',
+        'w:jc',
+        'w:tblInd',
+        'w:tblBorders',
+        'w:shd',
+        'w:tblLayout',
+        'w:tblCellMar',
+        'w:tblLook',
+      ],
+      'w:trPr': ['w:gridBefore', 'w:gridAfter', 'w:cantSplit', 'w:trHeight', 'w:tblHeader', 'w:jc'],
+      'w:tcPr': [
+        'w:tcW',
+        'w:gridSpan',
+        'w:hMerge',
+        'w:vMerge',
+        'w:tcBorders',
+        'w:shd',
+        'w:noWrap',
+        'w:tcMar',
+        'w:textDirection',
+        'w:vAlign',
+      ],
+    };
+    for (const [parent, order] of Object.entries(SEQUENCES)) {
+      const rank = new Map(order.map((tag, i) => [tag, i]));
+      const blocks = xml.match(new RegExp(`<${parent}>.*?</${parent}>`, 'gsu')) ?? [];
+      for (const block of blocks) {
+        const kids: Array<string> = [];
+        let depth = 0;
+        for (const m of block
+          .slice(parent.length + 2)
+          .matchAll(/<(\/?)(w:[A-Za-z]+)[^>]*?(\/?)>/gu)) {
+          const [, closing, tag, selfClose] = m;
+          if (closing === '/') {
+            depth--;
+            continue;
+          }
+          if (depth === 0) kids.push(tag!);
+          if (selfClose !== '/') depth++;
+        }
+        const ranks = kids.flatMap((tag) => (rank.has(tag) ? [rank.get(tag)!] : []));
+        expect(ranks, `${parent}: ${kids.join(' ')}`).toEqual([...ranks].sort((a, b) => a - b));
+      }
+    }
+  });
+});
+
+describe('a document written for another program to read', () => {
+  const bodyOf = (bytes: Uint8Array): string =>
+    decode(OpcPackage.open(bytes).getMainDocument().data);
+
+  it('names the FAMILY a face belongs to, and lists it in the font table (§17.8.3)', () => {
+    // A PDF names a face — `Inter-SemiBold` — and a reader looks a font up by
+    // the family it was installed under. Written as the face, an invoice set in
+    // Inter came back in LibreOffice's default serif.
+    const { doc } = readDocx(
+      buildDocxFromBody(
+        '<w:p><w:r><w:rPr><w:rFonts w:ascii="inter-semibold" w:hAnsi="inter-semibold"/><w:b/></w:rPr>' +
+          '<w:t>Invoice</w:t></w:r></w:p>',
+      ),
+    );
+    const flow: FlowDoc = {
+      ...doc,
+      faceFamilies: new Map([['inter-semibold', { family: 'Inter', generic: 'swiss' as const }]]),
+    };
+    const bytes = writeDocx(flow).bytes;
+    expect(bodyOf(bytes)).toContain(
+      '<w:rFonts w:ascii="Inter" w:hAnsi="Inter" w:eastAsia="Inter" w:cs="Inter"/>',
+    );
+    const table = OpcPackage.open(bytes).getPart('word/fontTable.xml');
+    expect(table).toBeDefined();
+    expect(decode(table!)).toContain(
+      '<w:font w:name="Inter"><w:family w:val="swiss"/><w:pitch w:val="variable"/></w:font>',
+    );
+  });
+
+  it('writes a page number as a COMPLEX field, in the run’s own properties (§17.16.18)', () => {
+    // Inside `w:fldSimple` LibreOffice sets the result in the paragraph's
+    // default size: a receipt's "Page 1 of 2" came back with both numbers half
+    // as large again as the words around them.
+    const { doc } = readDocx(
+      buildDocxFromBody(
+        '<w:p><w:r><w:rPr><w:sz w:val="15"/></w:rPr><w:t xml:space="preserve">Page </w:t></w:r>' +
+          '<w:fldSimple w:instr=" PAGE "><w:r><w:rPr><w:sz w:val="15"/></w:rPr><w:t>1</w:t></w:r></w:fldSimple></w:p>',
+      ),
+    );
+    const bytes = writeDocx(doc).bytes;
+    const xml = bodyOf(bytes);
+    expect(xml).not.toContain('w:fldSimple');
+    for (const piece of [
+      '<w:fldChar w:fldCharType="begin"/>',
+      '<w:instrText xml:space="preserve"> PAGE </w:instrText>',
+      '<w:fldChar w:fldCharType="separate"/>',
+      '<w:fldChar w:fldCharType="end"/>',
+    ]) {
+      expect(xml).toContain(`<w:rPr><w:sz w:val="15"/><w:szCs w:val="15"/></w:rPr>${piece}`);
+    }
+    // …and it reads back as the page number it is.
+    const runs = readDocx(bytes).doc.body.flatMap((b) =>
+      b.kind === 'paragraph' ? b.paragraph.runs : [],
+    );
+    expect(runs.some((r) => r.field === 'PAGE')).toBe(true);
+  });
+
+  it('writes the rule between two ruled paragraphs as `w:between` (§17.3.1.5)', () => {
+    // §17.3.1.24 CT_PBdr has no inside edges; the rule between two members of
+    // a bordered set is `w:between`, and `w:insideH` there is a file Word turns
+    // away.
+    const para =
+      '<w:p><w:pPr><w:pBdr><w:top w:val="single" w:sz="6" w:color="EBEBEB"/>' +
+      '<w:between w:val="single" w:sz="6" w:color="EBEBEB"/></w:pBdr></w:pPr>' +
+      '<w:r><w:t>Subtotal</w:t></w:r></w:p>';
+    const { doc } = readDocx(buildDocxFromBody(para + para));
+    const first = doc.body[0];
+    expect(
+      first?.kind === 'paragraph' && first.paragraph.properties.borders?.insideH,
+    ).toMatchObject({ style: 'single', colorHex: 'EBEBEB' });
+    const xml = bodyOf(writeDocx(doc).bytes);
+    expect(xml).toContain('<w:between w:val="single" w:sz="6" w:color="EBEBEB"/>');
+    expect(xml).not.toContain('w:insideH');
+  });
+
+  it('writes a foot whose run names no face at all', () => {
+    // A band's runs come with RAW properties, and a run the page set in a face
+    // with no name has no font map: ZapfDingbats.pdf's foot threw, and the
+    // whole package with it.
+    const { doc } = readDocx(buildDocxFromBody('<w:p><w:r><w:t>body</w:t></w:r></w:p>'));
+    const foot = {
+      kind: 'paragraph' as const,
+      paragraph: { properties: {}, runs: [{ text: 'Page 1', properties: {} }] },
+    };
+    const flow = {
+      ...doc,
+      sections: doc.sections.map((s) => ({
+        ...s,
+        properties: {
+          ...s.properties,
+          footers: [{ type: 'default' as const, relationshipId: 'rIdFoot' }],
+        },
+      })),
+      headersFooters: new Map([['rIdFoot', [foot]]]),
+    } as unknown as FlowDoc;
+    expect(() => writeDocx(flow)).not.toThrow();
+  });
+
+  it('writes z-orders the way Word reads them (§20.4.2.3)', () => {
+    // Word reads a relativeHeight of 0 or 1 as ABOVE everything, and a
+    // negative one is no value the attribute admits: a PDF's first two marks
+    // came back over everything drawn after them, and a tagged reading, which
+    // counts up from minus a million, wrote numbers no reader should accept.
+    const mark = (z: number) =>
+      shapeBlock(
+        {
+          orderKey: [z],
+          segs: [
+            { op: 'move', x: 10, y: 10 },
+            { op: 'line', x: 20, y: 10 },
+            { op: 'line', x: 20, y: 20 },
+            { op: 'close' },
+          ],
+          minX: 10,
+          minY: 10,
+          maxX: 20,
+          maxY: 20,
+          fillHex: '2E6DAD',
+        },
+        { left: 0, top: 100 },
+        z,
+      );
+    const { doc } = readDocx(buildDocxFromBody('<w:p><w:r><w:t>after</w:t></w:r></w:p>'));
+    const xml = bodyOf(writeDocx({ ...doc, body: [mark(-1_000_000), mark(0), mark(1)] }).bytes);
+    const heights = [...xml.matchAll(/relativeHeight="(\d+)"/gu)].map((m) => Number(m[1]));
+    expect(heights).toHaveLength(3);
+    expect(heights.every((h) => h >= 2)).toBe(true);
+    expect([...heights].sort((a, b) => a - b)).toEqual(heights);
+  });
+
+  it('anchors a floating mark in a paragraph that takes no room (§17.3.1.33)', () => {
+    // Every rule and fill a page draws is anchored where it was drawn. The
+    // paragraph carrying it is on no page, and written bare it took a reader's
+    // default line: a blank line in the flow for each.
+    const rule = shapeBlock(
+      {
+        orderKey: [0],
+        segs: [
+          { op: 'move', x: 30, y: 700 },
+          { op: 'line', x: 582, y: 700 },
+          { op: 'line', x: 582, y: 701 },
+          { op: 'line', x: 30, y: 701 },
+          { op: 'close' },
+        ],
+        minX: 30,
+        minY: 700,
+        maxX: 582,
+        maxY: 701,
+        fillHex: 'EBEBEB',
+      },
+      { left: 0, top: 792 },
+      0,
+      true,
+    );
+    const { doc } = readDocx(buildDocxFromBody('<w:p><w:r><w:t>after</w:t></w:r></w:p>'));
+    const xml = bodyOf(writeDocx({ ...doc, body: [rule, ...doc.body] }).bytes);
+    expect(xml).toMatch(
+      /<w:p><w:pPr><w:spacing w:line="1" w:lineRule="exact"\/><\/w:pPr><w:r><w:drawing>/u,
+    );
+    expect(FLOAT_CARRIER.spacingLineRule).toBe('exact');
   });
 });

@@ -2956,6 +2956,7 @@ export function parseLine(spPr: PoNode, resolveColor: ColorResolver): ShapeLine 
           : undefined;
   let noFill = false;
   let colorHex: string | undefined;
+  let alpha: number | undefined;
   let dash: ShapeDash | undefined;
   // §20.1.8.21 — the author's own pattern, each length a percentage of the
   // line's width. dashed_line_custdash_percentage.docx rules a dash-dot-dot
@@ -2965,8 +2966,14 @@ export function parseLine(spPr: PoNode, resolveColor: ColorResolver): ShapeLine 
   let tailEnd: LineEnd | undefined;
   for (const c of poChildren(ln)) {
     if (poIs(c, 'a:noFill')) noFill = true;
-    else if (poIs(c, 'a:solidFill')) colorHex = colorFromContainer(c, resolveColor);
-    else if (poIs(c, 'a:prstDash')) dash = normalizeDash(poAttr(c, 'val'));
+    else if (poIs(c, 'a:solidFill')) {
+      // §20.1.2.3.1 — the opacity is the line's, kept apart as a fill's is:
+      // the resolver has composited the colour over white, and that undoes
+      // exactly (see the solid fill above).
+      alpha = containerAlpha(c);
+      const hex = colorFromContainer(c, resolveColor);
+      colorHex = hex !== undefined && alpha !== undefined ? unblendWhite(hex, alpha) : hex;
+    } else if (poIs(c, 'a:prstDash')) dash = normalizeDash(poAttr(c, 'val'));
     else if (poIs(c, 'a:custDash')) customDash = parseCustDash(c);
     else if (poIs(c, 'a:headEnd')) headEnd = parseLineEnd(c);
     else if (poIs(c, 'a:tailEnd')) tailEnd = parseLineEnd(c);
@@ -2978,6 +2985,7 @@ export function parseLine(spPr: PoNode, resolveColor: ColorResolver): ShapeLine 
     ...(customDash && customDash.length > 0 ? { customDash } : {}),
     ...(cap ? { cap } : {}),
     ...(noFill ? { fill: 'none' as const } : {}),
+    ...(alpha !== undefined && alpha < 1 ? { alpha } : {}),
     ...(headEnd ? { headEnd } : {}),
     ...(tailEnd ? { tailEnd } : {}),
   };

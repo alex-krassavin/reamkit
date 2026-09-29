@@ -9,7 +9,7 @@
 
 import { interpretContent, multiply } from './content';
 import { decodePdfImage } from './image-decode';
-import { collectPageAppearances } from './annots';
+import { appearanceContent, collectPageAppearances } from './annots';
 import { buildFonts } from './text';
 import { hiddenProperties, hiddenXObject } from './optional-content';
 import { buildAlphaMap, sampledShading } from './shading';
@@ -44,6 +44,11 @@ export interface PdfImage {
    * centre, which is what every downstream format does with one.
    */
   readonly rotationDeg?: number;
+  /**
+   * §8.9.5 — the CTM MIRRORS the picture: its first row stands at the foot of
+   * the box. Drawn as a flip top to bottom, and then the turn above.
+   */
+  readonly flipV?: boolean;
   /**
    * §8.5.4 — the fraction of each of the picture's OWN edges a clip cut away,
    * where one bounded it: `a:srcRect` in DrawingML terms. Absent is whole.
@@ -310,7 +315,7 @@ export function collectPageImages(file: PdfFile, page: PdfPage): PageImages {
   collectPageAppearances(file, page).forEach((appearance, index) => {
     walk(
       appearance.resources ?? page.resources,
-      file.streamData(appearance.stream),
+      appearanceContent(file, appearance),
       appearance.ctm,
       1,
       undefined,
@@ -335,6 +340,11 @@ function geometry(
   // image-rotated-black-white-ratio.pdf sets its picture at forty degrees in
   // the middle of the page and it came back upright in the corner.
   const angle = (Math.atan2(ctm[1], ctm[0]) * 180) / Math.PI;
+  // …and it may MIRROR it: a matrix that turns the square inside out draws the
+  // first row at the foot of the box, as bug1771477.pdf draws one of its
+  // pictures. Read as a turn alone a mirrored picture is written upside down
+  // or back to front — a flip, then the turn, is what the matrix is.
+  const mirrored = ctm[0] * ctm[3] - ctm[1] * ctm[2] < 0;
   const box = clippedUnitBox(ctm, clip);
   // The centre is what a turn leaves in place, so the box is measured off it:
   // the shown part of the unit square, through the matrix.
@@ -347,6 +357,8 @@ function geometry(
   // §20.1.8.55 — what the clip cut away, as the fraction of each edge. The unit
   // square's v runs UP and an image's rows run DOWN from its first, so the top
   // is what is above v1.
+  // The crop is the SOURCE's (§20.1.8.55), cut before the flip and the turn,
+  // and the image's first row is at v = 1 however the matrix mirrors it.
   const crop =
     box.u0 > 0 || box.v0 > 0 || box.u1 < 1 || box.v1 < 1
       ? { left: box.u0, right: 1 - box.u1, top: 1 - box.v1, bottom: box.v0 }
@@ -360,6 +372,7 @@ function geometry(
     y: cy - shownH / 2,
     ...(crop ? { crop } : {}),
     ...(Math.abs(angle) > 0.5 ? { rotationDeg: angle } : {}),
+    ...(mirrored ? { flipV: true } : {}),
     ...(mcid !== undefined ? { mcid } : {}),
     ...(alpha !== undefined ? { alpha } : {}),
   };

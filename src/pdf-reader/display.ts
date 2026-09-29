@@ -234,9 +234,25 @@ export function placeVectors(vectors: ReadonlyArray<PdfVector>, d: Display): Arr
         ys.push(s.y);
         if (s.op === 'cubic') (xs.push(s.x1, s.x2), ys.push(s.y1, s.y2));
       }
-      if (xs.length === 0) return { ...v, segs };
+      // §8.7.4.5.3 — a gradient's axis is on the page too, and moves with it.
+      const g = v.gradient;
+      const moved =
+        g?.axis !== undefined
+          ? {
+              gradient: {
+                ...g,
+                axis: ((a): typeof a => {
+                  const p0 = d.place(a.x0, a.y0);
+                  const p1 = d.place(a.x1, a.y1);
+                  return { x0: p0.x, y0: p0.y, x1: p1.x, y1: p1.y };
+                })(g.axis),
+              },
+            }
+          : {};
+      if (xs.length === 0) return { ...v, ...moved, segs };
       return {
         ...v,
+        ...moved,
         segs,
         minX: Math.min(...xs),
         minY: Math.min(...ys),

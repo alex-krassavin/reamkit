@@ -91,7 +91,7 @@ const QE: ReadonlyArray<readonly [number, number, number, number]> = [
 ];
 
 /** A context's state: the Table E.1 index and which symbol is currently more probable. */
-interface Cx {
+export interface Cx {
   i: Uint8Array;
   mps: Uint8Array;
 }
@@ -576,8 +576,11 @@ function huffDecode(r: BitReader, t: HuffTable): number | typeof OOB {
  * §B.5 Tables B.1–B.15 — the standard tables, as `[prefLen, rangeLen,
  * rangeLow]` with `'lower'` and `'oob'` on the two lines that need them.
  *
- * They are transcribed rather than derived, and the corpus is what checks
- * them: a table off by one line decodes rubble, and the suite says so at once.
+ * They are transcribed rather than derived, and a transcription can lose a
+ * line without a sound: B.7 came over four lines short and B.10 with five
+ * prefixes a bit or two long, and only the files that read through those two
+ * ever noticed. Every table is a complete prefix code — its lengths sum to
+ * exactly one, by Kraft — and that is what the tests hold each of them to.
  */
 const STANDARD_TABLES: ReadonlyArray<ReadonlyArray<HuffLine>> = [
   // B.1
@@ -654,11 +657,15 @@ const STANDARD_TABLES: ReadonlyArray<ReadonlyArray<HuffLine>> = [
     { prefLen: 5, rangeLen: 6, rangeLow: -128 },
     { prefLen: 5, rangeLen: 5, rangeLow: -64 },
     { prefLen: 4, rangeLen: 5, rangeLow: -32 },
-    { prefLen: 4, rangeLen: 9, rangeLow: 0 },
-    { prefLen: 5, rangeLen: 10, rangeLow: 512 },
-    { prefLen: 3, rangeLen: 10, rangeLow: 1536 },
+    { prefLen: 4, rangeLen: 5, rangeLow: 0 },
+    { prefLen: 5, rangeLen: 5, rangeLow: 32 },
+    { prefLen: 5, rangeLen: 6, rangeLow: 64 },
+    { prefLen: 4, rangeLen: 7, rangeLow: 128 },
+    { prefLen: 3, rangeLen: 8, rangeLow: 256 },
+    { prefLen: 3, rangeLen: 9, rangeLow: 512 },
+    { prefLen: 3, rangeLen: 10, rangeLow: 1024 },
     { prefLen: 5, rangeLen: 32, rangeLow: -1025, kind: 'lower' },
-    { prefLen: 5, rangeLen: 32, rangeLow: 2560 },
+    { prefLen: 5, rangeLen: 32, rangeLow: 2048 },
   ],
   // B.8
   [
@@ -723,11 +730,11 @@ const STANDARD_TABLES: ReadonlyArray<ReadonlyArray<HuffLine>> = [
     { prefLen: 2, rangeLen: 6, rangeLow: 6 },
     { prefLen: 5, rangeLen: 5, rangeLow: 70 },
     { prefLen: 6, rangeLen: 5, rangeLow: 102 },
-    { prefLen: 7, rangeLen: 6, rangeLow: 134 },
-    { prefLen: 8, rangeLen: 7, rangeLow: 198 },
-    { prefLen: 8, rangeLen: 8, rangeLow: 326 },
-    { prefLen: 8, rangeLen: 9, rangeLow: 582 },
-    { prefLen: 8, rangeLen: 10, rangeLow: 1094 },
+    { prefLen: 6, rangeLen: 6, rangeLow: 134 },
+    { prefLen: 6, rangeLen: 7, rangeLow: 198 },
+    { prefLen: 6, rangeLen: 8, rangeLow: 326 },
+    { prefLen: 6, rangeLen: 9, rangeLow: 582 },
+    { prefLen: 6, rangeLen: 10, rangeLow: 1094 },
     { prefLen: 7, rangeLen: 11, rangeLow: 2118 },
     { prefLen: 8, rangeLen: 32, rangeLow: -22, kind: 'lower' },
     { prefLen: 8, rangeLen: 32, rangeLow: 4166 },
@@ -810,6 +817,24 @@ const STANDARD_TABLES: ReadonlyArray<ReadonlyArray<HuffLine>> = [
 /** Table B.n, ready to read with. */
 function standardTable(n: number): HuffTable {
   return buildHuffTable(STANDARD_TABLES[n - 1] ?? STANDARD_TABLES[0]!);
+}
+
+/**
+ * §B.5 — the prefix every line of standard table B.`n` is written with, the
+ * way the spec prints it: a string of bits beside the values the line covers.
+ *
+ * @param n The table's number, 1–15.
+ * @returns Its lines, shortest prefix first, each with its prefix.
+ */
+export function standardTableCodes(
+  n: number,
+): Array<{ prefix: string; rangeLow: number; rangeLen: number; kind?: 'lower' | 'oob' }> {
+  return standardTable(n).lines.map((l) => ({
+    prefix: l.code.toString(2).padStart(l.prefLen, '0'),
+    rangeLow: l.rangeLow,
+    rangeLen: l.rangeLen,
+    ...(l.kind !== undefined ? { kind: l.kind } : {}),
+  }));
 }
 
 /** §B.2 — a custom table, from a type-53 segment. */
@@ -1113,6 +1138,7 @@ function decodeSymbolDictionary(
   refAgg: boolean,
   rTemplate: number,
   rAt: ReadonlyArray<At>,
+  contexts: BitmapContexts = freshBitmapContexts(),
 ): Array<Jbig2Bitmap> {
   const iadh = new IntDecoder(mq);
   const iadw = new IntDecoder(mq);
@@ -1120,8 +1146,8 @@ function decodeSymbolDictionary(
   const iaai = new IntDecoder(mq);
   const iardx = new IntDecoder(mq);
   const iardy = new IntDecoder(mq);
-  const genericCx = newContexts(1 << 16);
-  const refineCx = newContexts(1 << 13);
+  const genericCx = contexts.generic;
+  const refineCx = contexts.refine;
   const newSymbols: Array<Jbig2Bitmap> = [];
   const num = (v: number | typeof OOB): number => (v === OOB ? 0 : v);
   // §6.5.8.2.3 — a dictionary that refines names its symbols in as many bits as
@@ -1828,6 +1854,54 @@ interface PageInfo {
 }
 
 /**
+ * §7.4.3.1.1 — the statistics a symbol dictionary codes its bitmaps with: the
+ * generic region's contexts and the refinement's. A dictionary may keep them
+ * when it is done (bit 9) and a later one start from them (bit 8) instead of
+ * from nothing.
+ */
+export interface BitmapContexts {
+  readonly generic: Cx;
+  readonly refine: Cx;
+}
+
+function freshBitmapContexts(): BitmapContexts {
+  return { generic: newContexts(1 << 16), refine: newContexts(1 << 13) };
+}
+
+/**
+ * §7.4.3.2 step 3 — the statistics a symbol dictionary starts from.
+ *
+ * One that says it USES the coding context starts where the LAST dictionary it
+ * refers to was left, among those that kept theirs: the bitmaps it codes were
+ * coded against those. Started fresh, every shape of
+ * bitmap-symbol-context-reuse.pdf decoded to paper and the sheet came back
+ * blank. It starts from a copy — two dictionaries may start from the same
+ * one, and the second must not start where the first left off.
+ *
+ * @param used     Whether the dictionary's flags say it uses the context (bit 8).
+ * @param referred The segments it refers to, in the order it names them.
+ * @param kept     What each dictionary that retained its context was left with.
+ * @returns The contexts to decode with.
+ */
+export function startingContexts(
+  used: boolean,
+  referred: ReadonlyArray<number>,
+  kept: ReadonlyMap<number, BitmapContexts>,
+): BitmapContexts {
+  const last = used
+    ? referred
+        .map((n) => kept.get(n))
+        .filter((c): c is BitmapContexts => c !== undefined)
+        .at(-1)
+    : undefined;
+  if (last === undefined) return freshBitmapContexts();
+  return {
+    generic: { i: last.generic.i.slice(), mps: last.generic.mps.slice() },
+    refine: { i: last.refine.i.slice(), mps: last.refine.mps.slice() },
+  };
+}
+
+/**
  * Decode an embedded JBIG2 image.
  *
  * @param data    The `/JBIG2Decode` stream's own segments.
@@ -1870,6 +1944,9 @@ export function decodeJbig2(
   const patternsBySegment = new Map<number, ReadonlyArray<Jbig2Bitmap>>();
   // §7.4.13 — the custom Huffman tables a segment may refer to.
   const tablesBySegment = new Map<number, HuffTable>();
+  // §7.4.3.2 — the coding statistics a symbol dictionary kept when it was
+  // done, for the next one that asks to start from them.
+  const contextsBySegment = new Map<number, BitmapContexts>();
 
   const run = (bytes: Uint8Array): void => {
     for (const seg of parseSegments(bytes)) {
@@ -2002,6 +2079,7 @@ export function decodeJbig2(
           const template = (flags >> 10) & 3;
           const rTemplate = (flags >> 12) & 1;
           const ctxUsed = (flags & 0x0100) !== 0;
+          const ctxRetained = (flags & 0x0200) !== 0;
           const at: Array<At> = [];
           if (!huff) {
             const n = template === 0 ? 4 : 1;
@@ -2015,7 +2093,6 @@ export function decodeJbig2(
           const newCount = r.u32();
           if (newCount > 10000) continue;
           const inherited = seg.referred.flatMap((n) => symbolsBySegment.get(n) ?? []);
-          void ctxUsed;
           if (huff) {
             // §7.4.3.1.2 — which table each field is read through, chosen by
             // the flags; `3` means one the segment refers to.
@@ -2058,6 +2135,7 @@ export function decodeJbig2(
             );
             continue;
           }
+          const contexts = startingContexts(ctxUsed, seg.referred, contextsBySegment);
           symbolsBySegment.set(
             seg.number,
             decodeSymbolDictionary(
@@ -2070,8 +2148,11 @@ export function decodeJbig2(
               refAgg,
               rTemplate,
               rAt.length > 0 ? rAt : NOMINAL_AT_REFINE,
+              contexts,
             ),
           );
+          // …and one that says it RETAINS them keeps what it was left with.
+          if (ctxRetained) contextsBySegment.set(seg.number, contexts);
           continue;
         }
         // §7.4.4 text region — where each of those shapes goes.

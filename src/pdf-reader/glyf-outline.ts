@@ -69,8 +69,25 @@ export function outlineSource(program: Uint8Array): OutlineSource | undefined {
     if (at + stride * 2 > loca.offset + loca.length) return undefined;
     const read = (o: number): number => (longLoca ? safeUint32(view, o) : safeUint16(view, o) * 2);
     const start = read(at);
-    const end = read(at + stride);
-    if (end <= start) return undefined; // an empty glyph — a space, say
+    let end = read(at + stride);
+    if (end === start) return undefined; // an empty glyph — a space, say
+    if (end < start) {
+      // A subsetter that drops glyphs may write their `loca` entries as zero,
+      // and the glyph before a dropped one then seems to end before it
+      // begins. TCPDF does: bug1650302_reduced.pdf's dotless i and caron both
+      // came back empty, and with them the í's stem and the whole of its ř.
+      // The glyph runs to the next entry that lies past its start — or to the
+      // end of the table, its own counts saying where it stops.
+      end = glyf.length;
+      for (let o = at + stride * 2; o + stride <= loca.offset + loca.length; o += stride) {
+        const next = read(o);
+        if (next > start) {
+          end = Math.min(next, glyf.length);
+          break;
+        }
+      }
+      if (end <= start) return undefined;
+    }
     if (glyf.offset + end > program.length) return undefined;
     return { start: glyf.offset + start, end: glyf.offset + end };
   };

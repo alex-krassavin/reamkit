@@ -1280,6 +1280,8 @@ export interface ShapeLine {
   readonly customDash?: ReadonlyArray<number>;
   readonly cap?: 'flat' | 'round' | 'square'; // a:ln @cap (flat=butt)
   readonly fill?: 'solid' | 'none'; // a:ln/a:noFill ⇒ no visible stroke
+  /** §20.1.2.3.1 `a:alpha` on the line's colour — how opaque the stroke is, `0..1`. */
+  readonly alpha?: number;
   /** §20.1.8.24 `a:headEnd` — the decoration at the line's first point. */
   readonly headEnd?: LineEnd;
   /** §20.1.8.42 `a:tailEnd` — the decoration at the line's last point. */

@@ -93,6 +93,12 @@ export function decodePdfImage(file: PdfFile, stream: PdfStream, fillHex?: strin
   // has to be taken apart and given back as a PNG. §8.9.5.4.
   if (last === 'DCTDecode' || last === 'DCT') {
     const jpegBytes = applyChainExceptLast(filters, stream.data);
+    // A JPEG of four inks cannot travel as it is: the PDF states them as the
+    // ink they are, and a picture file of CMYK is read by every viewer as
+    // Adobe's INVERTED convention — cmykjpeg.pdf's beach photograph came back
+    // a black rectangle. Its colours are worked out here instead.
+    const inks = cmykJpeg(file, d, jpegBytes, width, height);
+    if (inks) return inks;
     const masked = hasSMask(file, d) ? maskedJpeg(file, d, jpegBytes, width, height) : undefined;
     if (masked) return masked;
     const degraded = hasSMask(file, d)
@@ -135,8 +141,9 @@ export function decodePdfImage(file: PdfFile, stream: PdfStream, fillHex?: strin
     : decodeToSamples(file, stream, filters, width, height);
   if (typeof decoded === 'string') return fail('dropped', decoded);
 
-  // Fold an /SMask in as the alpha channel (PNG path only).
-  const alpha = decodeSMask(file, d, width, height);
+  // Fold an /SMask in as the alpha channel (PNG path only) — or, where there
+  // is none, what a colour key masks out: §8.9.5.4, a soft mask overrides it.
+  const alpha = decodeSMask(file, d, width, height) ?? decoded.keyed;
   const { color, samples } = alpha ? combineAlpha(decoded, alpha) : decoded;
   return {
     ok: true,
@@ -152,6 +159,8 @@ export function decodePdfImage(file: PdfFile, stream: PdfStream, fillHex?: strin
 interface RawColor {
   readonly color: 'gray' | 'rgb';
   readonly samples: Uint8Array; // 8-bit interleaved, width*height*(1|3)
+  /** §8.9.6.4 — the samples a colour key masks out, as an alpha. */
+  readonly keyed?: Alpha;
 }
 
 // Returns the decoded colour image, or a human reason string on failure.
@@ -170,7 +179,43 @@ function decodeToSamples(
   const bpc = intOf(file.get(d, 'BitsPerComponent')) || intOf(file.get(d, 'BPC')) || 8;
   const decodeArr = decodeArrayOf(file, d);
   const integers = unpackSamples(raw, width, height, cs.components, bpc);
-  return toColor(cs, integers, width * height, bpc, decodeArr);
+  const keyed = colorKey(file, d, integers, cs.components, width * height);
+  return { ...toColor(cs, integers, width * height, bpc, decodeArr), ...(keyed ? { keyed } : {}) };
+}
+
+/**
+ * §8.9.6.4 — colour key masking: `/Mask` as an array of a range per colour
+ * component, and a sample whose every component falls inside its range is
+ * not painted. The ranges are in the image's own sample values, before any
+ * `/Decode`. colorkeymask.pdf keys out every sample of full red, and painted
+ * whole its red bar stood beside the green and blue ones the page shows.
+ *
+ * @returns The alpha it comes to, or `undefined` where no sample is keyed out.
+ */
+function colorKey(
+  file: PdfFile,
+  d: PdfDict,
+  samples: Uint16Array,
+  n: number,
+  px: number,
+): Alpha | undefined {
+  const mask = file.resolve(d.get('Mask') ?? PDF_NULL);
+  if (!Array.isArray(mask) || mask.length < 2 * n) return undefined;
+  const ranges = mask.slice(0, 2 * n).map((v) => file.resolve(v));
+  if (!ranges.every((v): v is number => typeof v === 'number')) return undefined;
+  const data = new Uint8Array(px).fill(255);
+  let keyed = false;
+  for (let i = 0; i < px; i++) {
+    let inside = true;
+    for (let c = 0; c < n && inside; c++) {
+      const v = samples[i * n + c]!;
+      inside = v >= ranges[2 * c]! && v <= ranges[2 * c + 1]!;
+    }
+    if (!inside) continue;
+    data[i] = 0;
+    keyed = true;
+  }
+  return keyed ? { data } : undefined;
 }
 
 // E-PDF EP15 — decode a /CCITTFaxDecode image to DeviceGray samples (black → 0,
@@ -687,7 +732,7 @@ function maskedJpeg(
   height: number,
 ): DecodedImage | undefined {
   const image = decodeJpeg(jpegBytes);
-  if (!image) return undefined;
+  if (!image || image.components === 4) return undefined;
   const alpha = decodeSMask(file, d, image.width, image.height);
   if (!alpha) return undefined;
   const color: RawColor =
@@ -743,10 +788,44 @@ function decodeSMask(file: PdfFile, d: PdfDict, width: number, height: number): 
 /** A DCT-coded mask decoded to samples, or `undefined` past the baseline decoder. */
 function jpegSamples(bytes: Uint8Array): RawColor | undefined {
   const decoded = decodeJpeg(bytes);
-  if (!decoded) return undefined;
+  if (!decoded || decoded.components === 4) return undefined;
   return decoded.components === 1
     ? { color: 'gray', samples: decoded.samples }
     : { color: 'rgb', samples: decoded.samples };
+}
+
+/**
+ * §8.6.4.4 — a four-ink JPEG taken apart and given back as the colours it
+ * paints, through the image's colour space and its `/Decode` (§8.9.5.2) as any
+ * other sampled CMYK image is, with an `/SMask` folded in where it has one.
+ *
+ * @returns The picture as a PNG, or `undefined` where the JPEG is not four
+ *          inks or is past the baseline decoder — it then travels as it is.
+ */
+function cmykJpeg(
+  file: PdfFile,
+  d: PdfDict,
+  jpegBytes: Uint8Array,
+  width: number,
+  height: number,
+): DecodedImage | undefined {
+  const image = decodeJpeg(jpegBytes);
+  if (image?.components !== 4) return undefined;
+  const cs = resolveColorSpace(file, d.get('ColorSpace') ?? d.get('CS'));
+  const inks: ColorSpace = cs?.components === 4 ? cs : { kind: 'cmyk', components: 4 };
+  const px = image.width * image.height;
+  const color = toColor(inks, Uint16Array.from(image.samples), px, 8, decodeArrayOf(file, d));
+  const alpha = hasSMask(file, d) ? decodeSMask(file, d, image.width, image.height) : undefined;
+  const { color: pngColor, samples } = alpha
+    ? combineAlpha(color, alpha)
+    : { color: color.color, samples: color.samples };
+  return {
+    ok: true,
+    bytes: encodePng(image.width, image.height, pngColor, samples),
+    format: 'png',
+    widthPx: width,
+    heightPx: height,
+  };
 }
 
 function combineAlpha(color: RawColor, alpha: Alpha): { color: PngColor; samples: Uint8Array } {

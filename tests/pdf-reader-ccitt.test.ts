@@ -11,6 +11,7 @@ import { unzlibSync } from 'fflate';
 import { beforeAll, describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
+import type { BitmapContexts } from '@/pdf-reader/jbig2';
 import { prepareImage } from '@/core/images';
 import { Ream } from '@/core/converter/ream';
 import {
@@ -22,7 +23,12 @@ import {
   decodeCcittPlanes,
 } from '@/pdf-reader/ccitt';
 import { PdfFile } from '@/pdf-reader/document';
-import { symbolCodeLength } from '@/pdf-reader/jbig2';
+import {
+  newContexts,
+  standardTableCodes,
+  startingContexts,
+  symbolCodeLength,
+} from '@/pdf-reader/jbig2';
 import { decodePdfImage } from '@/pdf-reader/image-decode';
 import { dict, name, stream } from '@/pdf/objects';
 
@@ -408,5 +414,79 @@ describe('how a text region names one of its symbols (§6.4.5)', () => {
     expect(symbolCodeLength(256)).toBe(8);
     // A region with no symbols reads nothing either.
     expect(symbolCodeLength(0)).toBe(0);
+  });
+});
+
+describe('the standard Huffman tables (§B.5)', () => {
+  const line = (n: number, low: number): { prefix: string; rangeLen: number } | undefined =>
+    standardTableCodes(n).find((l) => l.rangeLow === low && l.kind !== 'lower');
+
+  it('writes every line of B.7 with the prefix the spec prints for it', () => {
+    // A text region reads its first S through B.7. Transcribed with four of
+    // its lines missing, every value past 31 decoded as another, and
+    // bitmap-symbol-symhuffB5B3-texthuffB7B9B12.pdf set its shapes all over
+    // the sheet.
+    expect(line(7, -512)).toEqual({ prefix: '000', rangeLen: 8, rangeLow: -512 });
+    expect(line(7, 0)).toMatchObject({ prefix: '1011', rangeLen: 5 });
+    expect(line(7, 32)).toMatchObject({ prefix: '11100', rangeLen: 5 });
+    expect(line(7, 64)).toMatchObject({ prefix: '11101', rangeLen: 6 });
+    expect(line(7, 128)).toMatchObject({ prefix: '1100', rangeLen: 7 });
+    expect(line(7, 256)).toMatchObject({ prefix: '001', rangeLen: 8 });
+    expect(line(7, 1024)).toMatchObject({ prefix: '011', rangeLen: 10 });
+    expect(line(7, 2048)).toMatchObject({ prefix: '11111', rangeLen: 32 });
+  });
+
+  it('writes the long lines of B.10 in six bits', () => {
+    expect(line(10, 134)).toMatchObject({ prefix: '111000', rangeLen: 6 });
+    expect(line(10, 1094)).toMatchObject({ prefix: '111100', rangeLen: 10 });
+    expect(line(10, 2118)).toMatchObject({ prefix: '1111101', rangeLen: 11 });
+  });
+
+  it('leaves no string of bits unread in any of the fifteen', () => {
+    // A prefix code the tables fill completely: its lengths sum to exactly one
+    // by Kraft. A line missing or a length wrong leaves a hole, which is how
+    // both of the broken tables above could have been found.
+    for (let n = 1; n <= 15; n++) {
+      const sum = standardTableCodes(n).reduce((s, l) => s + 2 ** -l.prefix.length, 0);
+      expect(sum, `B.${String(n)}`).toBe(1);
+    }
+  });
+});
+
+describe('the statistics a symbol dictionary starts from (§7.4.3.2)', () => {
+  const left = (state: number): BitmapContexts => {
+    const generic = newContexts(1 << 16);
+    const refine = newContexts(1 << 13);
+    generic.i[0] = state;
+    refine.i[0] = state;
+    return { generic, refine };
+  };
+
+  it('starts from nothing unless its flags say it uses the context', () => {
+    const kept = new Map([[1, left(7)]]);
+    expect(startingContexts(false, [1], kept).generic.i[0]).toBe(0);
+  });
+
+  it('starts from what the LAST dictionary it names was left with', () => {
+    // bitmap-symbol-context-reuse.pdf's last dictionary names the three before
+    // it, and it is the third's statistics its bitmaps were coded against.
+    const kept = new Map([
+      [1, left(7)],
+      [3, left(9)],
+    ]);
+    expect(startingContexts(true, [1, 2, 3], kept).generic.i[0]).toBe(9);
+    expect(startingContexts(true, [1, 2, 3], kept).refine.i[0]).toBe(9);
+    // A dictionary that kept nothing is passed over for one that did.
+    expect(startingContexts(true, [3, 2], kept).generic.i[0]).toBe(9);
+    expect(startingContexts(true, [2], kept).generic.i[0]).toBe(0);
+  });
+
+  it('starts from a copy, which the next to start there does not see', () => {
+    // Two dictionaries start from the first one's statistics; the first of
+    // them does not keep its own, and the second must not begin where it ended.
+    const kept = new Map([[1, left(7)]]);
+    const first = startingContexts(true, [1], kept);
+    first.generic.i[0] = 30;
+    expect(startingContexts(true, [1], kept).generic.i[0]).toBe(7);
   });
 });

@@ -315,6 +315,29 @@ export class Lexer {
   }
 
   /**
+   * Where `word` next stands as a keyword of its own — whitespace (or the
+   * start) before it, whitespace, a delimiter or the end after it — rather
+   * than as two bytes inside something else.
+   *
+   * @param word The keyword.
+   * @param from Where to start looking.
+   * @returns Its offset, or −1 where it does not stand anywhere after `from`.
+   */
+  indexOfKeyword(word: string, from: number): number {
+    for (let at = this.indexOfAscii(word, from); at >= 0; at = this.indexOfAscii(word, at + 1)) {
+      const before = this.byteAt(at - 1);
+      const after = this.byteAt(at + word.length);
+      if (
+        (at === from || before < 0 || isWhitespace(before)) &&
+        (after < 0 || isWhitespace(after) || isDelimiter(after))
+      ) {
+        return at;
+      }
+    }
+    return -1;
+  }
+
+  /**
    * §7.3.8.1 — read a stream's raw bytes. `pos` must sit right after the `stream`
    * keyword. The keyword is followed by CRLF (or a lone LF); the data then runs
    * for `length` bytes, or — when the length is unknown — up to `endstream`.

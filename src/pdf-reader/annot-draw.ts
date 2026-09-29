@@ -17,7 +17,8 @@
 
 import type { PdfDict, PdfValue } from '@/pdf/objects';
 import type { PdfFile } from './document';
-import { PDF_NULL, PdfName, PdfStream } from '@/pdf/objects';
+import { analyzeString, hasBidiCharacters, reorderVisual } from '@/core/bidi';
+import { PDF_NULL, PdfHexString, PdfName, PdfStream } from '@/pdf/objects';
 
 /** The circle constant: how far a Bézier handle reaches to round a quarter. */
 const KAPPA = 0.5523;
@@ -51,6 +52,9 @@ export function drawnAppearance(file: PdfFile, annot: PdfDict): PdfStream | unde
   // value, and the value is the form's content. 160F-2019.pdf files seven of
   // them and every one was lost.
   if (subtype.value === 'Widget') return typedValue(file, annot) ?? checkedBox(file, annot);
+  // §12.5.6.6 — a free-text annotation IS its text, and one with no appearance
+  // is drawn from its `/Contents` in the face its `/DA` names.
+  if (subtype.value === 'FreeText') return freeText(file, annot);
   // §12.5.6.10 — a text markup normally goes ON the words it covers, and is
   // skipped here for that reason (see `textMarkupOf`). Where it marks NO words
   // — the page has none, or none under its quads — the annotation is the only
@@ -238,6 +242,12 @@ const SQUIGGLE_AMP_EM = 0.07;
  */
 export function drawnResources(file: PdfFile, annot: PdfDict): PdfDict | undefined {
   const subtype = file.get(annot, 'Subtype');
+  if (subtype instanceof PdfName && subtype.value === 'FreeText') {
+    const text = freeTextContents(file, annot);
+    return text === undefined
+      ? undefined
+      : new Map([['Font', new Map([[FREE_TEXT_FONT, spelledFace(text)]])]]);
+  }
   if (!(subtype instanceof PdfName) || subtype.value !== 'Widget') return undefined;
   const acro = file.get(file.catalog, 'AcroForm');
   if (!(acro instanceof Map)) return undefined;
@@ -288,6 +298,114 @@ function typedValue(file: PdfFile, annot: PdfDict): PdfStream | undefined {
   });
   ops.push('ET', 'Q');
   return new PdfStream(new Map(), new TextEncoder().encode(ops.join('\n')));
+}
+
+/**
+ * §12.5.6.6 — a free-text annotation with no appearance: its contents, a line
+ * to each line break, from the top of its `/Rect` in the size and colour its
+ * `/DA` asks. Left undrawn the words were simply gone: bug1865341.pdf's one
+ * note, "Załącznik", and nothing else on the page.
+ */
+function freeText(file: PdfFile, annot: PdfDict): PdfStream | undefined {
+  const text = freeTextContents(file, annot);
+  const rect = rectangle(file.get(annot, 'Rect'));
+  if (text === undefined || !rect) return undefined;
+  const da = defaultAppearance(file, annot);
+  const box = inset(rect, 2);
+  const size = da.size > 0 ? da.size : 12;
+  const codes = codesOf(text);
+  const ops: Array<string> = ['q', 'BT', `/${FREE_TEXT_FONT} ${num(size)} Tf`, `${da.color} rg`];
+  text.split(/\r\n|[\r\n]/u).forEach((line, i) => {
+    const y = box[3] - size * (0.8 + i * 1.16);
+    // A page paints its glyphs in the order they stand on the line, which for
+    // a right-to-left script is not the order they are read in — and the
+    // reader turns painted order back into reading order. Painted in reading
+    // order, freetext_no_appearance.pdf's Arabic came back with half its
+    // words back to front.
+    const hex = visualOrder(line)
+      .map((ch) => (codes.get(ch) ?? 0).toString(16).padStart(2, '0'))
+      .join('');
+    ops.push(`1 0 0 1 ${num(box[0])} ${num(y)} Tm`, `<${hex}> Tj`);
+  });
+  ops.push('ET', 'Q');
+  return new PdfStream(new Map(), new TextEncoder().encode(ops.join('\n')));
+}
+
+/** UAX #9 — a line's characters in the order they stand on the page, left to right. */
+function visualOrder(line: string): Array<string> {
+  const chars = [...line];
+  if (!hasBidiCharacters(line)) return chars;
+  const { levels } = analyzeString(line);
+  return reorderVisual(levels).map((i) => chars[i] ?? '');
+}
+
+/** The resource name the face of a drawn free-text annotation goes by. */
+const FREE_TEXT_FONT = 'FreeText';
+
+/** §7.9.2.2 — an annotation's `/Contents`, decoded as the text string it is. */
+function freeTextContents(file: PdfFile, annot: PdfDict): string | undefined {
+  const found = file.get(annot, 'Contents');
+  // Written literal or in hex, the string is the same bytes.
+  const raw =
+    found instanceof PdfHexString
+      ? String.fromCharCode(...found.bytes)
+      : typeof found === 'string'
+        ? found
+        : undefined;
+  if (raw === undefined) return undefined;
+  const text = textString(raw).replace(/\s+$/u, '');
+  return text.length > 0 ? text : undefined;
+}
+
+/**
+ * §7.9.2.2 — a text string's characters: UTF-16BE behind its byte-order mark,
+ * UTF-8 behind its own, and otherwise one byte to a character.
+ */
+function textString(raw: string): string {
+  if (raw.startsWith('\u00fe\u00ff')) {
+    let out = '';
+    for (let i = 2; i + 1 < raw.length; i += 2) {
+      out += String.fromCharCode((raw.charCodeAt(i) << 8) | raw.charCodeAt(i + 1));
+    }
+    return out;
+  }
+  if (raw.startsWith('\u00ef\u00bb\u00bf')) {
+    return new TextDecoder('utf-8').decode(
+      Uint8Array.from([...raw.slice(3)].map((c) => c.charCodeAt(0))),
+    );
+  }
+  return raw;
+}
+
+/**
+ * A code for each character a text shows, in the order it first shows them —
+ * so a simple face can set a text no standard encoding covers.
+ */
+function codesOf(text: string): Map<string, number> {
+  const codes = new Map<string, number>();
+  for (const ch of text.replace(/[\r\n]/gu, '')) {
+    if (!codes.has(ch) && codes.size < 255) codes.set(ch, codes.size + 1);
+  }
+  return codes;
+}
+
+/**
+ * The Helvetica a drawn free-text annotation is set in, its encoding spelling
+ * each code's character out as a glyph name (`uni0142` for ł) — which is how
+ * the text reads back as what it is.
+ */
+function spelledFace(text: string): PdfDict {
+  const differences: Array<PdfValue> = [1];
+  for (const ch of codesOf(text).keys()) {
+    const cp = ch.codePointAt(0) ?? 0x20;
+    differences.push(new PdfName(`uni${cp.toString(16).toUpperCase().padStart(4, '0')}`));
+  }
+  return new Map<string, PdfValue>([
+    ['Type', new PdfName('Font')],
+    ['Subtype', new PdfName('Type1')],
+    ['BaseFont', new PdfName('Helvetica')],
+    ['Encoding', new Map<string, PdfValue>([['Differences', differences]])],
+  ]);
 }
 
 /** §12.7.4.3 — the field is a multi-line text box (bit 13 of `/Ff`). */

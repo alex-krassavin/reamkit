@@ -134,7 +134,10 @@ const SAME_HEIGHT_PT = 0.5;
 function joinRules(
   vectors: ReadonlyArray<PdfVector>,
 ): Array<{ rule: PdfVector; parts: Array<PdfVector> }> {
-  const rules = vectors.filter((v) => isRule(v));
+  // §9.6.6 — a traced GLYPH is type, whatever it looks like: an invoice's
+  // hyphen is a flat bar across the middle of its own place in the line, and
+  // read as a rule it struck itself through.
+  const rules = vectors.filter((v) => v.glyph !== true && isRule(v));
   const byRow = new Map<string, Array<PdfVector>>();
   for (const v of rules) {
     const mid = (v.minY + v.maxY) / 2;
