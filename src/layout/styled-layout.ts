@@ -170,15 +170,130 @@ function parsePdfAProfile(pdfA: PdfALevel): PdfAProfile {
 }
 
 /**
- * E-PARITY: renderer-compatibility profile for the line-height model.
- *   `'ream'` (default) — Ream's flat 1.2× leading; byte-identical to before.
- *   `'word'` — leading from the font's OS/2 usWin metrics (the GDI cell box).
- *   `'libreoffice'` — leading from hhea (or OS/2 typo when USE_TYPO_METRICS is set).
+ * E-PARITY: renderer-compatibility profile — how lines are measured, broken
+ * and stacked.
+ *   `'ream'` (default) — kerned measuring, Knuth-Plass breaking, and the line
+ *     height the document asks for (see {@link LineHeights}).
+ *   `'word'` — kern-free measuring, first-fit breaking, and lines as Word sets
+ *     them whatever the document.
+ *   `'libreoffice'` — first-fit breaking, lines from the face in hand: hhea, or
+ *     the OS/2 typo line when USE_TYPO_METRICS is set.
  *
- * Opt-in: a profile emulates that renderer's vertical rhythm for closer visual
- * parity. It never changes default (`'ream'`) output.
+ * Opt-in: a profile emulates that renderer for closer visual parity.
  */
 export type LayoutProfile = 'ream' | 'word' | 'libreoffice';
+
+/**
+ * §17.3.1.33 — how tall a line stands at single spacing: `'word'`, as Word
+ * sets it — the line of the faces on it (see `fontLeadingPt`) — rather than
+ * Ream's flat 1.2× of the size. A Word document's reader asks for it (see
+ * `FlowDoc.lineHeights`).
+ */
+export type LineHeights = 'word';
+
+/** The line model a layout runs with: the profile's own, else the document's. */
+type Leading = 'flat' | 'word' | 'libreoffice';
+
+function leadingOf(options: StyledRenderOptions): Leading {
+  const profile = options.layoutProfile ?? 'ream';
+  if (profile !== 'ream') return profile;
+  return options.lineHeights === 'word' ? 'word' : 'flat';
+}
+
+/** What a paragraph's lines are reckoned from. */
+interface LineLeading {
+  readonly model: Leading;
+  /**
+   * §17.3.1.33 — the single line of the paragraph mark's font: what a spacing
+   * of more lines adds, per line, to a line that holds no text. 0 under the
+   * flat model, which never asks.
+   */
+  readonly markLinePt: number;
+}
+
+const FLAT_LEADING: LineLeading = { model: 'flat', markLinePt: 0 };
+
+/**
+ * The single line Word sets a family at, in 2048ths of the size: the ascent,
+ * the gap it adds above it, and the descent. It is the face's `hhea` line (the
+ * `OS/2` typo line where the face sets USE_TYPO_METRICS), not the `usWin` cell
+ * — Book Antiqua stands 1.206 of its size in Word, its cell is 1.243. Measured
+ * in Word for Mac on the families marked `*`; the rest read by the same rule
+ * from the faces Office ships. The layout draws most of them with a twin or a
+ * fallback whose own line differs (Caladea stands 1.15 of its size, Cambria
+ * 1.172), so a run's height comes from here, by the family it names, and the
+ * face in hand answers only for a family not listed.
+ */
+const WORD_LINE_METRICS: ReadonlyMap<string, readonly [number, number, number]> = (() => {
+  const arial = [1854, 67, 434] as const;
+  const times = [1825, 87, 443] as const;
+  const courier = [1705, 0, 615] as const;
+  const aptos = [1923, 0, 577] as const;
+  const franklin = [1877, 0, 445] as const;
+  const century = [2019, 0, 443] as const;
+  const lucida = [1980, 0, 432] as const;
+  return new Map<string, readonly [number, number, number]>([
+    ['calibri', [1950, 0, 550]], // *
+    ['calibri light', [1950, 0, 550]], // *
+    ['carlito', [1950, 0, 550]],
+    ['cambria', [1946, 0, 455]], // *
+    ['arial', arial], // *
+    ['helvetica', arial],
+    ['liberation sans', arial],
+    ['arimo', arial],
+    ['arial narrow', [1916, 0, 434]], // *
+    ['arial black', [2254, 0, 634]],
+    ['times new roman', times], // *
+    ['times', times],
+    ['liberation serif', times],
+    ['tinos', times],
+    ['courier new', courier], // *
+    ['courier', courier],
+    ['liberation mono', courier],
+    ['cousine', courier],
+    ['aptos', aptos], // *
+    ['aptos narrow', aptos],
+    ['aptos light', aptos],
+    ['aptos semibold', aptos],
+    ['aptos extrabold', aptos],
+    ['aptos black', aptos],
+    ['georgia', [1878, 0, 449]], // *
+    ['verdana', [2059, 0, 430]], // *
+    ['tahoma', [2049, 0, 423]], // *
+    ['trebuchet ms', [1923, 0, 455]], // *
+    ['candara', [1484, 452, 564]], // *
+    ['consolas', [1521, 350, 527]], // *
+    ['constantia', [1538, 452, 510]],
+    ['corbel', [1523, 425, 525]],
+    ['century gothic', [2060, 0, 451]], // *
+    ['century', century],
+    ['century schoolbook', century],
+    ['garamond', [1765, 0, 539]], // *
+    ['book antiqua', [1891, 0, 578]], // *
+    ['palatino linotype', [2150, 0, 613]],
+    ['bookman old style', [1929, 0, 475]], // *
+    ['rockwell', [1937, 0, 468]], // *
+    ['franklin gothic book', franklin],
+    ['franklin gothic medium', franklin],
+    ['franklin gothic demi', franklin],
+    ['gill sans mt', [1903, 0, 472]],
+    ['tw cen mt', [1753, 0, 477]],
+    ['lucida sans unicode', [2246, 0, 901]], // *
+    ['lucida sans', lucida],
+    ['lucida bright', lucida],
+    ['lucida console', [1616, 0, 432]],
+    ['comic sans ms', [2257, 0, 597]],
+    ['impact', [2066, 0, 432]],
+    ['goudy old style', [1832, 140, 486]],
+    ['calisto mt', [1894, 0, 470]],
+    ['perpetua', [1679, 0, 668]],
+    ['symbol', [2059, 0, 450]], // *
+    ['wingdings', [1841, 0, 432]],
+    ['wingdings 2', [1727, 0, 432]],
+    ['wingdings 3', [1900, 0, 432]],
+    ['webdings', [1638, 0, 410]],
+  ]);
+})();
 
 /**
  * The full option set the layout engine and PDF emitter consume: the resolved
@@ -193,6 +308,8 @@ export interface StyledRenderOptions {
   readonly registry: FontRegistry;
   /** Renderer-compatibility profile for the line-height model (default `'ream'`). */
   readonly layoutProfile?: LayoutProfile;
+  /** §17.3.1.33 — lines as tall as their fonts make them, as Word sets them (see {@link LineHeights}). */
+  readonly lineHeights?: LineHeights;
   /**
    * Per-run font resolution: when supplied, each text run picks the registry of
    * its declared family (sans→arimo / serif→tinos / mono→cousine via the run's
@@ -2464,7 +2581,7 @@ function layoutBodyElement(
           maxHeight,
           box,
         )
-      : layoutImageBlock(el.image, imageResources, contentWidth, maxHeight, box, options.styles);
+      : layoutImageBlock(el.image, imageResources, contentWidth, maxHeight, box, options);
   }
   if (el.kind === 'chart') {
     return layoutChartBlock(
@@ -2495,18 +2612,22 @@ function layoutBodyElement(
  * 100pt picture's next paragraph stands 100, 102.5 and 113 points down at
  * single, 1.15 and double spacing of an 11pt mark.
  *
- * @param pp     The paragraph the picture stands on, resolved.
- * @param styles The sheet its mark's font size resolves against.
+ * @param pp      The paragraph the picture stands on, resolved.
+ * @param options The render options its mark's font resolves against; absent
+ *                for a picture out of the flow.
  * @returns The extra points, 0 where the spacing is not a multiple above one.
  */
-function pictureLineExtra(pp: ParagraphProperties, styles: StyleSheet | undefined): number {
+function pictureLineExtra(
+  pp: ParagraphProperties,
+  options: StyledRenderOptions | undefined,
+): number {
+  if (!options) return 0;
   if (pp.spacingLine === undefined || (pp.spacingLineRule ?? 'auto') !== 'auto') return 0;
   const multiple = Math.round(pp.spacingLine * 20) / 240;
   if (multiple <= 1) return 0;
-  const markSizePt = styles
-    ? resolveRunProperties({}, pp, styles).fontSizePt
-    : DEFAULT_RESOLVED_RUN.fontSizePt;
-  return (multiple - 1) * markSizePt * 1.2;
+  const model = leadingOf(options);
+  if (model !== 'flat') return (multiple - 1) * paragraphLeading(pp, options).markLinePt;
+  return (multiple - 1) * resolveRunProperties({}, pp, options.styles).fontSizePt * 1.2;
 }
 
 function layoutImageBlock(
@@ -2515,9 +2636,9 @@ function layoutImageBlock(
   contentWidth: number,
   maxHeight?: number,
   box?: RelativeBox,
-  // The sheet the paragraph under the picture resolves against, for what its
+  // The options the paragraph under the picture resolves against, for what its
   // line spacing adds (see pictureLineExtra); absent for a picture out of the flow.
-  styles?: StyleSheet,
+  options?: StyledRenderOptions,
 ): ImageBlockLaidOut {
   let widthPt: number = relativeWidth(image.relativeSize, contentWidth, box) ?? image.width;
   let heightPt: number =
@@ -2583,7 +2704,7 @@ function layoutImageBlock(
     spacingBeforePt: image.paragraphProperties.spacingBefore ?? 0,
     spacingAfterPt:
       (image.paragraphProperties.spacingAfter ?? 0) +
-      (image.float ? 0 : pictureLineExtra(image.paragraphProperties, styles)),
+      (image.float ? 0 : pictureLineExtra(image.paragraphProperties, options)),
     ...(image.altText ? { altText: image.altText } : {}),
     ...(image.float ? { float: image.float } : {}),
   };
@@ -3046,8 +3167,7 @@ function layoutMetafileBlock(
     layout,
     resolvedAlignment: pp.alignment ?? 'left',
     spacingBeforePt: pp.spacingBefore ?? 0,
-    spacingAfterPt:
-      (pp.spacingAfter ?? 0) + (image.float ? 0 : pictureLineExtra(pp, options.styles)),
+    spacingAfterPt: (pp.spacingAfter ?? 0) + (image.float ? 0 : pictureLineExtra(pp, options)),
     figureRole: 'Image',
     ...(image.altText ? { altText: image.altText } : {}),
     ...(image.float ? { float: image.float } : {}),
@@ -5266,7 +5386,6 @@ function emptyLine(
   options: StyledRenderOptions,
   resolved: ResolvedParagraphProperties,
   availableWidthPt: number,
-  fontResources: ReadonlyMap<string, FontResource>,
 ): Line {
   const mark = resolveRunProperties(
     paragraph.properties.runProperties ?? {},
@@ -5274,11 +5393,8 @@ function emptyLine(
     options.styles,
   );
   const fontSizePt = mark.fontSizePt;
-  const profile = options.layoutProfile ?? 'ream';
-  const { variant } = options.registry.resolveByStyle(mark.bold, mark.italic);
-  const parsed = fontResources.get(variant)?.parsed;
-  const metric =
-    profile !== 'ream' && parsed ? fontLeadingPt(parsed, fontSizePt, profile) : undefined;
+  const model = leadingOf(options);
+  const metric = model === 'flat' ? undefined : markLine(paragraph.properties, options, model);
   return {
     tokens: [],
     contentWidthPt: 0,
@@ -5291,9 +5407,39 @@ function emptyLine(
       ? {
           metricHeightPt: metric.ascentPt + metric.descentPt + metric.lineGapPt,
           metricDescentPt: metric.descentPt,
+          metricTextHeightPt: metric.ascentPt + metric.descentPt + metric.lineGapPt,
         }
       : {}),
   };
+}
+
+/**
+ * The single line of a paragraph mark's font (§17.3.1.29 `w:rPr` on the
+ * `w:pPr`) under a model that reads faces: what an empty paragraph stands, and
+ * what a spacing of more lines adds to a line with no text on it.
+ *
+ * @param pp      The paragraph's properties.
+ * @param options Render options (styles, fonts).
+ * @param model   The line model.
+ * @returns Its ascent, descent and gap, in points.
+ */
+function markLine(
+  pp: ParagraphProperties,
+  options: StyledRenderOptions,
+  model: Leading,
+): { ascentPt: number; descentPt: number; lineGapPt: number } {
+  const mark = resolveRunProperties(pp.runProperties ?? {}, pp, options.styles);
+  const family = mark.fontFamily.ascii;
+  const { parsed } = runFontKeyAndParsed(options, family, mark.bold, mark.italic);
+  return fontLeadingPt(parsed, mark.fontSizePt, model, family);
+}
+
+/** What a paragraph's lines are reckoned from, under the layout's model. */
+function paragraphLeading(pp: ParagraphProperties, options: StyledRenderOptions): LineLeading {
+  const model = leadingOf(options);
+  if (model === 'flat') return FLAT_LEADING;
+  const m = markLine(pp, options, model);
+  return { model, markLinePt: m.ascentPt + m.descentPt + m.lineGapPt };
 }
 
 function layoutParagraphBlock(
@@ -5359,6 +5505,7 @@ function layoutParagraphBlock(
   );
   const firstLineWidth = paragraphMaxWidth(resolved, contentWidth, true);
   const otherWidth = paragraphMaxWidth(resolved, contentWidth, false);
+  const leading = paragraphLeading(paragraph.properties, options);
   const runWrap = (
     part: ReadonlyArray<Token>,
     firstWidth: number,
@@ -5371,6 +5518,7 @@ function layoutParagraphBlock(
       resolved,
       options.hyphenator,
       options.layoutProfile ?? 'ream',
+      leading,
       options.doNotExpandShiftReturn === true,
       widths,
     );
@@ -5406,7 +5554,7 @@ function layoutParagraphBlock(
   const lines =
     wrapped.length > 0
       ? wrapped
-      : [emptyLine(paragraph, options, resolved, Math.max(firstLineWidth, 0), fontResources)];
+      : [emptyLine(paragraph, options, resolved, Math.max(firstLineWidth, 0))];
 
   let heightPt = 0;
   for (const line of lines) heightPt += computeLineHeight(line, resolved);
@@ -6457,7 +6605,7 @@ function lineFromRange(
   availableWidthPt: number,
   isFirst: boolean,
   resolved: ResolvedParagraphProperties,
-  profile: LayoutProfile,
+  leading: LineLeading,
   allowEmpty = false,
 ): Line | null {
   let st = start;
@@ -6525,12 +6673,20 @@ function lineFromRange(
   let maxSize = 0;
   let mathAscent = 0;
   let mathDescent = 0;
-  // E-PARITY: under a non-default profile, derive the line's natural height and
-  // descent from the max of its text-token fonts' vertical metrics.
-  const useMetric = profile !== 'ream';
-  let metricAscent = 0;
-  let metricDescent = 0;
-  let metricLineGap = 0;
+  // §17.3.1.33 — where the model reads the faces, the line stands as tall as
+  // the tallest ascent on it (with the gap its face sets above the text) and
+  // the deepest descent, each taken on its own: Word sets 11pt Verdana beside
+  // Courier New 14.36pt apart, Verdana's ascent over Courier's descent.
+  const useMetric = leading.model !== 'flat';
+  let textAscent = 0;
+  let textDescent = 0;
+  // A list marker adds its ascent and nothing below: Word stands a 20pt
+  // Courier New bullet over 11pt Calibri 19.59pt apart, the bullet's ascent
+  // over the text's descent.
+  let markerAscent = 0;
+  let markerDescent = 0;
+  // A picture stands on the baseline and reaches as high as it is.
+  let pictureHeight = 0;
   // §17.3.1.33 — a line stands as tall as what PRINTS on it. Word measures the
   // spaces of a line at the size of its text, not their own: tdf117988.docx
   // says so in its own words — "The height of 72pt spaces is ignored?" — and
@@ -6547,13 +6703,29 @@ function lineFromRange(
       mathAscent = Math.max(mathAscent, t.ascentPt);
       mathDescent = Math.max(mathDescent, t.descentPt);
     } else if (useMetric && t.kind === 'text') {
-      const m = fontLeadingPt(t.font.parsed, t.fontSizePt, profile);
-      if (m.ascentPt > metricAscent) metricAscent = m.ascentPt;
-      if (m.descentPt > metricDescent) metricDescent = m.descentPt;
-      if (m.lineGapPt > metricLineGap) metricLineGap = m.lineGapPt;
+      const m = fontLeadingPt(t.font.parsed, t.fontSizePt, leading.model, wordFamilyOf(t));
+      const above = m.ascentPt + m.lineGapPt;
+      if (t.listMarker === true) {
+        markerAscent = Math.max(markerAscent, above);
+        markerDescent = Math.max(markerDescent, m.descentPt);
+      } else {
+        textAscent = Math.max(textAscent, above);
+        textDescent = Math.max(textDescent, m.descentPt);
+      }
+    } else if (useMetric && t.kind === 'image') {
+      pictureHeight = Math.max(pictureHeight, t.heightPt);
     }
   }
-  const hasMetric = useMetric && metricAscent + metricDescent > 0;
+  // A line of nothing but a marker is measured by it whole.
+  const hasText = textAscent + textDescent > 0;
+  const ascent = Math.max(textAscent, markerAscent);
+  const descent = hasText ? textDescent : markerDescent;
+  // …and one of nothing but a picture is exactly as tall as the picture: Word
+  // stands a 30pt picture alone on its line 29.97pt from the next, with no
+  // descent under it. What a spacing of more lines adds to it is the
+  // paragraph mark's.
+  const hasMetric = useMetric && ascent + descent + pictureHeight > 0;
+  const textLine = ascent + descent > 0 ? ascent + descent : leading.markLinePt;
   return {
     tokens: lineTokens,
     contentWidthPt: contentWidth,
@@ -6566,8 +6738,9 @@ function lineFromRange(
     mathDescentPt: mathDescent,
     ...(hasMetric
       ? {
-          metricHeightPt: metricAscent + metricDescent + metricLineGap,
-          metricDescentPt: metricDescent,
+          metricHeightPt: Math.max(ascent, pictureHeight) + descent,
+          metricDescentPt: descent,
+          metricTextHeightPt: textLine,
         }
       : {}),
   };
@@ -6601,6 +6774,7 @@ function wrap(
   resolved: ResolvedParagraphProperties,
   hyphenator: Hyphenator | undefined,
   profile: LayoutProfile,
+  leading: LineLeading,
   // §17.15.1.35: leave a line that ends at a soft break unstretched.
   noExpandShiftReturn: boolean,
   // Float text wrapping: explicit per-line widths (the last reuses for the
@@ -6641,7 +6815,7 @@ function wrap(
         width,
         isFirst,
         resolved,
-        profile,
+        leading,
         i < at.length - 1,
       );
       // §17.15.1.35 — the compat flag fdo106029.docx sets: a line the author
@@ -6684,21 +6858,61 @@ function wrap(
   return lines;
 }
 
-// E-PARITY: a font's natural ascent/descent/line-gap (Pt) at the given size for
-// the renderer-compat profile. 'word' uses the OS/2 win metrics (the GDI cell
-// box, no external leading); 'libreoffice' uses hhea, or the OS/2 typo triple
-// when the font requests USE_TYPO_METRICS. descender/typoDescent are stored
-// negative, so the descent magnitude negates them.
+/**
+ * §17.3.2.26 — the family Word sets a token's characters in: East Asian text
+ * in the run's `eastAsia` font, complex-script text (and a `w:rtl` run) in its
+ * `cs` one, the rest in `ascii` — `hAnsi` above ASCII. The layout draws a run
+ * with its ascii face and hands what that face lacks to another, so the name
+ * the run gives for THESE characters is the one Word's line is looked up by:
+ * a Chinese sentence in a Calibri run does not stand on Calibri's line.
+ *
+ * @param t The text token.
+ * @returns The family's name, when the run gives one for that slot.
+ */
+function wordFamilyOf(t: TextToken): string | undefined {
+  const fonts = t.resolvedRun.fontFamily;
+  if (t.resolvedRun.rtl) return fonts.cs;
+  let high = false;
+  for (const ch of t.text) {
+    const cp = ch.codePointAt(0) ?? 0;
+    if (cp <= 0x7f) continue;
+    high = true;
+    const script = scriptForCodepoint(cp);
+    if (script === 'hebrew' || script === 'arabic' || script === 'thai') return fonts.cs;
+    if (script === 'kr' || script === 'jp' || script === 'sc') return fonts.eastAsia;
+  }
+  return high ? (fonts.hAnsi ?? fonts.ascii) : fonts.ascii;
+}
+
+/**
+ * A face's single line at a size: its ascent, its descent, and the gap set
+ * above the text. Under `'word'` a family Word's own line is known for (see
+ * {@link WORD_LINE_METRICS}) takes that; otherwise the face in hand gives its
+ * hhea line, or the OS/2 typo one when it sets USE_TYPO_METRICS.
+ *
+ * @param parsed The face the run is drawn with.
+ * @param sizePt The run's size.
+ * @param model  The line model (never `'flat'`, which asks no face).
+ * @param family The family the run names, when it names one.
+ * @returns The three, in points; the descent as a magnitude.
+ */
 function fontLeadingPt(
   parsed: ParsedTtf,
   sizePt: number,
-  profile: LayoutProfile,
+  model: Leading,
+  family?: string,
 ): { ascentPt: number; descentPt: number; lineGapPt: number } {
+  const known =
+    model === 'word' && family !== undefined
+      ? WORD_LINE_METRICS.get(family.trim().toLowerCase())
+      : undefined;
+  if (known) {
+    const k = sizePt / 2048;
+    return { ascentPt: known[0] * k, lineGapPt: known[1] * k, descentPt: known[2] * k };
+  }
   const s = sizePt / parsed.unitsPerEm;
   const vm = parsed.vmetrics;
-  if (profile === 'word') {
-    return { ascentPt: vm.winAscent * s, descentPt: vm.winDescent * s, lineGapPt: 0 };
-  }
+  // descender/typoDescent are stored negative.
   const asc = vm.useTypoMetrics ? vm.typoAscent : parsed.ascender;
   const desc = vm.useTypoMetrics ? vm.typoDescent : parsed.descender;
   const gap = vm.useTypoMetrics ? vm.typoLineGap : parsed.lineGap;
@@ -6718,8 +6932,8 @@ function computeLineHeight(line: Line, p: ResolvedParagraphProperties): number {
 
 function naturalLineHeight(line: Line, p: ResolvedParagraphProperties): number {
   const fontSize = line.maxFontSizePt || 12;
-  // Natural single-line height: a font-metric value under a layoutProfile
-  // (E-PARITY), else Ream's flat 1.2×. The spacing rules below scale it.
+  // Natural single-line height: the faces' own line where the model reads
+  // them, else Ream's flat 1.2×. The spacing rules below scale it.
   const natural = line.metricHeightPt ?? fontSize * 1.2;
   // A math box straddles the baseline; the line must be at least tall enough to
   // hold its full ascent+descent (plus a little leading).
@@ -6739,7 +6953,14 @@ function naturalLineHeight(line: Line, p: ResolvedParagraphProperties): number {
   // (twips*(1/20))/12 differs from twips/240 in the last ulp.
   const lineTwips = Math.round(p.spacingLine * 20);
   const multiple = lineTwips > 0 ? lineTwips / 240 : 1;
-  return Math.max(natural * multiple, mathNeed);
+  // A face-metric line grows by lines of its TEXT: in Word a 30pt picture
+  // among 11pt Calibri stands 32.99pt at single spacing, 35.00 at 1.15 and
+  // 46.38 at double — 2.01 and 13.4 more, the text's line, not the picture's.
+  const scaled =
+    line.metricTextHeightPt === undefined
+      ? natural * multiple
+      : natural + (multiple - 1) * line.metricTextHeightPt;
+  return Math.max(scaled, mathNeed);
 }
 
 function lineDescent(line: Line): number {

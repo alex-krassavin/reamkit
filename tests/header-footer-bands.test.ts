@@ -106,7 +106,8 @@ describe('a picture on a paragraph of its own (§17.3.1.33)', () => {
       {
         images: { rId20: { contentType: 'image/png', bytes: PNG, extension: 'png' } },
         stylesXml:
-          '<w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val="22"/></w:rPr></w:rPrDefault></w:docDefaults>' +
+          '<w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri"/>' +
+          '<w:sz w:val="22"/></w:rPr></w:rPrDefault></w:docDefaults>' +
           '<w:style w:type="paragraph" w:styleId="Spaced"><w:name w:val="Spaced"/>' +
           '<w:pPr><w:spacing w:after="400"/></w:pPr></w:style>',
       },
@@ -120,10 +121,12 @@ describe('a picture on a paragraph of its own (§17.3.1.33)', () => {
 
   it('gains what a spacing of more lines adds to the mark’s font, not a share of itself', () => {
     // Word for Mac: 100, 102.5 and 113 points at 1, 1.15 and 2 lines of an
-    // 11pt mark — the line of the mark's font, not a picture 15% or twice as tall.
+    // 11pt Calibri mark — the line of the mark's font (13.43pt, see
+    // word-line-heights.test.ts), not a picture 15% or twice as tall.
+    const line = (11 * 2500) / 2048;
     const single = bodyTops(pictureThen(240))[0]!;
-    expect(bodyTops(pictureThen(276))[0]! - single).toBeCloseTo(0.15 * 11 * 1.2, 1);
-    expect(bodyTops(pictureThen(480))[0]! - single).toBeCloseTo(11 * 1.2, 1);
+    expect(bodyTops(pictureThen(276))[0]! - single).toBeCloseTo(0.15 * line, 1);
+    expect(bodyTops(pictureThen(480))[0]! - single).toBeCloseTo(line, 1);
   });
 });
 

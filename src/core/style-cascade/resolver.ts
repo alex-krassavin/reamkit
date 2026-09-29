@@ -378,6 +378,12 @@ function primeParagraphFixpoint(para: ParagraphProperties): void {
   if (!bySheet.has(para)) bySheet.set(para, para as ResolvedParagraphProperties);
 }
 
+// The mark-resolving half of resolveBodyStyles, keyed like paragraphCascadeCache.
+const markCascadeCache = new WeakMap<
+  StyleSheet,
+  WeakMap<ParagraphProperties, ParagraphProperties>
+>();
+
 /**
  * Resolve the style cascade across an entire body so the tree carries final
  * effective run/paragraph properties (FlowDoc transform, ir-design stage 6).
@@ -388,6 +394,30 @@ export function resolveBodyStyles(
   body: ReadonlyArray<BodyElement>,
   sheet: StyleSheet,
 ): ReadonlyArray<BodyElement> {
+  // §17.3.1.29 — the paragraph MARK is a run as well, formatted by the same
+  // cascade, and it is what an empty paragraph stands as tall as and what the
+  // extra lines of a spaced-out picture are lines of. Left as the bare `w:rPr`
+  // the paragraph states, a document that sets 12pt Calibri in its defaults
+  // stood every blank paragraph on Word's empty-document 11pt, in no family.
+  // One result per distinct input, as the paragraph cascade keeps: the grid
+  // mapper shares a properties object across a sheet's cells.
+  let bySheet = markCascadeCache.get(sheet);
+  if (!bySheet) {
+    bySheet = new WeakMap();
+    markCascadeCache.set(sheet, bySheet);
+  }
+  const marks = bySheet;
+  const withResolvedMark = (pp: ParagraphProperties): ParagraphProperties => {
+    const hit = marks.get(pp);
+    if (hit) return hit;
+    const resolved: ParagraphProperties = {
+      ...resolveParagraphProperties(pp, sheet),
+      runProperties: resolveRunProperties(pp.runProperties ?? {}, pp, sheet),
+    };
+    marks.set(pp, resolved);
+    return resolved;
+  };
+
   const visitParagraph = (p: Paragraph): void => {
     // Run resolution sees the RAW paragraph properties (its styleId drives
     // the paragraph-style rPr layer) — so resolve every run first, then
@@ -399,10 +429,7 @@ export function resolveBodyStyles(
         sheet,
       );
     }
-    (p as { properties: ParagraphProperties }).properties = resolveParagraphProperties(
-      p.properties,
-      sheet,
-    );
+    (p as { properties: ParagraphProperties }).properties = withResolvedMark(p.properties);
     primeParagraphFixpoint(p.properties);
     for (const r of p.runs) primeResolvedFixpoint(r.properties, p.properties);
   };
@@ -446,7 +473,7 @@ export function resolveBodyStyles(
     readonly float?: unknown;
   }): void => {
     if (block.float !== undefined) return;
-    block.paragraphProperties = resolveParagraphProperties(block.paragraphProperties, sheet);
+    block.paragraphProperties = withResolvedMark(block.paragraphProperties);
   };
 
   for (const el of body) visit(el);

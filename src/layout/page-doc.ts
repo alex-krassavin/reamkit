@@ -218,12 +218,19 @@ export interface Line {
   readonly mathAscentPt?: number;
   readonly mathDescentPt?: number;
   /**
-   * E-PARITY: metric-derived single-line height and descent (Pt), the max over
-   * the line's text-token fonts under a non-default `layoutProfile`. Absent under
-   * `'ream'`, where leading stays the flat 1.2×/0.2 model (byte-identical).
+   * §17.3.1.33 — the line's single height and descent (Pt) from the faces on
+   * it, pictures included, where the line model reads faces (a Word document,
+   * or a renderer-compat `layoutProfile`). Absent under the flat 1.2×/0.2
+   * model.
    */
   readonly metricHeightPt?: number;
   readonly metricDescentPt?: number;
+  /**
+   * The line of its TEXT alone (the paragraph mark's, on a line with none):
+   * what a spacing of more lines adds per line, where a picture on the line
+   * adds nothing.
+   */
+  readonly metricTextHeightPt?: number;
 }
 
 /** An image bound into a {@link LaidOutDocument}: its resource name plus the decoded/validated bytes. */

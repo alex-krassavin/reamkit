@@ -8,9 +8,9 @@ exports[`byte gate: images and PDF/A emit paths > images.docx (PDF/A-2b: transpa
 
 exports[`byte gate: images and PDF/A emit paths > images.docx (plain: SMask kept) 1`] = `"0a2dd18ab5569b57bf98aecd0ae54eb0bed880fe9ac3df73d440ae309e278121"`;
 
-exports[`byte gate: static fixtures > header-footer.docx 1`] = `"a145426946598ae3ff7f9b33d71a9b85906c3b4e2c22e7e66f7f28de5b197fb9"`;
+exports[`byte gate: static fixtures > header-footer.docx 1`] = `"4ac01c1da22d221691c6f5e827ab13693484365dff63f2a3e7346e6dfe141541"`;
 
-exports[`byte gate: static fixtures > list-basic.docx 1`] = `"c9660e341450bc5da70bc0b6fe72a77d19a61a9ad389f84ea08c3b7ad3e9fef5"`;
+exports[`byte gate: static fixtures > list-basic.docx 1`] = `"b1c2b8b3c05029334a932fadfd513f91ae916807e895166fd8e603b3de776aa4"`;
 
 exports[`byte gate: static fixtures > sheet-basic.xlsx 1`] = `"390f1605e9662f54d0b5b10dc47bb5a241f07de87d2bc2f209f07ec92d947641"`;
 
@@ -24,13 +24,13 @@ exports[`byte gate: static fixtures > sheet-print-titles.xlsx 1`] = `"d20c3502bb
 
 exports[`byte gate: static fixtures > sheet-row-breaks.xlsx 1`] = `"3cdd87abc1f4d034ed470a43b7510a22224c8887047560dac69dcb544c93db60"`;
 
-exports[`byte gate: static fixtures > table-basic.docx 1`] = `"ee19b2990a6babfecbda69431256f11fecfb1632c66d3a6f83f839f22df0b8f5"`;
+exports[`byte gate: static fixtures > table-basic.docx 1`] = `"6f0020b3c6aaa3f02444e1620a65be435d2c7e00a2fdba200f1598abd2f59798"`;
 
-exports[`byte gate: static fixtures > text-basic.docx 1`] = `"0e409ca1265ccc9e822377e23ab7fea1e44a025216bf99dc445b2431f1130b8d"`;
+exports[`byte gate: static fixtures > text-basic.docx 1`] = `"be75390e4614595300e8b6bacfff7ba195d3a38ebcb8bbb90aa484b8f6ac75aa"`;
 
-exports[`byte gate: static fixtures > text-justified.docx 1`] = `"d1253c4a3d8f371636aa3be59aa1a321187262495b765d34edb0597688d485e1"`;
+exports[`byte gate: static fixtures > text-justified.docx 1`] = `"86b6815ee063b80603b1615d3548a2d56ddb06b605a8473fe4afafb754dcbfea"`;
 
-exports[`byte gate: static fixtures > text-styled.docx 1`] = `"2012970e019f1fdeb48fd891085f6006827e9b00ad44073b7124b75b4fed39f4"`;
+exports[`byte gate: static fixtures > text-styled.docx 1`] = `"e2a54735e04e4c44802f22602da051c4c77ba61da923dfa95a4a1a256143cabc"`;
 
 exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: cell-styles 1`] = `"89ae3f6445278484f94fe590b3f3514141f3c54b6fc86b0f24cdf3b58d804a30"`;
 
