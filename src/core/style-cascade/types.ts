@@ -64,6 +64,12 @@ export interface ResolvedRunProperties {
 export interface ResolvedParagraphProperties {
   readonly alignment: Alignment;
   readonly spacingBefore: Pt;
+  /**
+   * §17.3.1.3 `w:beforeAutospacing` — present, and equal to
+   * {@link spacingBefore}, where the space before is the automatic (HTML) one:
+   * Word does not give it to the document's first paragraph.
+   */
+  readonly spacingBeforeAuto?: Pt;
   readonly spacingAfter: Pt;
   readonly spacingLine: Pt;
   readonly spacingLineRule: 'auto' | 'exact' | 'atLeast';

@@ -9345,7 +9345,15 @@ function paginateSections(
         asm.flushPage();
       }
       const columnInUse = asm.colHasContent();
-      asm.cursorY -= asm.openBefore(block.spacingBeforePt, opensSection, ownBreak);
+      // …and HTML's automatic space before is not given to the document's
+      // first paragraph: Word for Mac starts one at 72.00 in modes 14 and 15,
+      // where a stated 24pt starts at 95.45.
+      const opensDocument = opensSection && asm.pages.length === 0 && asm.secIdx === 0;
+      const beforePt =
+        asm.collapseSpacing && opensDocument && block.resolved.spacingBeforeAuto !== undefined
+          ? 0
+          : block.spacingBeforePt;
+      asm.cursorY -= asm.openBefore(beforePt, opensSection, ownBreak);
       // §17.3.1.14/15 — a paragraph that keeps its lines together, or keeps with
       // the start of the next, goes whole to the next column where this one
       // cannot hold what it keeps: a heading is not left at the foot of a page

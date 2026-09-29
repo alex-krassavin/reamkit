@@ -270,6 +270,11 @@ function mergePar(
   const sectionBreak = override.sectionBreak ?? base.sectionBreak;
   const textDirection = override.textDirection ?? base.textDirection;
   const snapToGrid = override.snapToGrid ?? base.snapToGrid;
+  // Whether the space before is the automatic one: the layer that decides it
+  // asked for it.
+  const beforeAuto =
+    override.spacingBeforeAuto ??
+    (override.spacingBefore === undefined ? base.spacingBeforeAuto : undefined);
   return {
     alignment: override.alignment ?? base.alignment,
     // §17.3.1.1/§17.3.1.3 — an autospacing flag at this layer beats the length
@@ -300,6 +305,7 @@ function mergePar(
     ...(sectionBreak !== undefined ? { sectionBreak } : {}),
     ...(textDirection !== undefined ? { textDirection } : {}),
     ...(snapToGrid !== undefined ? { snapToGrid } : {}),
+    ...(beforeAuto !== undefined ? { spacingBeforeAuto: beforeAuto } : {}),
   };
 }
 

@@ -183,8 +183,8 @@ export interface ParseContext {
   readonly openCommentRanges?: Set<string>;
   /**
    * §17.3.1.1/§17.3.1.3 — what `w:beforeAutospacing`/`w:afterAutospacing`
-   * resolve to for THIS document: 14pt when it states no compatibility mode,
-   * and nothing (the default) for every Word 2007-or-later one.
+   * resolve to: HTML's 14pt for a Word document, nothing (the default) where
+   * the caller gives none.
    */
   readonly autoSpacingPt?: number;
 }
