@@ -250,7 +250,7 @@ export function buildContentFont(file: PdfFile, fontDict: PdfDict): ContentFont 
     ...(name !== undefined ? { name } : {}),
     // Map each code to Unicode; an unmapped code in a simple font falls back to
     // its Latin-1 character, a composite font's to nothing (no sensible guess).
-    decode: (codes) => codes.map((c) => readable(decodeOne(c))).join(''),
+    decode: (codes) => codes.map((c) => lettersOf(readable(decodeOne(c)))).join(''),
     width,
     ...style,
   };
@@ -298,6 +298,32 @@ function readable(text: string): string {
   }
   return out;
 }
+
+/**
+ * Unicode's presentation forms of the Latin ligatures, U+FB00–U+FB06, as the
+ * letters they join.
+ *
+ * A producer maps a ligature glyph to its compatibility character, and carried
+ * as that the word neither searches nor edits as the letters it is — and a
+ * face with no such form sets it in another's, wider: copy_paste_ligatures.pdf
+ * is one line in Times, and its "ﬀﬁﬂﬃﬄﬅﬆ" pushed the line off its page. The long
+ * s of `ﬅ` is kept: it is a letter of its own.
+ */
+function lettersOf(text: string): string {
+  return LIGATURE.test(text) ? text.replace(LIGATURES, (c) => LATIN_LIGATURES.get(c) ?? c) : text;
+}
+
+const LIGATURE = /[\uFB00-\uFB06]/u;
+const LIGATURES = /[\uFB00-\uFB06]/gu;
+const LATIN_LIGATURES: ReadonlyMap<string, string> = new Map([
+  ['\uFB00', 'ff'],
+  ['\uFB01', 'fi'],
+  ['\uFB02', 'fl'],
+  ['\uFB03', 'ffi'],
+  ['\uFB04', 'ffl'],
+  ['\uFB05', '\u017Ft'],
+  ['\uFB06', 'st'],
+]);
 
 /** The last Unicode code point in the BMP, and the surrogate block inside it. */
 const BMP_END = 0xffff;

@@ -310,6 +310,20 @@ describe('the encoding a font is read through (Annex D.2)', () => {
   });
 });
 
+describe('a ligature is the letters it joins', () => {
+  it('reads the Latin presentation forms as their letters', () => {
+    // StandardEncoding sets `fi` at 0xAE and `fl` at 0xAF, and their names are
+    // the ligature forms U+FB01 and U+FB02. Kept as those, a word neither
+    // searches nor edits as itself — freeculture.pdf's "ﬁrst", "ofﬁce" — and
+    // a face without the form sets it in another's, wider:
+    // copy_paste_ligatures.pdf's one line ran off its page.
+    expect(standardFaceText('Times-Roman', '41AE42AF43')).toBe('AfiBflC');
+    // …the long s of `ﬅ` kept, a letter of its own.
+    const named = '/Encoding << /Differences [65 /ff /ffi /ffl /uniFB05 /uniFB06] >>';
+    expect(standardFaceText('Times-Roman', '4142434445', named)).toBe('ffffifflſtst');
+  });
+});
+
 describe('a standard face whose own encoding is not the Latin one (Annex D.6)', () => {
   it('reads ZapfDingbats as the pictures it draws', () => {
     // The face states no /Encoding — none of the fourteen need to — and read
