@@ -18,8 +18,12 @@ import {
   NATURAL_LINE_EM,
   buildFlowDoc,
   dedupeLosses,
+  figureBlock,
   floatOntoSheet,
   imageBlock,
+  imageMember,
+  labelMember,
+  membersBox,
   paragraphFromRuns,
   positionedText,
   sectionFromPdfPages,
@@ -28,6 +32,7 @@ import {
   spaceAfter,
   textSizeOf,
   tooSmallToRead,
+  vectorMember,
   withMeasuredMargins,
 } from './flow-build';
 import {
@@ -45,12 +50,14 @@ import { extractPageText } from './text';
 import { faceOutlinesOf, kernedFaces, pageSpacing } from './face-outlines';
 import { collectPageVectors } from './vector';
 import { markDrawnRules } from './text-rules';
+import { pageFigures } from './figures';
 import { regionsOf } from './regions';
 import { punctuationOf } from './glyph-shapes';
 import { matrixBlocks } from './math-rows';
 import { pageNumberingOf, runOf } from './page-numbers';
 import { isRightToLeft } from './content';
 import type { ShownCodes } from './face-outlines';
+import type { PageFigure } from './figures';
 import type { PageNumbering } from './page-numbers';
 import type { SideBySide } from './regions';
 import type { PdfVector } from './vector';
@@ -67,7 +74,7 @@ import type { Loss, Pt } from '@/core/ir';
 
 import type { TextRun } from './content';
 import type { PdfFile, PdfPage } from './document';
-import type { Reconstruction, TextSpan } from './flow-build';
+import type { FigureMember, Reconstruction, TextSpan } from './flow-build';
 import { FEATURES, ResourceStore, pt } from '@/core/ir';
 
 /** The relationships the reconstruction files its running head and foot under. */
@@ -197,7 +204,7 @@ export function reconstructByLayout(
     mode !== 'positional' &&
     (r.annotation === true || tooSmallToRead(r, textSize) || offSheet(r, i));
   const stamps = allRuns.map((runs, i) => runs.filter((r) => stamp(r, i)));
-  const pageRuns =
+  const readRuns =
     foot || head || stamps.some((s) => s.length > 0)
       ? allRuns.map((runs, i) =>
           runs.filter(
@@ -205,6 +212,43 @@ export function reconstructByLayout(
           ),
         )
       : allRuns;
+  // Every page's pictures and paths, lifted before its text is read.
+  // A white box drawn over a picture is not invisible paint but the thing that
+  // hides it, so the paths are filtered against the pictures already placed.
+  const art = pages.map((page, i) => {
+    const raw = collectPageImages(file, page);
+    const images = placeImages(raw.images, shown[i]!);
+    const covered = images.map((img) => ({
+      minX: img.x,
+      minY: img.y,
+      maxX: img.x + img.widthPt,
+      maxY: img.y + img.heightPt,
+    }));
+    const lifted = collectPageVectors(file, page, covered);
+    return {
+      images,
+      imageLosses: raw.losses,
+      vectors: placeVectors(lifted.vectors, shown[i]!),
+      vectorLosses: lifted.losses,
+    };
+  });
+  // §8.5 — the figures the pages draw (see `./figures`). The words set on a
+  // figure are its labels: the page's text is read without them, and they are
+  // set with the drawing they label. Read as text, comments.pdf's state machine
+  // cut its page into so many columns that the page was taken for a table.
+  // …in a FLOWING reading of a page read upright: a placed one anchors every
+  // mark where it stands already.
+  const figures = art.map((a, i) =>
+    mode === 'positional' || shown[i]!.sheet !== undefined
+      ? []
+      : pageFigures(a.vectors, a.images, readRuns[i]!, shown[i]!),
+  );
+  const pageRuns = figures.some((f) => f.length > 0)
+    ? readRuns.map((runs, i) => {
+        const labels = new Set(figures[i]!.flatMap((f) => f.labels));
+        return labels.size > 0 ? runs.filter((r) => !labels.has(r)) : runs;
+      })
+    : readRuns;
 
   // Every page's pictures, kept for the margins the section is measured to.
   const pageMarks: Array<
@@ -334,9 +378,22 @@ export function reconstructByLayout(
     // before it and what is below after, so a paper's columns do not start at
     // the top of the sheet.
     const split = gutters.length > 0 && inColumns ? assignColumns(runs, gutters) : undefined;
+    // The page's figures, each read in the column it stands in. One that
+    // reaches across a gutter spans the columns, and cuts the page in two
+    // where it begins, as a line set across the page does.
+    const figs = figures[i]!;
+    const spansGutter = (f: PageFigure): boolean =>
+      gutters.some((g) => f.minX < g.mid && f.maxX > g.mid);
+    const breaks = split
+      ? [...split.breaks, ...figs.filter(spansGutter).map((f) => f.maxY)].sort((a, b) => b - a)
+      : [];
     const bandEpsilon = (median(runs.map((r) => r.fontSizePt).filter((s) => s > 0)) || 10) / 2;
-    const bandAt = (top: number): number => bandOf(split?.breaks ?? [], top, bandEpsilon);
-    const addColumn = (allRuns: ReadonlyArray<TextRun>, col: number): void => {
+    const bandAt = (top: number): number => bandOf(breaks, top, bandEpsilon);
+    const addColumn = (
+      allRuns: ReadonlyArray<TextRun>,
+      col: number,
+      columnFigures: ReadonlyArray<PageFigure> = [],
+    ): void => {
       // §9.6.5 — a Type 3 run's marks are its glyph PROCEDURES, which the path
       // and picture passes lift. Re-setting its codes in a substitute face
       // would draw a second, smaller copy of a drawing.
@@ -436,55 +493,143 @@ export function reconstructByLayout(
       }
       // The column read region by region: a stretch that reads straight down,
       // then a band of blocks side by side, each spaced from the one before.
+      // A figure stands between the text over it and the text under it, and
+      // the text under it is spaced from its foot.
       let above: LineBox | undefined;
-      const regions = turned ? [{ kind: 'flow' as const, runs: textRuns }] : regionsOf(textRuns);
-      for (const region of regions) {
-        if (region.kind === 'side') {
-          const made = sideBySide(region, measure, above);
-          if (made === undefined) continue;
+      const slabs: Array<{ runs: ReadonlyArray<TextRun>; figure?: PageFigure }> = [];
+      let rest = textRuns;
+      for (const figure of columnFigures) {
+        slabs.push({ runs: rest.filter((r) => r.y > figure.maxY), figure });
+        rest = rest.filter((r) => r.y <= figure.maxY);
+      }
+      slabs.push({ runs: rest });
+      for (const slab of slabs) {
+        const regions = turned
+          ? [{ kind: 'flow' as const, runs: slab.runs }]
+          : regionsOf(slab.runs);
+        for (const region of regions) {
+          if (region.kind === 'side') {
+            const made = sideBySide(region, measure, above);
+            if (made === undefined) continue;
+            blocks.push({ band: bandAt(made.top), col, top: made.top, el: made.el });
+            above = made.below;
+            continue;
+          }
+          const regionLines = groupIntoLines(region.runs, false, stepped).filter(
+            (l) => l.text.length > 0,
+          );
+          // A sheet of a line or two shows no measure (see `MEASURE_LINES`):
+          // its longest line reaches the edge only because it IS the edge, and
+          // the .docx is re-set across the sheet's own width instead — at the
+          // least all but the third a guessed margin may take. A line whose
+          // next word would have fit short of THAT was ended, not broken: run
+          // together, checkbox-bad-appearance.pdf's "Checkbox 1 - not checked"
+          // and "✔ Checkbox 2 - Checked" came back side by side on one line.
+          const reach =
+            lines.length < MEASURE_LINES && gutters.length === 0
+              ? pageWidth * (1 - GUESSED_MARGIN)
+              : undefined;
+          const paras = groupIntoParagraphs(
+            regionLines,
+            measure,
+            display.height,
+            above,
+            false,
+            reach,
+          );
+          for (const set of setParagraphs(
+            paras,
+            measure && {
+              left: measure.left,
+              // The table runs to where the PAGE's text ends, not to where this
+              // column's longest line does: the last column of a payment history
+              // begins at its heading and its figures reach past it, and measured
+              // to the line the column came out a point wide.
+              right: Math.max(measure.right, textEdges?.right ?? measure.right),
+            },
+            pageWidth,
+          )) {
+            blocks.push({ band: bandAt(set.top), col, top: set.top, el: set.el });
+          }
+          const last = paras[paras.length - 1];
+          if (last !== undefined) above = { y: last.bottom, lineHeight: last.lineHeight };
+        }
+        if (slab.figure !== undefined) {
+          const made = figureIn(slab.figure, measure, above, col === SPANNING_COLUMN);
           blocks.push({ band: bandAt(made.top), col, top: made.top, el: made.el });
           above = made.below;
-          continue;
         }
-        const regionLines = groupIntoLines(region.runs, false, stepped).filter(
-          (l) => l.text.length > 0,
-        );
-        // A sheet of a line or two shows no measure (see `MEASURE_LINES`):
-        // its longest line reaches the edge only because it IS the edge, and
-        // the .docx is re-set across the sheet's own width instead — at the
-        // least all but the third a guessed margin may take. A line whose
-        // next word would have fit short of THAT was ended, not broken: run
-        // together, checkbox-bad-appearance.pdf's "Checkbox 1 - not checked"
-        // and "✔ Checkbox 2 - Checked" came back side by side on one line.
-        const reach =
-          lines.length < MEASURE_LINES && gutters.length === 0
-            ? pageWidth * (1 - GUESSED_MARGIN)
-            : undefined;
-        const paras = groupIntoParagraphs(
-          regionLines,
-          measure,
-          display.height,
-          above,
-          false,
-          reach,
-        );
-        for (const set of setParagraphs(
-          paras,
-          measure && {
-            left: measure.left,
-            // The table runs to where the PAGE's text ends, not to where this
-            // column's longest line does: the last column of a payment history
-            // begins at its heading and its figures reach past it, and measured
-            // to the line the column came out a point wide.
-            right: Math.max(measure.right, textEdges?.right ?? measure.right),
-          },
-          pageWidth,
-        )) {
-          blocks.push({ band: bandAt(set.top), col, top: set.top, el: set.el });
-        }
-        const last = paras[paras.length - 1];
-        if (last !== undefined) above = { y: last.bottom, lineHeight: last.lineHeight };
       }
+    };
+    /** A figure's parts in the order the page painted them, its words over its drawing. */
+    const figureMembers = (figure: PageFigure): Array<FigureMember> => {
+      const drawn = [
+        ...figure.vectors.map((v) => ({ key: v.orderKey, member: vectorMember(v) })),
+        ...figure.images.map((img) => ({ key: img.orderKey, member: imageMember(img, resources) })),
+      ].sort((a, b) => compareOrder(a.key, b.key));
+      const labels: Array<FigureMember> = [];
+      for (const [angle, turnedRuns] of byAngle(figure.labels)) {
+        for (const layer of byPainter(turnedRuns)) {
+          for (const line of groupIntoLines(rotate(layer, -angle), true, stepped)) {
+            if (line.text.length === 0) continue;
+            // Upright, the box is the words' own and an em more. It is told
+            // not to wrap (see `labelMember`), and LibreOffice wraps it all
+            // the same where the words fill it: comments.pdf's "Guard" came
+            // back "Guar".
+            const box =
+              angle === 0
+                ? {
+                    x: line.x,
+                    y: line.y - line.fontSize * 0.25,
+                    width: line.width + line.fontSize,
+                    height: line.fontSize * 1.25,
+                  }
+                : turnedBox(line, angle, pageWidth);
+            labels.push(labelMember(line.spans, box, rotation60kOf(angle)));
+          }
+        }
+      }
+      return [...drawn.map((d) => d.member), ...labels];
+    };
+    /**
+     * §20.5.2.17 — a figure as the paragraph it stands in (see `figureBlock`):
+     * spaced from the text over it as a paragraph is, and set in from its
+     * column's edge as far as the page set it.
+     *
+     * A figure across the columns is spaced from the text nearest over it in
+     * any column: what its own column holds over it is the line before the
+     * columns began.
+     */
+    const figureIn = (
+      figure: PageFigure,
+      measure: { left: number; right: number } | undefined,
+      over: LineBox | undefined,
+      across = false,
+    ): { top: number; below: LineBox; el: BodyElement } => {
+      const members = figureMembers(figure);
+      const box = membersBox(members);
+      const nearest = across
+        ? runs
+            .map((r) => r.y - r.fontSizePt * 0.25)
+            .filter((edge) => edge > box.top)
+            .reduce<number | undefined>((low, edge) => Math.min(low ?? edge, edge), undefined)
+        : undefined;
+      const above: LineBox | undefined =
+        nearest !== undefined ? { y: nearest, lineHeight: 0 } : over;
+      const opened =
+        above !== undefined ? above.y - (1 - BASELINE_AT) * above.lineHeight - box.top : 0;
+      const indent = box.left - (measure?.left ?? box.left);
+      const properties: ParagraphProperties = {
+        ...(opened > SPACING_NOISE_PT
+          ? { spacingBefore: pt(Math.min(opened, display.height / 3)) }
+          : {}),
+        ...(Math.abs(indent) > SPACING_NOISE_PT ? { indentLeft: pt(indent) } : {}),
+      };
+      return {
+        top: box.top,
+        below: { y: box.bottom, lineHeight: 0 },
+        el: figureBlock(members, properties),
+      };
     };
     /**
      * A region's paragraphs as the elements they are set in: the lines that
@@ -646,30 +791,26 @@ export function reconstructByLayout(
         });
       }
     }
-    const raw = collectPageImages(file, page);
-    const imgs = { images: placeImages(raw.images, display), losses: raw.losses };
-    losses.push(...imgs.losses);
+    const lifted = art[i]!;
+    losses.push(...lifted.imageLosses);
     // …and kept, because a margin is measured to the page's INK and a picture
     // is ink (see `withMeasuredMargins`).
-    pageMarks[i] = imgs.images;
+    pageMarks[i] = lifted.images;
+    losses.push(...lifted.vectorLosses);
+    // What a figure draws is set with the figure (see `figureIn`).
+    const figured = new Set<object>(figures[i]!.flatMap((f) => [...f.vectors, ...f.images]));
+    const imgs = {
+      images: figured.size > 0 ? lifted.images.filter((img) => !figured.has(img)) : lifted.images,
+    };
     // Filled vector paths (EP10) are ANCHORED where the page drew them — they
     // are artwork, not paragraphs, and a sheet of them has no reading order to
     // take a place in. They still sort by top edge, so their z-order is the
     // order the page painted them in.
-    // A white box drawn over a picture is not invisible paint but the thing
-    // that hides it, so the paths are filtered against what is already placed.
-    const covered = imgs.images.map((img) => ({
-      minX: img.x,
-      minY: img.y,
-      maxX: img.x + img.widthPt,
-      maxY: img.y + img.heightPt,
-    }));
-    const lifted = collectPageVectors(file, page, covered);
-    losses.push(...lifted.losses);
     // A PDF has no underline: it draws a thin bar under the words. Read onto
     // the runs BEFORE they are grouped, so the mark travels with them and the
     // bar is not placed a second time where the words no longer are.
-    const placedVectors = placeVectors(lifted.vectors, display);
+    const placedVectors =
+      figured.size > 0 ? lifted.vectors.filter((v) => !figured.has(v)) : lifted.vectors;
     const drawnRules = markDrawnRules(runs, placedVectors);
     const strayGlyphs = strayMarks(placedVectors, runs);
     // …and the marks the page draws for want of a character, read where their
@@ -709,19 +850,28 @@ export function reconstructByLayout(
       for (const block of asTable) {
         blocks.push({ band: bandAt(block.top), col: 0, top: block.top, el: block.el });
       }
+      // A table's rows are read whole and spaced by their own pitch, so a
+      // figure among them stands at its top, spaced from nothing.
+      for (const figure of figs) {
+        const made = figureIn(figure, undefined, undefined);
+        blocks.push({ band: bandAt(made.top), col: 0, top: made.top, el: made.el });
+      }
     } else if (split && !ruledIntoColumns) {
       // A run the rules pass rebuilt is not the one the split was measured on,
       // so its column is looked up by where it stands.
       const columnFor = (r: TextRun): number => split.columnOf.get(r) ?? colOf(r.x);
+      const figureColumn = (f: PageFigure): number =>
+        spansGutter(f) ? SPANNING_COLUMN : colOf((f.minX + f.maxX) / 2);
       const columns = Array.from({ length: gutters.length + 1 }, (_, n) => n);
       for (const col of [SPANNING_COLUMN, ...columns]) {
         addColumn(
           ruled.runs.filter((r) => columnFor(r) === col),
           col,
+          figs.filter((f) => figureColumn(f) === col),
         );
       }
     } else {
-      addColumn(ruled.runs, 0);
+      addColumn(ruled.runs, 0, figs);
     }
 
     // §20.4.2.3 `relativeHeight` — pictures and paths share one z-order, and
@@ -929,16 +1079,26 @@ export function reconstructByLayout(
     const top = (end ? setUp(end.from, end.to) : setUp(0, pages.length))?.margins?.top;
     const page = shown[lead.page];
     const el = body[lead.at];
-    if (top === undefined || page === undefined || el?.kind !== 'paragraph') continue;
+    if (top === undefined || page === undefined) continue;
     const before = page.height - top - lead.baseline - BASELINE_AT * lead.lineHeight;
     if (before <= SPACING_NOISE_PT) continue;
-    body[lead.at] = {
-      ...el,
-      paragraph: {
-        ...el.paragraph,
-        properties: { ...el.paragraph.properties, spacingBefore: pt(before) },
-      },
-    };
+    if (el?.kind === 'paragraph') {
+      body[lead.at] = {
+        ...el,
+        paragraph: {
+          ...el.paragraph,
+          properties: { ...el.paragraph.properties, spacingBefore: pt(before) },
+        },
+      };
+    } else if (el?.kind === 'shape') {
+      body[lead.at] = {
+        ...el,
+        shape: {
+          ...el.shape,
+          paragraphProperties: { ...el.shape.paragraphProperties, spacingBefore: pt(before) },
+        },
+      };
+    }
   }
   // §17.6.20 — what a page read in its text frame anchors, it anchors on the
   // SHEET: Word stands a drawing at its offsets there, however the section's
@@ -2254,6 +2414,9 @@ const WORD_SPACE_EM = 0.3;
  * line of text set to one (see {@link groupIntoParagraphs}).
  */
 function leadingLine(el: BodyElement): number | undefined {
+  // A figure in the flow (see `figureIn`) is where the page's text begins as
+  // much as a line is: its top is where the page set it.
+  if (el.kind === 'shape' && el.shape.float === undefined) return 0;
   if (el.kind !== 'paragraph' || el.paragraph.runs.length === 0) return undefined;
   const { spacingLine, spacingLineRule } = el.paragraph.properties;
   return spacingLineRule === 'exact' && spacingLine !== undefined && spacingLine > 0

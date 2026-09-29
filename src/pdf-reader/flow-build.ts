@@ -363,15 +363,6 @@ export function positionedText(
   zOrder: number,
   rotation60k?: number,
 ): BodyElement {
-  // §17.3.1.33 — the line stands EXACTLY as tall as its box, so its baseline
-  // falls where an exact line's does, four fifths down (`BASELINE_AT`) — which
-  // is where the box was measured to put it. Left to single spacing the face's
-  // own ascent placed it, a tenth of an em too high: bug1724918.pdf's "hello"
-  // and "world" rode up against the tops of the fields they are typed in.
-  const paragraph = paragraphFromRuns(spans, undefined, {
-    spacingLine: pt(Math.max(1, box.height)),
-    spacingLineRule: 'exact',
-  });
   return {
     kind: 'shape',
     shape: {
@@ -384,25 +375,165 @@ export function positionedText(
           offsetPt: pt(Math.max(0, frame.top - box.y - box.height)),
         },
       },
-      width: pt(Math.max(1, box.width)),
-      height: pt(Math.max(1, box.height)),
-      ...(rotation60k !== undefined ? { transform: { rotation60k } } : {}),
-      geometry: { kind: 'preset', preset: 'rect' },
-      fill: { kind: 'none' },
-      // A box drawn round a line of a form would be a box the page never had:
-      // the shape is here to place the words, not to be seen.
-      text: {
-        content: [paragraph],
-        insetLeft: pt(0),
-        insetTop: pt(0),
-        insetRight: pt(0),
-        insetBottom: pt(0),
-      },
+      ...lineBox(spans, box, rotation60k),
       // The box floats, so the paragraph that carries it takes no room, as a
       // placed drawing's does (`FLOAT_CARRIER`). Floats in a row share one
       // carrier, the first one's: left at single spacing it is a blank line,
       // and every line under it moves down one.
       paragraphProperties: FLOAT_CARRIER,
+    },
+  };
+}
+
+/** A line of text in a box of its own, sized to the box, which nobody sees. */
+function lineBox(
+  spans: ReadonlyArray<TextSpan>,
+  box: { width: number; height: number },
+  rotation60k?: number,
+  noWrap = false,
+): Omit<ShapeBlock, 'paragraphProperties'> {
+  // §17.3.1.33 — the line stands EXACTLY as tall as its box, so its baseline
+  // falls where an exact line's does, four fifths down (`BASELINE_AT`) — which
+  // is where the box was measured to put it. Left to single spacing the face's
+  // own ascent placed it, a tenth of an em too high: bug1724918.pdf's "hello"
+  // and "world" rode up against the tops of the fields they are typed in.
+  const paragraph = paragraphFromRuns(spans, undefined, {
+    spacingLine: pt(Math.max(1, box.height)),
+    spacingLineRule: 'exact',
+  });
+  return {
+    width: pt(Math.max(1, box.width)),
+    height: pt(Math.max(1, box.height)),
+    ...(rotation60k !== undefined ? { transform: { rotation60k } } : {}),
+    geometry: { kind: 'preset', preset: 'rect' },
+    fill: { kind: 'none' },
+    // A box drawn round a line of a form would be a box the page never had:
+    // the shape is here to place the words, not to be seen.
+    text: {
+      content: [paragraph],
+      insetLeft: pt(0),
+      insetTop: pt(0),
+      insetRight: pt(0),
+      insetBottom: pt(0),
+      ...(noWrap ? { noWrap: true } : {}),
+    },
+  };
+}
+
+/**
+ * One part of a figure (see `./figures`): the shape it is drawn as, and where
+ * its box stands on the page — its left edge and its top, y-up.
+ */
+export interface FigureMember {
+  readonly shape: ShapeBlock;
+  readonly left: number;
+  readonly top: number;
+}
+
+/** A path of a figure, drawn where the page drew it. */
+export function vectorMember(v: PdfVector): FigureMember {
+  const el = shapeBlock(v);
+  if (el.kind !== 'shape') throw new Error('a path is drawn as a shape');
+  return { shape: el.shape, left: v.minX, top: v.maxY };
+}
+
+/**
+ * A picture of a figure: a box filled with it (§20.1.8.14), which is what a
+ * `pic:pic` inside a group is — the shadows comments.pdf lays under each of
+ * its boxes.
+ */
+export function imageMember(image: PdfImage, resources: ResourceStore): FigureMember {
+  const turned = image.rotationDeg !== undefined || image.flipV === true;
+  return {
+    shape: {
+      width: pt(image.widthPt),
+      height: pt(image.heightPt),
+      ...(turned
+        ? {
+            transform: {
+              ...(image.rotationDeg !== undefined
+                ? { rotation60k: Math.round(-image.rotationDeg * 60000) }
+                : {}),
+              ...(image.flipV === true ? { flipV: true } : {}),
+            },
+          }
+        : {}),
+      geometry: { kind: 'preset', preset: 'rect' },
+      fill: {
+        kind: 'picture',
+        imageResource: resources.put(image.bytes),
+        ...(image.crop ? { imageCrop: image.crop } : {}),
+        ...(image.alpha !== undefined ? { alpha: image.alpha } : {}),
+      },
+      paragraphProperties: {},
+    },
+    left: image.x,
+    top: image.y + image.heightPt,
+  };
+}
+
+/**
+ * A label of a figure: a line of its words, in a box as wide as they are.
+ * The box never wraps — set in a face a little wider than the page's, one
+ * word would break in two.
+ */
+export function labelMember(
+  spans: ReadonlyArray<TextSpan>,
+  box: { x: number; y: number; width: number; height: number },
+  rotation60k?: number,
+): FigureMember {
+  return {
+    shape: { ...lineBox(spans, box, rotation60k, true), paragraphProperties: {} },
+    left: box.x,
+    top: box.y + box.height,
+  };
+}
+
+/** The box a figure's parts stand in, on the page (y-up). */
+export function membersBox(members: ReadonlyArray<FigureMember>): {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+} {
+  return {
+    left: Math.min(...members.map((m) => m.left)),
+    top: Math.max(...members.map((m) => m.top)),
+    right: Math.max(...members.map((m) => m.left + m.shape.width)),
+    bottom: Math.min(...members.map((m) => m.top - m.shape.height)),
+  };
+}
+
+/**
+ * §20.5.2.17 — a figure as the one drawing it is: a group holding its paths,
+ * its pictures and its labels at their places in it, set in a paragraph of
+ * its own. An inline drawing takes the room it is tall (a line holding
+ * nothing but a picture is the picture's height in Word), so the text after
+ * it follows it, and the figure goes with its paragraph wherever the text
+ * puts that.
+ *
+ * @param members    Its parts, in the order they are painted.
+ * @param properties The paragraph it stands in.
+ */
+export function figureBlock(
+  members: ReadonlyArray<FigureMember>,
+  properties: ParagraphProperties,
+): BodyElement {
+  const box = membersBox(members);
+  return {
+    kind: 'shape',
+    shape: {
+      width: pt(box.right - box.left),
+      height: pt(box.top - box.bottom),
+      children: members.map((m) => ({
+        shape: m.shape,
+        xPt: pt(m.left - box.left),
+        yPt: pt(box.top - m.top),
+      })),
+      // A group is a container: nothing is drawn for its own box.
+      geometry: { kind: 'custom', custom: { pathWidth: 0, pathHeight: 0, commands: [] } },
+      fill: { kind: 'none' },
+      paragraphProperties: properties,
     },
   };
 }
