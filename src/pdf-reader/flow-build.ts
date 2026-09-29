@@ -297,6 +297,9 @@ export function imageBlock(
       ...(image.rotationDeg !== undefined
         ? { rotation60k: Math.round(-image.rotationDeg * 60000) }
         : {}),
+      // §20.1.7.6 — a flip is applied before the turn, which is how the page's
+      // matrix is taken apart (see `geometry` in ./images).
+      ...(image.flipV === true ? { flipV: true } : {}),
       // §20.1.8.55 — the box above is what the clip left showing, so the source
       // must be cut to match it or the whole picture squeezes into it.
       ...(image.crop ? { crop: image.crop } : {}),

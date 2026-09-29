@@ -265,6 +265,65 @@ describe('docx writer (E-DOCX D2 skeleton)', () => {
     expect(innerCell.kind === 'paragraph' && innerCell.paragraph.runs[0]!.text).toBe('inner');
   });
 
+  it('writes back how a picture is drawn: crop, turn, flip and opacity', () => {
+    // Read and never written, a cropped picture came back whole and squeezed
+    // into the frame its crop was sized for — the most common edit a picture
+    // in a document gets. A PDF's turned and clipped pictures went the same way.
+    const png = buildTinyPng(2, 2, [255, 0, 0, 255]);
+    const drawing =
+      '<w:r><w:drawing><wp:inline ' +
+      'xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">' +
+      '<wp:extent cx="914400" cy="685800"/><wp:docPr id="1" name="Pic"/>' +
+      '<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">' +
+      '<a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">' +
+      '<pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">' +
+      '<pic:blipFill><a:blip r:embed="rId20"/><a:srcRect l="25000" b="50000"/>' +
+      '<a:stretch><a:fillRect/></a:stretch></pic:blipFill>' +
+      '<pic:spPr><a:xfrm rot="5400000" flipV="1"><a:off x="0" y="0"/>' +
+      '<a:ext cx="914400" cy="685800"/></a:xfrm></pic:spPr>' +
+      '</pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>';
+    const { doc: flow } = readDocx(
+      buildDocxFromBody(`<w:p>${drawing}</w:p>`, {
+        images: { rId20: { contentType: 'image/png', bytes: png, extension: 'png' } },
+      }),
+    );
+    const xml = new TextDecoder().decode(
+      OpcPackage.open(writeDocx(flow).bytes).getMainDocument().data,
+    );
+    expect(xml).toContain('<a:srcRect l="25000" b="50000"/><a:stretch>');
+    expect(xml).toContain('<a:xfrm rot="5400000" flipV="1">');
+  });
+
+  it('writes a picture drawn part-way through (§20.1.8.4 a:alphaModFix)', () => {
+    // alphatrans.pdf lays a photograph in at half strength over three squares.
+    const png = buildTinyPng(1, 1, [0, 0, 255, 255]);
+    const drawing =
+      '<w:r><w:drawing><wp:inline ' +
+      'xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">' +
+      '<wp:extent cx="254000" cy="254000"/><wp:docPr id="1" name="Pic"/>' +
+      '<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">' +
+      '<a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">' +
+      '<pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">' +
+      '<pic:blipFill><a:blip r:embed="rId20"/></pic:blipFill>' +
+      '<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="254000" cy="254000"/></a:xfrm></pic:spPr>' +
+      '</pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>';
+    const { doc: flow } = readDocx(
+      buildDocxFromBody(`<w:p>${drawing}</w:p>`, {
+        images: { rId20: { contentType: 'image/png', bytes: png, extension: 'png' } },
+      }),
+    );
+    const faded = {
+      ...flow,
+      body: flow.body.map((b) =>
+        b.kind === 'image' ? { ...b, image: { ...b.image, alpha: 0.52 } } : b,
+      ),
+    };
+    const xml = new TextDecoder().decode(
+      OpcPackage.open(writeDocx(faded).bytes).getMainDocument().data,
+    );
+    expect(xml).toMatch(/<a:blip r:embed="rId\d+"><a:alphaModFix amt="52000"\/><\/a:blip>/u);
+  });
+
   it('round-trips an image: media part + blip rel, dimensions and alt text', () => {
     const png = buildTinyPng(2, 2, [255, 0, 0, 255]);
     const drawing =

@@ -941,6 +941,24 @@ describe('a picture the CTM turns and a clip cuts (§8.9.5, §8.5.4)', () => {
     ]);
   });
 
+  it('mirrors it as a flip, and then the turn', () => {
+    // A matrix that turns the square inside out draws the first row at the
+    // foot of the box, as bug1771477.pdf draws one of its pictures; read as a
+    // turn alone, a mirrored picture is written upside down.
+    const img = only('100 0 0 -60 40 90');
+    expect(img.flipV).toBe(true);
+    expect(img.rotationDeg).toBeUndefined();
+    expect([img.x, img.y, img.widthPt, img.heightPt]).toEqual([40, 30, 100, 60]);
+    // −100 across is the same flip turned half round.
+    const across = only('-100 0 0 60 140 30');
+    expect(across.flipV).toBe(true);
+    expect(Math.round(Math.abs(across.rotationDeg ?? 0))).toBe(180);
+    // A clip keeping the page's lower half keeps the picture's FIRST rows,
+    // and the crop is the source's, cut before any flip.
+    const cut = only('100 0 0 -60 40 90', '40 30 100 30 re W n ');
+    expect(cut.crop).toEqual({ left: 0, right: 0, top: 0, bottom: 0.5 });
+  });
+
   it('cuts it to a clip, on the picture\u2019s own edges', () => {
     // The left half and the top three quarters, of a picture placed square on.
     const img = only('100 0 0 100 0 0', '0 25 50 75 re W n ');

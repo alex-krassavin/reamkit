@@ -37,6 +37,8 @@ import type {
   Comment,
   FloatAnchor,
   FontFamilyMap,
+  ImageBlock,
+  ImageCrop,
   Numbering,
   NumberingLevel,
   Paragraph,
@@ -859,6 +861,7 @@ function floatingDrawingRun(
       state,
       scope,
       el.image.float,
+      el.image,
     );
     if (drawing === '') {
       losses.push({
@@ -904,6 +907,7 @@ function emitBlock(
       state,
       scope,
       el.image.float,
+      el.image,
     );
     if (drawing) {
       // An image is emitted as a paragraph, so a closing section break rides
@@ -1126,6 +1130,7 @@ function drawingXml(
   state: WriteState,
   scope: PartScope,
   float?: FloatAnchor,
+  look?: PictureLook,
 ): string {
   if (resource === undefined) return '';
   const relId = mediaRelId(resource, state, scope);
@@ -1134,14 +1139,22 @@ function drawingXml(
   const cy = Math.round(heightPt * EMU_PER_PT);
   const id = ++state.drawingSeq;
   const descr = altText ? ` descr="${escapeAttr(altText)}"` : '';
+  // §20.1.8.4 / §20.1.8.55 / §20.1.7.6 — how the picture is drawn into its
+  // frame: how opaque, which part of the source, turned or mirrored. Read
+  // from a .docx and never written back, a cropped picture came back whole
+  // and squeezed into the frame its crop was sized for.
+  const alpha =
+    look?.alpha !== undefined && look.alpha < 1
+      ? `<a:alphaModFix amt="${String(Math.round(Math.max(0, look.alpha) * 100000))}"/>`
+      : '';
   const graphic =
     '<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">' +
     '<a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">' +
     '<pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">' +
     `<pic:nvPicPr><pic:cNvPr id="${id}" name="Image ${id}"/><pic:cNvPicPr/></pic:nvPicPr>` +
-    `<pic:blipFill><a:blip r:embed="${relId}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>` +
-    '<pic:spPr><a:xfrm><a:off x="0" y="0"/>' +
-    `<a:ext cx="${cx}" cy="${cy}"/></a:xfrm>` +
+    `<pic:blipFill><a:blip r:embed="${relId}">${alpha}</a:blip>${srcRectXml(look?.crop)}` +
+    '<a:stretch><a:fillRect/></a:stretch></pic:blipFill>' +
+    `<pic:spPr>${xfrmXml(look, cx, cy)}` +
     '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr>' +
     '</pic:pic></a:graphicData></a:graphic>';
   return drawingFrame(
@@ -1151,7 +1164,21 @@ function drawingXml(
     `<wp:docPr id="${id}" name="Image ${id}"${descr}/>`,
     graphic,
     state,
+    look?.rotation60k,
   );
+}
+
+/** What of a picture's own look the frame writes: its crop, turn, mirror and opacity. */
+type PictureLook = Pick<ImageBlock, 'crop' | 'rotation60k' | 'flipH' | 'flipV' | 'alpha'>;
+
+/** §20.1.8.55 `a:srcRect` — each edge cut away, in thousandths of a percent. */
+function srcRectXml(crop: ImageCrop | undefined): string {
+  if (!crop) return '';
+  const edge = (name: string, v: number): string =>
+    v > 0 ? ` ${name}="${String(Math.round(v * 100000))}"` : '';
+  const attrs =
+    edge('l', crop.left) + edge('t', crop.top) + edge('r', crop.right) + edge('b', crop.bottom);
+  return attrs === '' ? '' : `<a:srcRect${attrs}/>`;
 }
 
 // §20.4 wp:inline holding a wps:wsp — the inverse of drawing-parser's parseWsp.
@@ -1638,7 +1665,16 @@ function runXml(run: Run, state: WriteState, scope: PartScope): string {
   const rPr = rPrXml(run.properties as ResolvedRunProperties, state);
   if (run.inlineImage !== undefined) {
     const img = run.inlineImage;
-    const drawing = drawingXml(img.resource, img.width, img.height, undefined, state, scope);
+    const drawing = drawingXml(
+      img.resource,
+      img.width,
+      img.height,
+      undefined,
+      state,
+      scope,
+      undefined,
+      img,
+    );
     if (drawing) return `<w:r>${rPr}${drawing}</w:r>`;
     // Unresolved inline image with no text and no break: nothing to emit.
     if (run.text === '' && !run.pageBreak) return '';
