@@ -173,4 +173,26 @@ describe('a column the page ends short of the foot of its text', () => {
     expect(first.paragraph.runs[0]?.columnBreak).toBe(true);
     expect(first.paragraph.runs.map((r) => r.text).join('')).toContain('Ra01');
   });
+
+  it("breaks before the next column's first line past a drawing anchored over it", () => {
+    // canvas.pdf's right column opens on a drawing, and broken after the left
+    // column's last line instead, LibreOffice opened the right column with an
+    // empty line.
+    const doc = reconstructByLayout(
+      PdfFile.parse(
+        pages([
+          ['0.5 g 317 752 40 6 re f', 'BT /F1 9 Tf 0 g', ...columns(740, 30, 'a'), 'ET'],
+          ['BT /F1 9 Tf', ...columns(740, 50, 'b'), 'ET'],
+        ]),
+      ),
+    ).doc;
+    const broken = doc.body.filter(
+      (el) => el.kind === 'paragraph' && el.paragraph.runs.some((r) => r.columnBreak === true),
+    );
+    expect(broken).toHaveLength(1);
+    const first = broken[0];
+    if (first?.kind !== 'paragraph') throw new Error('a paragraph');
+    expect(first.paragraph.runs[0]?.columnBreak).toBe(true);
+    expect(first.paragraph.runs.map((r) => r.text).join('')).toContain('Ra01');
+  });
 });

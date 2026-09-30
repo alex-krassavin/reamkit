@@ -1300,11 +1300,17 @@ export function reconstructByLayout(
     const brk: Run = { text: '\n', properties: {}, columnBreak: true };
     // Before the next column's first line, where that is a paragraph's: at the
     // end of the column's last, a writer that splits a paragraph at the break
-    // opens the next column with an empty line.
-    const next = body[turn.at];
+    // opens the next column with an empty line. A drawing anchored to the page
+    // takes no room in the column it is written in, and the line is looked for
+    // past it: canvas.pdf's right column opens on one, and broken after the
+    // left column's last line instead, the right column stood a line low in
+    // LibreOffice.
+    let first = turn.at;
+    while (floating(body[first])) first++;
+    const next = body[first];
     const last = body[turn.at - 1];
     if (next?.kind === 'paragraph') {
-      body[turn.at] = {
+      body[first] = {
         ...next,
         paragraph: { ...next.paragraph, runs: [brk, ...next.paragraph.runs] },
       };
@@ -4758,6 +4764,14 @@ const BALANCED_LINES = 4;
 
 /** How many lines short of the foot a page's columns stop to be set short. */
 const SHORT_LINES = 3;
+
+/** Whether an element is a drawing anchored to the page, which takes no room in the flow. */
+function floating(el: BodyElement | undefined): boolean {
+  return (
+    (el?.kind === 'shape' && el.shape.float !== undefined) ||
+    (el?.kind === 'image' && el.image.float !== undefined)
+  );
+}
 
 /** A block of a page's reading, as `ruleBorders` is handed it. */
 type Block = {
