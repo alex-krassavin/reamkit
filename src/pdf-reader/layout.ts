@@ -2706,6 +2706,7 @@ function groupIntoParagraphs(
           endedParagraph(prev, line, column) ||
           (reach !== undefined && roomForWord(prev, line, reach)) ||
           (setJustified && endedJustified(beforePrev, prev, line, column)) ||
+          (column !== undefined && endedCentred(prev, line, column)) ||
           carriesLeader(prev) ||
           prev.tabbed === true))
     ) {
@@ -2822,6 +2823,34 @@ function roomForWord(prev: Line, next: Line, reach: number): boolean {
   const width = (next.width * word.length) / text.length;
   return reach - (prev.x + prev.width) > width + prev.fontSize * WORD_SPACE_EM;
 }
+
+/**
+ * Whether a centred line ended its paragraph: the line under it is centred too,
+ * and its first word would have fit on this one. A centred paragraph that wraps
+ * fills its lines to the measure but the last, as any paragraph does; lines a
+ * page centres one by one do not. comments.pdf centres its authors'
+ * affiliations a line apiece — "{gal,brendan,…}@mozilla.com", and under it
+ * "Adobe Corporation" — and run together they came back re-wrapped a line
+ * shorter, the columns under them risen into the white.
+ */
+function endedCentred(prev: Line, next: Line, column: { left: number; right: number }): boolean {
+  const width = column.right - column.left;
+  if (!(width > 0)) return false;
+  const centred = (l: Line): boolean => {
+    const lead = l.x - column.left;
+    const trail = column.right - (l.x + l.width);
+    return Math.abs(lead - trail) <= width * CENTRED_SLACK && Math.min(lead, trail) > 0;
+  };
+  if (!centred(prev) || !centred(next)) return false;
+  const text = next.text.trimStart();
+  const word = text.split(/\s/u)[0] ?? '';
+  if (word.length === 0) return false;
+  const wordWidth = (next.width * word.length) / text.length;
+  return width - prev.width > wordWidth + prev.fontSize * WORD_SPACE_EM;
+}
+
+/** How far off the middle of the measure, as a share of it, a centred line may stand. */
+const CENTRED_SLACK = 0.06;
 
 /**
  * Whether a line of a column set against both edges ended its paragraph: it

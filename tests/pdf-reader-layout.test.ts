@@ -15,6 +15,7 @@ import { PdfFile } from '@/pdf-reader/document';
 import { BASELINE_AT, FLOAT_CARRIER, positionedText } from '@/pdf-reader/flow-build';
 import { drawnWords, endedParagraph, reconstructByLayout } from '@/pdf-reader/layout';
 import { extractPageText } from '@/pdf-reader/text';
+import { standardWidth } from '@/pdf-reader/standard-widths';
 import { writeDocx } from '@/word/docx-writer';
 
 const FONTS = {
@@ -1481,6 +1482,53 @@ describe('a flowing reading re-sets the page where the page set it', () => {
     ]);
   const textOf = (p: { paragraph: { runs: ReadonlyArray<{ text: string }> } }): string =>
     p.paragraph.runs.map((r) => r.text).join('');
+
+  describe('lines set in the middle of the measure', () => {
+    const long =
+      'This line runs the whole measure of the page from the left margin across to the right one, as prose does.';
+    /** How wide `text` is in 9pt Helvetica. */
+    const widthOf = (text: string): number =>
+      [...text].reduce((sum, c) => sum + (standardWidth('Helvetica', c.charCodeAt(0), c) ?? 0), 0) *
+      0.009;
+    const middle = 54 + widthOf(long) / 2;
+    /** `lines` centred on the measure, 11pt apart from 700 down, and the prose line under them. */
+    const page = (lines: ReadonlyArray<string>): Array<string> =>
+      paragraphs(
+        reconstructByLayout(
+          PdfFile.parse(
+            helvetica(
+              [
+                ...lines.map(
+                  (text, k) =>
+                    `BT /F1 9 Tf 1 0 0 1 ${(middle - widthOf(text) / 2).toFixed(2)} ${String(700 - k * 11)} Tm (${text}) Tj ET`,
+                ),
+                `BT /F1 9 Tf 1 0 0 1 54 600 Tm (${long}) Tj ET`,
+              ].join('\n'),
+            ),
+          ),
+        ).doc,
+      ).map(textOf);
+
+    it('ends a centred line where the first word of the next would have fit on it', () => {
+      // comments.pdf centres its authors' affiliations a line apiece, and run
+      // together they came back re-wrapped a line shorter, the columns under
+      // them risen into the white.
+      const lines = [
+        'Mozilla Corporation',
+        'gal, brendan, shaver, danderson, dmandelin, mrbkap at mozilla dot com',
+        'Adobe Corporation',
+      ];
+      expect(page(lines)).toEqual([...lines, long]);
+    });
+
+    it('keeps a centred paragraph whole where its line ran as far as the measure lets it', () => {
+      const title = [
+        'A title set in centred lines that fill very nearly the whole measure of this page, from its left edge to the',
+        'right',
+      ];
+      expect(page(title)).toEqual([title.join(' '), long]);
+    });
+  });
 
   it('stands its lines EXACTLY as far apart as the page stood them (§17.3.1.33)', () => {
     // An invoice sets its 9pt lines 13.5 apart. Left to a reader's single
