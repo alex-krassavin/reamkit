@@ -7,6 +7,7 @@
 
 import { describe, expect, it } from 'vitest';
 
+import type { BodyElement } from '@/core/document-model';
 import type { PdfValue } from '@/pdf/objects';
 import { OpcPackage } from '@/core/opc';
 import { PdfFile } from '@/pdf-reader/document';
@@ -150,11 +151,34 @@ describe('a last page that sets its columns balanced', () => {
 });
 
 describe('a column the page ends short of the foot of its text', () => {
+  /** The one break to a column in `flow`, what follows it, and the page's first paragraph. */
+  const turn = (flow: { body: ReadonlyArray<BodyElement> }) => {
+    const index = flow.body.findIndex(
+      (el) => el.kind === 'paragraph' && el.paragraph.runs.some((r) => r.columnBreak === true),
+    );
+    const breaks = flow.body.filter(
+      (el) => el.kind === 'paragraph' && el.paragraph.runs.some((r) => r.columnBreak === true),
+    );
+    const carrier = flow.body[index];
+    const opens = flow.body
+      .slice(index + 1)
+      .find((el) => el.kind === 'paragraph' && el.paragraph.runs.length > 0);
+    const first = flow.body.find((el) => el.kind === 'paragraph');
+    if (carrier?.kind !== 'paragraph' || opens?.kind !== 'paragraph' || first?.kind !== 'paragraph')
+      throw new Error('paragraphs');
+    return {
+      breaks: breaks.length,
+      carrier: carrier.paragraph,
+      opens: opens.paragraph,
+      first: first.paragraph,
+    };
+  };
+
   it('breaks to the next column there, where a word processor would run it on', () => {
     // canvas.pdf ends its first sheet's left column fifty points above the
     // foot its second sheet sets, and the head of the right column came back
     // under the left one.
-    const doc = reconstructByLayout(
+    const flow = reconstructByLayout(
       PdfFile.parse(
         pages([
           ['BT /F1 9 Tf', ...columns(740, 30, 'a'), 'ET'],
@@ -162,23 +186,23 @@ describe('a column the page ends short of the foot of its text', () => {
         ]),
       ),
     ).doc;
-    const broken = doc.body.filter(
-      (el) => el.kind === 'paragraph' && el.paragraph.runs.some((r) => r.columnBreak === true),
-    );
+    const { breaks, carrier, opens, first } = turn(flow);
     // Before the first line of the right column of the first sheet, and nowhere
     // else: the second sheet's columns run to the foot.
-    expect(broken).toHaveLength(1);
-    const first = broken[0];
-    if (first?.kind !== 'paragraph') throw new Error('a paragraph');
-    expect(first.paragraph.runs[0]?.columnBreak).toBe(true);
-    expect(first.paragraph.runs.map((r) => r.text).join('')).toContain('Ra01');
+    expect(breaks).toBe(1);
+    // …as a paragraph of its own: inside one, a word processor leaves what is
+    // before the break in the column it turns from.
+    expect(carrier.runs.map((r) => r.text).join('')).toBe('\n');
+    expect(opens.runs.map((r) => r.text).join('')).toMatch(/^Ra01/u);
+    // The right column's first line stands off the head of the column as the
+    // left one's stands off the head of the page: both are on one baseline.
+    expect(opens.properties.spacingBefore).toBeCloseTo(first.properties.spacingBefore ?? 0, 1);
   });
 
   it("breaks before the next column's first line past a drawing anchored over it", () => {
-    // canvas.pdf's right column opens on a drawing, and broken after the left
-    // column's last line instead, LibreOffice opened the right column with an
-    // empty line.
-    const doc = reconstructByLayout(
+    // canvas.pdf's right column opens on a drawing anchored to the page, which
+    // takes no room in the column: the right column's first line is past it.
+    const flow = reconstructByLayout(
       PdfFile.parse(
         pages([
           ['0.5 g 317 752 40 6 re f', 'BT /F1 9 Tf 0 g', ...columns(740, 30, 'a'), 'ET'],
@@ -186,13 +210,9 @@ describe('a column the page ends short of the foot of its text', () => {
         ]),
       ),
     ).doc;
-    const broken = doc.body.filter(
-      (el) => el.kind === 'paragraph' && el.paragraph.runs.some((r) => r.columnBreak === true),
-    );
-    expect(broken).toHaveLength(1);
-    const first = broken[0];
-    if (first?.kind !== 'paragraph') throw new Error('a paragraph');
-    expect(first.paragraph.runs[0]?.columnBreak).toBe(true);
-    expect(first.paragraph.runs.map((r) => r.text).join('')).toContain('Ra01');
+    const { breaks, opens, first } = turn(flow);
+    expect(breaks).toBe(1);
+    expect(opens.runs.map((r) => r.text).join('')).toMatch(/^Ra01/u);
+    expect(opens.properties.spacingBefore).toBeCloseTo(first.properties.spacingBefore ?? 0, 1);
   });
 });

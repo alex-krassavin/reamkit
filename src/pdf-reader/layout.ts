@@ -375,7 +375,15 @@ export function reconstructByLayout(
   // Where in the body a page turns from one of its columns to the next: where
   // the column before the turn ends and the one after it, up the page, and
   // whether a line across the page closes their band (see `columnTurns` below).
-  const columnTurns: Array<{ at: number; foot: number; next: number; closed: boolean }> = [];
+  const columnTurns: Array<{
+    at: number;
+    foot: number;
+    next: number;
+    closed: boolean;
+    /** Where the next column's first line stands, and the first line of the band's first column. */
+    head?: { at: number; baseline: number; lineHeight: number };
+    opens?: { at: number; baseline: number; lineHeight: number };
+  }> = [];
   pages.forEach((page, i) => {
     const runs = pageRuns[i]!;
     const display = shown[i]!;
@@ -1066,6 +1074,8 @@ export function reconstructByLayout(
       return column.reduce((low, b) => (b.top < low.top ? b : low)).foot;
     };
     let prev: Block | undefined;
+    // Where in the body each of the page's blocks went.
+    const placedAt = new Map<Block, number>();
     for (const block of blocks) {
       if (
         columnsHere > 1 &&
@@ -1078,7 +1088,36 @@ export function reconstructByLayout(
         const next = footOf(block.band, block.col);
         const closed = blocks.some((b) => b.band === block.band && b.col === SPANNING_COLUMN);
         if (ends !== undefined && next !== undefined) {
-          columnTurns.push({ at: body.length, foot: ends, next, closed });
+          // The next column's first line: past the drawings anchored ahead of
+          // it, which take no room in the column they are written in.
+          const rest = blocks.slice(blocks.indexOf(block));
+          const skipped = rest.findIndex((b) => !floating(b.el));
+          const lead = skipped >= 0 ? leadingLine(rest[skipped]!.el) : undefined;
+          // …and the first line of the band's first column, which the next
+          // column's stands level with or under as the page stands it.
+          const opener = blocks.find(
+            (b) => b.band === block.band && b.col !== SPANNING_COLUMN && !floating(b.el),
+          );
+          const openerAt = opener !== undefined ? placedAt.get(opener) : undefined;
+          const openerLine = opener !== undefined ? leadingLine(opener.el) : undefined;
+          columnTurns.push({
+            at: body.length,
+            foot: ends,
+            next,
+            closed,
+            ...(lead !== undefined
+              ? {
+                  head: {
+                    at: body.length + skipped,
+                    baseline: rest[skipped]!.top,
+                    lineHeight: lead,
+                  },
+                }
+              : {}),
+            ...(opener !== undefined && openerAt !== undefined && openerLine !== undefined
+              ? { opens: { at: openerAt, baseline: opener.top, lineHeight: openerLine } }
+              : {}),
+          });
         }
       }
       prev = block;
@@ -1128,6 +1167,7 @@ export function reconstructByLayout(
         // anchored to the page takes no room and does not.
         led = lead !== undefined || block.el.kind === 'table' || block.el.kind === 'paragraph';
       }
+      placedAt.set(block, body.length);
       body.push(block.el);
       begun = true;
     }
@@ -1226,22 +1266,6 @@ export function reconstructByLayout(
     spacePt: curSpace,
     continuous: pendingContinuous,
   });
-  const sections =
-    sectionEnds.length > 1
-      ? sectionEnds.flatMap((end) => {
-          const base = sectionOnSheet(setUp(end.from, end.to), shown[end.from]);
-          if (!base) return [];
-          const properties: SectionProperties = {
-            ...base,
-            ...numberedFrom(numbering, end.from),
-            ...(end.columns > 1 && mode !== 'positional'
-              ? { columns: { count: end.columns, spacePt: end.spacePt } }
-              : {}),
-            ...(end.continuous ? { sectionStart: 'continuous' as const } : {}),
-          };
-          return [{ properties, endIndex: end.at }];
-        })
-      : [];
   // §17.3.1.33 — a page's text begins where the page began it, not against the
   // top margin: the margin is measured to the highest ink, and an invoice
   // paints a band across the top of the sheet thirty points above its title.
@@ -1288,39 +1312,91 @@ export function reconstructByLayout(
   // second sheet's left column five lines below its right one, over the line
   // that names its source, and balanced, "Text" and its bar came back at the
   // foot of the left column.
+  //
+  // The break is a paragraph of its own, of no height: a break inside a
+  // paragraph leaves what is before it in the column it turns from — at the
+  // head of the next column's first line, Word left that line's box at the
+  // foot of the left one, and the right column stood eleven points high;
+  // at the end of the column's last, LibreOffice opened the next column with
+  // what was left of it, a line. And the next column's first line stands off
+  // the head of the column as the page stands it, level with the first line
+  // of the band's first column or under it by as much as the page sets it.
   const line = medianFont * NATURAL_LINE_EM;
+  const breaks: Array<{ at: number; head?: { at: number; before: number } }> = [];
   for (const turn of columnTurns) {
+    const end = sectionEnds.find((e) => e.at > turn.at);
+    const margins = (end ? setUp(end.from, end.to) : undefined)?.margins;
     if (turn.closed) {
       if (Math.abs(turn.foot - turn.next) <= line * BALANCED_LINES) continue;
-    } else {
-      const end = sectionEnds.find((e) => e.at > turn.at);
-      const bottom = (end ? setUp(end.from, end.to) : undefined)?.margins?.bottom;
-      if (bottom === undefined || turn.foot - bottom < line * SHORT_LINES) continue;
+    } else if (margins?.bottom === undefined || turn.foot - margins.bottom < line * SHORT_LINES) {
+      continue;
     }
-    const brk: Run = { text: '\n', properties: {}, columnBreak: true };
-    // Before the next column's first line, where that is a paragraph's: at the
-    // end of the column's last, a writer that splits a paragraph at the break
-    // opens the next column with an empty line. A drawing anchored to the page
-    // takes no room in the column it is written in, and the line is looked for
-    // past it: canvas.pdf's right column opens on one, and broken after the
-    // left column's last line instead, the right column stood a line low in
-    // LibreOffice.
-    let first = turn.at;
-    while (floating(body[first])) first++;
-    const next = body[first];
-    const last = body[turn.at - 1];
-    if (next?.kind === 'paragraph') {
-      body[first] = {
-        ...next,
-        paragraph: { ...next.paragraph, runs: [brk, ...next.paragraph.runs] },
-      };
-    } else if (last?.kind === 'paragraph') {
-      body[turn.at - 1] = {
-        ...last,
-        paragraph: { ...last.paragraph, runs: [...last.paragraph.runs, brk] },
-      };
-    }
+    // The next column's first line stands under the first line of the band's
+    // first column as far as the page stands it, and that line's white is
+    // what the column's head keeps over it: the page's own margin where the
+    // band opens the page (see `leads`), the white under a line across the
+    // page where one closes the band over it.
+    const { head: start, opens } = turn;
+    const opener = opens !== undefined ? body[opens.at] : undefined;
+    const openerProps =
+      opener?.kind === 'paragraph'
+        ? opener.paragraph.properties
+        : opener?.kind === 'shape'
+          ? opener.shape.paragraphProperties
+          : undefined;
+    const before =
+      start !== undefined && opens !== undefined && openerProps !== undefined
+        ? (openerProps.spacingBefore ?? 0) +
+          (openerProps.borders?.top?.width ?? 0) +
+          (opens.baseline + BASELINE_AT * opens.lineHeight) -
+          (start.baseline + BASELINE_AT * start.lineHeight)
+        : undefined;
+    breaks.push({
+      at: turn.at,
+      ...(start !== undefined && before !== undefined ? { head: { at: start.at, before } } : {}),
+    });
   }
+  // From the last to the first, so each lands where it was found; the ends of
+  // the sections after it move down one.
+  for (const brk of [...breaks].sort((x, y) => y.at - x.at)) {
+    const el = brk.head !== undefined ? body[brk.head.at] : undefined;
+    if (brk.head !== undefined && el?.kind === 'paragraph') {
+      const border = el.paragraph.properties.borders?.top?.width ?? 0;
+      const before = brk.head.before - border;
+      const { spacingBefore: _, ...rest } = el.paragraph.properties;
+      body[brk.head.at] = {
+        ...el,
+        paragraph: {
+          ...el.paragraph,
+          properties: before > SPACING_NOISE_PT ? { ...rest, spacingBefore: pt(before) } : rest,
+        },
+      };
+    }
+    body.splice(brk.at, 0, {
+      kind: 'paragraph',
+      paragraph: {
+        properties: { spacingLine: CARRIER_LINE_PT, spacingLineRule: 'exact' },
+        runs: [{ text: '\n', properties: {}, columnBreak: true }],
+      },
+    });
+    for (const e of sectionEnds) if (e.at > brk.at) e.at++;
+  }
+  const sections =
+    sectionEnds.length > 1
+      ? sectionEnds.flatMap((end) => {
+          const base = sectionOnSheet(setUp(end.from, end.to), shown[end.from]);
+          if (!base) return [];
+          const properties: SectionProperties = {
+            ...base,
+            ...numberedFrom(numbering, end.from),
+            ...(end.columns > 1 && mode !== 'positional'
+              ? { columns: { count: end.columns, spacePt: end.spacePt } }
+              : {}),
+            ...(end.continuous ? { sectionStart: 'continuous' as const } : {}),
+          };
+          return [{ properties, endIndex: end.at }];
+        })
+      : [];
   // §17.6.20 — what a page read in its text frame anchors, it anchors on the
   // SHEET: Word stands a drawing at its offsets there, however the section's
   // lines run, so each one is carried onto the sheet and turned with the page.
