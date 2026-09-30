@@ -944,7 +944,7 @@ export function reconstructByLayout(
       positionedText(line.spans, turnedBox(line, 0, pageWidth), frame, FAR_Z + k),
     );
     const givenAway =
-      mode !== 'positional' ? ruleBorders(vectors, blocks, display.width) : undefined;
+      mode !== 'positional' ? ruleBorders(vectors, blocks, display.width, colOf) : undefined;
     const marks = [
       ...imgs.images.map((img) => ({
         key: img.orderKey,
@@ -4356,15 +4356,23 @@ function splitAtTabs(spans: ReadonlyArray<TextSpan>): Array<Array<TextSpan>> {
  * the rule introduces; where nothing follows closely enough, the block above
  * takes it as a bottom one.
  *
+ * A rule drawn down one column is a border of a block in that column, and one
+ * drawn across the columns of a block across them: comments.pdf rules off
+ * Figure 9's caption in the right column, and taken by the nearest line under
+ * it on the page, the rule came back over "Every time the trace recorder
+ * emits…" in the left column, and none over the caption.
+ *
  * @param vectors The page's painted paths.
  * @param blocks  The blocks read off the page so far, which the rule joins.
  * @param width   The page's width, which a rule is long relative to.
+ * @param colOf   The column an x across the page stands in.
  * @returns The rules that became borders, and so must not be drawn again.
  */
 function ruleBorders(
   vectors: ReadonlyArray<PdfVector>,
   blocks: Array<Block>,
   width: number,
+  colOf: (x: number) => number = () => 0,
 ): ReadonlySet<PdfVector> {
   const given = new Set<PdfVector>();
   const paragraphs = blocks.filter((b) => b.el.kind === 'paragraph');
@@ -4400,10 +4408,14 @@ function ruleBorders(
       continue;
     }
     if (paragraphs.length === 0) continue;
+    // The column the rule is drawn in, or across them.
+    const first = colOf(band.from + RULE_INSET_PT);
+    const col = first === colOf(band.to - RULE_INSET_PT) ? first : SPANNING_COLUMN;
+    const own = paragraphs.filter((b) => b.col === col);
     // The block the rule introduces: the nearest one under it. Failing that,
     // the one it closes off above.
-    const below = paragraphs.filter((b) => b.top < y).sort((a, b) => b.top - a.top)[0];
-    const above = paragraphs.filter((b) => b.top >= y).sort((a, b) => a.top - b.top)[0];
+    const below = own.filter((b) => b.top < y).sort((a, b) => b.top - a.top)[0];
+    const above = own.filter((b) => b.top >= y).sort((a, b) => a.top - b.top)[0];
     const side =
       below !== undefined && y - below.top <= RULE_REACH_PT
         ? ({ block: below, edge: 'top' } as const)
@@ -4702,6 +4714,9 @@ const RULE_SEAT_PT = 3;
 
 /** How far from a paragraph a rule may stand and still belong to it. */
 const RULE_REACH_PT = 14;
+
+/** How far in from its ends a rule is looked at to say which column it stands in. */
+const RULE_INSET_PT = 2;
 
 /** The thinnest a border may be drawn and still be seen. */
 const RULE_MIN_PT = 0.5;

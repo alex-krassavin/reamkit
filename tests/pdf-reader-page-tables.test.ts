@@ -357,3 +357,23 @@ describe('a table ruled into its columns', () => {
     expect(doc.body.map(textOf).join(' ')).not.toContain('xx1 number');
   });
 });
+
+describe('a rule drawn down one column', () => {
+  it('is the border of the block under it in its own column', () => {
+    // comments.pdf rules off Figure 9's caption in the right column, and the
+    // nearest line under the rule on the page, in the left column, took it.
+    const ops = ['BT /F1 9 Tf'];
+    const line = (x: number, y: number, tag: string): string =>
+      at(x, y, `${tag} a line of prose that runs across its column`);
+    for (let k = 0; k < 8; k++) ops.push(line(54, 700 - k * 12, `La${String(k)}`));
+    for (let k = 0; k < 20; k++) ops.push(line(54, 596 - k * 12, `Lb${String(k)}`));
+    for (let k = 0; k < 8; k++) ops.push(line(317, 700 - k * 12, `Ra${String(k)}`));
+    for (let k = 0; k < 20; k++) ops.push(line(317, 588 - k * 12, `Rb${String(k)}`));
+    ops.push('ET', '0.4 w 317 599 m 556 599 l S');
+    const { doc } = reconstructByLayout(PdfFile.parse(pages([ops])));
+    const bordered = doc.body.filter(
+      (el) => el.kind === 'paragraph' && el.paragraph.properties.borders?.top !== undefined,
+    );
+    expect(bordered.map((el) => textOf(el).slice(0, 3))).toEqual(['Rb0']);
+  });
+});
