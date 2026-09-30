@@ -719,15 +719,18 @@ describe('page text extraction — real Ream output (E-PDF EP2)', () => {
  * One line of text with a text-markup annotation over it. `annot` states the
  * subtype and its colour; the quad is the box round the line.
  */
-function markedTextPdf(annot: string): Uint8Array {
-  const content = 'BT /F1 12 Tf 72 720 Td (Marked) Tj ET';
+function markedTextPdf(
+  annot: string,
+  content = 'BT /F1 12 Tf 72 720 Td (Marked) Tj ET',
+  quad = '70 734 140 734 70 716 140 716',
+): Uint8Array {
   const objects = [
     '<< /Type /Catalog /Pages 2 0 R >>',
     '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
     '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] ' +
       '/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R ' +
       `/Annots [<< /Type /Annot ${annot} /Rect [70 716 140 734] ` +
-      '/QuadPoints [70 734 140 734 70 716 140 716] >>] >>',
+      `/QuadPoints [${quad}] >>] >>`,
     `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
     '<< /Type /Font /Subtype /TrueType /BaseFont /Arial /FirstChar 32 /LastChar 255 ' +
       '/Encoding /WinAnsiEncoding >>',
@@ -797,6 +800,24 @@ describe('text-markup annotations (§12.5.6.10)', () => {
     expect(extractPageText(wavy, wavy.pages()[0]!)[0]?.markup?.underline).toBe('wave');
     const struck = PdfFile.parse(markedTextPdf('/Subtype /StrikeOut /C [1 0 0]'));
     expect(extractPageText(struck, struck.pages()[0]!)[0]?.markup?.strike).toBe(true);
+  });
+
+  it('marks the white between two words it marks, which the page never wrote', () => {
+    // TeX writes no space: it moves the pen, and the space between two words
+    // is this reader's own. comments.pdf highlights whole lines, and with its
+    // spaces left bare the band came back broken at every word.
+    const file = PdfFile.parse(
+      markedTextPdf(
+        '/Subtype /Highlight /C [1 1 0]',
+        'BT /F1 12 Tf 72 720 Td (Marked) Tj 46 0 Td (words) Tj ET',
+        '70 734 160 734 70 716 160 716',
+      ),
+    );
+    const [first] = reconstructByLayout(file).doc.body;
+    expect(first?.kind).toBe('paragraph');
+    if (first?.kind !== 'paragraph') return;
+    expect(first.paragraph.runs.map((r) => r.text).join('')).toBe('Marked words');
+    expect(first.paragraph.runs.every((r) => r.properties.shadingColorHex === 'FFFF00')).toBe(true);
   });
 
   it('leaves a line the quads do not cover unmarked', () => {

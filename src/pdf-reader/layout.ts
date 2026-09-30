@@ -2472,7 +2472,7 @@ function lineSpans(
         stops.push(run.x);
         pieces.push({ from: Infinity, to: -Infinity });
       } else {
-        spans.push(fittedSpace(spaceAfter(spans[spans.length - 1]), prev, run, spaces));
+        spans.push(fittedSpace(spaceAfter(spans[spans.length - 1], run), prev, run, spaces));
       }
     }
     // §9.3.1/§8.6.8 — the size and colour the page showed the glyphs at. The
@@ -2938,7 +2938,7 @@ function joinLines(lines: ReadonlyArray<Line>): Array<TextSpan> {
       // joined with another, bug1057544.pdf's column came back "marks the  end
       // of a year's work", a gap twice as wide at every line it had broken.
       else if (!hard && !/\s$/u.test(ends) && !/^\s/u.test(line.spans[0]?.text ?? ''))
-        out.push(spaceAfter(prev));
+        out.push(spaceAfter(prev, line.spans[0]));
     }
     out.push(...line.spans);
   });
@@ -3606,7 +3606,7 @@ function bandLine(
       only.x - measure.left >= width * BAND_RIGHT_SHARE;
     const alignment = flushRight ? 'right' : alignmentOf(lines.slice(0, 1), measure).alignment;
     const spans = lines.flatMap((line, i) =>
-      i === 0 ? line.spans : [spaceAfter(lines[i - 1]!.spans.at(-1)), ...line.spans],
+      i === 0 ? line.spans : [spaceAfter(lines[i - 1]!.spans.at(-1), line.spans[0]), ...line.spans],
     );
     return { spans, properties: alignment ? { alignment } : {} };
   }

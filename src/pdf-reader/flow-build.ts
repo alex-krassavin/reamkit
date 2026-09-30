@@ -80,14 +80,27 @@ export function paragraphBlock(text: string, outlineLevel?: number): BodyElement
  * them up to "78110"; in 7-point footnotes the same space is half as wide
  * again as the page's, and pushes their lines over.
  *
+ * A space between two words one text markup marks is marked with them: the
+ * band a highlighter lays runs across the gap. comments.pdf highlights two
+ * lines on its sixth page, and with its spaces left bare the band came back
+ * broken at every word.
+ *
  * @param before The span the space follows, where there is one.
+ * @param after  What follows the space, where anything does.
  * @returns The space.
  */
-export function spaceAfter(before: TextSpan | undefined): TextSpan {
+export function spaceAfter(
+  before: TextSpan | undefined,
+  after?: { readonly markup?: TextMarkup },
+): TextSpan {
+  const markup = before?.markup;
   return {
     text: ' ',
     ...(before?.sizePt !== undefined ? { sizePt: before.sizePt } : {}),
     ...(before?.fontName !== undefined ? { fontName: before.fontName } : {}),
+    ...(markup !== undefined && after?.markup !== undefined && sameMarkup(markup, after.markup)
+      ? { markup }
+      : {}),
   };
 }
 
