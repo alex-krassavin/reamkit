@@ -2055,6 +2055,61 @@ describe('a flowing reading re-sets the page where the page set it', () => {
       expect(doc.body.some((b) => b.kind === 'shape')).toBe(true);
     });
   });
+
+  it('keeps an ellipsis the page steps between the dots of together', () => {
+    // freeculture.pdf sets "at the scene. . . ." with a step between the dots,
+    // as wide as most of its face's space: read as word spaces, the steps
+    // came back "scene. .. .".
+    const prose = Array.from(
+      { length: 8 },
+      (_, k) =>
+        `1 0 0 1 72 ${String(720 - k * 12)} Tm (Line ${String(k)} of the body text of the page) Tj`,
+    );
+    const doc = reconstructByLayout(
+      PdfFile.parse(
+        helvetica(
+          [
+            'BT /F1 10 Tf',
+            ...prose,
+            '1 0 0 1 72 600 Tm [(whose blood was at the scene.) -230 (.) -230 (.)] TJ',
+            'ET',
+          ].join('\n'),
+        ),
+      ),
+    ).doc;
+    expect(
+      paragraphs(doc)
+        .map((p) => textOf(p))
+        .join('\n'),
+    ).toContain('at the scene...');
+  });
+
+  it("reads a step as wide as most of the face's space as a space, where the line draws its others", () => {
+    // freeculture.pdf's index draws the space in "academic journals" and
+    // steps the one after "journals," — 1.71 points against a space of 2.03 —
+    // and the entry came back "journals,262,280–82".
+    const prose = Array.from(
+      { length: 8 },
+      (_, k) =>
+        `1 0 0 1 72 ${String(720 - k * 12)} Tm (Line ${String(k)} of the body text of the page) Tj`,
+    );
+    const doc = reconstructByLayout(
+      PdfFile.parse(
+        helvetica(
+          [
+            'BT /F1 8 Tf',
+            ...prose,
+            '1 0 0 1 72 600 Tm [(academic journals,)-214(262,)-214(280)] TJ',
+            'ET',
+          ].join('\n'),
+        ),
+      ),
+    ).doc;
+    const text = paragraphs(doc)
+      .map((p) => textOf(p))
+      .join(' ');
+    expect(text).toContain('academic journals, 262, 280');
+  });
 });
 
 describe('a right-to-left line ends on its left (§17.3.1.13)', () => {

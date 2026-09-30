@@ -2744,10 +2744,30 @@ const TAB_GAP_EM = 2.5;
  * {@link stepsBetweenWords}). The tight one still clears the gaps a producer
  * leaves INSIDE a word when it splits one for kerning, which measure eight
  * hundredths of an em at their widest across this corpus.
+ *
+ * …and a page that draws its spaces may step some of them all the same: a
+ * gap as wide as most of the face's own space is one, set by a step instead
+ * of a glyph. freeculture.pdf's index draws the space in "academic journals"
+ * and steps the one after "journals," — 1.71 points against a space of 2.03,
+ * short of a quarter em — and the entry came back "journals,262,280–82".
  */
 function spaceGap(prev: TextRun, fontSize: number, stepped: boolean): number {
-  return (prev.fontSizePt || fontSize) * (stepped ? STEPPED_SPACE_EM : DRAWN_SPACE_EM);
+  const size = prev.fontSizePt || fontSize;
+  if (stepped) return size * STEPPED_SPACE_EM;
+  const space = prev.spaceWidthPt;
+  const face =
+    space !== undefined && space >= size * LEAST_FACE_SPACE_EM && space <= size * MOST_FACE_SPACE_EM
+      ? space * STEPPED_SPACE_SHARE
+      : Infinity;
+  return Math.min(size * DRAWN_SPACE_EM, face);
 }
+
+/** How much of the face's own space a step has to be to stand for one. */
+const STEPPED_SPACE_SHARE = 0.75;
+
+/** The narrowest and widest space, in ems, a face is taken at its word for. */
+const LEAST_FACE_SPACE_EM = 0.15;
+const MOST_FACE_SPACE_EM = 0.5;
 
 /**
  * §17.3.1.25 — one character of a LEADER, the dotted rule that carries the eye
@@ -2772,9 +2792,12 @@ function isLeader(text: string): boolean {
  * cell standing where three had.
  */
 function continuesLeader(prev: TextRun, run: TextRun, fontSize: number): boolean {
+  // …and a dot stepped on from a word that ends in one is the rest of an
+  // ellipsis: freeculture.pdf steps between the dots of its "scene. . . .",
+  // and read as word spaces the steps came back "scene. .. .".
+  const dots = prev.text.endsWith('.') && run.text.startsWith('.');
   return (
-    isLeader(prev.text) &&
-    prev.text === run.text &&
+    ((isLeader(prev.text) && prev.text === run.text) || dots) &&
     run.x - prev.endX < (run.fontSizePt || fontSize) * CELL_GAP_EM
   );
 }
@@ -2903,7 +2926,15 @@ function lineSpans(
         spans.push({ text: '\t' });
         stops.push(run.x);
         pieces.push({ from: Infinity, to: -Infinity });
-      } else {
+      } else if (
+        (!/\s$/u.test(prev.text) && !/^\s/u.test(run.text)) ||
+        run.x - prev.endX > (prev.fontSizePt || fontSize) * DRAWN_SPACE_EM
+      ) {
+        // …and beside a space the page drew, a step is a space of its own only
+        // where it is wide as one: a narrower one is the drawn space's advance
+        // come out wider than its glyph. bug1815476.pdf draws the space after
+        // "IDIOMA ………" in a smaller face and steps past it, and read by that
+        // face's space the step came back a second one.
         spans.push(fittedSpace(spaceAfter(spans[spans.length - 1], run), prev, run, spaces));
       }
     }
