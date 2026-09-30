@@ -262,6 +262,25 @@ describe('a table down either column, their rows abreast', () => {
   });
 });
 
+describe('the white under a line across the page', () => {
+  it('is the space after it, over both columns under it', () => {
+    // comments.pdf leaves twenty points under Figure 13's caption before the
+    // columns begin, and each column read from nothing put the white nowhere:
+    // the caption came down onto the text. As space before each column's
+    // first paragraph, Word and LibreOffice drop it at the head of the second.
+    const caption = 'Figure 13. A caption set across the page, wider than a column is';
+    const ops = ['BT /F1 9 Tf', at(54, 600, caption), ...columns(575, 20), 'ET'];
+    const { doc } = reconstructByLayout(PdfFile.parse(pages([ops])));
+    const paragraphs = doc.body.flatMap((el) => (el.kind === 'paragraph' ? [el.paragraph] : []));
+    const over = paragraphs.find((p) => p.runs.some((r) => r.text.startsWith('Figure 13.')));
+    // Baselines 25 points apart, less the boxes the two lines stand in.
+    expect(over?.properties.spacingAfter).toBeGreaterThan(10);
+    const under = paragraphs.filter((p) => p.runs.some((r) => /^[LR]01/u.test(r.text)));
+    expect(under).toHaveLength(2);
+    expect(under.map((p) => p.properties.spacingBefore ?? 0)).toEqual([0, 0]);
+  });
+});
+
 describe('a table inside a column', () => {
   it('stays in its column, and the column beside it reads on', () => {
     const ops = ['BT /F1 9 Tf'];

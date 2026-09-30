@@ -386,7 +386,7 @@ export function reconstructByLayout(
     const stepped = stepsBetweenWords(runs);
     // Blocks carry a column key so the final sort reads column-by-column: left
     // column top-to-bottom, then right column.
-    const blocks: Array<{ band: number; col: number; top: number; el: BodyElement }> = [];
+    const blocks: Array<Block> = [];
     // EP17 — a full-width line cuts the page in two: what is above it is read
     // before it and what is below after, so a paper's columns do not start at
     // the top of the sheet.
@@ -574,7 +574,13 @@ export function reconstructByLayout(
             },
             pageWidth,
           )) {
-            blocks.push({ band: bandAt(set.top), col, top: set.top, el: set.el });
+            blocks.push({
+              band: bandAt(set.top),
+              col,
+              top: set.top,
+              el: set.el,
+              ...(set.foot !== undefined ? { foot: set.foot } : {}),
+            });
           }
           const last = paras[paras.length - 1];
           if (last !== undefined) above = { y: last.bottom, lineHeight: last.lineHeight };
@@ -668,7 +674,7 @@ export function reconstructByLayout(
       paras: ReturnType<typeof groupIntoParagraphs>,
       tableMeasure: { left: number; right: number } | undefined,
       sheetWidth = 0,
-    ): Array<{ top: number; el: BodyElement }> => {
+    ): Array<{ top: number; el: BodyElement; foot?: number }> => {
       // §17.4.38 — consecutive lines set out on the SAME stops are a table:
       // "Description / Qty / Unit price / Tax / Amount" and the row under it.
       // Written as tabbed paragraphs the picture is right and the document is
@@ -677,7 +683,7 @@ export function reconstructByLayout(
       const asRows = turned
         ? new Map<number, BodyElement | null>()
         : tabbedRows(paras, tableMeasure);
-      const out: Array<{ top: number; el: BodyElement }> = [];
+      const out: Array<{ top: number; el: BodyElement; foot?: number }> = [];
       for (const [at, para] of paras.entries()) {
         const table = asRows.get(at);
         if (table !== undefined) {
@@ -705,7 +711,11 @@ export function reconstructByLayout(
           ...(overflow > 0 ? { indentRight: pt(-overflow) } : {}),
         });
         if (sheetWidth > 0 && para.far !== undefined) far.set(el, para.far);
-        out.push({ top: para.top, el });
+        out.push({
+          top: para.top,
+          el,
+          foot: para.bottom - (1 - BASELINE_AT) * para.lineHeight,
+        });
       }
       return out;
     };
@@ -897,6 +907,7 @@ export function reconstructByLayout(
           figs.filter((f) => figureColumn(f) === col),
         );
       }
+      spaceUnderSpans(blocks);
     } else {
       addColumn(ruled.runs, 0, figs);
     }
@@ -4266,8 +4277,55 @@ function ruleBorders(
   return given;
 }
 
+/**
+ * §17.3.1.33 — the white a block across the page leaves over the columns
+ * under it, as the space after its last paragraph. Each column reads its own
+ * lines from nothing (see `addColumn`), so the white went nowhere, and
+ * comments.pdf's Figure 13 caption came down onto the text under it. As the
+ * space before each column's first paragraph Word and LibreOffice drop it at
+ * the head of the second column, which then stands higher than the first.
+ *
+ * @param blocks A page's blocks, as read; each block across the page with
+ *               columns under it is given its white.
+ */
+function spaceUnderSpans(blocks: Array<Block>): void {
+  for (const span of blocks) {
+    if (span.col !== SPANNING_COLUMN || span.foot === undefined || span.el.kind !== 'paragraph') {
+      continue;
+    }
+    // The columns under it, as far as the next block across the page — every
+    // line across the page is a band of its own, so they are found by where
+    // they stand, not by band.
+    const next = blocks
+      .filter((b) => b.col === SPANNING_COLUMN && b.top < span.top)
+      .reduce((high, b) => Math.max(high, b.top), -Infinity);
+    // The head of each: the box of its first line.
+    const heads = blocks
+      .filter((b) => b.col !== SPANNING_COLUMN && b.top < span.top && b.top > next)
+      .map((b) => b.top + BASELINE_AT * (leadingLine(b.el) ?? 0));
+    if (heads.length === 0) continue;
+    const white = span.foot - Math.max(...heads);
+    if (white <= SPACING_NOISE_PT) continue;
+    const { paragraph } = span.el;
+    span.el = {
+      kind: 'paragraph',
+      paragraph: {
+        ...paragraph,
+        properties: { ...paragraph.properties, spacingAfter: pt(white) },
+      },
+    };
+  }
+}
+
 /** A block of a page's reading, as `ruleBorders` is handed it. */
-type Block = { band: number; col: number; top: number; el: BodyElement };
+type Block = {
+  band: number;
+  col: number;
+  top: number;
+  el: BodyElement;
+  /** Where the box of a paragraph's last line ends, down the page. */
+  foot?: number;
+};
 
 /**
  * A table with a rule over one of its rows: the top edge of each of the row's
