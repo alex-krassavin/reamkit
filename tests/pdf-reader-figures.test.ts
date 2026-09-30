@@ -59,6 +59,12 @@ function path(points: ReadonlyArray<[number, number]>, curved = false, key?: num
   };
 }
 
+/** `v` filled with `hex`, and not stroked. */
+function filled(v: PdfVector, hex: string): PdfVector {
+  const { strokeHex: _stroke, lineWidth: _width, ...shape } = v;
+  return { ...shape, fillHex: hex };
+}
+
 /** A box, lower-left at (x, y); `curved` rounds its first corner. */
 const box = (x: number, y: number, w = 50, h = 20, curved = true): PdfVector =>
   path(
@@ -178,6 +184,28 @@ describe('the figures a page draws (§8.5)', () => {
     const figures = pageFigures([...diagram(330, 400), ...head], [], labels(330, 400), SHEET);
     expect(figures).toHaveLength(1);
     expect(figures[0]!.vectors).toEqual(expect.arrayContaining(head));
+  });
+
+  it('finds a bar chart: bars on one line, as long as their figures make them', () => {
+    // comments.pdf's Figure 10: a bar a benchmark, standing on one line, and
+    // not a curve among them — the one drawing of straight lines and boxes a
+    // ruling is not.
+    const bars = [30, 12, 45, 8, 60, 22, 17, 38].map((tall, k) =>
+      filled(box(330 + k * 12, 400, 8, tall, false), '5E96DE'),
+    );
+    const names = bars.map((b, k) => run(`b${String(k)}`, b.minX, 392, 5));
+    const figures = pageFigures(bars, [], [...column(54, 600, 20, 'L'), ...names], SHEET);
+    expect(figures).toHaveLength(1);
+    expect(figures[0]!.labels).toHaveLength(bars.length);
+  });
+
+  it('finds none in shading: boxes on one line, each as long as the last', () => {
+    // A table's rows shaded in turn stand on one line too.
+    const rows = Array.from({ length: 8 }, (_, k) =>
+      filled(box(100, 400 + k * 12, 200, 10, false), 'EEEEEE'),
+    );
+    const words = rows.map((r, k) => run(`row${String(k)}`, 105, r.minY + 2, 5));
+    expect(pageFigures(rows, [], [...column(54, 600, 20, 'L'), ...words], SHEET)).toEqual([]);
   });
 
   it('leaves out what an annotation draws over the page', () => {

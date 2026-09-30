@@ -182,8 +182,9 @@ export function pageFigures(
   for (const members of clusters.values()) {
     const box = boxOf(members);
     if (huge(box)) continue;
-    if (members.length < MIN_PATHS || !members.some(draws)) pieces.push({ box, vectors: members });
-    else found.push({ box, vectors: members });
+    if (members.length < MIN_PATHS || !(members.some(draws) || barChart(members))) {
+      pieces.push({ box, vectors: members });
+    } else found.push({ box, vectors: members });
   }
   if (found.length === 0) return [];
 
@@ -291,6 +292,85 @@ function draws(v: PdfVector): boolean {
     }
   }
   return false;
+}
+
+/**
+ * Whether paths draw a BAR CHART: filled rectangles, six and more, standing on
+ * one line and as long as each other's figures make them — the one drawing
+ * made of nothing but straight lines and boxes that a ruling is not. A
+ * table's shading stands its boxes on one line too, but each as long as the
+ * last.
+ *
+ * comments.pdf sets Figures 10 and 12 so, bars of gradient and of flat grey.
+ * With no curve among them they were taken for a ruling: their labels were
+ * read as lines of the text, Figure 12 and the column beside it came back as
+ * one table, and Figure 10's caption, the first line left on its page, set
+ * the page's top margin 352 points down.
+ *
+ * @param paths The paths of one cluster.
+ */
+function barChart(paths: ReadonlyArray<PdfVector>): boolean {
+  const bars = paths
+    .filter((v) => v.fillHex !== undefined || v.gradient !== undefined)
+    .flatMap(rectanglesOf);
+  // Bars stand up from a line, or run out from one.
+  const standing = (base: (b: Box) => number, length: (b: Box) => number): boolean => {
+    const lengths = new Map<number, Array<number>>();
+    for (const b of bars) {
+      const at = Math.round(base(b) / BAR_LINE_PT);
+      const long = length(b);
+      if (long > THIN_PT) lengths.set(at, [...(lengths.get(at) ?? []), long]);
+    }
+    return [...lengths.values()].some(
+      (all) => all.length >= MIN_PATHS && Math.max(...all) >= Math.min(...all) * BAR_SPREAD,
+    );
+  };
+  return (
+    standing(
+      (b) => b.minY,
+      (b) => b.maxY - b.minY,
+    ) ||
+    standing(
+      (b) => b.minX,
+      (b) => b.maxX - b.minX,
+    )
+  );
+}
+
+/** How near, in points, bars' feet stand to stand on one line. */
+const BAR_LINE_PT = 0.5;
+
+/** How much longer the longest bar of a chart is than the shortest, at the least. */
+const BAR_SPREAD = 2;
+
+/** The upright rectangles a path is drawn with, one per subpath that is one. */
+function rectanglesOf(v: PdfVector): Array<Box> {
+  const out: Array<Box> = [];
+  let corners: Array<{ x: number; y: number }> = [];
+  let curved = false;
+  const close = (): void => {
+    const xs = new Set(corners.map((c) => Math.round(c.x * 10)));
+    const ys = new Set(corners.map((c) => Math.round(c.y * 10)));
+    if (!curved && corners.length >= 4 && corners.length <= 5 && xs.size === 2 && ys.size === 2) {
+      out.push({
+        minX: Math.min(...corners.map((c) => c.x)),
+        maxX: Math.max(...corners.map((c) => c.x)),
+        minY: Math.min(...corners.map((c) => c.y)),
+        maxY: Math.max(...corners.map((c) => c.y)),
+      });
+    }
+    corners = [];
+    curved = false;
+  };
+  for (const s of v.segs) {
+    if (s.op === 'move') {
+      close();
+      corners.push({ x: s.x, y: s.y });
+    } else if (s.op === 'line') corners.push({ x: s.x, y: s.y });
+    else if (s.op === 'cubic') curved = true;
+  }
+  close();
+  return out;
 }
 
 /**
