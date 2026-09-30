@@ -1566,6 +1566,12 @@ function detectGutters(runs: ReadonlyArray<TextRun>, pageWidth: number): Array<G
       if (before.length === 0 || after.length === 0) continue;
       const gap = Math.min(...after.map(([l]) => l)) - Math.max(...before.map(([, r]) => r));
       if (gap >= fontSize * MIN_GUTTER_EM) columned++;
+      // …and a line with a word space over x runs across it as surely as one
+      // with a word: counted as neither, a page of long lines whose spaces
+      // happened to fall together voted for a gutter there. freeculture.pdf's
+      // index split its left column seventy points short of the right one,
+      // and read every entry longer than that across the page.
+      else crossing++;
     }
     // Enough lines have to be split at the SAME x, or it is not a gutter: a
     // form's label-and-value rows have a wide gap on every line and it is in a
@@ -1621,9 +1627,15 @@ function detectGutters(runs: ReadonlyArray<TextRun>, pageWidth: number): Array<G
  * its columns, as a table — and so does a page's one gap.
  *
  * The gaps that stay are then measured afresh, as the white every line split
- * there leaves: a gutter voted across a column of short cells reaches back
+ * there leaves. The vote answers wherever more lines stand apart than run
+ * across, which is where MOST of a column's lines end and not where its
+ * longest does: a gutter voted across a column of short cells reaches back
  * into that column, and a section set with it stood its columns sixty-five
- * points further apart than the page does.
+ * points further apart than the page does. freeculture.pdf's index sets its
+ * entries ragged, two columns six to twenty points apart, and set seventy
+ * apart its columns came back a third narrower than the page's: the thirteen
+ * pages of the index ran to twenty-seven, and its longest entries ran on past
+ * the middle of the white and were read as lines across the page.
  *
  * @param gutters  The gutters found, left to right.
  * @param firm     The gutters no line crosses, which stay.
@@ -1641,7 +1653,6 @@ function withoutNarrowColumns(
   const kept = [...gutters];
   const least = fontSize * NARROWEST_COLUMN_EM;
   const white = (g: Gutter): number => g.to - g.from;
-  let dropped = false;
   // A page split once is two columns however narrow they are: a column a few
   // ems wide is a table's only where there is another column to be part of.
   while (kept.length > 1) {
@@ -1660,13 +1671,11 @@ function withoutNarrowColumns(
     }
     if (!narrowest) break;
     kept.splice(kept.indexOf(narrowest.gap), 1);
-    dropped = true;
   }
-  if (!dropped) return kept;
   return kept.map((g) => {
     if (firm.includes(g)) return g;
-    let from = -Infinity;
-    let to = Infinity;
+    const starts: Array<number> = [];
+    const ends: Array<number> = [];
     for (const row of rows) {
       // The row's widest white across the band, where the row is split there.
       let widest: readonly [number, number] | undefined;
@@ -1679,12 +1688,49 @@ function withoutNarrowColumns(
         reach = Math.max(reach, r);
       }
       if (!widest) continue;
-      from = Math.max(from, widest[0]);
-      to = Math.min(to, widest[1]);
+      starts.push(widest[0]);
+      ends.push(widest[1]);
     }
+    if (starts.length === 0) return g;
+    // …where the column before agrees on an edge, that is: a justified column
+    // has one most of its lines stop at, and a line past it is set over its
+    // measure. TeX leaves one where it can break a paragraph no better, and
+    // comments.pdf's, ten points past the edge of its column, set the measure
+    // there: every justified line of the column stopped short of it, and ran
+    // on into the next paragraph. A ragged column agrees on no edge, and its
+    // longest line is its measure; the column after begins at its first line.
+    const from = sharedEdge(starts) ?? Math.max(...starts);
+    const to = Math.min(...ends);
     return to > from ? { from, to, mid: (from + to) / 2 } : g;
   });
 }
+
+/**
+ * The edge at least half of `ends` agree on, to {@link FLUSH_PT}: the furthest
+ * out of the agreeing ones, which every one of them clears — where no more
+ * than a line in twenty stops past it, set over the measure. Lines of one
+ * length agree on where they stop too, and the column's longer lines past
+ * them are its measure.
+ *
+ * @param ends Where each line stops.
+ * @returns The edge, or `undefined` where no half of them agree on one.
+ */
+function sharedEdge(ends: ReadonlyArray<number>): number | undefined {
+  const sorted = [...ends].sort((a, b) => a - b);
+  let best: readonly [number, number] | undefined;
+  let low = 0;
+  for (let high = 0; high < sorted.length; high++) {
+    while (sorted[high]! - sorted[low]! > FLUSH_PT) low++;
+    if (!best || high - low > best[1] - best[0]) best = [low, high];
+  }
+  if (!best || (best[1] - best[0] + 1) * 2 < sorted.length) return undefined;
+  const over = sorted.length - 1 - best[1];
+  if (over > Math.max(1, Math.floor(sorted.length * OVERSET_SHARE))) return undefined;
+  return sorted[best[1]];
+}
+
+/** How many of a column's lines, as a share of them, may be set over its measure. */
+const OVERSET_SHARE = 0.05;
 
 /**
  * How narrow, in ems of the page's body, a column of the page may be: narrower
