@@ -12,7 +12,7 @@ import { describe, expect, it } from 'vitest';
 
 import { EMPTY_TO_UNICODE, numberedProgram, robotoGlyph } from './fixtures/numbered-truetype';
 import type { PdfDict } from '@/pdf/objects';
-import type { ContentFont } from '@/pdf-reader/content';
+import type { ContentFont, PathSeg } from '@/pdf-reader/content';
 import { Ream } from '@/core/converter/ream';
 import { PdfFile } from '@/pdf-reader/document';
 import { buildContentFont } from '@/pdf-reader/font';
@@ -129,6 +129,34 @@ describe('glyph outlines (§9.6.6)', () => {
     expect(Math.max(...xs)).toBeCloseTo(0.6, 6);
     expect(Math.min(...ys)).toBeCloseTo(0.1, 6);
     expect(Math.max(...ys)).toBeCloseTo(0.6, 6);
+  });
+
+  it('draws the two curves hflex and hflex1 state (TN 5177 §4.2)', () => {
+    // freeculture.pdf sets its page numbers in Caslon, whose "1" draws its
+    // foot serif with hflex: its second curve lost dx5, and every point after
+    // it stood 136 units left, the figure drawn in the left of its cell.
+    const small = (...vs: Array<number>): Array<number> => vs.map((v) => v + 139);
+    const run = (op: number, args: Array<number>): Array<PathSeg> =>
+      cffOutlineSource(
+        cffWith(Uint8Array.from([...small(100, 100), 21, ...small(...args), 12, op, 14])),
+      )?.path(1) ?? [];
+    const curves = (path: Array<PathSeg>) =>
+      path.flatMap((s) =>
+        s.op === 'cubic'
+          ? [[s.x1, s.y1, s.x2, s.y2, s.x, s.y].map((v) => Math.round(v * 1000))]
+          : [],
+      );
+    // hflex: dx1 dx2 dy2 dx3 dx4 dx5 dx6 — the second curve dx4 0, dx5 -dy2, dx6 0.
+    expect(curves(run(34, [10, 20, 30, 40, 50, 60, 70]))).toEqual([
+      [110, 100, 130, 130, 170, 130],
+      [220, 130, 280, 100, 350, 100],
+    ]);
+    // hflex1: dx1 dy1 dx2 dy2 dx3 dx4 dx5 dy5 dx6 — the second curve dx4 0,
+    // dx5 dy5, and dx6 back down to the line it began on.
+    expect(curves(run(36, [10, 5, 20, 15, 30, 40, 50, -10, 60]))).toEqual([
+      [110, 105, 130, 120, 160, 120],
+      [200, 120, 250, 110, 310, 100],
+    ]);
   });
 
   it('draws the glyphs of a CFF face embedded in a PDF', () => {
@@ -434,20 +462,26 @@ function fontStreamObject(program: Uint8Array): Uint8Array {
  */
 function squareCff(): Uint8Array {
   const int16 = (v: number): Array<number> => [28, (v >> 8) & 0xff, v & 0xff];
-  const square = Uint8Array.from([
-    ...[100 + 139, 100 + 139, 21], // 100 100 rmoveto
-    ...int16(500),
-    139,
-    5, // 500 0 rlineto
-    139,
-    ...int16(500),
-    5, // 0 500 rlineto
-    ...int16(-500),
-    139,
-    5, // -500 0 rlineto
-    14, // endchar
-  ]);
-  const charStrings = index([Uint8Array.from([14]), square]);
+  return cffWith(
+    Uint8Array.from([
+      ...[100 + 139, 100 + 139, 21], // 100 100 rmoveto
+      ...int16(500),
+      139,
+      5, // 500 0 rlineto
+      139,
+      ...int16(500),
+      5, // 0 500 rlineto
+      ...int16(-500),
+      139,
+      5, // -500 0 rlineto
+      14, // endchar
+    ]),
+  );
+}
+
+/** A CFF program of two glyphs: `.notdef`, and the one charstring given. */
+function cffWith(glyph: Uint8Array): Uint8Array {
+  const charStrings = index([Uint8Array.from([14]), glyph]);
   const name = index([new TextEncoder().encode('Square')]);
   const strings = index([]);
   const gsubrs = index([]);

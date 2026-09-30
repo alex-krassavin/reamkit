@@ -1305,16 +1305,22 @@ function flexCurves(
     push([n(0), n(2), n(4)], [n(1), n(3), n(5)]);
     push([n(6), n(8), n(10)], [n(7), n(9), n(11)]);
   } else if (op === 34) {
-    // hflex: the pair stays on one line, y returning to where it began
+    // hflex — dx1 dx2 dy2 dx3 dx4 dx5 dx6: the first curve dx1 0, dx2 dy2,
+    // dx3 0; the second dx4 0, dx5 -dy2, dx6 0, back on the line it began on.
+    // Read as dx4, dx6 and nothing, the second curve lost dx5, and every
+    // point after it stood that far left: freeculture.pdf's Caslon draws the
+    // foot of its "1" with one, and the figure stood 136 units left in its
+    // cell, a gap after every 1 it sets.
     const startY = y;
     push([n(0), n(1), n(3)], [0, n(2), 0]);
-    push([n(4), n(6), 0], [0, startY - y, 0]);
+    push([n(4), n(5), n(6)], [0, startY - y, 0]);
     y = startY;
   } else if (op === 36) {
-    // hflex1
+    // hflex1 — dx1 dy1 dx2 dy2 dx3 dx4 dx5 dy5 dx6: the second curve dx4 0,
+    // dx5 dy5, then dx6 and back down to the line the pair began on.
     const startY = y;
     push([n(0), n(2), n(4)], [n(1), n(3), 0]);
-    push([n(5), n(7), n(8)], [0, n(6), startY - (y + n(6))]);
+    push([n(5), n(6), n(8)], [0, n(7), startY - (y + n(7))]);
     y = startY;
   } else if (op === 37) {
     // flex1 — the last point returns to the start on whichever axis moved less
