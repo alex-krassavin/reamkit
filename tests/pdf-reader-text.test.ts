@@ -233,6 +233,17 @@ describe('a font that names its glyphs rather than mapping them (§9.6.6.1)', ()
     expect(textForGlyphName('ff')).toBe('ﬀ');
   });
 
+  it('reads the Greek and the mathematics TeX names its glyphs by', () => {
+    // comments.pdf sets "The α symbol is used…" with its α in CMMI9, named
+    // `alpha`, and the letter was traced and left out of the line.
+    expect(textForGlyphName('alpha')).toBe('α');
+    expect(textForGlyphName('Gamma')).toBe('Γ');
+    expect(textForGlyphName('epsilon1')).toBe('ϵ');
+    expect(textForGlyphName('arrowdblright')).toBe('⇒');
+    expect(textForGlyphName('asteriskmath')).toBe('∗');
+    expect(textForGlyphName('element')).toBe('∈');
+  });
+
   it('reads the algorithmic names, and says nothing for a slot number', () => {
     expect(textForGlyphName('uni0041')).toBe('A');
     expect(textForGlyphName('uni00410042')).toBe('AB');
