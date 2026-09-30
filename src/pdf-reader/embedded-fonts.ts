@@ -155,7 +155,8 @@ export function hasLiftableProgram(file: PdfFile, fontDict: PdfDict): boolean {
 /**
  * The style a font's embedded program states for itself — the `head` table's
  * macStyle, bit 0 bold and bit 1 italic — where the file carries a TrueType
- * program to read it from.
+ * program to read it from, and the weight a Type 1 program names (see
+ * {@link typeOneStyle}).
  *
  * @param file     The document.
  * @param fontDict The font dictionary.
@@ -167,7 +168,8 @@ export function programStyle(
   fontDict: PdfDict,
 ): { bold: boolean; italic: boolean } | undefined {
   const program = fontProgram(file, fontDict);
-  if (!program || program.length < 12) return undefined;
+  if (!program) return typeOneStyle(file, fontDict);
+  if (program.length < 12) return undefined;
   const view = new DataView(program.buffer, program.byteOffset, program.byteLength);
   const tables = view.getUint16(4);
   for (let i = 0; i < tables; i++) {
@@ -182,6 +184,38 @@ export function programStyle(
   }
   return undefined;
 }
+
+/**
+ * §9.9 `/FontFile` — the weight a Type 1 program names in its `FontInfo`
+ * (`/Weight (Bold)`), read off the cleartext that opens it. pdfTeX states no
+ * weight in the descriptor, and names URW's bold Times "NimbusRomNo9L-Medi",
+ * which no rule of names reads as bold: comments.pdf's headings and captions
+ * came back in the body's weight. Its program says "Bold"; Computer Modern's
+ * say "Medium", which is their book weight.
+ *
+ * @param file     The document.
+ * @param fontDict The font dictionary.
+ * @returns The style, or `undefined` where no program names a weight.
+ */
+function typeOneStyle(
+  file: PdfFile,
+  fontDict: PdfDict,
+): { bold: boolean; italic: boolean } | undefined {
+  const owner = descendant(file, fontDict) ?? fontDict;
+  const descriptor = file.resolve(owner.get('FontDescriptor') ?? PDF_NULL);
+  if (!(descriptor instanceof Map)) return undefined;
+  const program = file.resolve(descriptor.get('FontFile') ?? PDF_NULL);
+  if (!(program instanceof PdfStream)) return undefined;
+  const bytes = file.streamData(program);
+  const clear = new TextDecoder('latin1').decode(bytes.subarray(0, TYPE_ONE_HEAD));
+  const weight = /\/Weight\s*\(([^)]*)\)/u.exec(clear)?.[1];
+  return weight === undefined
+    ? undefined
+    : { bold: /bold|black|heavy|semib|demi/iu.test(weight), italic: false };
+}
+
+/** How far into a Type 1 program its `FontInfo` stands, at the most. */
+const TYPE_ONE_HEAD = 8192;
 
 /** §9.9 `/FontFile2` — the TrueType program, off the font or its descendant. */
 function fontProgram(file: PdfFile, fontDict: PdfDict): Uint8Array | undefined {
