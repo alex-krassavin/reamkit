@@ -1688,3 +1688,48 @@ describe('a composite font that names a system face and embeds nothing (§9.7.4)
     expect(shown('SomeFoundryFace', '0039002400370026')).not.toBe('VATC');
   });
 });
+
+describe('an accent struck over a letter (§9.4.3)', () => {
+  /** "naïve" in Helvetica as TeX sets it: the dieresis, and a dotless i drawn back under it. */
+  const accentedPdf = (under: string): Uint8Array => {
+    const content =
+      'BT /F1 12 Tf 1 0 0 1 72 720 Tm (na) Tj ' +
+      `1 0 0 1 85.34 720 Tm (\\310) Tj 1 0 0 1 ${under} 720 Tm (\\365ve) Tj ET`;
+    const objects = [
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] ' +
+        '/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>',
+      `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+      '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+    ];
+    let pdf = '%PDF-1.7\n';
+    const offsets: Array<number> = [];
+    objects.forEach((body, i) => {
+      offsets.push(pdf.length);
+      pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+    });
+    const xref = pdf.length;
+    pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+    for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+    pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\n`;
+    pdf += `startxref\n${String(xref)}\n%%EOF\n`;
+    return new TextEncoder().encode(pdf);
+  };
+  const textOf = (pdf: Uint8Array): string => {
+    const file = PdfFile.parse(pdf);
+    return extractPageText(file, file.pages()[0]!)
+      .map((r) => r.text)
+      .join('');
+  };
+
+  it('composes it with the letter the pen was taken back to', () => {
+    // comments.pdf's "naïve" came back "na¨ıve", the accent a character of
+    // the word and the i without its dot.
+    expect(textOf(accentedPdf('85.34'))).toBe('na\u00efve');
+  });
+
+  it('leaves an accent the pen moved on from as it stands', () => {
+    expect(textOf(accentedPdf('89.34'))).toBe('na\u00a8\u0131ve');
+  });
+});
