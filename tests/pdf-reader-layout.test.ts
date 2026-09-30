@@ -529,6 +529,61 @@ describe('a running foot is a foot, not a paragraph (§17.6.13)', () => {
     expect(lines[1]).toContain('The Journal of Things');
   });
 
+  /**
+   * Six pages of a book: the folio at the outer edge of each, "<n> THE BOOK"
+   * on the left of the even pages with the address it is published at under
+   * it, and the chapter's name before the number on the right of the odd ones.
+   */
+  const book = (): Uint8Array =>
+    pages(
+      [1, 2, 3, 4, 5, 6].map((n) => {
+        const ops: Array<string> = [];
+        for (let i = 0; i < 8; i++)
+          ops.push(
+            `BT /F0 10 Tf 1 0 0 1 40 ${String(360 - i * 14)} Tm (body line ${String(i)}) Tj ET`,
+          );
+        if (n % 2 === 0) {
+          ops.push(`BT /F0 8 Tf 1 0 0 1 40 40 Tm (${String(n)}) Tj ET`);
+          ops.push('BT /F0 8 Tf 1 0 0 1 52 40 Tm (THE BOOK) Tj ET');
+          ops.push('BT /F0 8 Tf 1 0 0 1 100 20 Tm (<http://example.org/book>) Tj ET');
+        } else {
+          const chapter = ['Alpha', 'Beta', 'Gamma'][(n - 1) / 2]!;
+          ops.push(`BT /F0 8 Tf 1 0 0 1 220 40 Tm (${chapter}) Tj ET`);
+          ops.push(`BT /F0 8 Tf 1 0 0 1 255 40 Tm (${String(n)}) Tj ET`);
+        }
+        return ops.join('\n');
+      }),
+    );
+  const bandText = (
+    doc: ReturnType<typeof reconstructByLayout>['doc'],
+    type: 'default' | 'even',
+  ): Array<string> => {
+    const part = doc.section?.footers.find((f) => f.type === type)?.relationshipId;
+    const band = part !== undefined ? doc.headersFooters?.get(part) : undefined;
+    return (
+      band?.map((b) =>
+        b.kind === 'paragraph'
+          ? b.paragraph.runs.map((r) => (r.field ? `{${r.field}}` : r.text)).join('')
+          : '',
+      ) ?? []
+    );
+  };
+
+  it('lifts the feet of a book that signs one side of its spreads with more than the other', () => {
+    // freeculture.pdf sets its folio forty-eight points up every page and the
+    // URL it is published at under it on the left-hand ones. Asked where each
+    // foot ends, the two sides disagreed by the line between them, and the
+    // book's feet were read into the text of every page.
+    const doc = reconstructByLayout(PdfFile.parse(book())).doc;
+    const body = doc.body
+      .flatMap((b) => (b.kind === 'paragraph' ? b.paragraph.runs.map((r) => r.text) : []))
+      .join(' ');
+    expect(body).toContain('body line 0');
+    expect(body).not.toContain('THE BOOK');
+    expect(body).not.toContain('example.org');
+    expect(body).not.toContain('Alpha');
+  });
+
   it('sets a foot written in REGIONS on the stops it was written at', () => {
     // A foot is written the way a spreadsheet's is: something at the left,
     // something against the far edge. ZapfDingbats.pdf signs each sheet

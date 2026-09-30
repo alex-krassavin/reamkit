@@ -3903,9 +3903,19 @@ export function runningFoot(
   const found = feet.filter((f) => f !== undefined);
   if (found.length < 2 || found.length < pageRuns.length * FOOT_SHARE) return undefined;
   // The same place on every page: a foot that wanders is a last paragraph.
-  const ys = found.map((f) => f.y);
-  const mid = median(ys);
-  if (ys.some((y) => Math.abs(y - mid) > FOOT_DRIFT)) return undefined;
+  // …its line nearest the text, that is, which is where the text stops: a
+  // book may sign one side of its spreads with more than the other.
+  // freeculture.pdf sets its folio forty-eight points up every page and its
+  // URL under it on the left-hand ones; asked where each foot ENDS, the two
+  // sides disagreed, and the book's feet were read into the text of every
+  // page. A foot reaching further out than the others is the margin's all
+  // the same.
+  const inner = (f: { runs: ReadonlyArray<TextRun> }): number =>
+    where === 'foot' ? Math.max(...f.runs.map((r) => r.y)) : Math.min(...f.runs.map((r) => r.y));
+  const mid = median(found.map(inner));
+  if (found.some((f) => (where === 'foot' ? inner(f) - mid : mid - inner(f)) > FOOT_DRIFT)) {
+    return undefined;
+  }
   // Whether the foot says something DIFFERENT on each page, which is what a
   // page number is. ZapfDingbats.pdf signs every sheet "© RenderX 2000", and
   // read as a number the year came out as the page: "© RenderX 1".
