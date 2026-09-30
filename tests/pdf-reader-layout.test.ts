@@ -1973,6 +1973,88 @@ describe('a flowing reading re-sets the page where the page set it', () => {
     if (body?.kind !== 'paragraph') throw new Error('the body is a paragraph');
     expect(body.paragraph.properties.indentLeft).toBeCloseTo(32, 0);
   });
+
+  describe('a box filled behind a line (§17.3.1.31)', () => {
+    /** The paragraph whose text is `text`, as the model has it. */
+    const paragraphAt = (doc: { body: ReadonlyArray<BodyElement> }, text: string) => {
+      const el = doc.body.find((b) => b.kind === 'paragraph' && textOf(b) === text);
+      if (el?.kind !== 'paragraph') throw new Error(`no paragraph "${text}"`);
+      return el.paragraph;
+    };
+    /** Whether any paragraph of `doc` is shaded. */
+    const shaded = (doc: { body: ReadonlyArray<BodyElement> }): boolean =>
+      doc.body.some((b) => b.kind === 'paragraph' && b.paragraph.properties.shading !== undefined);
+    const body = (from: number, count: number): Array<string> =>
+      Array.from(
+        { length: count },
+        (_, k) =>
+          `1 0 0 1 72 ${String(from - k * 12)} Tm (Line ${String(k)} of the body text of the page) Tj`,
+      );
+
+    it('is the shading of the paragraph set on it, and goes where the paragraph goes', () => {
+      // canvas.pdf heads each section with its name in white on a dark bar.
+      // Drawn where the page drew it, the bar stayed on the sheet while the
+      // words were set again, and the heading slid off it, white on white.
+      const doc = reconstructByLayout(
+        PdfFile.parse(
+          helvetica(
+            [
+              '0.25 g 66 614 148 19 re f',
+              'BT /F1 9 Tf 0 g',
+              ...body(700, 6),
+              '/F1 12 Tf 1 g 1 0 0 1 72 618 Tm (Canvas element) Tj',
+              '/F1 9 Tf 0 g',
+              ...body(598, 6),
+              'ET',
+            ].join('\n'),
+          ),
+        ),
+      ).doc;
+      const { properties } = paragraphAt(doc, 'Canvas element');
+      expect(properties.shading).toEqual({ colorHex: '404040' });
+      // The bar stands out over the line's box and under it: a border of its
+      // own colour is the rest of it.
+      expect(properties.borders?.top?.colorHex).toBe('404040');
+      expect(properties.borders?.top?.width).toBeCloseTo(3.5, 0);
+      expect(properties.borders?.bottom?.width).toBeCloseTo(1.1, 0);
+      // …and the bar is not drawn again.
+      expect(doc.body.some((b) => b.kind === 'shape')).toBe(false);
+    });
+
+    it("is the paper's where it is white, and stays where the page drew it", () => {
+      // bug1815476.pdf backs its form with white boxes as wide as the sheet,
+      // and taken for shading, "A N E X O" stood off centre by as much as the
+      // box reached past the column.
+      const doc = reconstructByLayout(
+        PdfFile.parse(
+          helvetica(
+            [
+              '1 g 66 614 148 19 re f',
+              'BT /F1 9 Tf 0 g',
+              ...body(700, 6),
+              '/F1 12 Tf 1 0 0 1 72 618 Tm (Canvas element) Tj',
+              '/F1 9 Tf',
+              ...body(598, 6),
+              'ET',
+            ].join('\n'),
+          ),
+        ),
+      ).doc;
+      expect(shaded(doc)).toBe(false);
+    });
+
+    it('is drawn where the page drew it behind a block of lines', () => {
+      const doc = reconstructByLayout(
+        PdfFile.parse(
+          helvetica(
+            ['0.9 g 66 632 148 30 re f', 'BT /F1 9 Tf 0 g', ...body(700, 12), 'ET'].join('\n'),
+          ),
+        ),
+      ).doc;
+      expect(shaded(doc)).toBe(false);
+      expect(doc.body.some((b) => b.kind === 'shape')).toBe(true);
+    });
+  });
 });
 
 describe('a right-to-left line ends on its left (§17.3.1.13)', () => {

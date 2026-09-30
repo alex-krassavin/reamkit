@@ -63,6 +63,7 @@ import type { SideBySide } from './regions';
 import type { PdfVector } from './vector';
 import type {
   BodyElement,
+  Border,
   ParagraphProperties,
   Run,
   SectionProperties,
@@ -402,6 +403,9 @@ export function reconstructByLayout(
     // Blocks carry a column key so the final sort reads column-by-column: left
     // column top-to-bottom, then right column.
     const blocks: Array<Block> = [];
+    // The boxes the page fills behind a line, which became its shading and so
+    // are not drawn again (see `onBoxes`).
+    const shaded = new Set<PdfVector>();
     // EP17 — a full-width line cuts the page in two: what is above it is read
     // before it and what is below after, so a paper's columns do not start at
     // the top of the sheet.
@@ -573,13 +577,10 @@ export function reconstructByLayout(
             lines.length < MEASURE_LINES && gutters.length === 0
               ? pageWidth * (1 - GUESSED_MARGIN)
               : undefined;
-          const paras = groupIntoParagraphs(
-            regionLines,
+          const { paras, under } = onBoxes(
+            groupIntoParagraphs(regionLines, measure, display.height, above, false, reach),
+            vectors.filter(solidBox),
             measure,
-            display.height,
-            above,
-            false,
-            reach,
           );
           for (const set of setParagraphs(
             paras,
@@ -602,7 +603,8 @@ export function reconstructByLayout(
             });
           }
           const last = paras[paras.length - 1];
-          if (last !== undefined) above = { y: last.bottom, lineHeight: last.lineHeight };
+          // A box under the last line reaches down into the white under it.
+          if (last !== undefined) above = { y: last.bottom - under, lineHeight: last.lineHeight };
         }
         if (slab.figure !== undefined) {
           const made = figureIn(slab.figure, measure, above, col === SPANNING_COLUMN);
@@ -693,7 +695,7 @@ export function reconstructByLayout(
     // say, with their lines (see `setOff`).
     const far = new WeakMap<BodyElement, ReadonlyArray<Line>>();
     const setParagraphs = (
-      paras: ReturnType<typeof groupIntoParagraphs>,
+      paras: ReadonlyArray<ShadedParagraph>,
       tableMeasure: { left: number; right: number } | undefined,
       sheetWidth = 0,
     ): Array<{ top: number; el: BodyElement; foot?: number }> => {
@@ -714,6 +716,8 @@ export function reconstructByLayout(
         }
         // A cell's lines keep to the cell: there is no sheet for them to run on into.
         const overflow = sheetWidth > 0 ? runOn(para, tableMeasure, sheetWidth) : 0;
+        const { shade } = para;
+        if (shade) shaded.add(shade.box);
         const el = paragraphFromRuns(para.spans, headingLevel(para.fontSize, medianFont), {
           ...(para.stops !== undefined && para.stops.length > 0
             ? {
@@ -731,12 +735,13 @@ export function reconstructByLayout(
             ? { indentFirstLine: pt(para.indentFirstLine) }
             : {}),
           ...(overflow > 0 ? { indentRight: pt(-overflow) } : {}),
+          ...(shade ? shadeProperties(shade) : {}),
         });
         if (sheetWidth > 0 && para.far !== undefined) far.set(el, para.far);
         out.push({
           top: para.top,
           el,
-          foot: para.bottom - (1 - BASELINE_AT) * para.lineHeight,
+          foot: para.bottom - (1 - BASELINE_AT) * para.lineHeight - (shade?.under ?? 0),
         });
       }
       return out;
@@ -965,7 +970,7 @@ export function reconstructByLayout(
         make: (z: number): BodyElement => imageBlock(img, resources, undefined, frame, z, under),
       })),
       ...drawn
-        .filter((v) => givenAway?.has(v) !== true)
+        .filter((v) => givenAway?.has(v) !== true && !shaded.has(v))
         .map((v) => ({
           key: v.orderKey,
           col: colOf((v.minX + v.maxX) / 2),
@@ -1276,7 +1281,11 @@ export function reconstructByLayout(
     const page = shown[lead.page];
     const el = body[lead.at];
     if (top === undefined || page === undefined) continue;
-    const before = page.height - top - lead.baseline - BASELINE_AT * lead.lineHeight;
+    // A border over the line takes its room out of the white over it, as it
+    // does anywhere else on the page (see `ruleBorders`, `onBoxes`).
+    const border =
+      el?.kind === 'paragraph' ? (el.paragraph.properties.borders?.top?.width ?? 0) : 0;
+    const before = page.height - top - lead.baseline - BASELINE_AT * lead.lineHeight - border;
     if (before <= SPACING_NOISE_PT) continue;
     if (el?.kind === 'paragraph') {
       body[lead.at] = {
@@ -3039,8 +3048,9 @@ function groupIntoParagraphs(
   lineHeight: number;
   stops?: Array<number>;
   pieces?: Array<Extent>;
-  /** How many lines the page set the paragraph in, and where the farthest of them ends. */
+  /** How many lines the page set the paragraph in, where the nearest begins and the farthest ends. */
   lineCount: number;
+  left: number;
   right: number;
   /** Its lines, where the white above it was more than the spacing may say (see `setOff`). */
   far?: ReadonlyArray<Line>;
@@ -3192,6 +3202,7 @@ function groupIntoParagraphs(
       ...aligned,
       ...indentOf(g, columnLeft, aligned.alignment),
       lineCount: g.length,
+      left: Math.min(...g.map((l) => l.x)),
       right: Math.max(...g.map((l) => l.x + l.width)),
       ...(opened > most ? { far: g } : {}),
     };
@@ -5028,6 +5039,174 @@ const RULE_REACH_PT = 14;
 
 /** How far in from its ends a rule is looked at to say which column it stands in. */
 const RULE_INSET_PT = 2;
+
+/**
+ * §17.3.1.31 — the box a paragraph's one line is set on: the box itself, and
+ * the indents and borders that make the paragraph's shading stand where it
+ * does.
+ */
+type Shade = {
+  box: PdfVector;
+  /** How far the box reaches over the line's box, and under it. */
+  over: number;
+  under: number;
+  indentLeft: number;
+  indentFirstLine: number;
+  indentRight: number;
+};
+
+/** A paragraph as {@link groupIntoParagraphs} reads it, with the box it is set on. */
+type ShadedParagraph = ReturnType<typeof groupIntoParagraphs>[number] & { shade?: Shade };
+
+/**
+ * §17.3.1.31 — the paragraphs a page sets on a box it fills, each given the box
+ * as its shading.
+ *
+ * canvas.pdf heads each section with its name in white on a dark bar, and each
+ * table with "Attributes" or "Methods" on a grey one. Drawn where the page drew
+ * them, the bars stayed on the sheet while the words were set again: headings
+ * slid off their bars, white on white, and the bars struck through the tables
+ * under them. As a paragraph's shading the bar goes where the paragraph goes.
+ *
+ * A paragraph's shading fills its line's box across its indents, and the box
+ * a page draws stands out over and under the line: that is a border of its
+ * own colour over the line, and one under it (§17.3.1.24), as thick as the box
+ * stands out. The room the borders take comes out of the white the page left
+ * over the paragraph and under it — and where there is none to take, the box
+ * reaches no further than the line's box does.
+ *
+ * A box is a paragraph's only where it holds the paragraph's one line and no
+ * other, stands out by less than a line over it and under it, and is no wider
+ * than the column: a panel drawn behind a block of text is drawn where the
+ * page drew it. And only a box of a colour: white is the paper's, and
+ * bug1815476.pdf backs a whole form with white boxes as wide as the sheet —
+ * taken for shading, "A N E X O" stood off centre by as much as the box
+ * reached past the column.
+ *
+ * @param paras   A region's paragraphs, top to bottom.
+ * @param boxes   The page's filled boxes (see {@link solidBox}).
+ * @param measure The column the paragraphs are set in.
+ * @returns The paragraphs, and how far under the last one its box reaches.
+ */
+function onBoxes(
+  paras: ReadonlyArray<ReturnType<typeof groupIntoParagraphs>[number]>,
+  boxes: ReadonlyArray<PdfVector>,
+  measure: { left: number; right: number } | undefined,
+): { paras: Array<ShadedParagraph>; under: number } {
+  const out: Array<ShadedParagraph> = paras.map((para) => ({ ...para }));
+  if (boxes.length === 0 || measure === undefined) return { paras: out, under: 0 };
+  let under = 0;
+  out.forEach((para, k) => {
+    if (para.lineCount !== 1 || (para.stops?.length ?? 0) > 0) return;
+    const lineTop = para.top + BASELINE_AT * para.lineHeight;
+    const lineFoot = para.bottom - (1 - BASELINE_AT) * para.lineHeight;
+    // …and no wider than the column it is set in, by more than an em or two
+    // either side: a box drawn behind half the sheet is a panel, or the paper.
+    const reach = para.fontSize * BAR_REACH_EM;
+    const box = boxes.find(
+      (b) =>
+        b.minX >= measure.left - reach &&
+        b.maxX <= measure.right + reach &&
+        b.minX <= para.left + FLUSH_PT &&
+        b.maxX >= para.right - FLUSH_PT &&
+        b.maxY >= lineTop - FLUSH_PT &&
+        b.maxY - lineTop <= para.lineHeight &&
+        b.minY <= lineFoot + FLUSH_PT &&
+        lineFoot - b.minY <= para.lineHeight &&
+        // …and no other paragraph set on it.
+        paras.every((o, n) => n === k || o.bottom > b.maxY || o.top < b.minY),
+    );
+    if (box === undefined) return;
+    const next = out[k + 1];
+    const over = Math.min(Math.max(0, box.maxY - lineTop), para.spacingBefore ?? 0, MOST_BORDER_PT);
+    const below = Math.min(
+      Math.max(0, lineFoot - box.minY),
+      next !== undefined ? (next.spacingBefore ?? 0) : Infinity,
+      MOST_BORDER_PT,
+    );
+    // The box's left edge is the paragraph's, measured from the column's edge
+    // as every indent is — not from the paragraph's own indent, which a line
+    // set a few points in drops — and its line starts in from it.
+    const inset = para.alignment === undefined ? Math.max(0, para.left - box.minX) : 0;
+    const shade: Shade = {
+      box,
+      over: over > SPACING_NOISE_PT ? over : 0,
+      under: below > SPACING_NOISE_PT ? below : 0,
+      indentLeft: box.minX - measure.left,
+      indentFirstLine: inset,
+      indentRight: measure.right - box.maxX,
+    };
+    para.shade = shade;
+    if (para.spacingBefore !== undefined) para.spacingBefore -= shade.over;
+    if (next?.spacingBefore !== undefined) next.spacingBefore -= shade.under;
+    if (k === out.length - 1) under = shade.under;
+  });
+  return { paras: out, under };
+}
+
+/**
+ * The paragraph properties a {@link Shade} sets: the box's colour behind the
+ * line, a border of it as thick as the box stands out over the line and under
+ * it, and the indents that put its edges where the page drew them.
+ */
+function shadeProperties(shade: Shade): ParagraphProperties {
+  const colorHex = shade.box.fillHex ?? 'FFFFFF';
+  const edge = (width: number): Border | undefined =>
+    width > 0 ? { style: 'single', width: pt(width), colorHex } : undefined;
+  const top = edge(shade.over);
+  const bottom = edge(shade.under);
+  const noted = (value: number): Pt | undefined =>
+    Math.abs(value) > SPACING_NOISE_PT ? pt(value) : undefined;
+  const indentLeft = noted(shade.indentLeft);
+  const indentFirstLine = noted(shade.indentFirstLine);
+  const indentRight = noted(shade.indentRight);
+  return {
+    shading: { colorHex },
+    ...(top || bottom
+      ? { borders: { ...(top ? { top } : {}), ...(bottom ? { bottom } : {}) } }
+      : {}),
+    ...(indentLeft !== undefined ? { indentLeft } : {}),
+    ...(indentFirstLine !== undefined ? { indentFirstLine } : {}),
+    ...(indentRight !== undefined ? { indentRight } : {}),
+  };
+}
+
+/**
+ * §17.3.4 — the thickest border a single line may be, twelve points: a box
+ * standing out further than that from its line is not a bar behind it.
+ */
+const MOST_BORDER_PT = 12;
+
+/** How far past its column, in ems of its line, a bar behind a line may reach. */
+const BAR_REACH_EM = 2;
+
+/** How light, in each of its channels, a fill is the paper's rather than a colour. */
+const PAPER_LEVEL = 0xfa;
+
+/**
+ * Whether a painted path is a box filled in one opaque colour, square to the
+ * page: a bar a heading is set on, a panel. A shape, a gradient, a stroked
+ * frame or a glyph is none, and nor is a box of the paper's own white.
+ *
+ * @param v The painted path.
+ */
+function solidBox(v: PdfVector): boolean {
+  if (v.fillHex === undefined || v.gradient !== undefined || v.glyph === true) return false;
+  const channels = [0, 2, 4].map((k) => parseInt(v.fillHex!.slice(k, k + 2), 16));
+  if (channels.every((c) => c >= PAPER_LEVEL)) return false;
+  if ((v.alpha ?? 1) < 1 || v.darkens === true) return false;
+  if (v.strokeHex !== undefined && v.strokeHex !== v.fillHex) return false;
+  if (v.segs.filter((s) => s.op === 'move').length !== 1) return false;
+  const points = v.segs.filter((s) => s.op !== 'close');
+  if (points.length < 4 || points.length > 5) return false;
+  const at = (value: number, edge: number): boolean => Math.abs(value - edge) <= FLUSH_PT;
+  return points.every(
+    (s) =>
+      s.op !== 'cubic' &&
+      (at(s.x, v.minX) || at(s.x, v.maxX)) &&
+      (at(s.y, v.minY) || at(s.y, v.maxY)),
+  );
+}
 
 /** The thinnest a border may be drawn and still be seen. */
 const RULE_MIN_PT = 0.5;
