@@ -95,6 +95,11 @@ interface Line {
   /** Whether a TAB stands inside it — a gap no word space could be. */
   readonly tabbed?: boolean;
   /**
+   * Whether it is a line of CODE: every word of it set in a typewriter face.
+   * Such a line is ended where the page ends it, and re-set as its own.
+   */
+  readonly code?: boolean;
+  /**
    * Where the pieces after each such gap begin, in page space. A line the page
    * SET OUT stands on stops, and a space in place of them puts the second piece
    * against the first: an invoice's "Bill to" block ran into its own address as
@@ -150,7 +155,7 @@ export function reconstructByLayout(
   const sheets = pages.map((page) => displayOf(page));
   // §9.9 — the codes each font paints, for the faces a writer may embed.
   const painted: ShownCodes = new Map();
-  const extracted = pages.map((page) => extractPageText(file, page, painted));
+  const extracted = typewritten(pages.map((page) => extractPageText(file, page, painted)));
   // §9.4.3 — how the page spaces each face: between words, and inside them.
   const spacing = pageSpacing(extracted);
   // §9.9 — the faces the document carries, and the space each is set with
@@ -326,10 +331,12 @@ export function reconstructByLayout(
   // clean lines for the vote to answer, and read as one column its citations
   // ran into its theorems. Where a page says nothing, the answer the rest of
   // the document gave is put to it, and kept only if its own lines agree.
-  const perPage = pages.map((_, i) => detectGutters(pageRuns[i]!, shown[i]!.width));
+  // …and not the gutters a page's code listings show (see `withoutListings`).
+  const gutterRuns = pageRuns.map(withoutListings);
+  const perPage = pages.map((_, i) => detectGutters(gutterRuns[i]!, shown[i]!.width));
   const shared = commonGutters(perPage);
   const pageGutters = perPage.map((own, i) =>
-    own.length > 0 ? own : shared && fitsGutters(pageRuns[i]!, shared) ? shared : own,
+    own.length > 0 ? own : shared && fitsGutters(gutterRuns[i]!, shared) ? shared : own,
   );
   const body: Array<BodyElement> = [];
   // §17.6 — where the pages differ in size the document is several sections,
@@ -1601,6 +1608,25 @@ function assignColumns(
     for (const run of row) columnOf.set(run, SPANNING_COLUMN);
     breaks.push(Math.max(...row.map((r) => r.y)));
   }
+  // A listing is one block (see `isCode`): where one line of it reaches across
+  // the page, every line does. Its short lines stand left of the gutter and
+  // read as the left column's, and comments.pdf's second listing came back
+  // with its tail — "...", "side_exit_1:" — under the text in the columns.
+  const inRows = rows.filter((row) => row.some((r) => r.text.trim() !== ''));
+  for (let from = 0; from < inRows.length; ) {
+    let to = from;
+    while (to < inRows.length && isCode(inRows[to]!)) to++;
+    const block = inRows.slice(from, to);
+    if (block.some((row) => row.some((r) => columnOf.get(r) === SPANNING_COLUMN))) {
+      for (const row of block) {
+        if (row.some((r) => columnOf.get(r) !== SPANNING_COLUMN)) {
+          breaks.push(Math.max(...row.map((r) => r.y)));
+        }
+        for (const run of row) columnOf.set(run, SPANNING_COLUMN);
+      }
+    }
+    from = Math.max(to, from + 1);
+  }
   return { columnOf, breaks: breaks.sort((a, b) => b - a) };
 }
 
@@ -1964,6 +1990,89 @@ function inkSpan(runs: ReadonlyArray<TextRun>): { x: number; width: number } {
   return { x, width: Math.max(0, last.endX - trail - x) };
 }
 
+/**
+ * A document's runs as its listings are read (see {@link isCode}).
+ *
+ * A typewriter face is a listing's only where the document is set in another:
+ * a letter typed throughout, a screenplay, a page set in Courier for its even
+ * widths, is PROSE in that face, and its lines run on and its double spaces
+ * are spaces. Where most of what the document shows is typewritten, its runs
+ * are read as any other face's.
+ *
+ * @param pages Each page's runs.
+ * @returns The same runs, or copies without `fixedPitch` where the typewriter
+ *          face is the document's own.
+ */
+function typewritten(
+  pages: ReadonlyArray<ReadonlyArray<TextRun>>,
+): ReadonlyArray<ReadonlyArray<TextRun>> {
+  let typed = 0;
+  let all = 0;
+  for (const runs of pages) {
+    for (const run of runs) {
+      const letters = run.text.replace(/\s/gu, '').length;
+      all += letters;
+      if (run.fixedPitch === true) typed += letters;
+    }
+  }
+  if (typed === 0 || typed * 2 <= all) return pages;
+  return pages.map((runs) =>
+    runs.map((run) => {
+      if (run.fixedPitch !== true) return run;
+      const { fixedPitch: _typed, ...prose } = run;
+      return prose;
+    }),
+  );
+}
+
+/**
+ * Whether a line is CODE: every word of it set in a typewriter face (§9.8.2).
+ *
+ * A listing is set line by line with its indents and its comments lined up in
+ * columns of the typewriter's cells, and re-set as prose it is no program:
+ * comments.pdf's "v0 := ld state[748]" and "st sp[0], v0" ran together as
+ * one line of a paragraph, and so did line 4 of Figure 1 and its line 5.
+ */
+function isCode(runs: ReadonlyArray<TextRun>): boolean {
+  const inked = runs.filter((r) => r.text.trim() !== '');
+  return inked.length > 0 && inked.every((r) => r.fixedPitch === true);
+}
+
+/**
+ * Whether the white between two runs of a typewriter face LINES UP what
+ * follows it: wider than a cell and a half, where a word space is one cell.
+ * A listing puts its comments in a column that way, and a space in their
+ * place set each comment against its own line's code.
+ */
+function aligned(before: TextRun, after: TextRun): boolean {
+  if (before.fixedPitch !== true || after.fixedPitch !== true) return false;
+  const letters = [...before.text].length;
+  if (letters === 0) return false;
+  const cell = (before.endX - before.x) / letters;
+  return cell > 0 && after.x - before.endX >= cell * ALIGNED_CELLS;
+}
+
+/** How many of a typewriter's cells of white line up what follows them. */
+const ALIGNED_CELLS = 1.5;
+
+/**
+ * A page's runs less its code listings: the rows every word of which is set
+ * in a typewriter face (see {@link isCode}).
+ *
+ * A listing says nothing about the page's columns. comments.pdf sets two
+ * across the head of its third page, the code at the left and each comment
+ * lined up at one x: the white between them — thirty-five lines of it at the
+ * same place — was taken for the gutter of a page in two columns, while the
+ * real one, under the listings, was crossed by every comment and not found.
+ * The code came back as a column of prose and the comments as another.
+ */
+function withoutListings(runs: ReadonlyArray<TextRun>): ReadonlyArray<TextRun> {
+  if (!runs.some((r) => r.fixedPitch === true)) return runs;
+  const fontSize = median(runs.map((r) => r.fontSizePt).filter((s) => s > 0)) || 10;
+  const listed = new Set(rowsOf(runs, fontSize).filter(isCode).flat());
+  return listed.size > 0 ? runs.filter((r) => !listed.has(r)) : runs;
+}
+
 /** One run of runs, left to right on a shared baseline, as a {@link Line}. */
 function lineOf(
   runs: ReadonlyArray<TextRun>,
@@ -1997,6 +2106,7 @@ function lineOf(
     fontSize,
     ...(tabbed(runs, fontSize) || stops.length > 0 ? { tabbed: true as const } : {}),
     ...(stops.length > 0 ? { stops, pieces } : {}),
+    ...(isCode(runs) ? { code: true as const } : {}),
     text: spans
       .map((s) => s.text)
       .join('')
@@ -2151,7 +2261,7 @@ function lineSpans(
         inked !== undefined &&
         run.x - inked >= size * STOP_GAP_EM &&
         shared.some((x) => Math.abs(x - run.x) <= STOP_SLACK_PT);
-      if (run.x - prev.endX >= size * TAB_GAP_EM || onStop) {
+      if (run.x - prev.endX >= size * TAB_GAP_EM || onStop || aligned(prev, run)) {
         spans.push({ text: '\t' });
         stops.push(run.x);
         pieces.push({ from: Infinity, to: -Infinity });
@@ -2368,8 +2478,10 @@ function groupIntoParagraphs(
       // the end of "…NOT to our San Francisco office. ----------------------".
       // It takes no line with it either, so what follows opens its own.
       ruleOfCharacters(line) ||
+      line.code === true ||
       (prev !== undefined &&
         (ruleOfCharacters(prev) ||
+          prev.code === true ||
           endedParagraph(prev, line, column) ||
           (reach !== undefined && roomForWord(prev, line, reach)) ||
           carriesLeader(prev) ||

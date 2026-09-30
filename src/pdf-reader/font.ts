@@ -281,6 +281,7 @@ export function buildContentFont(file: PdfFile, fontDict: PdfDict): ContentFont 
     isType0 || type3 || (namesOf.get(0x20) !== 'space' && unicode.get(0x20) !== ' ')
       ? undefined
       : simple.stated(0x20);
+  const fixedPitch = !isType0 && !type3 && fixedPitchOf(file, fontDict);
 
   return {
     bytesPerCode,
@@ -311,6 +312,7 @@ export function buildContentFont(file: PdfFile, fontDict: PdfDict): ContentFont 
     decode: (codes) => codes.map((c) => lettersOf(readable(decodeOne(c)))).join(''),
     width,
     ...(spaceWidth !== undefined ? { spaceWidth } : {}),
+    ...(fixedPitch ? { fixedPitch: true } : {}),
     ...style,
   };
 }
@@ -1591,6 +1593,31 @@ function descendantFont(file: PdfFile, fontDict: PdfDict): PdfDict {
   const first = Array.isArray(descFonts) ? file.resolve(descFonts[0] ?? PDF_NULL) : PDF_NULL;
   return first instanceof Map ? first : new Map<string, PdfValue>();
 }
+
+/**
+ * §9.8.2 — whether every glyph of a simple font is as wide as the next: the
+ * descriptor's FixedPitch flag, the standard Courier, or a /Widths array that
+ * says so itself. pdfTeX sets no flag on Computer Modern's typewriter face,
+ * and its widths do: all of them 525. Ten widths at the least — a face that
+ * shows four digits shows four equal widths and is no typewriter's.
+ */
+function fixedPitchOf(file: PdfFile, fontDict: PdfDict): boolean {
+  const descriptor = file.resolve(fontDict.get('FontDescriptor') ?? PDF_NULL);
+  const flags =
+    descriptor instanceof Map ? asNumber(file.resolve(descriptor.get('Flags') ?? PDF_NULL), 0) : 0;
+  if ((flags & FLAG_FIXED_PITCH) !== 0) return true;
+  if (/^courier/iu.test(plainFace(asName(file.resolve(fontDict.get('BaseFont') ?? PDF_NULL))))) {
+    return true;
+  }
+  const stated = file.resolve(fontDict.get('Widths') ?? PDF_NULL);
+  const widths = (Array.isArray(stated) ? stated : [])
+    .map((w) => file.resolve(w))
+    .filter((w): w is number => typeof w === 'number' && w > 0);
+  return widths.length >= FIXED_PITCH_WIDTHS && widths.every((w) => Math.abs(w - widths[0]!) < 0.5);
+}
+
+/** How many widths it takes to say every glyph is as wide as the next. */
+const FIXED_PITCH_WIDTHS = 10;
 
 // §9.6.2.1 — a simple font's /Widths array is indexed by (code − /FirstChar).
 // `stated` is the width the file (or, for a standard face, its metrics) gives a

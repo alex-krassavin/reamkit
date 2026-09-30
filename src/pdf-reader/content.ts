@@ -45,6 +45,8 @@ export interface ContentFont {
    * width of its own.
    */
   readonly spaceWidth?: number;
+  /** §9.8.2 — every glyph of the face is as wide as the next: a typewriter's. */
+  readonly fixedPitch?: boolean;
   /**
    * §9.4.4 / §9.7.4.3 — the face sets its text DOWN the page, not across, and
    * the pen advances by the vertical displacement `w1` rather than by `w0`.
@@ -171,6 +173,8 @@ export interface TextRun {
    * Absent where the face states no width for it.
    */
   readonly spaceWidthPt?: number;
+  /** §9.8.2 — the face sets every glyph as wide as the next (see `ContentFont`). */
+  readonly fixedPitch?: boolean;
   /** §9.8.1 — the face the glyphs were shown in is a bold one. */
   readonly bold?: boolean;
   /**
@@ -880,6 +884,7 @@ export function interpretContent(
         ((state.font.width(0x20) / 1000) * state.fontSize + state.charSpacing + state.wordSpacing) *
         scaleX,
       fontKey: state.fontKey,
+      ...(state.font.fixedPitch === true ? { fixedPitch: true } : {}),
       ...(state.font.name !== undefined ? { fontName: state.font.name } : {}),
       ...(state.font.type3 ? { type3: true } : {}),
       ...(state.renderMode === 3 || state.renderMode === 7 ? { invisible: true } : {}),
