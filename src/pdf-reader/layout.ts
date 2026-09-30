@@ -2362,7 +2362,7 @@ function isLeader(text: string): boolean {
  * "-", a column apart, and joined as one leader they came back "---", one
  * cell standing where three had.
  */
-function leads(prev: TextRun, run: TextRun, fontSize: number): boolean {
+function continuesLeader(prev: TextRun, run: TextRun, fontSize: number): boolean {
   return (
     isLeader(prev.text) &&
     prev.text === run.text &&
@@ -2437,7 +2437,7 @@ function lineSpans(
     if (
       prev !== undefined &&
       run.x - prev.endX > spaceGap(prev, fontSize, stepped) &&
-      !leads(prev, run, fontSize)
+      !continuesLeader(prev, run, fontSize)
     ) {
       // A gap no word space could be is a TAB, and the piece after it starts
       // where the page starts it. Written as a space the two pieces close up.
@@ -2655,7 +2655,22 @@ function groupIntoParagraphs(
 }> {
   const groups: Array<Array<Line>> = [];
   const gaps: Array<number> = [];
+  // A column set against both edges runs its every line to the measure but a
+  // paragraph's last: there, a line short of it ENDED, where a ragged column's
+  // quarter-measure rule (see `endedParagraph`) let a nearly full last line
+  // run on into the next paragraph. comments.pdf's "…break even after running
+  // a trace 270 times." stops twenty-seven points short, and "The other VMs we
+  // compared…" came back joined to it.
+  const flushEnds = column
+    ? lines.filter((l) => Math.abs(column.right - (l.x + l.width)) <= JUSTIFIED_SLACK_PT).length
+    : 0;
+  const setJustified =
+    column !== undefined &&
+    lines.length >= JUSTIFIED_COLUMN_LINES &&
+    flushEnds >= lines.length * JUSTIFIED_COLUMN_SHARE;
   let prev: Line | undefined;
+  // …and the line before that, whose end says where the block's edge is.
+  let beforePrev: Line | undefined;
   for (const line of lines) {
     const gap = prev !== undefined ? prev.y - line.y : 0;
     const opened = prev !== undefined && gap > line.fontSize * 1.5;
@@ -2675,6 +2690,7 @@ function groupIntoParagraphs(
           prev.code === true ||
           endedParagraph(prev, line, column) ||
           (reach !== undefined && roomForWord(prev, line, reach)) ||
+          (setJustified && endedJustified(beforePrev, prev, line, column)) ||
           carriesLeader(prev) ||
           prev.tabbed === true))
     ) {
@@ -2684,6 +2700,7 @@ function groupIntoParagraphs(
       gaps.push(prev === undefined ? (before !== undefined ? before.y - line.y : 0) : gap);
     }
     groups[groups.length - 1]!.push(line);
+    beforePrev = prev;
     prev = line;
   }
   // §17.3.1.12 — where the COLUMN's own text begins, which is what an indented
@@ -2790,6 +2807,40 @@ function roomForWord(prev: Line, next: Line, reach: number): boolean {
   const width = (next.width * word.length) / text.length;
   return reach - (prev.x + prev.width) > width + prev.fontSize * WORD_SPACE_EM;
 }
+
+/**
+ * Whether a line of a column set against both edges ended its paragraph: it
+ * stops short of the measure, and the line after it is indented or its first
+ * word would have fit on it.
+ *
+ * Not where a line beside it stops at the same place: that is the edge of a
+ * narrower block, not the end of the text. A quotation set in from both sides
+ * stops short of the measure on every line, and freeculture.pdf's came back a
+ * paragraph a line.
+ */
+function endedJustified(
+  before: Line | undefined,
+  prev: Line,
+  next: Line,
+  column: { left: number; right: number },
+): boolean {
+  const end = prev.x + prev.width;
+  if (column.right - end <= prev.fontSize * WORD_SPACE_EM) return false;
+  const edge = (l: Line | undefined): boolean =>
+    l !== undefined && Math.abs(l.x + l.width - end) <= JUSTIFIED_SLACK_PT;
+  if (edge(before) || edge(next)) return false;
+  const indented = next.x - prev.x >= prev.fontSize * INDENT_EM;
+  return indented || roomForWord(prev, next, column.right);
+}
+
+/** How many lines a column needs to show it is set against both edges. */
+const JUSTIFIED_COLUMN_LINES = 8;
+
+/** …and how many of them run to the measure, at the least. */
+const JUSTIFIED_COLUMN_SHARE = 0.6;
+
+/** How far short of the measure a line of it may end and still run to it: the page's rounding. */
+const JUSTIFIED_SLACK_PT = 1;
 
 /** A word space, in ems: what stands between a line's end and the word put after it. */
 const WORD_SPACE_EM = 0.3;
