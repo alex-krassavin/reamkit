@@ -1483,6 +1483,34 @@ describe('a flowing reading re-sets the page where the page set it', () => {
   const textOf = (p: { paragraph: { runs: ReadonlyArray<{ text: string }> } }): string =>
     p.paragraph.runs.map((r) => r.text).join('');
 
+  it('stands a line on its type, not on a mark set over it', () => {
+    // comments.pdf's "…back to a double.¹ Clearly, a" stood on its footnote
+    // mark's baseline, 3.8 points up, and the line under it came back a
+    // paragraph of its own.
+    const first = 'and then convert any integer result back to a double.';
+    const end =
+      54 +
+      [...first].reduce(
+        (sum, c) => sum + (standardWidth('Helvetica', c.charCodeAt(0), c) ?? 0),
+        0,
+      ) *
+        0.009;
+    const doc = reconstructByLayout(
+      PdfFile.parse(
+        helvetica(
+          [
+            `BT /F1 9 Tf 1 0 0 1 54 700 Tm (${first}) Tj`,
+            `/F1 6 Tf 1 0 0 1 ${end.toFixed(2)} 703.8 Tm (1) Tj`,
+            `/F1 9 Tf 1 0 0 1 ${(end + 6.8).toFixed(2)} 700 Tm (Clearly, a) Tj`,
+            '1 0 0 1 54 690 Tm (JavaScript VM that wants to be fast must find a way to operate on) Tj',
+            '1 0 0 1 54 680 Tm (integers directly and avoid these conversions.) Tj ET',
+          ].join('\n'),
+        ),
+      ),
+    ).doc;
+    expect(paragraphs(doc).map(textOf)).toHaveLength(1);
+  });
+
   describe('lines set in the middle of the measure', () => {
     const long =
       'This line runs the whole measure of the page from the left margin across to the right one, as prose does.';

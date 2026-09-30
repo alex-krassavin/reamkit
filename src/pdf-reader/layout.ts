@@ -1955,6 +1955,13 @@ function groupIntoLines(
     const tol = Math.max(1, (run.fontSizePt || 10) * 0.5);
     if (last && Math.abs(last.y - run.y) <= tol) {
       last.runs.push(run);
+      // The line stands on its type's baseline, not on a mark set over it. Its
+      // runs are read from the top of the page down, and a footnote mark is
+      // the first of them: comments.pdf's "…back to a double.¹ Clearly, a"
+      // stood on the mark's baseline, 3.8 points up, and so ten points over
+      // the line after it stood thirteen — a paragraph's gap, and "JavaScript
+      // VM that wants to be fast…" came back a paragraph of its own.
+      if ((run.fontSizePt || 0) > last.fontSize) last.y = run.y;
       last.fontSize = Math.max(last.fontSize, run.fontSizePt || 0);
     } else {
       clusters.push({ y: run.y, fontSize: run.fontSizePt || 10, runs: [run] });
