@@ -49,6 +49,36 @@ describe('the page numbers a band prints', () => {
     expect(pageNumberingOf(['© RenderX 2000', '© RenderX 2000'])).toBeUndefined();
   });
 
+  it('reads a book that leaves its blank pages out, its count skipping their numbers', () => {
+    // freeculture.pdf leaves out the blank page before five of its chapters,
+    // and its count jumps two at each: seven sequences in all, where a band
+    // counting something else starts one on nearly every page.
+    const count = (from: number): Array<string> =>
+      Array.from({ length: 14 }, (_, k) => String(from + k));
+    const numbering = pageNumberingOf([
+      'xiii',
+      'xiv',
+      'xv',
+      'xvi',
+      ...count(1),
+      ...count(17),
+      ...count(33),
+      ...count(49),
+      ...count(65),
+    ]);
+    expect(numbering?.runs).toEqual([
+      { from: 0, format: 'lowerRoman', start: 13 },
+      { from: 4, format: 'decimal', start: 1 },
+      { from: 18, format: 'decimal', start: 17 },
+      { from: 32, format: 'decimal', start: 33 },
+      { from: 46, format: 'decimal', start: 49 },
+      { from: 60, format: 'decimal', start: 65 },
+    ]);
+    expect(
+      pageNumberingOf(Array.from({ length: 40 }, (_, k) => `Figure ${String((k * 7) % 31)}`)),
+    ).toBeUndefined();
+  });
+
   it('takes only letters written as a numeral for one', () => {
     expect(numeralsIn('ic vx iv XIV 12345').map((n) => [n.text, n.value])).toEqual([
       ['iv', 4],

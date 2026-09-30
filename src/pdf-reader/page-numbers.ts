@@ -45,6 +45,15 @@ const NUMERAL = /(?<=^|\s)(\d{1,4}|[ivxlcdm]{1,9}|[IVXLCDM]{1,9})(?=\s|$)/gu;
 const MOST_RUNS = 4;
 
 /**
+ * …unless the sequences run long: a book leaves its blank pages out and skips
+ * their numbers, and freeculture.pdf's count jumps two at five of its chapters
+ * — seven sequences over three hundred and thirty-five numbered pages, and
+ * read as none its footer printed no number at all. A date or a figure count
+ * starts a sequence of its own on nearly every page.
+ */
+const LEAST_RUN_PAGES = 10;
+
+/**
  * The numerals a band's text holds, in order.
  *
  * @param text The band's text on one page.
@@ -172,7 +181,9 @@ export function pageNumberingOf(
         { from: page, format: number.format, start: number.value },
       );
   });
-  if (runs.length === 0 || runs.length > MOST_RUNS) return undefined;
+  if (runs.length === 0 || runs.length > Math.max(MOST_RUNS, counted.length / LEAST_RUN_PAGES)) {
+    return undefined;
+  }
   return { numbers, runs };
 }
 
