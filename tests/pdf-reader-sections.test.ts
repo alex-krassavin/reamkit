@@ -89,7 +89,10 @@ describe('a page that opens a section of its own', () => {
     const carrier = doc.body[before.endIndex - 1];
     if (carrier?.kind !== 'paragraph') throw new Error('a paragraph');
     expect(carrier.paragraph.properties.pageBreakBefore).not.toBe(true);
-    expect(carrier.paragraph.runs.map((r) => r.text).join('')).toMatch(/^Ra01/u);
+    // (The right column opens on a break to it: the foot of the sheet is the
+    // second page's, sixty points under the first page's columns.)
+    const words = carrier.paragraph.runs.filter((r) => r.columnBreak !== true);
+    expect(words.map((r) => r.text).join('')).toMatch(/^Ra01/u);
   });
 
   it('never breaks on a paragraph that carries a section: Word does not', () => {
@@ -143,5 +146,31 @@ describe('a last page that sets its columns balanced', () => {
       ops.push(at(317, 740 - k * 12, `Rz${String(k)} a line of prose that runs across its column`));
     }
     expect(read(ops).sections.at(-1)?.properties.columns?.count).toBe(2);
+  });
+});
+
+describe('a column the page ends short of the foot of its text', () => {
+  it('breaks to the next column there, where a word processor would run it on', () => {
+    // canvas.pdf ends its first sheet's left column fifty points above the
+    // foot its second sheet sets, and the head of the right column came back
+    // under the left one.
+    const doc = reconstructByLayout(
+      PdfFile.parse(
+        pages([
+          ['BT /F1 9 Tf', ...columns(740, 30, 'a'), 'ET'],
+          ['BT /F1 9 Tf', ...columns(740, 50, 'b'), 'ET'],
+        ]),
+      ),
+    ).doc;
+    const broken = doc.body.filter(
+      (el) => el.kind === 'paragraph' && el.paragraph.runs.some((r) => r.columnBreak === true),
+    );
+    // Before the first line of the right column of the first sheet, and nowhere
+    // else: the second sheet's columns run to the foot.
+    expect(broken).toHaveLength(1);
+    const first = broken[0];
+    if (first?.kind !== 'paragraph') throw new Error('a paragraph');
+    expect(first.paragraph.runs[0]?.columnBreak).toBe(true);
+    expect(first.paragraph.runs.map((r) => r.text).join('')).toContain('Ra01');
   });
 });

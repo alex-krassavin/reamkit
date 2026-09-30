@@ -372,6 +372,10 @@ export function reconstructByLayout(
   let pendingContinuous = false;
   // Where each page's last columns end, down the page (see `balancedEnd`).
   const columnFeet: Array<ReadonlyArray<number> | undefined> = [];
+  // Where in the body a page turns from one of its columns to the next: where
+  // the column before the turn ends and the one after it, up the page, and
+  // whether a line across the page closes their band (see `columnTurns` below).
+  const columnTurns: Array<{ at: number; foot: number; next: number; closed: boolean }> = [];
   pages.forEach((page, i) => {
     const runs = pageRuns[i]!;
     const display = shown[i]!;
@@ -1054,7 +1058,30 @@ export function reconstructByLayout(
     let led = false;
     // Whether a block of this page stands in the body yet.
     let begun = false;
+    // Where each column of a band ends, up the page: the foot of its lowest
+    // block, where that is a paragraph's.
+    const footOf = (band: number, col: number): number | undefined => {
+      const column = blocks.filter((b) => b.band === band && b.col === col);
+      if (column.length === 0) return undefined;
+      return column.reduce((low, b) => (b.top < low.top ? b : low)).foot;
+    };
+    let prev: Block | undefined;
     for (const block of blocks) {
+      if (
+        columnsHere > 1 &&
+        prev !== undefined &&
+        block.band === prev.band &&
+        prev.col !== SPANNING_COLUMN &&
+        block.col > prev.col
+      ) {
+        const ends = footOf(prev.band, prev.col);
+        const next = footOf(block.band, block.col);
+        const closed = blocks.some((b) => b.band === block.band && b.col === SPANNING_COLUMN);
+        if (ends !== undefined && next !== undefined) {
+          columnTurns.push({ at: body.length, foot: ends, next, closed });
+        }
+      }
+      prev = block;
       const count = block.col === SPANNING_COLUMN ? 1 : columnsHere;
       if (count !== curColumns) {
         // §17.18.77 — a section that opens a page opens it itself, not
@@ -1242,6 +1269,49 @@ export function reconstructByLayout(
           ...el.shape,
           paragraphProperties: { ...el.shape.paragraphProperties, spacingBefore: pt(before) },
         },
+      };
+    }
+  }
+  // §17.3.3.1 — a column the page ends short of the foot of its text ends
+  // there. A word processor runs a column to the foot of the text before it
+  // turns to the next one, and the foot is the section's, the lowest any of
+  // its pages sets: canvas.pdf ends its first sheet's left column fifty points
+  // above the foot its second sheet sets, and the head of the right column,
+  // "http://blog.nihilogic.dk/" and "Compositing", came back under the left
+  // one. A break to the next column says where the page ended it — only
+  // where the column ends lines short of the foot, so that one set a line or
+  // two longer than the page set it still turns before the foot does.
+  //
+  // …and a band a line across the page closes is a section of its own, whose
+  // columns a word processor balances, level with each other: where the page
+  // did not, the break keeps them as the page ended them. canvas.pdf ends its
+  // second sheet's left column five lines below its right one, over the line
+  // that names its source, and balanced, "Text" and its bar came back at the
+  // foot of the left column.
+  const line = medianFont * NATURAL_LINE_EM;
+  for (const turn of columnTurns) {
+    if (turn.closed) {
+      if (Math.abs(turn.foot - turn.next) <= line * BALANCED_LINES) continue;
+    } else {
+      const end = sectionEnds.find((e) => e.at > turn.at);
+      const bottom = (end ? setUp(end.from, end.to) : undefined)?.margins?.bottom;
+      if (bottom === undefined || turn.foot - bottom < line * SHORT_LINES) continue;
+    }
+    const brk: Run = { text: '\n', properties: {}, columnBreak: true };
+    // Before the next column's first line, where that is a paragraph's: at the
+    // end of the column's last, a writer that splits a paragraph at the break
+    // opens the next column with an empty line.
+    const next = body[turn.at];
+    const last = body[turn.at - 1];
+    if (next?.kind === 'paragraph') {
+      body[turn.at] = {
+        ...next,
+        paragraph: { ...next.paragraph, runs: [brk, ...next.paragraph.runs] },
+      };
+    } else if (last?.kind === 'paragraph') {
+      body[turn.at - 1] = {
+        ...last,
+        paragraph: { ...last.paragraph, runs: [...last.paragraph.runs, brk] },
       };
     }
   }
