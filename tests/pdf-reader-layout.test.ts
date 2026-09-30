@@ -1833,6 +1833,51 @@ describe('a flowing reading re-sets the page where the page set it', () => {
     expect(texts.some((t) => t.startsWith('Object'))).toBe(true);
     expect(texts.some((t) => t.includes('args) Object'))).toBe(false);
   });
+
+  it('lands a run the page reached with spaces on the stop the rows around it share', () => {
+    // canvas.pdf spaces its way from a method's return type to its name,
+    // "CanvasGradient" and two spaces to the column every other row reaches
+    // with white, and the row came back one run of words.
+    const faces = (content: string): Uint8Array =>
+      onePagePdf(
+        '/MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R /F2 6 0 R /F3 7 0 R >> >>',
+        content,
+        [
+          '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+          '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Oblique >>',
+          '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>',
+        ],
+      );
+    const prose = Array.from(
+      { length: 8 },
+      (_, k) =>
+        `/F1 9 Tf 1 0 0 1 72 ${String(720 - k * 12)} Tm (Line ${String(k)} of the body text of the page) Tj`,
+    );
+    const row = (y: number, type: string, name: string, spaces: boolean): Array<string> => [
+      `/F2 9 Tf 1 0 0 1 72 ${String(y)} Tm (${type}) Tj`,
+      ...(spaces ? ['/F1 9 Tf ( ) Tj ( ) Tj'] : []),
+      `/F3 9 Tf 1 0 0 1 150 ${String(y)} Tm (${name}) Tj`,
+    ];
+    const doc = reconstructByLayout(
+      PdfFile.parse(
+        faces(
+          [
+            'BT',
+            ...prose,
+            ...row(600, 'void', 'fill\\( \\)', false),
+            ...row(588, 'void', 'stroke\\( \\)', false),
+            ...row(576, 'CanvasGradient', 'createLinearGradient\\(', true),
+            '/F1 9 Tf 1 0 0 1 160 564 Tm (float x0, float y0, float x1, float y1\\)) Tj',
+            ...row(552, 'CanvasPattern', 'createPattern\\(', true),
+            'ET',
+          ].join('\n'),
+        ),
+      ),
+    ).doc;
+    const texts = paragraphs(doc).map((p) => textOf(p));
+    expect(texts).toContain('CanvasGradient\tcreateLinearGradient(');
+    expect(texts.some((t) => t.includes('y1) CanvasPattern'))).toBe(false);
+  });
 });
 
 describe('a right-to-left line ends on its left (§17.3.1.13)', () => {

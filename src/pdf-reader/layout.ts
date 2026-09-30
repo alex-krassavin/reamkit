@@ -2681,6 +2681,8 @@ function lineSpans(
   // narrower than a column's usual white became a space, and the rows of one
   // table came to stand on different numbers of stops.
   const table = isTableRow(runs);
+  // A listing's blanks are its own, and stand as they were set.
+  const code = isCode(runs);
   // §17.3.2.42 — the line's OWN baseline, which a script stands off. Taken from
   // the runs set at the line's size: the marks are the ones that moved.
   const body = runs.filter((r) => (r.fontSizePt || fontSize) > fontSize * SCRIPT_SIZE);
@@ -2706,7 +2708,30 @@ function lineSpans(
     // "Aug 11Sep 11". What it stood in is still a gap between two words, and
     // the next run is measured from the last one that says something.
     if (run.text.replaceAll(UNMAPPED, '') === '' && run.text !== '') continue;
+    // …and a run the page reached across blanks of its own, landing on a stop
+    // the lines around it share, stands on that stop as a run reached across
+    // white does: canvas.pdf spaces its way from a method's return type to
+    // its name, "CanvasGradient" and two spaces to the column of names every
+    // other row reaches with white, and the row came back one run of words,
+    // the lines under it run on into it. The blanks were the page's way to
+    // the stop, and so is the tab; set before it, they would push it on.
     if (
+      !code &&
+      prev !== undefined &&
+      prev.text.trim() === '' &&
+      run.text.trim() !== '' &&
+      inked !== undefined &&
+      run.x - inked >= (run.fontSizePt || fontSize) * STOP_GAP_EM &&
+      shared.some((x) => Math.abs(x - run.x) <= STOP_SLACK_PT)
+    ) {
+      while (spans.length > 0 && spans[spans.length - 1]!.text.trim() === '') {
+        if (spans[spans.length - 1]!.text === '\t') break;
+        spans.pop();
+      }
+      spans.push({ text: '\t' });
+      stops.push(run.x);
+      pieces.push({ from: Infinity, to: -Infinity });
+    } else if (
       prev !== undefined &&
       run.x - prev.endX > spaceGap(prev, fontSize, stepped) &&
       !continuesLeader(prev, run, fontSize)
