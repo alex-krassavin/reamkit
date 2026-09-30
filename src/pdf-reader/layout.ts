@@ -2698,9 +2698,22 @@ function lineSpans(
     // mark of no width to U+0020, and "(คำแปล)" came back "(คำ แปล)", a word
     // broken in two. A space of no width that DOES stand in a gap is a word
     // space set by its gap, and stays.
-    if (run.text.trim() === '' && run.endX - run.x <= 0 && inked !== undefined) {
+    //
+    // …and so is a space the next letter is set down INSIDE, whatever it
+    // steps: the page drew it over the ink rather than stepping across it.
+    // canvas.pdf writes the space that opens an empty cell at the column the
+    // cell stands in, and where the name in the cell before it runs on into
+    // that column the space lands between two of its letters — "p" set down
+    // a point into it, the ink on either side closed up — and
+    // "globalCompositeOperation" came back broken in two. Where the next word
+    // starts where the space ends, the space was stepped, however far the run
+    // before it claims to reach: freeculture.pdf's runs claim a quarter of an
+    // em more than they ink, and its every word space overlaps the word
+    // before it by as much.
+    if (run.text.trim() === '' && inked !== undefined) {
       const next = runs.slice(i + 1).find((r) => r.text.trim() !== '');
-      if (next !== undefined && next.x - inked < spaceGap(next, fontSize, true)) continue;
+      const over = run.endX - run.x <= 0 || (next !== undefined && next.x < (run.x + run.endX) / 2);
+      if (over && next !== undefined && next.x - inked < spaceGap(next, fontSize, true)) continue;
     }
     // §9.10.2 — a glyph the file names no character for is a character this
     // reader cannot write, and dropped it takes its place on the line with it:

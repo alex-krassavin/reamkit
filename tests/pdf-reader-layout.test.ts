@@ -1878,6 +1878,76 @@ describe('a flowing reading re-sets the page where the page set it', () => {
     expect(texts).toContain('CanvasGradient\tcreateLinearGradient(');
     expect(texts.some((t) => t.includes('y1) CanvasPattern'))).toBe(false);
   });
+
+  it('drops a space the page draws over a word, its ink closed up on either side', () => {
+    // canvas.pdf writes the space that opens an empty cell at the column the
+    // cell stands in, and a name that runs on into that column took it
+    // between two of its letters: "globalCompositeO peration".
+    const head = 'globalCompositeO';
+    const end =
+      72 +
+      [...head].reduce((sum, c) => sum + (standardWidth('Helvetica', c.charCodeAt(0), c) ?? 0), 0) *
+        0.009;
+    const prose = Array.from(
+      { length: 8 },
+      (_, k) =>
+        `1 0 0 1 72 ${String(720 - k * 12)} Tm (Line ${String(k)} of the body text of the page) Tj`,
+    );
+    const doc = reconstructByLayout(
+      PdfFile.parse(
+        helvetica(
+          [
+            'BT /F1 9 Tf',
+            ...prose,
+            `1 0 0 1 72 600 Tm (${head}) Tj`,
+            `1 0 0 1 ${String(end - 0.7)} 600 Tm ( ) Tj`,
+            `1 0 0 1 ${String(end)} 600 Tm (peration) Tj`,
+            'ET',
+          ].join('\n'),
+        ),
+      ),
+    ).doc;
+    const text = paragraphs(doc)
+      .map((p) => textOf(p))
+      .join(' ');
+    expect(text).toContain('globalCompositeOperation');
+  });
+
+  it('keeps a space the next word starts where it ends, however far the run before it reaches', () => {
+    // freeculture.pdf's runs claim a quarter of an em more than they ink, and
+    // every word space it steps overlaps the word before it by as much: taken
+    // for spaces drawn over the ink, "a copyright" came back "acopyright".
+    const widths = Array.from({ length: 91 }, (_, k) =>
+      k === 0 ? 250 : k + 32 === 97 ? 800 : 500,
+    ).join(' ');
+    const prose = Array.from(
+      { length: 8 },
+      (_, k) =>
+        `1 0 0 1 72 ${String(720 - k * 12)} Tm (Line ${String(k)} of the body text of the page) Tj`,
+    );
+    const doc = reconstructByLayout(
+      PdfFile.parse(
+        onePagePdf(
+          '/MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >>',
+          [
+            'BT /F1 10 Tf',
+            ...prose,
+            '1 0 0 1 72 600 Tm (a) Tj',
+            '1 0 0 1 77 600 Tm ( ) Tj',
+            '1 0 0 1 79.5 600 Tm (copyright) Tj',
+            'ET',
+          ].join('\n'),
+          [
+            `<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /FirstChar 32 /LastChar 122 /Widths [${widths}] >>`,
+          ],
+        ),
+      ),
+    ).doc;
+    const text = paragraphs(doc)
+      .map((p) => textOf(p))
+      .join(' ');
+    expect(text).toContain('a copyright');
+  });
 });
 
 describe('a right-to-left line ends on its left (§17.3.1.13)', () => {
