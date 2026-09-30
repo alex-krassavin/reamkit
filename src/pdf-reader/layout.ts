@@ -2700,6 +2700,7 @@ function groupIntoParagraphs(
       // It takes no line with it either, so what follows opens its own.
       ruleOfCharacters(line) ||
       line.code === true ||
+      (prev !== undefined && opensItem(prev, line)) ||
       (prev !== undefined &&
         (ruleOfCharacters(prev) ||
           prev.code === true ||
@@ -2956,6 +2957,33 @@ const INDENT_LINES = 3;
 
 /** Where in the run of line starts the column's own left edge is looked for. */
 const COLUMN_LEFT_QUANTILE = 0.15;
+
+/**
+ * Whether a line opens a list item: it begins with a bullet set apart from the
+ * words it marks, or with a label — "[19]", "3." — standing out left of the
+ * line over it. Where the item before it ends on a line that runs to the
+ * measure, or nearly, nothing else says it ended: comments.pdf's "• We explain
+ * how to speculatively generate…" came back run into the item over it, its
+ * bullet in the middle of a line, and its reference "[19] M. Zaleski…" into
+ * "[18]". A label that does not stand out is a line of prose that begins
+ * with one — a citation, a figure.
+ *
+ * @param prev The line over it.
+ * @param line A line of the column.
+ */
+function opensItem(prev: Line, line: Line): boolean {
+  if (BULLET_LEAD.test(line.text)) return true;
+  return LABEL_LEAD.test(line.text) && prev.x - line.x >= line.fontSize * HANGING_EM;
+}
+
+/** A bullet and the white after it, at the head of a line. */
+const BULLET_LEAD = /^[\u2022\u2023\u2043\u2219\u25aa\u25ab\u25cb\u25cf\u25e6\u25a0\u25a1]\s/u;
+
+/** A reference's or a step's label, "[19]" or "3.", and the white after it. */
+const LABEL_LEAD = /^(?:\[\d{1,4}\]|\d{1,3}\.)\s/u;
+
+/** How far, in ems, a label stands out left of the line over it to hang. */
+const HANGING_EM = 1;
 
 /**
  * §17.3.1.12 `w:ind` — how far a paragraph is set in from its column, and where

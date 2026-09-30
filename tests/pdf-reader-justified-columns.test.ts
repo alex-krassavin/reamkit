@@ -68,10 +68,11 @@ function set(
   justified: boolean,
   indent = 0,
   margin = 72,
+  stretchLast = false,
 ): Array<string> {
   const ops: Array<string> = [];
   lines.forEach((words, k) => {
-    const last = k === lines.length - 1;
+    const last = k === lines.length - 1 && !stretchLast;
     const left = margin + (k === 0 ? indent : 0);
     const spare = right - left - natural(words);
     const gap = widthOf(' ') + (justified && !last ? spare / (words.length - 1) : 0);
@@ -138,5 +139,50 @@ describe('a column set against both edges', () => {
     const quoted = paragraphsOf(ops).filter((p) => p.includes('Quoted'));
     expect(quoted).toHaveLength(1);
     expect(quoted[0]).toMatch(/white$/u);
+  });
+});
+
+describe('a list', () => {
+  it('opens an item at a line that begins with a bullet, however full the line over it', () => {
+    // comments.pdf's "• We explain how to speculatively generate…" follows an
+    // item whose last line runs to the measure, and came back run into it,
+    // its bullet in the middle of a line.
+    const full = fill(WORDS, 290).slice(0, -1);
+    const next = fill(WORDS, 290);
+    const below = 700 - full.length * 12;
+    const ops = [
+      '1 0 0 1 64 700 Tm (\\267) Tj',
+      ...set(full, 700, 72 + 290, true, 0, 72, true),
+      `1 0 0 1 64 ${String(below)} Tm (\\267) Tj`,
+      ...set(next, below, 72 + 290, true),
+    ];
+    const items = paragraphsOf(ops);
+    expect(items).toHaveLength(2);
+    expect(items[1]).toMatch(/^\u2022\sA justified/u);
+  });
+
+  /** Two references, each a label hung out left of its lines, the first ending on a full line. */
+  const references = (label: string, hang: number): Array<string> => {
+    const full = fill(WORDS, 290).slice(0, -1);
+    const next = fill(WORDS, 290);
+    const below = 700 - full.length * 12;
+    return [
+      '1 0 0 1 52 700 Tm ([18]) Tj',
+      ...set(full, 700, 72 + 290, true, 0, 72, true),
+      `1 0 0 1 ${String(72 - hang)} ${String(below)} Tm (${label}) Tj`,
+      ...set(next, below, 72 + 290, true, hang > 0 ? 0 : 20),
+    ];
+  };
+
+  it('opens an item at a label hung out left of the line over it', () => {
+    // comments.pdf's "[19] M. Zaleski…" follows a reference whose last line
+    // runs nearly to the measure, and came back run into it.
+    const items = paragraphsOf(references('[19]', 20));
+    expect(items).toHaveLength(2);
+    expect(items[1]).toMatch(/^\[19\]\sA justified/u);
+  });
+
+  it('runs a line of prose on that begins with a citation where the line over it began', () => {
+    expect(paragraphsOf(references('[19]', 0))).toHaveLength(1);
   });
 });
