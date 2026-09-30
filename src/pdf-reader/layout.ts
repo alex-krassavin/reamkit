@@ -1431,11 +1431,106 @@ function detectGutters(runs: ReadonlyArray<TextRun>, pageWidth: number): Array<G
   // on this page was inside a word, and the line was then read straight across.
   const near = (band: Gutter): boolean =>
     empty.some((e) => band.mid > e.from - fontSize && band.mid < e.to + fontSize);
-  return separating(
-    [...empty, ...voted.filter((v) => !near(v))].sort((a, b) => a.mid - b.mid),
-    spans,
+  return withoutNarrowColumns(
+    separating(
+      [...empty, ...voted.filter((v) => !near(v))].sort((a, b) => a.mid - b.mid),
+      spans,
+    ),
+    empty,
+    rows,
+    [minX, maxX],
+    fontSize,
   );
 }
+
+/**
+ * The gutters left when no column beside a gap the page's lines run across is
+ * narrower than a page's column can be.
+ *
+ * A table's columns stand apart as a page's do, line after line, and a page
+ * set in columns of tables has gaps between its tables' columns as well as
+ * its own: canvas.pdf sets two columns of Name, Type and Default, and read at
+ * every gap its sheets came back in three and five columns, a word wide each,
+ * on seven pages where it has two. What gives such a gap away is that the
+ * page's other lines — the headings over each table, the prose between them —
+ * run across it, and that a column it leaves is a few ems wide: such a gap
+ * goes, the one with the less white beside the narrowest column first, until
+ * no column is left so narrow. A gap NO line crosses stays however narrow the
+ * columns beside it — a page that is one table from edge to edge is read by
+ * its columns, as a table — and so does a page's one gap.
+ *
+ * The gaps that stay are then measured afresh, as the white every line split
+ * there leaves: a gutter voted across a column of short cells reaches back
+ * into that column, and a section set with it stood its columns sixty-five
+ * points further apart than the page does.
+ *
+ * @param gutters  The gutters found, left to right.
+ * @param firm     The gutters no line crosses, which stay.
+ * @param rows     Each line's ink across the page, left to right.
+ * @param extent   Where the page's ink begins and ends.
+ * @param fontSize The page's body size.
+ */
+function withoutNarrowColumns(
+  gutters: ReadonlyArray<Gutter>,
+  firm: ReadonlyArray<Gutter>,
+  rows: ReadonlyArray<ReadonlyArray<readonly [number, number]>>,
+  extent: readonly [number, number],
+  fontSize: number,
+): Array<Gutter> {
+  const kept = [...gutters];
+  const least = fontSize * NARROWEST_COLUMN_EM;
+  const white = (g: Gutter): number => g.to - g.from;
+  let dropped = false;
+  // A page split once is two columns however narrow they are: a column a few
+  // ems wide is a table's only where there is another column to be part of.
+  while (kept.length > 1) {
+    const edges = [extent[0], ...kept.flatMap((g) => [g.from, g.to]), extent[1]];
+    // The narrowest column with a gap beside it that may go, and that gap.
+    let narrowest: { width: number; gap: Gutter } | undefined;
+    for (let k = 0; k <= kept.length; k++) {
+      const width = edges[2 * k + 1]! - edges[2 * k]!;
+      if (width >= least || (narrowest && narrowest.width <= width)) continue;
+      const beside = [kept[k - 1], kept[k]].filter(
+        (g): g is Gutter => g !== undefined && !firm.includes(g),
+      );
+      if (beside.length === 0) continue;
+      const gap = beside.reduce((a, b) => (white(b) < white(a) ? b : a));
+      narrowest = { width, gap };
+    }
+    if (!narrowest) break;
+    kept.splice(kept.indexOf(narrowest.gap), 1);
+    dropped = true;
+  }
+  if (!dropped) return kept;
+  return kept.map((g) => {
+    if (firm.includes(g)) return g;
+    let from = -Infinity;
+    let to = Infinity;
+    for (const row of rows) {
+      // The row's widest white across the band, where the row is split there.
+      let widest: readonly [number, number] | undefined;
+      let reach = row[0]?.[1] ?? -Infinity;
+      for (const [l, r] of row.slice(1)) {
+        const overlaps = l > g.from && reach < g.to;
+        if (l - reach >= fontSize * MIN_GUTTER_EM && overlaps) {
+          if (!widest || l - reach > widest[1] - widest[0]) widest = [reach, l];
+        }
+        reach = Math.max(reach, r);
+      }
+      if (!widest) continue;
+      from = Math.max(from, widest[0]);
+      to = Math.min(to, widest[1]);
+    }
+    return to > from ? { from, to, mid: (from + to) / 2 } : g;
+  });
+}
+
+/**
+ * How narrow, in ems of the page's body, a column of the page may be: narrower
+ * is a table's. The columns canvas.pdf's tables leave are two to six ems wide,
+ * and eight is four or five words of prose.
+ */
+const NARROWEST_COLUMN_EM = 8;
 
 /**
  * The candidate gutters that actually separate something, left to right.

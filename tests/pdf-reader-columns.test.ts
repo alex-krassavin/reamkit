@@ -5,6 +5,7 @@
 
 import { describe, expect, it } from 'vitest';
 
+import type { BodyElement } from '@/core/document-model';
 import type { PdfValue } from '@/pdf/objects';
 import { Ream } from '@/core/converter/ream';
 import { PdfFile } from '@/pdf-reader/document';
@@ -133,6 +134,51 @@ describe('two-column reconstruction (E-PDF EP17)', () => {
     expect(tokens.slice(0, ROWS)).toEqual(column('L'));
     expect(tokens.slice(ROWS, ROWS * 2)).toEqual(column('M'));
     expect(tokens.slice(ROWS * 2)).toEqual(column('R'));
+  });
+
+  it('reads a page set in two columns of TABLES by its two columns', () => {
+    // A table's columns stand apart line after line as a page's do. canvas.pdf
+    // sets two columns of Name, Type and Default tables under headings that
+    // run across them, and read at every gap its sheets came back in five
+    // columns a word wide each, on seven pages where it has two.
+    const ops = ['BT /F1 9 Tf'];
+    for (const [side, x] of [
+      ['L', 40],
+      ['R', 320],
+    ] as const) {
+      let y = 740;
+      for (let s = 0; s < 4; s++) {
+        const head = `${side}h${String(s)} a heading over the table under it`;
+        ops.push(`1 0 0 1 ${String(x)} ${String(y)} Tm (${head}) Tj`);
+        for (let r = 0; r < 5; r++) {
+          y -= 12;
+          const n = `${String(s)}${String(r)}`;
+          ops.push(`1 0 0 1 ${String(x)} ${String(y)} Tm (${side}n${n}) Tj`);
+          ops.push(`1 0 0 1 ${String(x + 70)} ${String(y)} Tm (${side}t${n}) Tj`);
+          ops.push(`1 0 0 1 ${String(x + 140)} ${String(y)} Tm (${side}v${n}) Tj`);
+        }
+        y -= 24;
+      }
+    }
+    ops.push('ET');
+    const textIn = (els: ReadonlyArray<BodyElement>): string =>
+      els
+        .map((el) =>
+          el.kind === 'paragraph'
+            ? el.paragraph.runs.map((r) => r.text).join('')
+            : el.kind === 'table'
+              ? el.table.rows.flatMap((row) => row.cells.map((c) => textIn(c.content))).join(' ')
+              : '',
+        )
+        .join(' ');
+    const tokens = textIn(Ream.parse(onePage(ops)).flow.body).match(/[LR][hntv]\d+/gu) ?? [];
+    expect(tokens).toHaveLength(2 * 4 * 16);
+    // Every token of the left column before any of the right…
+    const right = tokens.findIndex((t) => t.startsWith('R'));
+    expect(tokens.slice(0, right).every((t) => t.startsWith('L'))).toBe(true);
+    expect(tokens.slice(right).every((t) => t.startsWith('R'))).toBe(true);
+    // …and a row's cells read across it, as the page sets them.
+    expect(tokens.slice(0, 7)).toEqual(['Lh0', 'Ln00', 'Lt00', 'Lv00', 'Ln01', 'Lt01', 'Lv01']);
   });
 
   it('reads a JUSTIFIED page in its columns', () => {
