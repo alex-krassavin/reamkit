@@ -1556,9 +1556,19 @@ describe('a flowing reading re-sets the page where the page set it', () => {
       // programs…" came back a paragraph of its own.
       const lines = [
         'A title set in centred lines that fill very nearly the whole measure of this page, from its left edge to the',
-        'on and on it runs, a second line nearly as long as the first, and set in the middle of it too',
+        'on it runs as far again, a second line very nearly as long as the first one and set in its middle as well',
       ];
       expect(page(lines)).toEqual([lines.join(' '), long]);
+    });
+
+    it('ends a line of names where the next, set in by more than a twentieth, would have fit', () => {
+      // comments.pdf centres its authors three lines to a block, the second a
+      // thirteenth in from either edge, and the third came back run into it.
+      const lines = [
+        'Andreas Gal, Brendan Eich, Mike Shaver, David Anderson, David Mandelin, Mohammad Haghighat,',
+        'Al Ruderman, Edwin Smith, Rick Reitmaier, Michael Bebenita, Mason Chang, Michael Franz',
+      ];
+      expect(page(lines)).toEqual([...lines, long]);
     });
 
     it('keeps a centred paragraph whole where its line ran as far as the measure lets it', () => {

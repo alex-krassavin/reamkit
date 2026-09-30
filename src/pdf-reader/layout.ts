@@ -2953,8 +2953,15 @@ function endedCentred(prev: Line, next: Line, column: { left: number; right: num
 /** How far off the middle of the measure, as a share of it, a centred line may stand. */
 const CENTRED_SLACK = 0.06;
 
-/** How far in from both edges, as a share of the measure, a centred line stands. */
-const CENTRED_INSET = 0.1;
+/**
+ * How far in from both edges, as a share of the measure, a centred line
+ * stands: further than a full line stands in from a column whose edges are
+ * its bullets' and an overfull line's (comments.pdf's, a thirtieth at most),
+ * and no further than a block of names needs — the paper's second line of
+ * authors stands in by a thirteenth, and asked for a tenth, the line under it
+ * came back run into it.
+ */
+const CENTRED_INSET = 0.05;
 
 /**
  * Whether a line of a column set against both edges ended its paragraph: it
