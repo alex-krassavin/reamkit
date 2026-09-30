@@ -1740,6 +1740,12 @@ function tblPrXml(p: TableProperties): string {
     out.push(`<w:tblW w:w="${w}" w:type="${p.widthType}"/>`);
   }
   if (p.alignment && p.alignment !== 'left') out.push(`<w:jc w:val="${p.alignment}"/>`);
+  // §17.4.65 — how far in from the margin the table stands, which the model
+  // carried and the writer never wrote: every table a PDF set in from its
+  // margin came back against it.
+  if (p.indentPt !== undefined && p.indentPt !== 0) {
+    out.push(`<w:tblInd w:w="${twips(p.indentPt)}" w:type="dxa"/>`);
+  }
   const borders = bordersXml('w:tblBorders', p.borders);
   if (borders) out.push(borders);
   // §17.4.53 — a FIXED table is laid out by its grid and nothing else. Left

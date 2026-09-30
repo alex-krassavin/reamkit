@@ -331,8 +331,15 @@ export function reconstructByLayout(
   // clean lines for the vote to answer, and read as one column its citations
   // ran into its theorems. Where a page says nothing, the answer the rest of
   // the document gave is put to it, and kept only if its own lines agree.
-  // …and not the gutters a page's code listings show (see `withoutListings`).
-  const gutterRuns = pageRuns.map(withoutListings);
+  // …and not the gutters a page's code listings show (see `withoutListings`),
+  // nor those of a table set over text in columns (`withoutTables`): the
+  // text's own gutters are the page's where it has any, and a page that is its
+  // table is ruled by it.
+  const gutterRuns = pageRuns.map((runs, i) => {
+    const listed = withoutListings(runs);
+    const prose = withoutTables(listed);
+    return prose !== listed && detectGutters(prose, shown[i]!.width).length > 0 ? prose : listed;
+  });
   const perPage = pages.map((_, i) => detectGutters(gutterRuns[i]!, shown[i]!.width));
   const shared = commonGutters(perPage);
   const pageGutters = perPage.map((own, i) =>
@@ -1608,24 +1615,34 @@ function assignColumns(
     for (const run of row) columnOf.set(run, SPANNING_COLUMN);
     breaks.push(Math.max(...row.map((r) => r.y)));
   }
-  // A listing is one block (see `isCode`): where one line of it reaches across
-  // the page, every line does. Its short lines stand left of the gutter and
-  // read as the left column's, and comments.pdf's second listing came back
-  // with its tail — "...", "side_exit_1:" — under the text in the columns.
+  // A listing is one block (see `isCode`), and so is a table (`isTableRow`):
+  // where one row of the block reaches across the page, every row of it
+  // does. A listing's short lines stand left of the gutter and read as the
+  // left column's — comments.pdf's second listing came back with its tail,
+  // "...", "side_exit_1:", under the text in the columns — and a table's
+  // rows are cut at the gutter where the white between two of its columns
+  // stands over it: Figure 13 came back as two tables, one a column.
+  // …where one row DOES reach across, or the rows run deeper than two
+  // columns' rows fall together by chance: two columns that each set a
+  // table are rows of cells on the same baselines too, for as long as their
+  // pitches agree. canvas.pdf sets one down either side of the sheet, three
+  // rows abreast, and read as one the two came back in a row.
   const inRows = rows.filter((row) => row.some((r) => r.text.trim() !== ''));
-  for (let from = 0; from < inRows.length; ) {
-    let to = from;
-    while (to < inRows.length && isCode(inRows[to]!)) to++;
-    const block = inRows.slice(from, to);
-    if (block.some((row) => row.some((r) => columnOf.get(r) === SPANNING_COLUMN))) {
-      for (const row of block) {
-        if (row.some((r) => columnOf.get(r) !== SPANNING_COLUMN)) {
-          breaks.push(Math.max(...row.map((r) => r.y)));
-        }
-        for (const run of row) columnOf.set(run, SPANNING_COLUMN);
+  const across = (block: ReadonlyArray<ReadonlyArray<TextRun>>): boolean =>
+    block.some((row) => row.some((r) => columnOf.get(r) === SPANNING_COLUMN));
+  const blocks = [
+    ...blocksOf(inRows, isCode, 1).filter(across),
+    ...blocksOf(inRows, isTableRow, LEAST_TABLE_ROWS).filter(
+      (block) => across(block) || block.length >= SPANNING_TABLE_ROWS,
+    ),
+  ];
+  for (const block of blocks) {
+    for (const row of block) {
+      if (row.some((r) => columnOf.get(r) !== SPANNING_COLUMN)) {
+        breaks.push(Math.max(...row.map((r) => r.y)));
       }
+      for (const run of row) columnOf.set(run, SPANNING_COLUMN);
     }
-    from = Math.max(to, from + 1);
   }
   return { columnOf, breaks: breaks.sort((a, b) => b - a) };
 }
@@ -2073,6 +2090,91 @@ function withoutListings(runs: ReadonlyArray<TextRun>): ReadonlyArray<TextRun> {
   return listed.size > 0 ? runs.filter((r) => !listed.has(r)) : runs;
 }
 
+/**
+ * A page's runs less its tables (see {@link isTableRow}): the rows of every
+ * block of three and more table rows. The same runs where it has none.
+ *
+ * The white between a table's columns says nothing about the columns of the
+ * text around it. comments.pdf sets Figure 13, a benchmark and nine figures a
+ * row, twenty-six rows deep, over two columns of text: its nine gaps were
+ * taken for the page's gutters, the text's own was crossed by its rows and
+ * not found, and the whole page came back as one table, each line of the text
+ * a row of it.
+ */
+function withoutTables(runs: ReadonlyArray<TextRun>): ReadonlyArray<TextRun> {
+  const fontSize = median(runs.map((r) => r.fontSizePt).filter((s) => s > 0)) || 10;
+  const rows = rowsOf(runs, fontSize).filter((row) => row.some((r) => r.text.trim() !== ''));
+  const tabled = new Set(blocksOf(rows, isTableRow, LEAST_TABLE_ROWS).flat(2));
+  return tabled.size > 0 ? runs.filter((r) => !tabled.has(r)) : runs;
+}
+
+/**
+ * The rows of a page that stand in runs of at least `least` for which `holds`
+ * is true, each run of them a block.
+ */
+function blocksOf(
+  rows: ReadonlyArray<ReadonlyArray<TextRun>>,
+  holds: (row: ReadonlyArray<TextRun>) => boolean,
+  least: number,
+): Array<Array<ReadonlyArray<TextRun>>> {
+  const out: Array<Array<ReadonlyArray<TextRun>>> = [];
+  for (let from = 0; from < rows.length; ) {
+    let to = from;
+    while (to < rows.length && holds(rows[to]!)) to++;
+    if (to - from >= least) out.push(rows.slice(from, to));
+    from = Math.max(to, from + 1);
+  }
+  return out;
+}
+
+/**
+ * Whether a row is a TABLE's: four cells or more — its words as far as each
+ * gap wider than an em — and none of them as long as a line of prose. A row
+ * of a page in columns is two long pieces; comments.pdf's Figure 13 is ten
+ * short ones a row, a benchmark and nine figures, twenty-six rows deep.
+ */
+function isTableRow(runs: ReadonlyArray<TextRun>): boolean {
+  const cells = cellsOf(runs);
+  if (cells.length < TABLE_CELLS) return false;
+  const size = median(runs.map((r) => r.fontSizePt).filter((s) => s > 0)) || 10;
+  return cells.every((c) => c.to - c.from <= size * WIDEST_CELL_EM);
+}
+
+/** A row's ink as its cells: its words, as far as each gap wider than an em. */
+function cellsOf(runs: ReadonlyArray<TextRun>): Array<Extent> {
+  const inks = runs
+    .map((run) => ({ run, ink: runInk(run) }))
+    .filter((r): r is { run: TextRun; ink: [number, number] } => r.ink !== undefined)
+    .sort((a, b) => a.ink[0] - b.ink[0]);
+  const cells: Array<{ from: number; to: number }> = [];
+  for (const { run, ink } of inks) {
+    const last = cells[cells.length - 1];
+    if (last && ink[0] - last.to < (run.fontSizePt || 10) * CELL_GAP_EM) {
+      last.to = Math.max(last.to, ink[1]);
+    } else cells.push({ from: ink[0], to: ink[1] });
+  }
+  return cells;
+}
+
+/** How many cells make a row a table's. */
+const TABLE_CELLS = 4;
+
+/** How many such rows make a table. */
+const LEAST_TABLE_ROWS = 3;
+
+/**
+ * …and how many make one across the page's columns with no row of it
+ * reaching over the gutter on its own: more than two columns' rows fall
+ * together by chance.
+ */
+const SPANNING_TABLE_ROWS = 6;
+
+/** The white between two cells of a table row, in ems: wider than a word space ever is. */
+const CELL_GAP_EM = 1;
+
+/** The longest a table's cell runs, in ems; a line of a column of prose runs further. */
+const WIDEST_CELL_EM = 12;
+
 /** One run of runs, left to right on a shared baseline, as a {@link Line}. */
 function lineOf(
   runs: ReadonlyArray<TextRun>,
@@ -2189,6 +2291,21 @@ function isLeader(text: string): boolean {
   return text.length === 1 && LEADER_CHARS.has(text);
 }
 
+/**
+ * Whether `run` carries on the leader `prev` is a character of: the same
+ * character, a step no wider than a word space on from it. A dash a column
+ * further on is a cell's: comments.pdf's Figure 13 marks three empty figures
+ * "-", a column apart, and joined as one leader they came back "---", one
+ * cell standing where three had.
+ */
+function leads(prev: TextRun, run: TextRun, fontSize: number): boolean {
+  return (
+    isLeader(prev.text) &&
+    prev.text === run.text &&
+    run.x - prev.endX < (run.fontSizePt || fontSize) * CELL_GAP_EM
+  );
+}
+
 const LEADER_CHARS = new Set(['.', '\u00b7', '_', '-', '\u2010', '\u2013']);
 
 /** A page that writes its own spaces: only a wide gap means anything more. */
@@ -2223,6 +2340,11 @@ function lineSpans(
   const spans: Array<TextSpan> = [];
   const stops: Array<number> = [];
   const pieces: Array<{ from: number; to: number }> = [{ from: Infinity, to: -Infinity }];
+  // A table's row (see `isTableRow`) is its cells, each on the stop the page
+  // set it at: a gap wider than an em between two of them is a tab, where one
+  // narrower than a column's usual white became a space, and the rows of one
+  // table came to stand on different numbers of stops.
+  const table = isTableRow(runs);
   // §17.3.2.42 — the line's OWN baseline, which a script stands off. Taken from
   // the runs set at the line's size: the marks are the ones that moved.
   const body = runs.filter((r) => (r.fontSizePt || fontSize) > fontSize * SCRIPT_SIZE);
@@ -2251,7 +2373,7 @@ function lineSpans(
     if (
       prev !== undefined &&
       run.x - prev.endX > spaceGap(prev, fontSize, stepped) &&
-      !(isLeader(prev.text) && prev.text === run.text)
+      !leads(prev, run, fontSize)
     ) {
       // A gap no word space could be is a TAB, and the piece after it starts
       // where the page starts it. Written as a space the two pieces close up.
@@ -2261,7 +2383,12 @@ function lineSpans(
         inked !== undefined &&
         run.x - inked >= size * STOP_GAP_EM &&
         shared.some((x) => Math.abs(x - run.x) <= STOP_SLACK_PT);
-      if (run.x - prev.endX >= size * TAB_GAP_EM || onStop || aligned(prev, run)) {
+      if (
+        run.x - prev.endX >= size * TAB_GAP_EM ||
+        onStop ||
+        aligned(prev, run) ||
+        (table && run.x - prev.endX >= size * CELL_GAP_EM)
+      ) {
         spans.push({ text: '\t' });
         stops.push(run.x);
         pieces.push({ from: Infinity, to: -Infinity });
@@ -3691,92 +3818,215 @@ function tabbedRows(
         to: Math.max(...cells.map((c) => c!.to)),
       };
     });
-    // §17.3.1.13 — a column whose cells END together and start apart is set
-    // against its right edge: the "Qty", "Tax" and "Amount" of an item table,
-    // figures and headings alike. Set from the left the "1" stood under the Q
-    // of "Qty", eight points from the figure the page puts under its y.
-    const flush = inks.map((ink, k) => {
-      if (k === 0 || ink === undefined) return false;
-      const tos = rows.map((r) => r.pieces![k]!.to);
-      const froms = rows.map((r) => r.pieces![k]!.from);
-      const even = Math.max(...tos) - Math.min(...tos);
-      return (
-        even <= FLUSH_SLACK_PT && Math.max(...froms) - Math.min(...froms) > even + FLUSH_SLACK_PT
+    // …and the HEADINGS set over the columns, where the line above the rows
+    // stands over them: comments.pdf's Figure 13 heads its figures and leaves
+    // the column of names bare, one stop short of every row under it, and the
+    // headings came back as a line of their own above the table.
+    // Close over the rows, and over half their columns at the least: a line
+    // of an address with two pieces over a table of five heads nothing.
+    const above = i > 0 && !out.has(i - 1) ? paras[i - 1] : undefined;
+    const close =
+      above !== undefined && above.top - rows[0]!.top <= rows[0]!.lineHeight * HEADING_LINES;
+    const columnsFor = (heading: Heading | undefined) => {
+      // §17.3.1.13 — a column whose cells END together and start apart is set
+      // against its right edge: the "Qty", "Tax" and "Amount" of an item table,
+      // figures and headings alike. Set from the left the "1" stood under the Q
+      // of "Qty", eight points from the figure the page puts under its y.
+      const flush = inks.map((ink, k) => {
+        if (k === 0 || ink === undefined) return false;
+        const tos = rows.map((r) => r.pieces![k]!.to);
+        const froms = rows.map((r) => r.pieces![k]!.from);
+        const even = Math.max(...tos) - Math.min(...tos);
+        if (even > FLUSH_SLACK_PT) return false;
+        if (Math.max(...froms) - Math.min(...froms) > even + FLUSH_SLACK_PT) return true;
+        // Cells all as wide as each other say nothing of the side they are set
+        // against, and the heading over them does: Figure 13's "Flushes" ends
+        // where its column of noughts ends, and begins a word further left.
+        const head = heading?.over[k];
+        return (
+          head !== undefined &&
+          Math.abs(head.to - Math.max(...tos)) <= FLUSH_SLACK_PT &&
+          Math.min(...froms) - head.from > FLUSH_SLACK_PT
+        );
+      });
+      // What each column has to hold: its figures, and the heading over them.
+      // Cut to the figures, "Traces/Tree" came back "Traces/" over "Tree".
+      const holds = inks.map((ink, k): Extent | undefined => {
+        const head = heading?.over[k];
+        return ink !== undefined && head !== undefined
+          ? { from: Math.min(ink.from, head.from), to: Math.max(ink.to, head.to) }
+          : ink;
+      });
+      // Where each column begins. One set from its left begins at its stop; one
+      // set against its right has no stop to begin at, and begins halfway across
+      // the white before it — a cell only as wide as the page's figure wraps the
+      // figure the moment the face it is re-set in runs a little wider.
+      const edges = [0, ...bounds, width];
+      for (let k = 1; k < bounds.length + 1; k++) {
+        const before = holds[k - 1];
+        const own = holds[k];
+        if (!flush[k] || before === undefined || own === undefined) continue;
+        const mid = (before.to + own.from) / 2;
+        if (mid > edges[k - 1]! && mid < own.from) edges[k] = mid;
+      }
+      // §17.4.65 — and the first begins where its words do: comments.pdf centres
+      // Figure 13 on the page, its names seventeen points in from the margin.
+      const lead = holds[0]?.from ?? 0;
+      if (lead > FLUSH_SLACK_PT && lead < edges[1]!) edges[0] = lead;
+      const flushRight = flush.map((right, k) =>
+        right ? Math.max(0, edges[k + 1]! - inks[k]!.to) : undefined,
       );
-    });
-    // Where each column begins. One set from its left begins at its stop; one
-    // set against its right has no stop to begin at, and begins halfway across
-    // the white before it — a cell only as wide as the page's figure wraps the
-    // figure the moment the face it is re-set in runs a little wider.
-    const edges = [0, ...bounds, width];
-    for (let k = 1; k < bounds.length + 1; k++) {
-      const before = inks[k - 1];
-      const own = inks[k];
-      if (!flush[k] || before === undefined || own === undefined) continue;
-      const mid = (before.to + own.from) / 2;
-      if (mid > edges[k - 1]! && mid < own.from) edges[k] = mid;
-    }
-    const flushRight = flush.map((right, k) =>
-      right ? Math.max(0, edges[k + 1]! - inks[k]!.to) : undefined,
-    );
+      // …and a heading the columns cannot hold is no heading of theirs: a
+      // form's "Bankverbindung:" heads a label and its value together, and
+      // set over the labels alone it broke in two.
+      const held =
+        heading?.over.every(
+          (head, k) =>
+            head === undefined ||
+            edges[k + 1]! - edges[k]! - (flushRight[k] ?? 0) >=
+              head.to - head.from - FLUSH_SLACK_PT,
+        ) ?? true;
+      return { holds, edges, flushRight, held };
+    };
+    const offered = above && close ? headingOver(above, inks) : undefined;
+    const withHeading = offered ? columnsFor(offered) : undefined;
+    const heading = withHeading?.held === true ? offered : undefined;
+    const { holds, edges, flushRight } =
+      heading && withHeading ? withHeading : columnsFor(undefined);
     const grid = edges.slice(0, -1).map((from, k) => pt(Math.max(edges[k + 1]! - from, 1)));
-    out.set(i, {
-      kind: 'table',
-      table: {
-        // §17.4.63/§17.4.72 — as wide as the measure, each cell as wide as its
-        // column: the widths the grid gives, stated where a reader looks first.
-        properties: {
-          defaultCellMargins: { left: pt(0), right: pt(0) },
-          layout: 'fixed',
-          widthType: 'dxa',
-          widthPt: pt(grid.reduce((sum, w) => sum + w, 0)),
-        },
-        grid,
-        rows: rows.map((row, r) => {
-          // The row stands as far from the next as the page stood it, and the
-          // white BEFORE the table is the first row's own: a table has no
-          // spacing of its own to carry it, and glued to the block above it the
-          // invoice's item table came up against the address over it.
-          const prev = rows[r - 1];
-          // The white a row keeps from the one above it, less the boxes the two
-          // lines stand in — the same measure a paragraph's spacing is read by.
-          // Stated as the ROW's height instead, LibreOffice set the rows solid
-          // and an invoice's heading sat on the item under it.
-          const pitch = prev
-            ? prev.top -
-              row.top -
-              (1 - BASELINE_AT) * prev.lineHeight -
-              BASELINE_AT * row.lineHeight
-            : 0;
-          const opening = r === 0 ? row.spacingBefore : pitch > 0 ? pitch : undefined;
-          return {
-            properties: {},
-            cells: splitAtTabs(row.spans).map((cell, k) => {
-              const inset = flushRight[k];
-              const own = grid[k];
-              return {
-                properties: own !== undefined ? { width: own } : {},
-                content: [
-                  paragraphFromRuns(cell, undefined, {
-                    ...(opening !== undefined ? { spacingBefore: pt(opening) } : {}),
-                    spacingLine: pt(row.lineHeight),
-                    spacingLineRule: 'exact',
-                    ...(inset !== undefined
-                      ? { alignment: 'right' as const, indentRight: pt(inset) }
-                      : {}),
-                  }),
-                ],
-              };
-            }),
-          };
-        }),
+    const tableRows = above && heading ? [{ ...above, spans: heading.spans }, ...rows] : rows;
+    const table: Table = {
+      // §17.4.63/§17.4.72 — as wide as its columns, each cell as wide as its
+      // column: the widths the grid gives, stated where a reader looks first.
+      properties: {
+        defaultCellMargins: { left: pt(0), right: pt(0) },
+        layout: 'fixed',
+        widthType: 'dxa',
+        widthPt: pt(grid.reduce((sum, w) => sum + w, 0)),
+        ...(edges[0]! > 0 ? { indentPt: pt(edges[0]!) } : {}),
       },
+      grid,
+      rows: tableRows.map((row, r) => {
+        // The row stands as far from the next as the page stood it, and the
+        // white BEFORE the table is the first row's own: a table has no
+        // spacing of its own to carry it, and glued to the block above it the
+        // invoice's item table came up against the address over it.
+        const prev = tableRows[r - 1];
+        // The white a row keeps from the one above it, less the boxes the two
+        // lines stand in — the same measure a paragraph's spacing is read by.
+        // Stated as the ROW's height instead, LibreOffice set the rows solid
+        // and an invoice's heading sat on the item under it.
+        const pitch = prev
+          ? prev.top - row.top - (1 - BASELINE_AT) * prev.lineHeight - BASELINE_AT * row.lineHeight
+          : 0;
+        const opening = r === 0 ? row.spacingBefore : pitch > 0 ? pitch : undefined;
+        return {
+          properties: {},
+          cells: splitAtTabs(row.spans).map((cell, k) => {
+            const inset = flushRight[k];
+            const own = grid[k];
+            return {
+              properties: own !== undefined ? { width: own } : {},
+              content: [
+                paragraphFromRuns(cell, undefined, {
+                  ...(opening !== undefined ? { spacingBefore: pt(opening) } : {}),
+                  spacingLine: pt(row.lineHeight),
+                  spacingLineRule: 'exact',
+                  ...(inset !== undefined
+                    ? { alignment: 'right' as const, indentRight: pt(inset) }
+                    : {}),
+                }),
+              ],
+            };
+          }),
+        };
+      }),
+    };
+    const ink = holds.filter((h): h is Extent => h !== undefined);
+    tableReads.set(table, {
+      rows: tableRows.map((row) => ({ top: row.top, lineHeight: row.lineHeight })),
+      from: measure.left + Math.min(...ink.map((h) => h.from)),
+      to: measure.left + Math.max(...ink.map((h) => h.to)),
     });
+    out.set(heading ? i - 1 : i, { kind: 'table', table });
+    if (heading) out.set(i, null);
     for (let k = i + 1; k < to; k++) out.set(k, null);
     i = to;
   }
   return out;
 }
+
+/**
+ * A line's cells as a heading row over a table's columns: each cell over the
+ * column whose figures it overlaps most, left to right, and an empty cell over
+ * a column it leaves bare. `undefined` where the line is no such row.
+ *
+ * @param line The line above the table, with the cells it was set out in.
+ * @param inks The ink of each of the table's columns.
+ * @returns The line's spans with a tab between every two columns, and the ink
+ *          of the heading over each column.
+ */
+function headingOver(
+  line: { spans: Array<TextSpan>; pieces?: Array<Extent> },
+  inks: ReadonlyArray<Extent | undefined>,
+): Heading | undefined {
+  const cells = splitAtTabs(line.spans);
+  const pieces = line.pieces ?? [];
+  if (
+    cells.length < 2 ||
+    pieces.length !== cells.length ||
+    cells.length > inks.length ||
+    cells.length * 2 < inks.length
+  ) {
+    return undefined;
+  }
+  const columns: Array<number> = [];
+  for (const piece of pieces) {
+    let best = -1;
+    let most = 0;
+    inks.forEach((ink, k) => {
+      if (ink === undefined) return;
+      const overlap = Math.min(piece.to, ink.to) - Math.max(piece.from, ink.from);
+      if (overlap > most) {
+        most = overlap;
+        best = k;
+      }
+    });
+    if (best <= (columns[columns.length - 1] ?? -1)) return undefined;
+    columns.push(best);
+  }
+  return {
+    spans: inks.flatMap((_, k): Array<TextSpan> => {
+      const own = columns.indexOf(k);
+      return [...(k > 0 ? [{ text: '\t' }] : []), ...(own >= 0 ? cells[own]! : [])];
+    }),
+    over: inks.map((_, k) => {
+      const own = columns.indexOf(k);
+      return own >= 0 ? pieces[own] : undefined;
+    }),
+  };
+}
+
+/** A line set over a table's columns as its heading row (see `headingOver`). */
+type Heading = { spans: Array<TextSpan>; over: Array<Extent | undefined> };
+
+/**
+ * Where a table read off the page stood on it (see `tabbedRows`): each row's
+ * baseline and the box its line stands in, top to bottom, and how far across
+ * the page its words reach — which is what a rule drawn between two of its
+ * rows is measured against (see `ruleBorders`).
+ */
+const tableReads = new WeakMap<
+  Table,
+  {
+    rows: ReadonlyArray<{ top: number; lineHeight: number }>;
+    from: number;
+    to: number;
+  }
+>();
+
+/** How many of its rows' lines a heading may stand over a table and head it. */
+const HEADING_LINES = 3;
 
 /** How far apart the ends of a column's cells may stand and still be flush. */
 const FLUSH_SLACK_PT = 2;
@@ -3819,12 +4069,13 @@ function splitAtTabs(spans: ReadonlyArray<TextSpan>): Array<Array<TextSpan>> {
  */
 function ruleBorders(
   vectors: ReadonlyArray<PdfVector>,
-  blocks: Array<{ band: number; col: number; top: number; el: BodyElement }>,
+  blocks: Array<Block>,
   width: number,
 ): ReadonlySet<PdfVector> {
   const given = new Set<PdfVector>();
   const paragraphs = blocks.filter((b) => b.el.kind === 'paragraph');
-  if (paragraphs.length === 0) return given;
+  const tables = blocks.filter((b) => b.el.kind === 'table');
+  if (paragraphs.length === 0 && tables.length === 0) return given;
   // A rule drawn in PIECES is one rule. An invoice draws the rule under its
   // headings cell by cell — five bars on one baseline, one under each column —
   // and measured apart only the widest was long enough to be a rule: it became
@@ -3834,6 +4085,27 @@ function ruleBorders(
     const v = band.pieces[0]!;
     if (band.to - band.from < width * RULE_SHARE) continue;
     const y = (v.minY + v.maxY) / 2;
+    const border = {
+      style: 'single' as const,
+      width: pt(Math.max(v.lineWidth ?? v.maxY - v.minY, RULE_MIN_PT)),
+      colorHex: v.strokeHex ?? v.fillHex ?? '000000',
+    };
+    // A rule between two rows of a table, across it, is the top edge of the
+    // lower row's cells (§17.4.39): Figure 13's rule under its headings stayed
+    // where the page drew it, and the table, set a little lower, ran its
+    // headings through it. Only where it stands ON the edge: an invoice's
+    // rule under its headings stands in the white between them and the item,
+    // and moved onto the item's edge it rose nine points.
+    const seat = seatOf(tables, band, y);
+    if (seat !== undefined && seat.block.el.kind === 'table') {
+      seat.block.el = {
+        kind: 'table',
+        table: ruledRow(seat.block.el.table, seat.row, border),
+      };
+      for (const piece of band.pieces) given.add(piece);
+      continue;
+    }
+    if (paragraphs.length === 0) continue;
     // The block the rule introduces: the nearest one under it. Failing that,
     // the one it closes off above.
     const below = paragraphs.filter((b) => b.top < y).sort((a, b) => b.top - a.top)[0];
@@ -3845,11 +4117,6 @@ function ruleBorders(
           ? ({ block: above, edge: 'bottom' } as const)
           : undefined;
     if (!side || side.block.el.kind !== 'paragraph') continue;
-    const border = {
-      style: 'single' as const,
-      width: pt(Math.max(v.lineWidth ?? v.maxY - v.minY, RULE_MIN_PT)),
-      colorHex: v.strokeHex ?? v.fillHex ?? '000000',
-    };
     const { paragraph } = side.block.el;
     // A rule takes the room it is drawn in (§17.3.1.24): stood over a line,
     // it pushes the line down by its own width, and five rules over five
@@ -3883,6 +4150,97 @@ function ruleBorders(
   }
   return given;
 }
+
+/** A block of a page's reading, as `ruleBorders` is handed it. */
+type Block = { band: number; col: number; top: number; el: BodyElement };
+
+/**
+ * A table with a rule over one of its rows: the top edge of each of the row's
+ * cells (§17.4.39), the rule taking its room out of the white the row keeps
+ * over it as a paragraph's does (see `ruleBorders`).
+ */
+function ruledRow(
+  table: Table,
+  at: number,
+  border: { style: 'single'; width: Pt; colorHex: string },
+): Table {
+  const ruled: Table = {
+    ...table,
+    rows: table.rows.map((row, r) =>
+      r !== at
+        ? row
+        : {
+            ...row,
+            cells: row.cells.map((cell) => ({
+              properties: {
+                ...cell.properties,
+                borders: { ...cell.properties.borders, top: border },
+              },
+              content: cell.content.map((block, k) => {
+                const before =
+                  block.kind === 'paragraph' && k === 0
+                    ? block.paragraph.properties.spacingBefore
+                    : undefined;
+                return before === undefined || block.kind !== 'paragraph'
+                  ? block
+                  : {
+                      ...block,
+                      paragraph: {
+                        ...block.paragraph,
+                        properties: {
+                          ...block.paragraph.properties,
+                          spacingBefore: pt(Math.max(0, before - border.width)),
+                        },
+                      },
+                    };
+              }),
+            })),
+          },
+    ),
+  };
+  const read = tableReads.get(table);
+  if (read) tableReads.set(ruled, read);
+  return ruled;
+}
+
+/**
+ * The table row a rule is drawn on the top edge of: a row after the first,
+ * the rule standing where its line's box meets the box of the line above it,
+ * and reaching across the table's words. `undefined` where the rule is no
+ * such row's.
+ *
+ * @param tables The page's tables, as blocks.
+ * @param band   The rule, across the page.
+ * @param y      Its height on the page.
+ */
+function seatOf(
+  tables: ReadonlyArray<Block>,
+  band: { from: number; to: number },
+  y: number,
+): { block: Block; row: number } | undefined {
+  for (const block of tables) {
+    const read = block.el.kind === 'table' ? tableReads.get(block.el.table) : undefined;
+    if (!read) continue;
+    if (band.from > read.from + RULE_SEAT_PT || band.to < read.to - RULE_SEAT_PT) continue;
+    for (let r = 1; r < read.rows.length; r++) {
+      const row = read.rows[r]!;
+      const prev = read.rows[r - 1]!;
+      const edge = row.top + BASELINE_AT * row.lineHeight;
+      const over = prev.top - (1 - BASELINE_AT) * prev.lineHeight;
+      if (y > row.top && y < prev.top && y - edge <= RULE_SEAT_PT && over - y <= RULE_SEAT_PT) {
+        return { block, row: r };
+      }
+    }
+  }
+  return undefined;
+}
+
+/**
+ * How far off the edge between two rows a rule may stand and still be that
+ * edge — a point or two either way, which the white a row keeps does not
+ * notice.
+ */
+const RULE_SEAT_PT = 3;
 
 /** How far from a paragraph a rule may stand and still belong to it. */
 const RULE_REACH_PT = 14;

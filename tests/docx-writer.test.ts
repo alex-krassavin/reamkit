@@ -1054,7 +1054,8 @@ describe('what a reader can actually draw', () => {
       '<w:outlineLvl w:val="1"/></w:pPr>' +
       '<w:r><w:rPr><w:b/><w:color w:val="FF0000"/><w:sz w:val="28"/></w:rPr>' +
       '<w:t>a line the page set out</w:t></w:r></w:p>' +
-      '<w:tbl><w:tblPr><w:tblW w:w="5000" w:type="dxa"/><w:tblLayout w:type="fixed"/>' +
+      '<w:tbl><w:tblPr><w:tblW w:w="5000" w:type="dxa"/><w:tblInd w:w="360" w:type="dxa"/>' +
+      '<w:tblLayout w:type="fixed"/>' +
       '<w:tblCellMar><w:left w:w="0" w:type="dxa"/></w:tblCellMar></w:tblPr>' +
       '<w:tblGrid><w:gridCol w:w="2500"/><w:gridCol w:w="2500"/></w:tblGrid>' +
       '<w:tr><w:trPr><w:trHeight w:val="300"/></w:trPr>' +
@@ -1165,6 +1166,9 @@ describe('what a reader can actually draw', () => {
         expect(ranks, `${parent}: ${kids.join(' ')}`).toEqual([...ranks].sort((a, b) => a - b));
       }
     }
+    // §17.4.65 — the table's indent, which the model read and the writer
+    // dropped: a table set in from its margin came back against it.
+    expect(xml).toContain('<w:tblInd w:w="360" w:type="dxa"/>');
   });
 });
 
