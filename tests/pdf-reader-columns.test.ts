@@ -531,6 +531,115 @@ describe('two-column reconstruction (E-PDF EP17)', () => {
     expect(text).toContain('L16 a long entry, 12, 34, 56, 78, 90, 123, 456');
   });
 
+  it('reads an index whose entries hang, a line apiece where the page ends them', () => {
+    // freeculture.pdf sets "democracy:" at the edge, its sub-entries a level
+    // in, and the lines that carry an entry on a level further in again.
+    // Read by the measure alone, a line back at the edge after one carried
+    // on was taken for the second line of a paragraph set in.
+    const ops = ['BT /F1 8 Tf'];
+    const lines: Array<[number, string]> = [
+      [72, 'democracy:'],
+      [82, 'digital sharing within, 184'],
+      [82, 'media concentration and, 166'],
+      [82, 'in technologies of expression, 33, 35, 36, 37, 38, 39, 40, 41,'],
+      [92, '42, 43, 44-45'],
+      [72, 'Democratic Party, 249'],
+      [72, 'derivative works, 329n'],
+      [82, 'historical shift in copyright coverage of, 136, 137, 138, 139,'],
+      [92, '170-72'],
+      [72, 'developing countries, foreign patent costs in, 63, 64, 65, 66,'],
+      [92, '257-61, 313n'],
+      [72, 'Diamond Multimedia Systems, 323n'],
+    ];
+    lines.forEach(([x, text], k) =>
+      ops.push(`1 0 0 1 ${String(x)} ${String(700 - k * 10)} Tm (${text}) Tj`),
+    );
+    ops.push('ET');
+    const paragraphs = Ream.parse(onePage(ops)).flow.body.flatMap((el) =>
+      el.kind === 'paragraph' ? [el.paragraph.runs.map((r) => r.text).join('')] : [],
+    );
+    expect(paragraphs.map((p) => p.replace(/\s+/gu, ' '))).toEqual([
+      'democracy:',
+      'digital sharing within, 184',
+      'media concentration and, 166',
+      'in technologies of expression, 33, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44-45',
+      'Democratic Party, 249',
+      'derivative works, 329n',
+      'historical shift in copyright coverage of, 136, 137, 138, 139, 170-72',
+      'developing countries, foreign patent costs in, 63, 64, 65, 66, 257-61, 313n',
+      'Diamond Multimedia Systems, 323n',
+    ]);
+  });
+
+  it('reads a page of prose with a quotation set in as prose, not as an index', () => {
+    // freeculture.pdf sets its quotations in from the edge, reached from a
+    // full line of the paragraph they break, as an index's entries go on; read
+    // as hanging, a page of its prose came back a paragraph to every line.
+    const full = 'the argument runs on from one line to the next as prose does';
+    const ops = ['BT /F1 10 Tf'];
+    const lines: Array<[number, string]> = [
+      ...Array.from({ length: 5 }, (): [number, string] => [72, full]),
+      [72, 'and ends here.'],
+      ...Array.from({ length: 4 }, (): [number, string] => [72, full]),
+      [92, 'a quotation set in from the edge of the column, as long'],
+      [92, 'as the lines of the prose are, or nearly so, runs on'],
+      [92, 'and ends.'],
+      ...Array.from({ length: 4 }, (): [number, string] => [72, full]),
+      [72, 'the end.'],
+    ];
+    lines.forEach(([x, text], k) =>
+      ops.push(`1 0 0 1 ${String(x)} ${String(700 - k * 12)} Tm (${text}) Tj`),
+    );
+    ops.push('ET');
+    const paragraphs = Ream.parse(onePage(ops)).flow.body.flatMap((el) =>
+      el.kind === 'paragraph' ? [el.paragraph.runs.map((r) => r.text).join('')] : [],
+    );
+    expect(paragraphs[0]?.replace(/\s+/gu, ' ')).toBe(
+      `${Array(5).fill(full).join(' ')} and ends here.`,
+    );
+  });
+
+  it('carries an entry on at the level its lines go on at, however short the line before', () => {
+    // freeculture.pdf breaks "RPI, see Rensselaer Polytechnic" a third of
+    // the column short, for want of room for "Institute", and carries it on a
+    // level in: taken for an entry ended short, it came back two.
+    const ops = ['BT /F1 8 Tf'];
+    const lines: Array<[number, string]> = [
+      [72, 'Rensselaer Polytechnic Institute (RPI), 48, 49, 50, 51, 185,'],
+      [92, '200, 206'],
+      [72, 'Rhapsody, 191'],
+      [72, 'Rise of the Creative Class, The (Florida), 21'],
+      [72, 'Roberts, Richard, 309n, 310n, 311n, 312n, 313n, 314n, 315n,'],
+      [92, '316n'],
+      [72, 'Rogers, Fred, 111'],
+      [72, 'RPI, see Rensselaer Polytechnic'],
+      [92, 'Institute'],
+      [72, 'Rubin, Jed, 44'],
+      [72, 'Russia, commercial piracy in, 63, 64, 65, 66, 67, 68, 69, 70,'],
+      [92, '71, 302'],
+      [72, 'Safire, William, 128, 129, 130, 131, 132, 133, 134, 135, 136,'],
+      [92, '137, 138'],
+    ];
+    lines.forEach(([x, text], k) =>
+      ops.push(`1 0 0 1 ${String(x)} ${String(700 - k * 10)} Tm (${text}) Tj`),
+    );
+    ops.push('ET');
+    const paragraphs = Ream.parse(onePage(ops)).flow.body.flatMap((el) =>
+      el.kind === 'paragraph' ? [el.paragraph.runs.map((r) => r.text).join('')] : [],
+    );
+    expect(paragraphs.map((p) => p.replace(/\s+/gu, ' '))).toEqual([
+      'Rensselaer Polytechnic Institute (RPI), 48, 49, 50, 51, 185, 200, 206',
+      'Rhapsody, 191',
+      'Rise of the Creative Class, The (Florida), 21',
+      'Roberts, Richard, 309n, 310n, 311n, 312n, 313n, 314n, 315n, 316n',
+      'Rogers, Fred, 111',
+      'RPI, see Rensselaer Polytechnic Institute',
+      'Rubin, Jed, 44',
+      'Russia, commercial piracy in, 63, 64, 65, 66, 67, 68, 69, 70, 71, 302',
+      'Safire, William, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138',
+    ]);
+  });
+
   it('reads an invoice ACROSS, not down: figures against the right margin are not a column', () => {
     // A page whose amounts stand against the right margin breaks a dozen lines
     // at the same x, which is what a gutter looks like from the outside and

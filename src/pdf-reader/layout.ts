@@ -3116,12 +3116,19 @@ function groupIntoParagraphs(
     column !== undefined &&
     lines.length >= JUSTIFIED_COLUMN_LINES &&
     flushEnds >= lines.length * JUSTIFIED_COLUMN_SHARE;
+  // …and a column whose paragraphs HANG — their first line at the edge, the
+  // lines after it set in — opens a paragraph at every line nearer the edge
+  // than the level they go on at, and goes on at every line at that level
+  // however short the line before it: its lines end where an entry does or
+  // where the word after would not fit, and that word may be a long one.
+  const hangsAt = column !== undefined ? hangingEdge(lines, column) : undefined;
   let prev: Line | undefined;
   // …and the line before that, whose end says where the block's edge is.
   let beforePrev: Line | undefined;
   for (const line of lines) {
     const gap = prev !== undefined ? prev.y - line.y : 0;
     const opened = prev !== undefined && gap > line.fontSize * 1.5;
+    const goesOn = hangsAt !== undefined && line.x >= hangsAt;
     if (
       groups.length === 0 ||
       eachLine ||
@@ -3133,6 +3140,7 @@ function groupIntoParagraphs(
       // It takes no line with it either, so what follows opens its own.
       ruleOfCharacters(line) ||
       line.code === true ||
+      (hangsAt !== undefined && line.x < hangsAt) ||
       // …and nothing runs on into a line the page set out on stops, as it
       // runs on into nothing: canvas.pdf sets each method a row of its table,
       // its arguments on the lines under its name, and the next row came back
@@ -3143,10 +3151,11 @@ function groupIntoParagraphs(
       (prev !== undefined &&
         (ruleOfCharacters(prev) ||
           prev.code === true ||
-          endedParagraph(prev, line, column) ||
-          (reach !== undefined && roomForWord(prev, line, reach)) ||
-          (setJustified && endedJustified(beforePrev, prev, line, column)) ||
-          (column !== undefined && endedCentred(prev, line, column)) ||
+          (!goesOn &&
+            (endedParagraph(prev, line, column) ||
+              (reach !== undefined && roomForWord(prev, line, reach)) ||
+              (setJustified && endedJustified(beforePrev, prev, line, column)) ||
+              (column !== undefined && endedCentred(prev, line, column)))) ||
           carriesLeader(prev) ||
           prev.tabbed === true))
     ) {
@@ -3254,6 +3263,99 @@ function groupIntoParagraphs(
     };
   });
 }
+
+/**
+ * Where a column's paragraphs go on, where they HANG: the first line of each
+ * at the column's edge — or at a level set in from it — and the lines after it
+ * set in further, as an index sets its entries and a bibliography its
+ * references. freeculture.pdf's index sets "democracy:" at the edge, "digital
+ * sharing within, 184" and the other entries under it a level in, and the
+ * lines that carry an entry on — "41–42, 43, 44–45" — at a level further in
+ * again; read by the measure alone, its short entries ran together, and a line
+ * back at the edge after one set in was taken for the second line of a
+ * paragraph whose first is set in.
+ *
+ * The level a paragraph goes on at is reached from full lines, the ones the
+ * entry ran to the measure and turned from, and many of its lines are short:
+ * they end their entries. The level a paragraph's own first line is set in to
+ * is reached from short lines — the paragraph before ended there — or runs to
+ * the measure itself.
+ *
+ * @param lines  The column's lines, top to bottom.
+ * @param column The column they are set in.
+ * @returns How far in a line goes on its paragraph; a line nearer the edge
+ *          opens one. `undefined` where the column's paragraphs do not hang.
+ */
+function hangingEdge(
+  lines: ReadonlyArray<Line>,
+  column: { left: number; right: number },
+): number | undefined {
+  const width = column.right - column.left;
+  if (!(width > 0) || lines.length < HANGING_LINES) return undefined;
+  const size = median(lines.map((l) => l.fontSize)) || 10;
+  const edge = Math.min(...lines.map((l) => l.x));
+  const short = (l: Line): boolean => column.right - (l.x + l.width) > width * 0.25;
+  // The levels the column's lines are set in to, and how each is reached.
+  const levels: Array<{ x: number; lines: number; afterFull: number; short: number }> = [];
+  for (let k = 1; k < lines.length; k++) {
+    const prev = lines[k - 1]!;
+    const line = lines[k]!;
+    const setIn = line.x - edge;
+    if (setIn < size * 0.5 || setIn > size * HANGING_DEEPEST_EM) continue;
+    let level = levels.find((v) => Math.abs(v.x - line.x) <= size * HANGING_SLACK_EM);
+    if (level === undefined) {
+      level = { x: line.x, lines: 0, afterFull: 0, short: 0 };
+      levels.push(level);
+    }
+    level.lines++;
+    if (!short(prev)) level.afterFull++;
+    if (short(line)) level.short++;
+  }
+  const goesOn = levels.filter(
+    (v) =>
+      v.lines >= HANGING_LEAST &&
+      v.afterFull >= v.lines * HANGING_FULL_SHARE &&
+      v.short >= v.lines * HANGING_SHORT_SHARE,
+  );
+  if (goesOn.length === 0) return undefined;
+  // …and where two lines at the edge follow one another, the first ENDED an
+  // entry more often than not. In prose a line at the edge after another
+  // carries its paragraph on, the line before it run to the measure, and a
+  // page of prose with a list or a quotation set in reaches that level from
+  // full lines too: freeculture.pdf's index follows a line at its edge with
+  // another after a short one four times in five, its prose never, and read
+  // as hanging a page of it came back a paragraph to every line.
+  let pairs = 0;
+  let fullPairs = 0;
+  for (let k = 1; k < lines.length; k++) {
+    if (lines[k - 1]!.x - edge >= size * 0.5 || lines[k]!.x - edge >= size * 0.5) continue;
+    pairs++;
+    if (!short(lines[k - 1]!)) fullPairs++;
+  }
+  if (fullPairs > Math.max(1, pairs * HANGING_RUN_ON_SHARE)) return undefined;
+  return Math.min(...goesOn.map((v) => v.x)) - size * HANGING_SLACK_EM;
+}
+
+/** How many lines a column needs before its paragraphs can be seen to hang. */
+const HANGING_LINES = 8;
+
+/** …and how many lines a level needs before a paragraph can be seen to go on at it. */
+const HANGING_LEAST = 2;
+
+/** How far off a level, in ems, a line may start and still stand at it. */
+const HANGING_SLACK_EM = 0.25;
+
+/** How far in from the edge, in ems, a level may stand. */
+const HANGING_DEEPEST_EM = 4;
+
+/** How many of a level's lines, as a share of them, follow full lines where paragraphs go on at it. */
+const HANGING_FULL_SHARE = 0.8;
+
+/** …and how many of them are short, ending their paragraphs. */
+const HANGING_SHORT_SHARE = 0.3;
+
+/** How many lines at the edge, as a share of those after another, may follow a full one. */
+const HANGING_RUN_ON_SHARE = 0.6;
 
 /**
  * Whether the first word of `next` would have fit on `prev` short of `reach` —
