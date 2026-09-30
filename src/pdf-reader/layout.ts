@@ -358,6 +358,8 @@ export function reconstructByLayout(
   }> = [];
   let sectionFrom = 0;
   let lastSize = '';
+  // Each page's sheet: its size, and whether it is set turned.
+  const sheetSizes: Array<string> = [];
   // The first paragraph each page's text begins with: where in the body it is,
   // and the baseline and box the page set its first line at.
   const leads: Array<{ page: number; at: number; baseline: number; lineHeight: number }> = [];
@@ -977,6 +979,7 @@ export function reconstructByLayout(
       pendingContinuous = false;
     }
     lastSize = size;
+    sheetSizes[i] = size;
     // Each source page after the first opens an output page of its own. Flowed,
     // the layout repaginates and this hardly shows; PLACED, every mark is
     // anchored to "the page", so without it all twenty-five pages of
@@ -984,6 +987,8 @@ export function reconstructByLayout(
     //
     // …and so does a page with nothing on it to read. A blank sheet is still a
     // sheet: doc_actions.pdf is three of them, and came back as one.
+    // Where this page's break stands in the body, where it has one.
+    const breakAt = i > 0 && !opensSection ? body.length : undefined;
     if (i > 0 && !opensSection) {
       body.push({
         kind: 'paragraph',
@@ -1025,7 +1030,47 @@ export function reconstructByLayout(
       ruledIntoColumns || !proseColumns(runs, gutters, textEdges) ? 1 : gutters.length + 1;
     const spacePt = columnsHere > 1 ? median(gutters.map((g) => g.to - g.from)) : 0;
     let led = false;
+    // Whether a block of this page stands in the body yet.
+    let begun = false;
     for (const block of blocks) {
+      const count = block.col === SPANNING_COLUMN ? 1 : columnsHere;
+      if (count !== curColumns) {
+        // §17.18.77 — a section that opens a page opens it itself, not
+        // continuously after a break: Word does not break before a paragraph
+        // that carries the section before it, and comments.pdf's twelfth page
+        // came back under the eleventh on one sheet.
+        const opensPage = breakAt !== undefined && !begun;
+        if (opensPage) {
+          // The section before it ends on its own page's last paragraph where
+          // that is the section's own. Anywhere else the break stays as its
+          // carrier, a line of no height — which, on a page the words fill to
+          // the foot, is a line that goes over onto a sheet of its own.
+          const last = body[breakAt - 1];
+          const own = sectionEnds.every((e) => e.at < breakAt);
+          if (last?.kind === 'paragraph' && own) body.pop();
+          else {
+            body[breakAt] = {
+              kind: 'paragraph',
+              paragraph: {
+                properties: { spacingLine: CARRIER_LINE_PT, spacingLineRule: 'exact' },
+                runs: [],
+              },
+            };
+          }
+        }
+        sectionEnds.push({
+          at: body.length,
+          from: sectionFrom,
+          to: opensPage ? i : i + 1,
+          columns: curColumns,
+          spacePt: curSpace,
+          continuous: pendingContinuous,
+        });
+        sectionFrom = i;
+        pendingContinuous = !opensPage;
+        curColumns = count;
+        curSpace = spacePt;
+      }
       if (!led && mode !== 'positional') {
         const lead = leadingLine(block.el);
         if (lead !== undefined)
@@ -1034,22 +1079,8 @@ export function reconstructByLayout(
         // anchored to the page takes no room and does not.
         led = lead !== undefined || block.el.kind === 'table' || block.el.kind === 'paragraph';
       }
-      const count = block.col === SPANNING_COLUMN ? 1 : columnsHere;
-      if (count !== curColumns) {
-        sectionEnds.push({
-          at: body.length,
-          from: sectionFrom,
-          to: i + 1,
-          columns: curColumns,
-          spacePt: curSpace,
-          continuous: pendingContinuous,
-        });
-        sectionFrom = i;
-        pendingContinuous = true;
-        curColumns = count;
-        curSpace = spacePt;
-      }
       body.push(block.el);
+      begun = true;
     }
   });
   // A placed reading anchors everything to the page, so its margins must stay
@@ -1058,18 +1089,51 @@ export function reconstructByLayout(
   // — which is what every converted PDF looked like.
   // Measured in the frame the pages were READ in; `sectionOnSheet` sets a
   // turned one back on its sheet once everything measured against it is done.
+  const measured = (
+    own: SectionProperties | undefined,
+    from: number,
+    to: number,
+  ): SectionProperties | undefined =>
+    withMeasuredMargins(
+      own,
+      shown.slice(from, to),
+      pageRuns.slice(from, to),
+      pageMarks.slice(from, to),
+      // The band is the upright pages' own, and a turned page kept its own.
+      shown[from]?.sheet ? undefined : foot?.band,
+    );
+  // §17.6.11 — the head and foot of the text block are the SHEET's, not a
+  // section's: a section a change of columns opens is measured on the pages
+  // it touches, one of them perhaps, and what one page happens to set first
+  // is no margin. comments.pdf's eleventh page opens on a chart, and its top
+  // margin was measured to the caption under it, 352 points down; Word sets
+  // the page from there, and three pages ran over. Every page cut from the
+  // same sheet gives its head and foot; across it, a section keeps its own.
+  const sheetRun = (from: number): [number, number] => {
+    let start = from;
+    while (start > 0 && sheetSizes[start - 1] === sheetSizes[from]) start--;
+    let end = from + 1;
+    while (end < pages.length && sheetSizes[end] === sheetSizes[from]) end++;
+    return [start, end];
+  };
+  const setUps = new Map<string, SectionProperties | undefined>();
   const setUp = (from: number, to: number): SectionProperties | undefined => {
+    const key = `${String(from)}:${String(to)}`;
+    if (setUps.has(key)) return setUps.get(key);
     const own = sectionFromPdfPages(pages.slice(from, to), shown[from]);
-    return mode === 'positional'
-      ? own
-      : withMeasuredMargins(
-          own,
-          shown.slice(from, to),
-          pageRuns.slice(from, to),
-          pageMarks.slice(from, to),
-          // The band is the upright pages' own, and a turned page kept its own.
-          shown[from]?.sheet ? undefined : foot?.band,
-        );
+    let section = mode === 'positional' ? own : measured(own, from, to);
+    const [start, end] = sheetRun(from);
+    if (mode !== 'positional' && section?.margins && (start < from || end > to)) {
+      const sheet = measured(own, start, end)?.margins;
+      if (sheet) {
+        section = {
+          ...section,
+          margins: { ...section.margins, top: sheet.top, bottom: sheet.bottom },
+        };
+      }
+    }
+    setUps.set(key, section);
+    return section;
   };
   sectionEnds.push({
     at: body.length,
