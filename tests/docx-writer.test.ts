@@ -1356,6 +1356,22 @@ describe('a document written for another program to read', () => {
     expect(xml).not.toContain('w:insideH');
   });
 
+  it("writes a paragraph's shading, and how far its rules stand off it (§17.3.1.31)", () => {
+    const para =
+      '<w:p><w:pPr><w:pBdr><w:top w:val="single" w:sz="4" w:space="6" w:color="404040"/></w:pBdr>' +
+      '<w:shd w:val="clear" w:color="auto" w:fill="404040"/></w:pPr>' +
+      '<w:r><w:rPr><w:color w:val="FFFFFF"/></w:rPr><w:t>Canvas element</w:t></w:r></w:p>';
+    const { doc } = readDocx(buildDocxFromBody(para));
+    const xml = bodyOf(writeDocx(doc).bytes);
+    expect(xml).toContain('<w:shd w:val="clear" w:color="auto" w:fill="404040"/>');
+    expect(xml).toContain('<w:top w:val="single" w:sz="4" w:space="6" w:color="404040"/>');
+    // …and it reads back as it was written.
+    const back = readDocx(writeDocx(doc).bytes).doc.body[0];
+    expect(back?.kind === 'paragraph' && back.paragraph.properties.shading).toEqual({
+      colorHex: '404040',
+    });
+  });
+
   it('writes a foot whose run names no face at all', () => {
     // A band's runs come with RAW properties, and a run the page set in a face
     // with no name has no font map: ZapfDingbats.pdf's foot threw, and the

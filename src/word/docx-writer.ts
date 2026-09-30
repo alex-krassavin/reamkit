@@ -1836,11 +1836,21 @@ function bordersXml(
     const el = tag === 'w:pBdr' && key === 'insideH' ? 'w:between' : name;
     // §17.4.x — w:sz in eighths of a point; the reader divides by 8.
     const sz = b.width !== undefined ? ` w:sz="${Math.round(b.width * 8)}"` : '';
+    // §17.3.4 `w:space` — how far a paragraph's rule stands off its text, in
+    // whole points (ST_PointMeasure). Read and not written, a rule set off its
+    // text came back hard against it.
+    const space =
+      b.spacePt !== undefined && Math.round(b.spacePt) > 0
+        ? ` w:space="${Math.min(Math.round(b.spacePt), MOST_BORDER_SPACE_PT)}"`
+        : '';
     const color = b.colorHex !== undefined ? ` w:color="${b.colorHex}"` : '';
-    return `<${el} w:val="${b.style}"${sz}${color}/>`;
+    return `<${el} w:val="${b.style}"${sz}${space}${color}/>`;
   }).join('');
   return sides ? `<${tag}>${sides}</${tag}>` : '';
 }
+
+/** §17.3.4 — the farthest a border may stand off its text, in points. */
+const MOST_BORDER_SPACE_PT = 31;
 
 function cellMarginsXml(tag: 'w:tblCellMar' | 'w:tcMar', margins: CellMargins | undefined): string {
   if (!margins) return '';
@@ -2131,6 +2141,10 @@ function pPrBody(p: ResolvedParagraphProperties): string {
   // paragraph it separates (see `pdf-reader/layout`).
   const pBdr = bordersXml('w:pBdr', p.borders);
   if (pBdr) out.push(pBdr);
+  // §17.3.1.31 `w:shd` — the paragraph's own background. Read from a .docx and
+  // not written back, a heading set white on a dark band came back white on
+  // the page.
+  if (p.shading) out.push(`<w:shd w:val="clear" w:color="auto" w:fill="${p.shading.colorHex}"/>`);
   // §17.3.1.38 `w:tabs` — the stops the paragraph's own tabs stand on. Without
   // them a tab falls to the default half-inch grid, which is not where the page
   // that was read set its second column.
