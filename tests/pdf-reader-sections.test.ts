@@ -112,3 +112,36 @@ describe('the head and foot of a section', () => {
     expect([...tops][0]).toBeLessThan(792 - 700);
   });
 });
+
+describe('a last page that sets its columns balanced', () => {
+  /** A full page of two columns, and a last page of `last`. */
+  const read = (last: ReadonlyArray<string>) =>
+    reconstructByLayout(
+      PdfFile.parse(
+        pages([
+          ['BT /F1 9 Tf', ...columns(740, 50, 'a'), 'ET'],
+          ['BT /F1 9 Tf', ...last, 'ET'],
+        ]),
+      ),
+    ).doc;
+
+  it('ends their section before the document does, for a word processor to balance them', () => {
+    // comments.pdf's references stand nine to a column on its last page, and
+    // came back all nineteen down the left one, the right one empty.
+    const [columned, closing] = read(columns(740, 20, 'z')).sections.slice(-2);
+    expect(columned?.properties.columns?.count).toBe(2);
+    expect(closing?.properties.columns).toBeUndefined();
+    expect(closing?.properties.sectionStart).toBe('continuous');
+  });
+
+  it('leaves a last page whose first column runs to the foot as it was', () => {
+    const ops: Array<string> = [];
+    for (let k = 0; k < 50; k++) {
+      ops.push(at(54, 740 - k * 12, `Lz${String(k)} a line of prose that runs across its column`));
+    }
+    for (let k = 0; k < 10; k++) {
+      ops.push(at(317, 740 - k * 12, `Rz${String(k)} a line of prose that runs across its column`));
+    }
+    expect(read(ops).sections.at(-1)?.properties.columns?.count).toBe(2);
+  });
+});

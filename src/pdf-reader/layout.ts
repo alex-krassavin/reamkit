@@ -370,6 +370,8 @@ export function reconstructByLayout(
   let curColumns = 1;
   let curSpace = 0;
   let pendingContinuous = false;
+  // Where each page's last columns end, down the page (see `balancedEnd`).
+  const columnFeet: Array<ReadonlyArray<number> | undefined> = [];
   pages.forEach((page, i) => {
     const runs = pageRuns[i]!;
     const display = shown[i]!;
@@ -1044,6 +1046,7 @@ export function reconstructByLayout(
     const columnsHere =
       ruledIntoColumns || !proseColumns(runs, gutters, textEdges) ? 1 : gutters.length + 1;
     const spacePt = columnsHere > 1 ? median(gutters.map((g) => g.to - g.from)) : 0;
+    columnFeet[i] = columnsHere > 1 ? lastColumnFeet(blocks) : undefined;
     let led = false;
     // Whether a block of this page stands in the body yet.
     let begun = false;
@@ -1150,6 +1153,40 @@ export function reconstructByLayout(
     setUps.set(key, section);
     return section;
   };
+  // §17.6.4 — a last page that sets its columns BALANCED, level with each
+  // other above the foot of the sheet, ends their section before the document
+  // does. A word processor balances the columns of a section another follows
+  // on the same page, and runs the last section's first column to the foot of
+  // the sheet: comments.pdf's references stand nine to a column, and came
+  // back all nineteen down the left one, the right one empty.
+  const lastFeet = columnFeet[pages.length - 1];
+  const floor = setUp(sectionFrom, pages.length)?.margins?.bottom;
+  if (
+    mode !== 'positional' &&
+    curColumns > 1 &&
+    lastFeet !== undefined &&
+    floor !== undefined &&
+    balancedEnd(lastFeet, floor, medianFont)
+  ) {
+    sectionEnds.push({
+      at: body.length,
+      from: sectionFrom,
+      to: pages.length,
+      columns: curColumns,
+      spacePt: curSpace,
+      continuous: pendingContinuous,
+    });
+    body.push({
+      kind: 'paragraph',
+      paragraph: {
+        properties: { spacingLine: CARRIER_LINE_PT, spacingLineRule: 'exact' },
+        runs: [],
+      },
+    });
+    curColumns = 1;
+    curSpace = 0;
+    pendingContinuous = true;
+  }
   sectionEnds.push({
     at: body.length,
     from: sectionFrom,
@@ -4377,6 +4414,47 @@ function spaceUnderSpans(blocks: Array<Block>): void {
     };
   }
 }
+
+/**
+ * Where each column of a page's last stretch of columns — under the last block
+ * across the page — ends: the foot of its lowest paragraph, up the page.
+ *
+ * @param blocks The page's blocks.
+ * @returns The feet, one a column, or nothing where fewer than two columns hold text.
+ */
+function lastColumnFeet(blocks: ReadonlyArray<Block>): Array<number> | undefined {
+  const across = blocks
+    .filter((b) => b.col === SPANNING_COLUMN)
+    .reduce((low, b) => Math.min(low, b.top), Infinity);
+  const feet = new Map<number, number>();
+  for (const b of blocks) {
+    if (b.col === SPANNING_COLUMN || b.foot === undefined || b.top >= across) continue;
+    feet.set(b.col, Math.min(feet.get(b.col) ?? Infinity, b.foot));
+  }
+  return feet.size >= 2 ? [...feet.values()] : undefined;
+}
+
+/**
+ * Whether a page's last columns are set BALANCED: they end within a couple of
+ * lines of each other, and well above the foot of the text.
+ *
+ * @param feet  Where each column ends, up the page.
+ * @param floor Where the text ends at its lowest, up the page.
+ * @param size  The body's type size.
+ */
+function balancedEnd(feet: ReadonlyArray<number>, floor: number, size: number): boolean {
+  const line = size * NATURAL_LINE_EM;
+  const deepest = Math.min(...feet);
+  return (
+    Math.max(...feet) - deepest <= line * BALANCED_LINES && deepest - floor >= line * SHORT_LINES
+  );
+}
+
+/** How many lines apart the ends of balanced columns may stand. */
+const BALANCED_LINES = 4;
+
+/** How many lines short of the foot a page's columns stop to be set short. */
+const SHORT_LINES = 3;
 
 /** A block of a page's reading, as `ruleBorders` is handed it. */
 type Block = {
