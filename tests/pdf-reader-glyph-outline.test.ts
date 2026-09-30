@@ -10,7 +10,9 @@ import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
 
+import { EMPTY_TO_UNICODE, numberedProgram, robotoGlyph } from './fixtures/numbered-truetype';
 import type { PdfDict } from '@/pdf/objects';
+import type { ContentFont } from '@/pdf-reader/content';
 import { Ream } from '@/core/converter/ream';
 import { PdfFile } from '@/pdf-reader/document';
 import { buildContentFont } from '@/pdf-reader/font';
@@ -594,5 +596,57 @@ describe('a composite font whose CIDs are characters (§9.7.4.2)', () => {
     // The space at 3, as the fonts such a producer subsets place it: read as
     // characters, complex_ttf_font.pdf's Arabic would come back as `$&')`.
     expect(text(routed((ch) => (ch === ' ' ? 3 : glyphFor(ch))))).toContain('\uFFFD');
+  });
+});
+
+describe('a TrueType program that numbers its glyphs (§9.6.6.4)', () => {
+  /** Codes 33–36 shown at 40pt in a simple TrueType over `program`, its `/ToUnicode` mapping nothing. */
+  const numberedPdf = (program: Uint8Array): Uint8Array => {
+    const content = 'BT /F0 40 Tf 20 40 Td <21222324> Tj ET';
+    return assemble([
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Contents 4 0 R ' +
+        '/Resources << /Font << /F0 5 0 R >> >> >>',
+      `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+      '<< /Type /Font /Subtype /TrueType /BaseFont /BTMOLE+Calibri /FirstChar 33 /LastChar 36 ' +
+        '/Widths [400 330 226 350] /FontDescriptor 6 0 R /ToUnicode 8 0 R >>',
+      '<< /Type /FontDescriptor /FontName /BTMOLE+Calibri /Flags 4 /ItalicAngle 0 /StemV 80 ' +
+        '/Ascent 900 /Descent -200 /CapHeight 700 /FontBBox [-500 -300 1500 1000] /FontFile2 7 0 R >>',
+      fontStreamObject(program),
+      `<< /Length ${String(EMPTY_TO_UNICODE.length)} >>\nstream\n${EMPTY_TO_UNICODE}\nendstream`,
+    ]);
+  };
+  const fontIn = (pdf: Uint8Array): ContentFont => {
+    const file = PdfFile.parse(pdf);
+    const fonts = file.get(file.pages()[0]!.resources!, 'Font');
+    if (!(fonts instanceof Map)) throw new Error('the page has a font');
+    return buildContentFont(file, file.resolve(fonts.get('F0')!) as PdfDict);
+  };
+
+  it('reads no character from its codes, and draws the glyph each one reaches', () => {
+    // comments.pdf's charts set their labels in Calibri subsets numbered so,
+    // under a `/ToUnicode` that maps nothing. Read as Latin-1,
+    // "string-validate-input" came back "=<6>?J+B:F>*:</+>?7-<".
+    const program = numberedProgram('st r');
+    const font = fontIn(numberedPdf(program));
+    expect(font.decode([33, 34, 35, 36])).toBe('\uFFFD'.repeat(4));
+    const source = outlineSource(program);
+    expect(font.outline?.path(33)).toEqual(source?.path(robotoGlyph('s')));
+    expect(font.outline?.path(36)).toEqual(source?.path(robotoGlyph('r')));
+    // Its space draws nothing, and nothing is traced for it.
+    expect(font.outline?.path(35)).toBeUndefined();
+    const doc = Ream.parse(numberedPdf(program));
+    const shapes = doc.flow.body.filter((b) => b.kind === 'shape');
+    expect(contours(shapes)).toBe(contoursOf('s') + contoursOf('t') + contoursOf('r'));
+    expect(doc.losses.some((l) => /map to no character/u.test(l.detail))).toBe(true);
+  });
+
+  it('reads Latin-1 where the program keeps its space at 32', () => {
+    expect(fontIn(numberedPdf(numberedProgram(' st r', 32))).decode([33])).toBe('!');
+  });
+
+  it('reads Latin-1 where the program names its glyphs', () => {
+    expect(fontIn(numberedPdf(numberedProgram('st r', 33, true))).decode([33])).toBe('!');
   });
 });

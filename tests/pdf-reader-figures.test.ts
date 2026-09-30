@@ -6,6 +6,12 @@
 
 import { describe, expect, it } from 'vitest';
 
+import {
+  EMPTY_TO_UNICODE,
+  ROBOTO,
+  numberedProgram,
+  robotoGlyph,
+} from './fixtures/numbered-truetype';
 import type { PdfValue } from '@/pdf/objects';
 import type { BodyElement, ShapeBlock } from '@/core/document-model';
 import type { PathSeg, TextRun } from '@/pdf-reader/content';
@@ -13,7 +19,8 @@ import type { PdfVector } from '@/pdf-reader/vector';
 import { Ream } from '@/core/converter/ream';
 import { OpcPackage } from '@/core/opc';
 import { PdfFile } from '@/pdf-reader/document';
-import { pageFigures } from '@/pdf-reader/figures';
+import { joinLetters, pageFigures } from '@/pdf-reader/figures';
+import { outlineSource } from '@/pdf-reader/glyf-outline';
 import { reconstructByLayout } from '@/pdf-reader/layout';
 import { dict, name, stream } from '@/pdf/objects';
 import { PdfDocument } from '@/pdf/writer';
@@ -208,6 +215,31 @@ describe('the figures a page draws (§8.5)', () => {
     expect(pageFigures(rows, [], [...column(54, 600, 20, 'L'), ...words], SHEET)).toEqual([]);
   });
 
+  it('takes lettering the file states no character for as a label, in the glyphs traced for it', () => {
+    // comments.pdf's charts set their labels in faces whose codes only number
+    // the glyphs: nothing to write, and the glyphs drawn where they stand.
+    const bars = [30, 12, 45, 8, 60, 22, 17, 38].map((tall, k) =>
+      filled(box(330 + k * 12, 400, 8, tall, false), '5E96DE'),
+    );
+    const names = bars.map((b) => run('\uFFFD\uFFFD', b.minX, 392, 5));
+    const letter = (x: number, y: number): PdfVector => ({
+      ...filled(box(x, y, 2, 3.5), '000000'),
+      glyph: true,
+    });
+    const letters = names.flatMap((r) => [letter(r.x, 392), letter(r.x + 2.5, 392)]);
+    const far = letter(60, 700);
+    const figures = pageFigures(
+      [...bars, ...letters, far],
+      [],
+      [...column(54, 600, 20, 'L'), ...names],
+      SHEET,
+    );
+    expect(figures).toHaveLength(1);
+    expect(figures[0]!.labels).toEqual(expect.arrayContaining(names));
+    expect(figures[0]!.vectors).toEqual(expect.arrayContaining(letters));
+    expect(figures[0]!.vectors).not.toContain(far);
+  });
+
   it('leaves out what an annotation draws over the page', () => {
     const bar = path(
       [
@@ -344,5 +376,109 @@ describe('a figure in the flow (§20.5.2.17)', () => {
     const again = figureIn(Ream.parse(docx).flow.body);
     expect(again?.children?.length).toBe(figureIn(body)!.children!.length);
     expect(words(again!)).toEqual(['Alpha', 'Beta', 'Gamma']);
+  });
+});
+
+describe('the letters of a label (§9.6.6)', () => {
+  const letter = (x: number, hex = '000000'): PdfVector => ({
+    ...filled(box(x, 100, 2, 3), hex),
+    glyph: true,
+  });
+
+  it('are one path where the page painted them one after another', () => {
+    const [a, b, c] = [letter(10), letter(13), letter(16)];
+    const red = letter(19, 'FF0000');
+    const bar = filled(box(30, 100, 8, 20, false), '5E96DE');
+    const last = letter(40);
+    const drawn = joinLetters([a, b, c, red, bar, last]);
+    expect(drawn).toHaveLength(4);
+    expect(drawn[0]!.segs).toEqual([...a.segs, ...b.segs, ...c.segs]);
+    expect([drawn[0]!.minX, drawn[0]!.maxX]).toEqual([10, 18]);
+    // A letter in another colour is another shape, and so is one the page
+    // painted after something else.
+    expect(drawn.slice(1)).toEqual([red, bar, last]);
+  });
+});
+
+/**
+ * A column of text, and beside it a bar chart whose eight labels are set in a
+ * face that only numbers its glyphs — "st r" under each bar.
+ */
+function chartPdf(): Uint8Array {
+  const doc = new PdfDocument();
+  const helvetica = doc.add(
+    dict({ Type: name('Font'), Subtype: name('Type1'), BaseFont: name('Helvetica') }),
+  );
+  const program = numberedProgram('st r');
+  const descriptor = doc.add(
+    dict({
+      Type: name('FontDescriptor'),
+      FontName: name('BTMOLE+Calibri'),
+      Flags: 4,
+      ItalicAngle: 0,
+      StemV: 80,
+      Ascent: 900,
+      Descent: -200,
+      CapHeight: 700,
+      FontBBox: [-500, -300, 1500, 1000],
+      FontFile2: doc.add(stream({ Length1: program.length }, program)),
+    }),
+  );
+  const numbered = doc.add(
+    dict({
+      Type: name('Font'),
+      Subtype: name('TrueType'),
+      BaseFont: name('BTMOLE+Calibri'),
+      FirstChar: 33,
+      LastChar: 36,
+      Widths: [400, 330, 226, 350],
+      FontDescriptor: descriptor,
+      ToUnicode: doc.add(stream({}, new TextEncoder().encode(EMPTY_TO_UNICODE))),
+    }),
+  );
+  const ops: Array<string> = ['BT /F1 9 Tf'];
+  for (let k = 0; k < 20; k++) {
+    ops.push(`1 0 0 1 54 ${String(720 - k * 11)} Tm (L${String(k + 1)} words of the column) Tj`);
+  }
+  ops.push('ET', '0.37 0.59 0.87 rg');
+  const heights = [30, 12, 45, 8, 60, 22, 17, 38];
+  heights.forEach((tall, k) => ops.push(`${String(330 + k * 12)} 400 8 ${String(tall)} re f`));
+  ops.push('0 g BT /F2 5 Tf');
+  heights.forEach((_, k) => ops.push(`1 0 0 1 ${String(330 + k * 12)} 392 Tm <21222324> Tj`));
+  ops.push('ET');
+  const content = doc.add(stream({}, new TextEncoder().encode(ops.join('\n'))));
+  const pagesMap = dict({ Type: name('Pages'), Kids: [], Count: 1 });
+  const pagesRef = doc.add(pagesMap);
+  const page = doc.add(
+    dict({
+      Type: name('Page'),
+      Parent: pagesRef,
+      MediaBox: [0, 0, 612, 792],
+      Resources: dict({ Font: dict({ F1: helvetica, F2: numbered }) }),
+      Contents: content,
+    }),
+  );
+  (pagesMap.get('Kids') as Array<PdfValue>).push(page);
+  const catalog = doc.add(dict({ Type: name('Catalog'), Pages: pagesRef }));
+  return doc.build(catalog);
+}
+
+describe('a figure labelled in a face that only numbers its glyphs (§9.6.6)', () => {
+  const { doc, losses } = reconstructByLayout(PdfFile.parse(chartPdf()));
+  const contoursOf = (letter: string): number =>
+    (outlineSource(ROBOTO)?.path(robotoGlyph(letter)) ?? []).filter((s) => s.op === 'move').length;
+
+  it('draws its labels with it, and writes nothing for them', () => {
+    const figure = figureIn(doc.body);
+    expect(figure).toBeDefined();
+    expect(words(figure!)).toEqual([]);
+    expect(doc.body.map(textOf).join(' ')).not.toMatch(/[\uFFFD!"#$]/u);
+    // The eight labels are painted one after another, and drawn as one shape.
+    const moves = figure!.children!.map(
+      (c) => (c.shape.geometry.custom?.commands ?? []).filter((m) => m.cmd === 'move').length,
+    );
+    expect(moves).toContain(8 * (contoursOf('s') + contoursOf('t') + contoursOf('r')));
+    // …and what cannot be written is said to be lost.
+    expect(losses.some((l) => /map to no character/u.test(l.detail))).toBe(true);
   });
 });

@@ -193,6 +193,21 @@ export function buildContentFont(file: PdfFile, fontDict: PdfDict): ContentFont 
   const statesEncoding =
     stated instanceof Map ||
     (stated instanceof PdfName && baseEncodingTable(stated.value) !== undefined);
+  // …and so are the codes of a program that has a `cmap` and NUMBERS its
+  // glyphs all the same (see `numbersGlyphs`). Quartz embeds a chart's Calibri
+  // so, its codes counting up from 33 in the order the chart first drew each
+  // glyph, under a `/ToUnicode` that maps nothing: comments.pdf's
+  // "string-validate-input (1.9x)" read "=<6>?J+B:F>*:</+>?7-<#0(1923#" in
+  // Latin-1. Its glyphs, embedded under that reading, showed the labels only
+  // where a reader took the embedded face over a Calibri of its own — and each
+  // chart numbers its own glyphs, so the one face the three charts made gave
+  // Figure 10's legend Figure 11's letters, "3456789%" for "Tracing".
+  const numbered =
+    !isType0 &&
+    toUnicode.size === 0 &&
+    glyphNames.size === 0 &&
+    stated === PDF_NULL &&
+    glyphs?.numbersGlyphs?.() === true;
   const baseNames = isType0
     ? undefined
     : statesEncoding
@@ -226,7 +241,7 @@ export function buildContentFont(file: PdfFile, fontDict: PdfDict): ContentFont 
   // Marked unreadable it is stripped from the output just the same, and the
   // reconstruction reports it (see `./layout`).
   const decodeOne = (code: number): string =>
-    (indices ? UNANSWERABLE : undefined) ??
+    (indices || numbered ? UNANSWERABLE : undefined) ??
     unicode.get(code) ??
     fromProgramFor(code) ??
     (named ? decodePredefined(named, code) : undefined) ??
@@ -290,7 +305,9 @@ export function buildContentFont(file: PdfFile, fontDict: PdfDict): ContentFont 
     // file. Drawn, the page shows what it showed; left out, it is a blank
     // sheet. Only for a code that has no character: a face this reads is set
     // as type, not traced.
-    ...(isType0 ? outlineOf(composite, decodeOne) : simpleOutlineOf(decodeOne, namesOf, glyphs)),
+    ...(isType0
+      ? outlineOf(composite, decodeOne)
+      : simpleOutlineOf(decodeOne, namesOf, glyphs, numbered)),
     // §9.9 — and the program itself, for a writer that embeds the face. Only a
     // face a run can name, and never a Type 3 one, whose glyphs are drawings.
     ...(name !== undefined && !type3
@@ -710,12 +727,16 @@ function compositeGlyph(
  * @param fontDict  The simple font's dictionary.
  * @param decodeOne What one code comes to, to tell the two cases apart.
  * @param nameOf    The glyph name a code selects, where the font states one.
+ * @param numbered  Whether the program numbers its glyphs (see
+ *                  {@link numbersGlyphs}), which its `cmap` then reaches by
+ *                  the code.
  * @returns The `outline` field of a {@link ContentFont}, or nothing.
  */
 function simpleOutlineOf(
   decodeOne: (code: number) => string,
   nameOf: ReadonlyMap<number, string>,
   source: SimpleGlyphs | undefined,
+  numbered: boolean,
 ): { outline?: GlyphOutline } {
   if (!source) return {};
   return {
@@ -725,6 +746,10 @@ function simpleOutlineOf(
       matrix: [1, 0, 0, 1, 0, 0],
       path: (code: number): Array<PathSeg> | undefined => {
         if (readable(decodeOne(code)) !== UNANSWERABLE) return undefined;
+        if (numbered) {
+          const segs = source.glyph(code, undefined);
+          return segs !== undefined && segs.length > 0 ? [...segs] : undefined;
+        }
         const name = nameOf.get(code) ?? source.builtIn?.get(code);
         // A program that names nothing and maps nothing is addressed the only
         // way that is left: by index, which is what the code is.
@@ -747,6 +772,8 @@ interface SimpleGlyphs extends ProgramFacts {
   readonly blank: (name: string) => boolean;
   /** §5 — a Type 1 program's own `/Encoding`, where the file states none. */
   readonly builtIn?: ReadonlyMap<number, string>;
+  /** Whether a TrueType program numbers its glyphs (see {@link numbersGlyphs}). */
+  readonly numbersGlyphs?: () => boolean;
   /** The glyph at an INDEX, for a program whose codes are indices. */
   readonly byIndex?: (gid: number) => Array<PathSeg> | undefined;
   /**
@@ -845,6 +872,7 @@ function simpleGlyphs(file: PdfFile, fontDict: PdfDict): SimpleGlyphs | undefine
         // §9.6.6.4 — with no `cmap` the program cannot be reached by character
         // at all, which is the file saying what its codes are.
         indexed: !glyf.cmap,
+        numbersGlyphs: () => numbersGlyphs(bytes, glyf, named, (code) => byCode(code, undefined)),
       };
     }
     const cff = openTypeCff(bytes) ?? bytes;
@@ -955,6 +983,61 @@ function trueTypeGlyphs(
 
 /** Below this, a byte is the same character in every encoding a simple font uses. */
 const ASCII_END = 0x80;
+
+/**
+ * §9.6.6.4 — whether a TrueType program NUMBERS its glyphs, where a font would
+ * code characters with them: its codes are the order some producer came to
+ * each glyph in, and read as Latin-1 they spell nothing.
+ *
+ * Nothing in such a program says what its codes are — no Unicode subtable, no
+ * glyph names — and its SPACE says what they are not. A text face's blank
+ * glyph is its space, and Latin-1 puts the space at 32. A program that reaches
+ * no glyph at 32, and a blank one where Latin-1 reads a mark, is not coded in
+ * Latin-1: comments.pdf's chart faces put their spaces at 35 and 34, "#" and
+ * `"`.
+ *
+ * @param program The raw `/FontFile2` bytes.
+ * @param glyf    Its outlines.
+ * @param named   The glyphs its `post` table names.
+ * @param gidOf   The glyph a code reaches, looked up as the text is.
+ */
+function numbersGlyphs(
+  program: Uint8Array,
+  glyf: OutlineSource,
+  named: ReadonlyMap<string, number> | undefined,
+  gidOf: (code: number) => number | undefined,
+): boolean {
+  if (named !== undefined && named.size > 0) return false;
+  const tables = cmapSubtables(program);
+  if (UNICODE_SUBTABLES.some((key) => tables.has(key))) return false;
+  if (!tables.has('1,0') && !tables.has('3,0')) return false;
+  const reached = (code: number): number | undefined => {
+    const gid = gidOf(code);
+    return gid !== undefined && gid > 0 && gid < glyf.count ? gid : undefined;
+  };
+  if (reached(SPACE) !== undefined) return false;
+  const blanks: Array<number> = [];
+  for (let code = 0; code <= 0xff; code++) {
+    const gid = reached(code);
+    if (gid !== undefined && glyf.path(gid) === undefined) blanks.push(code);
+  }
+  return blanks.length > 0 && blanks.length <= MOST_BLANKS && blanks.every(inkedInLatin1);
+}
+
+/** The `cmap` subtables that key a program's glyphs by character. */
+const UNICODE_SUBTABLES: ReadonlyArray<string> = ['3,1', '0,3', '0,1', '0,0'];
+
+/**
+ * How many blank glyphs a text face has: its space and, beside it, a no-break
+ * one. A program with more has emptied the glyphs it does not use, and its
+ * codes may be Latin-1 for all its blanks say.
+ */
+const MOST_BLANKS = 2;
+
+/** Whether Latin-1 reads a code as a mark: not a control, a space or a soft hyphen. */
+function inkedInLatin1(code: number): boolean {
+  return (code > 0x20 && code < 0x7f) || (code > 0xa0 && code <= 0xff && code !== 0xad);
+}
 
 /** §9.6.6.4 — where a symbolic face's (3,0) subtable may put a one-byte code. */
 const SYMBOL_RANGES: ReadonlyArray<number> = [0x0000, 0xf000, 0xf100, 0xf200];

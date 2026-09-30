@@ -119,6 +119,8 @@ export function pageFigures(
   // §9.10.2 — a run of glyphs that map to no character says nothing, and its
   // outlines are drawn as paths where it stands.
   const words = runs.filter((r) => r.text.replaceAll(UNMAPPED, '').trim().length > 0);
+  // …but on a drawing it labels it all the same, in the glyphs traced for it.
+  const traced = runs.filter((r) => r.type3 !== true && tracedRun(r));
   if (words.length === 0 || vectors.length === 0 || vectors.length > MOST_PATHS) return [];
   const size = median(words.map((r) => r.fontSizePt).filter((s) => s > 0)) || 10;
   const gap = size * JOIN_EM;
@@ -243,8 +245,9 @@ export function pageFigures(
   // size of the text is the text's, whatever stands near it.
   const figures: Array<PageFigure> = [];
   const labelled = new Set<TextRun>();
+  const lettered = new Set<PdfVector>();
   for (const f of found) {
-    const free = words.filter((r) => r.type3 !== true && !labelled.has(r));
+    const free = [...words, ...traced].filter((r) => r.type3 !== true && !labelled.has(r));
     const labels = free.filter((r) => touches(f.box, inkOf(r), 0));
     let box = labels.reduce((b, r) => union(b, inkOf(r)), f.box);
     for (let grown = true; grown; ) {
@@ -274,9 +277,87 @@ export function pageFigures(
     );
     for (const r of [...labels, ...spaces]) labelled.add(r);
     const held = images.filter((img) => mostlyInside(img, box));
-    figures.push({ ...box, vectors: f.vectors, images: held, labels: [...labels, ...spaces] });
+    // §9.6.6 — the labels no character can be written for are set as the
+    // glyphs the page traced for them. comments.pdf's charts set every label
+    // in a Calibri whose codes only number its glyphs, and left on the page
+    // they stayed where the page had them while the chart moved.
+    const letters = lettersOf(labels.filter(tracedRun), vectors).filter((v) => !lettered.has(v));
+    for (const v of letters) lettered.add(v);
+    figures.push({
+      ...box,
+      vectors: [...f.vectors, ...letters],
+      images: held,
+      labels: [...labels, ...spaces],
+    });
   }
   return figures.sort((a, b) => b.maxY - a.maxY);
+}
+
+/**
+ * Whether a run is lettering the file states no character for: glyphs traced
+ * as paths (see `PdfVector.glyph`), and a label only by where they stand.
+ *
+ * @param run A run of the page's text.
+ */
+export function tracedRun(run: TextRun): boolean {
+  return run.text.includes(UNMAPPED) && run.text.replaceAll(UNMAPPED, '').trim() === '';
+}
+
+/**
+ * The glyphs traced for some runs: the paths traced as glyphs whose middles
+ * stand in the runs' ink.
+ *
+ * @param runs  The traced runs.
+ * @param paths The page's paths.
+ */
+function lettersOf(
+  runs: ReadonlyArray<TextRun>,
+  paths: ReadonlyArray<PdfVector>,
+): Array<PdfVector> {
+  const inks = runs.map(inkOf);
+  return paths.filter((v) => {
+    if (v.glyph !== true) return false;
+    const x = (v.minX + v.maxX) / 2;
+    const y = (v.minY + v.maxY) / 2;
+    return inks.some(
+      (b) => x >= b.minX - 1 && x <= b.maxX + 1 && y >= b.minY - 1 && y <= b.maxY + 1,
+    );
+  });
+}
+
+/**
+ * A figure's paths with the traced letters painted one after another joined
+ * into one: the letters of a label are one shape, where a shape a letter made
+ * a chart of six hundred.
+ *
+ * @param paths The figure's paths, in the order the page painted them.
+ * @returns The paths to draw, in that order.
+ */
+export function joinLetters(paths: ReadonlyArray<PdfVector>): Array<PdfVector> {
+  const out: Array<PdfVector> = [];
+  let letters: Array<PdfVector> = [];
+  const flush = (): void => {
+    const [first, ...rest] = letters;
+    if (first !== undefined) {
+      out.push(
+        rest.length === 0
+          ? first
+          : { ...first, ...boxOf(letters), segs: letters.flatMap((v) => v.segs) },
+      );
+    }
+    letters = [];
+  };
+  for (const v of paths) {
+    const last = letters[letters.length - 1];
+    // One shape is one paint: a letter in another colour starts another.
+    if (last !== undefined && (!v.glyph || last.fillHex !== v.fillHex || last.alpha !== v.alpha)) {
+      flush();
+    }
+    if (v.glyph === true) letters.push(v);
+    else out.push(v);
+  }
+  flush();
+  return out;
 }
 
 /** Whether a path draws: a curve, or a line that is neither level nor upright. */

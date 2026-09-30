@@ -982,7 +982,14 @@ describe('an attribute is written only where the schema admits its value', () =>
 });
 
 describe('what a reader can actually draw', () => {
-  const shapeDoc = (pathWidth: number, pathHeight: number): FlowDoc =>
+  const shapeDoc = (
+    pathWidth: number,
+    pathHeight: number,
+    commands: ReadonlyArray<{ cmd: string; x: number; y: number }> = [
+      { cmd: 'move', x: 0, y: 0 },
+      { cmd: 'line', x: pathWidth, y: pathHeight },
+    ],
+  ): FlowDoc =>
     ({
       body: [
         {
@@ -992,14 +999,7 @@ describe('what a reader can actually draw', () => {
             height: 1,
             geometry: {
               kind: 'custom',
-              custom: {
-                pathWidth,
-                pathHeight,
-                commands: [
-                  { cmd: 'move', x: 0, y: 0 },
-                  { cmd: 'line', x: pathWidth, y: pathHeight },
-                ],
-              },
+              custom: { pathWidth, pathHeight, commands },
             },
             fill: { kind: 'none' },
             line: { width: 1, colorHex: 'FF0000', fill: 'solid' },
@@ -1021,6 +1021,22 @@ describe('what a reader can actually draw', () => {
       OpcPackage.open(writeDocx(shapeDoc(0, 570)).bytes).getMainDocument().data,
     );
     expect(upright).toContain('<a:path w="1" h="570">');
+  });
+
+  it('states a path however many points it runs through', () => {
+    // comments.pdf's chart labels are drawn in the glyphs traced for them, a
+    // chart's letters one path of twenty thousand curves: its coordinates,
+    // spread into one call to find the largest, overran the stack.
+    const commands = Array.from({ length: 200_000 }, (_, k) => ({
+      cmd: k === 0 ? 'move' : 'line',
+      x: (k % 1000) / 7,
+      y: Math.floor(k / 1000) / 7,
+    }));
+    const xml = decode(
+      OpcPackage.open(writeDocx(shapeDoc(1000 / 7, 200 / 7, commands)).bytes).getMainDocument()
+        .data,
+    );
+    expect(xml.match(/<a:lnTo>/gu)).toHaveLength(199_999);
   });
 
   it('writes run properties in the order CT_RPr states them (§17.3.2.28)', () => {

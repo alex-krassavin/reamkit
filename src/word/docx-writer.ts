@@ -1530,7 +1530,12 @@ function pathScale(g: NonNullable<ShapeGeometry['custom']>): number {
     else if (c.cmd === 'arc') values.push(c.wR, c.hR);
   }
   if (values.every((v) => Number.isInteger(v))) return 1;
-  const span = Math.max(...values.map((v) => (Number.isFinite(v) ? Math.abs(v) : 0)), 1);
+  // Folded rather than spread: a label's traced letters are one path of tens of
+  // thousands of numbers, past what a call takes as arguments.
+  const span = values.reduce(
+    (most, v) => (Number.isFinite(v) ? Math.max(most, Math.abs(v)) : most),
+    1,
+  );
   return Math.max(1, Math.floor(PATH_SPACE / span));
 }
 

@@ -50,7 +50,7 @@ import { extractPageText } from './text';
 import { faceOutlinesOf, kernedFaces, pageSpacing } from './face-outlines';
 import { collectPageVectors } from './vector';
 import { markDrawnRules } from './text-rules';
-import { pageFigures } from './figures';
+import { joinLetters, pageFigures, tracedRun } from './figures';
 import { regionsOf } from './regions';
 import { punctuationOf } from './glyph-shapes';
 import { matrixBlocks } from './math-rows';
@@ -297,7 +297,8 @@ export function reconstructByLayout(
   // words are unrecoverable, and a page that silently comes back blank is the
   // one loss this reader must never take without saying so:
   // arial_unicode_ab_cidfont.pdf is four Arabic letters and nothing else.
-  if (pageRuns.some((page) => page.some((r) => r.text.includes(UNMAPPED)))) {
+  // A figure's traced labels are among them: drawn, and still not text.
+  if (readRuns.some((page) => page.some((r) => r.text.includes(UNMAPPED)))) {
     losses.push({
       severity: 'dropped',
       feature: FEATURES.text,
@@ -594,12 +595,15 @@ export function reconstructByLayout(
     };
     /** A figure's parts in the order the page painted them, its words over its drawing. */
     const figureMembers = (figure: PageFigure): Array<FigureMember> => {
+      const painted = [...figure.vectors].sort((a, b) => compareOrder(a.orderKey, b.orderKey));
       const drawn = [
-        ...figure.vectors.map((v) => ({ key: v.orderKey, member: vectorMember(v) })),
+        ...joinLetters(painted).map((v) => ({ key: v.orderKey, member: vectorMember(v) })),
         ...figure.images.map((img) => ({ key: img.orderKey, member: imageMember(img, resources) })),
       ].sort((a, b) => compareOrder(a.key, b.key));
       const labels: Array<FigureMember> = [];
-      for (const [angle, turnedRuns] of byAngle(figure.labels)) {
+      // Lettering that states no character is drawn with the figure's paths.
+      const written = figure.labels.filter((r) => !tracedRun(r));
+      for (const [angle, turnedRuns] of byAngle(written)) {
         for (const layer of byPainter(turnedRuns)) {
           for (const line of groupIntoLines(rotate(layer, -angle), true, stepped)) {
             if (line.text.length === 0) continue;
