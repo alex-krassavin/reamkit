@@ -80,6 +80,8 @@ import { FEATURES, ResourceStore, pt } from '@/core/ir';
 
 /** The relationships the reconstruction files its running head and foot under. */
 export const FOOTER_PART = 'pdf-running-foot';
+/** The part the running foot of a book's even pages is written to (see `sidesOf`). */
+export const EVEN_FOOTER_PART = 'pdf-running-foot-even';
 export const HEADER_PART = 'pdf-running-head';
 
 /** §9.10.2 — a glyph the face maps to no character (see `./font`). */
@@ -1419,8 +1421,24 @@ export function reconstructByLayout(
   }
   // The band is built from the page that showed it first, and referenced by
   // every section: the foot runs through the document, not through a section.
-  const stepped0 = stepsBetweenWords(allRuns[0] ?? []);
-  const edges0 = pageTextEdges(allRuns[0] ?? []);
+  // A band is set across a page it stands on, which need not be the first:
+  // freeculture.pdf opens on its cover, a sheet of another size, and set
+  // across that its folio came back at the left of every page.
+  const setOn = (
+    runs: ReadonlyArray<TextRun>,
+    page: number,
+    numbered: boolean,
+    numeral: string | undefined,
+  ): Array<BodyElement> =>
+    footerBand(
+      runs,
+      stepsBetweenWords(allRuns[page] ?? []),
+      pageTextEdges(allRuns[page] ?? []),
+      numbered,
+      numeral,
+    );
+  const firstOf = (of: typeof foot): number =>
+    Math.max(0, of?.lift.findIndex((set) => set.size > 0) ?? 0);
   // The numeral a band's own first page prints its number as — for the band
   // the numbering was read from.
   const numeralOf = (of: typeof foot): string | undefined => {
@@ -1428,17 +1446,38 @@ export function reconstructByLayout(
     const first = of.lift.findIndex((set) => set.size > 0);
     return first >= 0 ? numbering.numbers[first]?.text : undefined;
   };
-  const band = foot ? footerBand(foot.band, stepped0, edges0, foot.numbered, numeralOf(foot)) : [];
-  const headBand = head
-    ? footerBand(head.band, stepped0, edges0, head.numbered, numeralOf(head))
+  // …and a book signs its two sides with feet of their own (see `sidesOf`).
+  const sides =
+    foot !== undefined && foot === numberedBand && numbering !== undefined
+      ? sidesOf(
+          foot,
+          numbering,
+          shown.map((s) => s.width / 2),
+        )
+      : undefined;
+  const band = foot
+    ? sides
+      ? setOn(sides.odd.runs, sides.odd.page, true, sides.odd.numeral)
+      : setOn(foot.band, firstOf(foot), foot.numbered, numeralOf(foot))
     : [];
+  const evenBand = sides ? setOn(sides.even.runs, sides.even.page, true, sides.even.numeral) : [];
+  const headBand = head ? setOn(head.band, firstOf(head), head.numbered, numeralOf(head)) : [];
   const withFooter = (properties: SectionProperties | undefined): SectionProperties | undefined =>
     properties
       ? {
           ...properties,
           ...(band.length > 0
-            ? { footers: [{ type: 'default' as const, relationshipId: FOOTER_PART }] }
+            ? {
+                footers: [
+                  { type: 'default' as const, relationshipId: FOOTER_PART },
+                  ...(evenBand.length > 0
+                    ? [{ type: 'even' as const, relationshipId: EVEN_FOOTER_PART }]
+                    : []),
+                ],
+              }
             : {}),
+          // §17.15.1.36 — which Word reads off the settings, for every page.
+          ...(evenBand.length > 0 ? { evenAndOddHeaders: true } : {}),
           ...(headBand.length > 0
             ? { headers: [{ type: 'default' as const, relationshipId: HEADER_PART }] }
             : {}),
@@ -1454,6 +1493,7 @@ export function reconstructByLayout(
       band.length > 0 || headBand.length > 0
         ? new Map([
             ...(band.length > 0 ? ([[FOOTER_PART, band]] as const) : []),
+            ...(evenBand.length > 0 ? ([[EVEN_FOOTER_PART, evenBand]] as const) : []),
             ...(headBand.length > 0 ? ([[HEADER_PART, headBand]] as const) : []),
           ])
         : undefined,
@@ -3931,6 +3971,90 @@ export function runningFoot(
     numbered: new Set(texts).size > 1,
   };
 }
+
+/**
+ * §17.10.1, §17.15.1.36 — the running feet of a book's two sides, where they
+ * differ. A book signs its left-hand pages one way and its right-hand ones
+ * another, its folio at the outer edge of each: freeculture.pdf sets "6 FREE
+ * CULTURE" at the left of its even pages with the URL it is published at
+ * under it, and "INTRODUCTION 5" at the right of its odd ones. Read as one
+ * foot, every page was signed the way its first was.
+ *
+ * The side is the page number's, as Word takes it, printing the even foot on
+ * the pages it numbers even; the sides differ where their numbers stand on
+ * opposite halves of the page. A side's foot says what most of that side's
+ * feet say, and its number: the chapter a page is in is not named alike in
+ * any two chapters, and set once it would name every page after the first.
+ *
+ * @param foot      The running foot, a page's runs to each page.
+ * @param numbering The numbers its pages print.
+ * @param middle    The middle of each page, across.
+ * @returns Each side's runs and the numeral they print, or `undefined` where
+ *          the two sides are signed alike.
+ */
+function sidesOf(
+  foot: { readonly lift: ReadonlyArray<ReadonlySet<TextRun>> },
+  numbering: PageNumbering,
+  middle: ReadonlyArray<number>,
+):
+  | {
+      even: { runs: ReadonlyArray<TextRun>; numeral: string; page: number };
+      odd: { runs: ReadonlyArray<TextRun>; numeral: string; page: number };
+    }
+  | undefined {
+  interface Signed {
+    runs: ReadonlyArray<TextRun>;
+    numeral: TextRun;
+    left: boolean;
+    page: number;
+  }
+  const bySide: [Array<Signed>, Array<Signed>] = [[], []];
+  foot.lift.forEach((set, i) => {
+    const number = numbering.numbers[i];
+    if (set.size === 0 || number === undefined) return;
+    const runs = [...set];
+    const numeral = runs.find((r) => r.text.trim() === number.text);
+    if (numeral === undefined) return;
+    bySide[number.value % 2]!.push({
+      runs,
+      numeral,
+      left: (numeral.x + numeral.endX) / 2 < (middle[i] ?? 0),
+      page: i,
+    });
+  });
+  const [even, odd] = bySide;
+  if (even.length < LEAST_SIDE_FEET || odd.length < LEAST_SIDE_FEET) return undefined;
+  const leftOf = (side: ReadonlyArray<Signed>): boolean =>
+    side.filter((f) => f.left).length * 2 > side.length;
+  if (leftOf(even) === leftOf(odd)) return undefined;
+  const wordsOf = (runs: ReadonlyArray<TextRun>): Array<string> =>
+    runs.flatMap((r) => r.text.split(/\s+/u)).filter((w) => w !== '');
+  const sideOf = (
+    side: ReadonlyArray<Signed>,
+  ): { runs: Array<TextRun>; numeral: string; page: number } => {
+    const counts = new Map<string, number>();
+    for (const f of side) {
+      for (const w of new Set(wordsOf(f.runs.filter((r) => r !== f.numeral)))) {
+        counts.set(w, (counts.get(w) ?? 0) + 1);
+      }
+    }
+    const said = (r: TextRun): boolean =>
+      wordsOf([r]).every((w) => (counts.get(w) ?? 0) >= side.length * SIDE_SHARE);
+    // The foot that says the most of it, where the side's number stands.
+    const kept = (f: Signed): Array<TextRun> => f.runs.filter((r) => r === f.numeral || said(r));
+    const best = side
+      .filter((f) => f.left === leftOf(side))
+      .reduce((a, b) => (kept(b).length > kept(a).length ? b : a));
+    return { runs: kept(best), numeral: best.numeral.text.trim(), page: best.page };
+  };
+  return { even: sideOf(even), odd: sideOf(odd) };
+}
+
+/** How many feet each side must show before a book is taken to sign its sides apart. */
+const LEAST_SIDE_FEET = 2;
+
+/** How many of a side's feet, as a share of them, must say a word before its foot does. */
+const SIDE_SHARE = 0.6;
 
 /** How many of a document's pages must carry the foot before it is running. */
 /**

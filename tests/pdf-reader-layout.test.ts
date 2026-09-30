@@ -584,6 +584,17 @@ describe('a running foot is a foot, not a paragraph (§17.6.13)', () => {
     expect(body).not.toContain('Alpha');
   });
 
+  it('signs the two sides of a book with feet of their own, each saying what its pages say', () => {
+    // …and read as one foot, every page was signed the way the first was:
+    // "Alpha 1" at the right of all of them, the chapter the book opens with.
+    // A side's foot says what most of its pages say, and the chapter's name,
+    // which no two chapters share, is left to the text.
+    const doc = reconstructByLayout(PdfFile.parse(book())).doc;
+    expect(doc.section?.evenAndOddHeaders).toBe(true);
+    expect(bandText(doc, 'default')).toEqual(['{PAGE}']);
+    expect(bandText(doc, 'even')).toEqual(['{PAGE} THE BOOK', '<http://example.org/book>']);
+  });
+
   it('sets a foot written in REGIONS on the stops it was written at', () => {
     // A foot is written the way a spreadsheet's is: something at the left,
     // something against the far edge. ZapfDingbats.pdf signs each sheet
