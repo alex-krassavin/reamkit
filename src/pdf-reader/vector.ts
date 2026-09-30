@@ -521,22 +521,102 @@ function overlaps(a: Box, b: Box): boolean {
  * path intersection, and where the two merely overlap the answer is the smaller
  * of them — bounded, never larger than the truth.
  *
+ * A path is measured by where its curves reach, not where their handles stand,
+ * and one that reaches past its clip by no more than a sliver is inside it. An
+ * appearance's `/BBox` is drawn round the path it holds: comments.pdf signs its
+ * sixth page with a stamp of sixty-seven strokes that its box meets exactly,
+ * and a handle standing 0.03pt past the box made the signature a path round
+ * its clip — it came back a black bar the width of the text.
+ *
  * @param v The painted path as the interpreter saw it.
  * @returns The path to draw, or `undefined` when the clip leaves nothing.
  */
 function clipped<T extends VectorPlacement>(v: T): T | undefined {
   const clip = v.clip;
   if (!clip) return v;
-  const b = bbox(v.segs);
+  const b = reachOf(v.segs);
   if (!b) return v;
   // Disjoint: the clip lets none of it through.
   if (clip.minX >= b.maxX || clip.maxX <= b.minX || clip.minY >= b.maxY || clip.maxY <= b.minY) {
     return undefined;
   }
+  if (
+    b.minX >= clip.minX - SLIVER_PT &&
+    b.maxX <= clip.maxX + SLIVER_PT &&
+    b.minY >= clip.minY - SLIVER_PT &&
+    b.maxY <= clip.maxY + SLIVER_PT
+  ) {
+    return v;
+  }
   const pathArea = Math.max(0, b.maxX - b.minX) * Math.max(0, b.maxY - b.minY);
   const clipArea = Math.max(0, clip.maxX - clip.minX) * Math.max(0, clip.maxY - clip.minY);
   if (clipArea >= pathArea) return v;
   return { ...v, clip: undefined, segs: clip.segs };
+}
+
+/** How far past its clip a path may reach and still be inside it: a box's rounding. */
+const SLIVER_PT = 0.5;
+
+/**
+ * The box a path's curves reach: its points, and the turns of its curves —
+ * a Bézier stays inside its handles, and rarely reaches them.
+ *
+ * @param segs The path.
+ */
+function reachOf(segs: ReadonlyArray<PathSeg>): Box | undefined {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  const add = (x: number, y: number): void => {
+    minX = Math.min(minX, x);
+    minY = Math.min(minY, y);
+    maxX = Math.max(maxX, x);
+    maxY = Math.max(maxY, y);
+  };
+  let [x, y] = [0, 0];
+  let [startX, startY] = [0, 0];
+  for (const s of segs) {
+    if (s.op === 'close') {
+      [x, y] = [startX, startY];
+      continue;
+    }
+    if (s.op === 'cubic') {
+      const [x0, y0] = [x, y];
+      for (const t of [...turnsOf(x0, s.x1, s.x2, s.x), ...turnsOf(y0, s.y1, s.y2, s.y)]) {
+        add(bezierAt(x0, s.x1, s.x2, s.x, t), bezierAt(y0, s.y1, s.y2, s.y, t));
+      }
+    }
+    add(s.x, s.y);
+    [x, y] = [s.x, s.y];
+    if (s.op === 'move') [startX, startY] = [s.x, s.y];
+  }
+  return Number.isFinite(minX) ? { minX, minY, maxX, maxY } : undefined;
+}
+
+/** Where, between its ends, one coordinate of a cubic Bézier turns back. */
+function turnsOf(p0: number, p1: number, p2: number, p3: number): Array<number> {
+  // The derivative over three: a t² + b t + c.
+  const a = p3 - 3 * p2 + 3 * p1 - p0;
+  const b = 2 * (p2 - 2 * p1 + p0);
+  const c = p1 - p0;
+  let roots: Array<number> = [];
+  if (Math.abs(a) < FLAT) {
+    if (Math.abs(b) >= FLAT) roots = [-c / b];
+  } else {
+    const d = b * b - 4 * a * c;
+    if (d >= 0) roots = [(-b + Math.sqrt(d)) / (2 * a), (-b - Math.sqrt(d)) / (2 * a)];
+  }
+  return roots.filter((t) => t > 0 && t < 1);
+}
+
+/** A coefficient this small is none: the curve's derivative is of lower degree. */
+const FLAT = 1e-12;
+
+/** One coordinate of a cubic Bézier at `t`. */
+function bezierAt(p0: number, p1: number, p2: number, p3: number, t: number): number {
+  const u = 1 - t;
+  return u * u * u * p0 + 3 * u * u * t * p1 + 3 * u * t * t * p2 + t * t * t * p3;
 }
 
 function bbox(
