@@ -167,8 +167,20 @@ describe('a table of figures as TeX sets one', () => {
     }
   });
 
-  it('stands in from the margin as far as the page set its names', () => {
-    expect(t.table.properties.indentPt).toBeCloseTo(72 - 54, 0);
+  it('stands in from the margin as far as its rule, its names where the page set them', () => {
+    // The rule runs from six points left of the names to five right of the
+    // last figures, and written as the edge of the row under the headings,
+    // it ran on past the table to the margin.
+    expect(t.table.properties.indentPt).toBeCloseTo(66 - 54, 0);
+    const names = cell(1, 0).content[0];
+    const inset = names?.kind === 'paragraph' ? (names.paragraph.properties.indentLeft ?? 0) : 0;
+    expect(54 + t.table.properties.indentPt! + inset).toBeCloseTo(72, 0);
+    const width = t.table.grid.reduce((sum, w) => sum + w, 0);
+    expect(54 + t.table.properties.indentPt! + width).toBeCloseTo(545, 0);
+    // …and the last figures still end where the page ends them.
+    const last = cell(1, HEADS.length).content[0];
+    const right = last?.kind === 'paragraph' ? (last.paragraph.properties.indentRight ?? 0) : 0;
+    expect(545 - right).toBeCloseTo(540, 0);
   });
 
   it('rules its headings off with a border, and draws the rule no more', () => {

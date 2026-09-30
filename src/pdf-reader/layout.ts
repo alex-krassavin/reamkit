@@ -4189,6 +4189,7 @@ function tabbedRows(
       rows: tableRows.map((row) => ({ top: row.top, lineHeight: row.lineHeight })),
       from: measure.left + Math.min(...ink.map((h) => h.from)),
       to: measure.left + Math.max(...ink.map((h) => h.to)),
+      left: measure.left,
     });
     out.set(heading ? i - 1 : i, { kind: 'table', table });
     if (heading) out.set(i, null);
@@ -4258,14 +4259,17 @@ type Heading = { spans: Array<TextSpan>; over: Array<Extent | undefined> };
  * the page its words reach — which is what a rule drawn between two of its
  * rows is measured against (see `ruleBorders`).
  */
-const tableReads = new WeakMap<
-  Table,
-  {
-    rows: ReadonlyArray<{ top: number; lineHeight: number }>;
-    from: number;
-    to: number;
-  }
->();
+const tableReads = new WeakMap<Table, TableRead>();
+
+/** Where a table read off the page stood on it (see {@link tableReads}). */
+type TableRead = {
+  rows: ReadonlyArray<{ top: number; lineHeight: number }>;
+  /** How far across the page its words reach. */
+  from: number;
+  to: number;
+  /** Where on the page the measure its indent is stated from begins. */
+  left: number;
+};
 
 /** How many of its rows' lines a heading may stand over a table and head it. */
 const HEADING_LINES = 3;
@@ -4342,7 +4346,7 @@ function ruleBorders(
     if (seat !== undefined && seat.block.el.kind === 'table') {
       seat.block.el = {
         kind: 'table',
-        table: ruledRow(seat.block.el.table, seat.row, border),
+        table: ruledRow(seat.block.el.table, seat.row, border, band),
       };
       for (const piece of band.pieces) given.add(piece);
       continue;
@@ -4493,6 +4497,7 @@ function ruledRow(
   table: Table,
   at: number,
   border: { style: 'single'; width: Pt; colorHex: string },
+  rule: { from: number; to: number },
 ): Table {
   const ruled: Table = {
     ...table,
@@ -4529,9 +4534,84 @@ function ruledRow(
     ),
   };
   const read = tableReads.get(table);
-  if (read) tableReads.set(ruled, read);
-  return ruled;
+  if (!read) return ruled;
+  const fitted = fittedToRule(ruled, read, rule);
+  tableReads.set(fitted, read);
+  return fitted;
 }
+
+/**
+ * §17.4.63 — a table as wide as the rule drawn across it.
+ *
+ * A table read off a page begins where its words do, and its last column runs
+ * to the measure; a rule drawn across it is its own edge, standing a little
+ * past its words on either side. comments.pdf rules Figure 13 from six points
+ * left of its names to six right of its last figures, and written as the
+ * edge of the row under its headings, the rule ran on twenty points past the
+ * table, to the margin. The table now spans what the rule does: its first
+ * column reaches out to where the rule begins, its words held where they
+ * stood, and its last column ends where the rule ends.
+ *
+ * Only a rule that reaches past the words on both sides is the table's edge.
+ *
+ * @param table The table, its rule written as a row's border.
+ * @param read  Where it stood on the page.
+ * @param rule  The rule, across the page.
+ */
+function fittedToRule(table: Table, read: TableRead, rule: { from: number; to: number }): Table {
+  const last = table.grid.length - 1;
+  if (last < 0 || rule.from > read.from || rule.to < read.to) return table;
+  const left = read.left + (table.properties.indentPt ?? 0);
+  const right = left + table.grid.reduce((sum, w) => sum + w, 0);
+  // How far the table's edges move to the rule's: out on the left, in on the
+  // right, and the other way where the rule stands the other side.
+  const out = left - rule.from;
+  const inward = right - rule.to;
+  if (Math.abs(out) < FIT_NOISE_PT && Math.abs(inward) < FIT_NOISE_PT) return table;
+  const grid = table.grid.map((w, k) => {
+    const wider = k === 0 ? w + out : w;
+    return pt(Math.max(1, k === last ? wider - inward : wider));
+  });
+  /** A cell's paragraphs, its words held where the page set them. */
+  const held = (content: ReadonlyArray<BodyElement>, k: number): Array<BodyElement> =>
+    content.map((block) => {
+      if (block.kind !== 'paragraph') return block;
+      const { indentLeft, indentRight } = block.paragraph.properties;
+      const properties = {
+        ...block.paragraph.properties,
+        ...(k === 0 && Math.abs(out) >= FIT_NOISE_PT
+          ? { indentLeft: pt(Math.max(0, (indentLeft ?? 0) + out)) }
+          : {}),
+        ...(k === last && Math.abs(inward) >= FIT_NOISE_PT && indentRight !== undefined
+          ? { indentRight: pt(Math.max(0, indentRight - inward)) }
+          : {}),
+      };
+      return { ...block, paragraph: { ...block.paragraph, properties } };
+    });
+  return {
+    ...table,
+    properties: {
+      ...table.properties,
+      widthPt: pt(grid.reduce((sum, w) => sum + w, 0)),
+      indentPt: pt((table.properties.indentPt ?? 0) - out),
+    },
+    grid,
+    rows: table.rows.map((row) => ({
+      ...row,
+      cells: row.cells.map((cell, k) =>
+        k !== 0 && k !== last
+          ? cell
+          : {
+              properties: { ...cell.properties, width: grid[k]! },
+              content: held(cell.content, k),
+            },
+      ),
+    })),
+  };
+}
+
+/** A fit smaller than this moves nothing a reader sees. */
+const FIT_NOISE_PT = 0.5;
 
 /**
  * The table row a rule is drawn on the top edge of: a row after the first,
