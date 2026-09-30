@@ -327,3 +327,33 @@ describe('a table inside a column', () => {
     );
   });
 });
+
+describe('a table ruled into its columns', () => {
+  it('reads a column where a rule stands in the gap, however narrow the gap', () => {
+    // comments.pdf's Figure 9 sets its codes "xx1", "000" in a column all as
+    // wide as each other, twelve points from the types beside them and a rule
+    // between: read as one column, "xx1 number" had the rule struck through it.
+    const codes = ['Tag', 'xx1', '000', '010', '100', '110'];
+    const types = ['JS Type', 'number', 'object', 'number', 'int', 'boolean'];
+    const texts = ['Description', 'a number', 'a pointer', 'a double', 'an integer', 'a truth'];
+    const ops = ['BT /F1 9 Tf'];
+    codes.forEach((code, k) => {
+      const y = 700 - k * 10;
+      ops.push(at(324, y, code), at(349, y, types[k]!), at(396, y, texts[k]!));
+    });
+    ops.push(...columns(600, 30), 'ET', '0.4 w');
+    codes.forEach((_, k) => {
+      const top = 709 - k * 10;
+      ops.push(`343 ${String(top - 10)} m 343 ${String(top)} l S`);
+      ops.push(`390 ${String(top - 10)} m 390 ${String(top)} l S`);
+    });
+    const { doc } = reconstructByLayout(PdfFile.parse(pages([ops])));
+    const cells = doc.body.flatMap((el) =>
+      el.kind === 'table'
+        ? el.table.rows.map((row) => row.cells.map((c) => c.content.map(textOf).join('')))
+        : [],
+    );
+    expect(cells).toContainEqual(['xx1', 'number', 'a number']);
+    expect(doc.body.map(textOf).join(' ')).not.toContain('xx1 number');
+  });
+});

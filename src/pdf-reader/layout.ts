@@ -543,9 +543,13 @@ export function reconstructByLayout(
             above = made.below;
             continue;
           }
-          const regionLines = groupIntoLines(region.runs, false, stepped, faceSpaces).filter(
-            (l) => l.text.length > 0,
-          );
+          const regionLines = groupIntoLines(
+            region.runs,
+            false,
+            stepped,
+            faceSpaces,
+            columnRules(vectors),
+          ).filter((l) => l.text.length > 0);
           // A sheet of a line or two shows no measure (see `MEASURE_LINES`):
           // its longest line reaches the edge only because it IS the edge, and
           // the .docx is re-set across the sheet's own width instead — at the
@@ -1947,6 +1951,7 @@ function groupIntoLines(
   split = false,
   stepped = false,
   spaces?: FaceSpaces,
+  rules: ReadonlyArray<ColumnRule> = [],
 ): Array<Line> {
   const sorted = [...runs].sort((a, b) => b.y - a.y || a.x - b.x);
   const clusters: Array<{ y: number; fontSize: number; runs: Array<TextRun> }> = [];
@@ -1968,7 +1973,10 @@ function groupIntoLines(
     }
   }
   for (const c of clusters) c.runs.sort((a, b) => a.x - b.x);
-  const stops = sharedStops(clusters.map((c) => c.runs));
+  const stops = sharedStops(
+    clusters.map((c) => c.runs),
+    rules,
+  );
   return clusters.flatMap((c) => {
     const ordered = c.runs;
     const fontSize = c.fontSize || 10;
@@ -2068,10 +2076,20 @@ const PROSE_FULL_SHARE = 0.6;
  * other two came back with their values a word's width after the label
  * instead of in the column.
  *
+ * …or a gap a rule is drawn down. A table ruled into columns needs no white
+ * wider than a space between them, the rule says where one ends: comments.pdf's
+ * Figure 9 sets its codes "xx1", "000" in a column all as wide as each other,
+ * twelve points from the types beside them and a rule between, and the two
+ * columns came back one, "xx1 number", with the rule struck through it.
+ *
  * @param lines Each line's runs, left to right.
+ * @param rules The rules drawn down the block (see {@link columnRules}).
  * @returns The x of every stop two lines share.
  */
-function sharedStops(lines: ReadonlyArray<ReadonlyArray<TextRun>>): Array<number> {
+function sharedStops(
+  lines: ReadonlyArray<ReadonlyArray<TextRun>>,
+  rules: ReadonlyArray<ColumnRule> = [],
+): Array<number> {
   const seen: Array<{ x: number; line: number; tab: boolean }> = [];
   lines.forEach((runs, line) => {
     let end: number | undefined;
@@ -2079,7 +2097,11 @@ function sharedStops(lines: ReadonlyArray<ReadonlyArray<TextRun>>): Array<number
       if (run.text.replaceAll(UNMAPPED, '').trim() === '') continue;
       const size = run.fontSizePt || 10;
       if (end !== undefined && run.x - end >= size * STOP_GAP_EM) {
-        seen.push({ x: run.x, line, tab: run.x - end >= size * TAB_GAP_EM });
+        const from = end;
+        const ruled = rules.some(
+          (r) => r.x > from && r.x < run.x && r.minY <= run.y + size * 0.5 && r.maxY >= run.y,
+        );
+        seen.push({ x: run.x, line, tab: ruled || run.x - end >= size * TAB_GAP_EM });
       }
       end = Math.max(end ?? run.endX, run.endX);
     }
@@ -2097,6 +2119,32 @@ function sharedStops(lines: ReadonlyArray<ReadonlyArray<TextRun>>): Array<number
 
 /** The least gap, in ems, that lands a run on a stop the lines around it share. */
 const STOP_GAP_EM = 0.5;
+
+/** A rule drawn down a block of lines: where across it stands, and how far down. */
+type ColumnRule = { x: number; minY: number; maxY: number };
+
+/**
+ * The rules a page draws down its lines: thin upright paths, a line's height
+ * long at the least — the edges of a table's columns.
+ *
+ * @param vectors The page's paths.
+ */
+function columnRules(vectors: ReadonlyArray<PdfVector>): Array<ColumnRule> {
+  return vectors
+    .filter(
+      (v) =>
+        v.glyph !== true &&
+        v.maxX - v.minX <= COLUMN_RULE_THIN_PT &&
+        v.maxY - v.minY >= COLUMN_RULE_LEAST_PT,
+    )
+    .map((v) => ({ x: (v.minX + v.maxX) / 2, minY: v.minY, maxY: v.maxY }));
+}
+
+/** No thicker than this, a path drawn down the page is a rule. */
+const COLUMN_RULE_THIN_PT = 1;
+
+/** …and no shorter than this: a rule stands at least a line of small type tall. */
+const COLUMN_RULE_LEAST_PT = 5;
 
 /** How far from a shared stop a run may start and still stand on it. */
 const STOP_SLACK_PT = 0.75;
