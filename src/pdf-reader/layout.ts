@@ -3520,6 +3520,11 @@ const SPACING_NOISE_PT = 0.25;
  * "typical two-column docu ment incorporating tables, figures and mathemat
  * ics" — the soft hyphens dropped by the page and a space in their place.
  *
+ * A dash closed up to the word before it binds that word to the one after,
+ * as the hyphen does: freeculture.pdf's index breaks "167–68" after its dash,
+ * and the entry came back "167– 68". A dash with a space before it stands
+ * apart, and the break is a space.
+ *
  * @param lines The paragraph's lines, in order.
  */
 function joinLines(lines: ReadonlyArray<Line>): Array<TextSpan> {
@@ -3529,7 +3534,11 @@ function joinLines(lines: ReadonlyArray<Line>): Array<TextSpan> {
       const prev = out[out.length - 1];
       const ends = prev?.text ?? '';
       const soft = ends.endsWith(SOFT_HYPHEN);
-      const hard = HYPHENS.has(ends.slice(-1));
+      // The character before the dash, where a span ends in one.
+      const before =
+        ends.length > 1 ? ends.slice(-2, -1) : (out[out.length - 2]?.text.slice(-1) ?? '');
+      const hard =
+        HYPHENS.has(ends.slice(-1)) || (DASHES.has(ends.slice(-1)) && /\S/u.test(before));
       if (soft && prev) out[out.length - 1] = { ...prev, text: ends.slice(0, -1) };
       // A line the page ended with a space has its break written already:
       // joined with another, bug1057544.pdf's column came back "marks the  end
@@ -3547,6 +3556,9 @@ const SOFT_HYPHEN = '\u00ad';
 
 /** The hyphens that belong to the word they end. */
 const HYPHENS = new Set(['-', '\u2010', '\u2011']);
+
+/** The dashes, en and em, that belong to the words either side where closed up to them. */
+const DASHES = new Set(['\u2013', '\u2014']);
 
 /** How many lines' worth of indent still reads as a first line, not a placement. */
 const INDENT_LINES = 3;

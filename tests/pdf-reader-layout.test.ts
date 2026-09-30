@@ -2110,6 +2110,27 @@ describe('a flowing reading re-sets the page where the page set it', () => {
       .join(' ');
     expect(text).toContain('academic journals, 262, 280');
   });
+
+  it('joins a line the page broke at a dash closed up to the word before it', () => {
+    // freeculture.pdf's index breaks "167–68" after its dash, and the entry
+    // came back "167– 68, 321n". A dash set apart is broken at a space.
+    const doc = reconstructByLayout(
+      PdfFile.parse(
+        helvetica(
+          [
+            'BT /F1 9 Tf 1 0 0 1 54 700 Tm (advertising, 36, 45\\26146, 127, 145\\26146, 167\\261) Tj',
+            '1 0 0 1 54 689 Tm (68, 321n) Tj',
+            '1 0 0 1 54 650 Tm (and the page sets its dash apart from the words \\261) Tj',
+            '1 0 0 1 54 639 Tm (as it does here) Tj ET',
+          ].join('\n'),
+        ),
+      ),
+    ).doc;
+    expect(paragraphs(doc).map(textOf)).toEqual([
+      'advertising, 36, 45\u201346, 127, 145\u201346, 167\u201368, 321n',
+      'and the page sets its dash apart from the words \u2013 as it does here',
+    ]);
+  });
 });
 
 describe('a right-to-left line ends on its left (§17.3.1.13)', () => {
