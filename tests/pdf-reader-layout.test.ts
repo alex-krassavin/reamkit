@@ -1804,6 +1804,35 @@ describe('a flowing reading re-sets the page where the page set it', () => {
       expect(borders.insideH).toEqual(borders.top);
     }
   });
+
+  it('opens a paragraph on a line set out on stops', () => {
+    // canvas.pdf sets each method a row of its table and its arguments on the
+    // lines under its name. The next row came back run on from the last
+    // argument: "[Variadic] any args) Object getContext(".
+    const prose = Array.from(
+      { length: 8 },
+      (_, k) =>
+        `1 0 0 1 72 ${String(720 - k * 12)} Tm (Line ${String(k)} of the body text of the page) Tj`,
+    );
+    const doc = reconstructByLayout(
+      PdfFile.parse(
+        helvetica(
+          [
+            'BT /F1 9 Tf',
+            ...prose,
+            '1 0 0 1 72 600 Tm (string) Tj 1 0 0 1 150 600 Tm (toDataURL\\() Tj',
+            '1 0 0 1 160 588 Tm ([Optional] string type,) Tj',
+            '1 0 0 1 160 576 Tm ([Variadic] any args\\)) Tj',
+            '1 0 0 1 72 564 Tm (Object) Tj 1 0 0 1 150 564 Tm (getContext\\( string contextId\\)) Tj',
+            'ET',
+          ].join('\n'),
+        ),
+      ),
+    ).doc;
+    const texts = paragraphs(doc).map((p) => textOf(p).replace(/\s+/gu, ' '));
+    expect(texts.some((t) => t.startsWith('Object'))).toBe(true);
+    expect(texts.some((t) => t.includes('args) Object'))).toBe(false);
+  });
 });
 
 describe('a right-to-left line ends on its left (§17.3.1.13)', () => {

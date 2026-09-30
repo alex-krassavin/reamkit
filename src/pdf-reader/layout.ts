@@ -2957,6 +2957,12 @@ function groupIntoParagraphs(
       // It takes no line with it either, so what follows opens its own.
       ruleOfCharacters(line) ||
       line.code === true ||
+      // …and nothing runs on into a line the page set out on stops, as it
+      // runs on into nothing: canvas.pdf sets each method a row of its table,
+      // its arguments on the lines under its name, and the next row came back
+      // run on from the last argument of the row before, "[Variadic] any
+      // args) Object getContext(", the return type torn off its own row.
+      line.tabbed === true ||
       (prev !== undefined && opensItem(prev, line)) ||
       (prev !== undefined &&
         (ruleOfCharacters(prev) ||
