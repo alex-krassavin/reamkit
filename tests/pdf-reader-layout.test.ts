@@ -1521,6 +1521,18 @@ describe('a flowing reading re-sets the page where the page set it', () => {
       expect(page(lines)).toEqual([...lines, long]);
     });
 
+    it('reads two full lines as prose, however evenly the white stands either side', () => {
+      // comments.pdf's list items stand in from a column whose left edge is
+      // their bullets' and whose right one an overfull line pushed out: two
+      // full lines of one item stood in by as much on each side, and "on this
+      // programs…" came back a paragraph of its own.
+      const lines = [
+        'A title set in centred lines that fill very nearly the whole measure of this page, from its left edge to the',
+        'on and on it runs, a second line nearly as long as the first, and set in the middle of it too',
+      ];
+      expect(page(lines)).toEqual([lines.join(' '), long]);
+    });
+
     it('keeps a centred paragraph whole where its line ran as far as the measure lets it', () => {
       const title = [
         'A title set in centred lines that fill very nearly the whole measure of this page, from its left edge to the',

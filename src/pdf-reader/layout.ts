@@ -2880,6 +2880,14 @@ function endedCentred(prev: Line, next: Line, column: { left: number; right: num
     return Math.abs(lead - trail) <= width * CENTRED_SLACK && Math.min(lead, trail) > 0;
   };
   if (!centred(prev) || !centred(next)) return false;
+  // …and one of the two set in from both edges, as a full line is not. A
+  // list's lines stand in from a column whose left edge is its bullets', and
+  // where an overfull line pushed the right edge out they stood in by as much
+  // there: comments.pdf's "…We expect to improve performance" and "on this
+  // programs by improving…", two full lines of one item, read as centred, and
+  // the item came back two paragraphs, its page a line over its sheet.
+  const inset = (l: Line): number => Math.min(l.x - column.left, column.right - (l.x + l.width));
+  if (Math.max(inset(prev), inset(next)) < width * CENTRED_INSET) return false;
   const text = next.text.trimStart();
   const word = text.split(/\s/u)[0] ?? '';
   if (word.length === 0) return false;
@@ -2889,6 +2897,9 @@ function endedCentred(prev: Line, next: Line, column: { left: number; right: num
 
 /** How far off the middle of the measure, as a share of it, a centred line may stand. */
 const CENTRED_SLACK = 0.06;
+
+/** How far in from both edges, as a share of the measure, a centred line stands. */
+const CENTRED_INSET = 0.1;
 
 /**
  * Whether a line of a column set against both edges ended its paragraph: it
