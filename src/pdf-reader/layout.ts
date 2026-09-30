@@ -3021,14 +3021,19 @@ function groupIntoParagraphs(
     beforePrev = prev;
     prev = line;
   }
-  // §17.3.1.12 — where the COLUMN's own text begins, which is what an indented
-  // paragraph is indented from. Not the leftmost line: a marginal note set
-  // outside the measure is not the measure, and bug1997343.pdf puts one forty-
-  // five points left of its body. Not the median either — a page can be half
-  // list — but the low end of the run of line starts, which the body holds
-  // whatever else is on the page.
+  // §17.3.1.12 — where the column begins, which is what an indented paragraph
+  // is indented from: the edge the .docx sets the column's text against, and
+  // so the column's own edge on the page wherever it is known. Not where this
+  // region's lines begin: a region is a stretch of a column, and its lines
+  // stand in from the column's edge as far as the page stands them —
+  // canvas.pdf sets its tables' rows seven points in from the headings of its
+  // columns, and ZapfDingbats.pdf its entries thirteen in from its running
+  // head, and indented from the rows and entries themselves both came back
+  // against the edge of the column. Where no column is given, the low end of
+  // the run of line starts: not the leftmost line, which may be a note set in
+  // the margin, nor the median, since a page can be half list.
   const starts = lines.map((l) => l.x).sort((a, b) => a - b);
-  const columnLeft = starts[Math.floor(starts.length * COLUMN_LEFT_QUANTILE)] ?? 0;
+  const columnLeft = column?.left ?? starts[Math.floor(starts.length * COLUMN_LEFT_QUANTILE)] ?? 0;
   const heights: Array<number> = [];
   return groups.map((g, i) => {
     const first = g[0]!;
@@ -3093,10 +3098,10 @@ function groupIntoParagraphs(
       // the last column of a table came out a point wide.
       ...(stops.length > 0
         ? {
-            stops: stops.map((x) => x - (column?.left ?? columnLeft)),
+            stops: stops.map((x) => x - columnLeft),
             pieces: (first.pieces ?? []).map((p) => ({
-              from: p.from - (column?.left ?? columnLeft),
-              to: p.to - (column?.left ?? columnLeft),
+              from: p.from - columnLeft,
+              to: p.to - columnLeft,
             })),
           }
         : {}),

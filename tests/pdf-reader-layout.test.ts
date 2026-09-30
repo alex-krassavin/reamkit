@@ -1948,6 +1948,31 @@ describe('a flowing reading re-sets the page where the page set it', () => {
       .join(' ');
     expect(text).toContain('a copyright');
   });
+
+  it('indents a paragraph from the edge of its column, not from where its own lines start', () => {
+    // canvas.pdf sets its tables' rows seven points in from the headings of
+    // its columns, and indented from the rows themselves they came back
+    // against the edge of the column.
+    const doc = reconstructByLayout(
+      PdfFile.parse(
+        helvetica(
+          [
+            'BT /F1 12 Tf 1 0 0 1 40 740 Tm (A heading set against the edge of the column) Tj',
+            '/F1 9 Tf',
+            ...Array.from(
+              { length: 12 },
+              (_, k) =>
+                `1 0 0 1 72 ${String(720 - k * 12)} Tm (Line ${String(k)} of the body text, set in) Tj`,
+            ),
+            'ET',
+          ].join('\n'),
+        ),
+      ),
+    ).doc;
+    const body = doc.body.find((b) => b.kind === 'paragraph' && textOf(b).startsWith('Line 0'));
+    if (body?.kind !== 'paragraph') throw new Error('the body is a paragraph');
+    expect(body.paragraph.properties.indentLeft).toBeCloseTo(32, 0);
+  });
 });
 
 describe('a right-to-left line ends on its left (§17.3.1.13)', () => {
