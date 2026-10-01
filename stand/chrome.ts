@@ -27,6 +27,14 @@ const LOAD_TIMEOUT_MS = 20_000;
 /** How long any one command may take. */
 const CALL_TIMEOUT_MS = 60_000;
 
+/** A face a page asks for by `family`, drawn from a font file where the machine lacks it. */
+export interface Substitute {
+  readonly family: string;
+  readonly file: string;
+  readonly weight: 'normal' | 'bold';
+  readonly style: 'normal' | 'italic';
+}
+
 /** A rectangle of the page, in CSS pixels from its top left. */
 export interface Box {
   readonly x: number;
@@ -75,8 +83,16 @@ export class Chrome {
     });
   }
 
-  /** A fresh headless Chrome on a profile of its own, with one tab the size of `viewport`. */
-  static async launch(viewport: { width: number; height: number }): Promise<Chrome> {
+  /**
+   * A fresh headless Chrome on a profile of its own, with one tab the size of
+   * `viewport`. Every page it opens gets the `substitutes` as faces of its own,
+   * ahead of the machine's — the way LibreOffice puts Carlito where a file
+   * asks for Calibri.
+   */
+  static async launch(
+    viewport: { width: number; height: number },
+    substitutes: ReadonlyArray<Substitute> = [],
+  ): Promise<Chrome> {
     const binary = CANDIDATES.find((c) => existsSync(c)) ?? 'google-chrome';
     const profile = mkdtempSync(join(tmpdir(), 'ream-stand-chrome-'));
     const proc = spawn(
@@ -87,6 +103,8 @@ export class Chrome {
         '--hide-scrollbars',
         '--no-first-run',
         '--no-default-browser-check',
+        // A page on disk may read a font on disk (the substitutes).
+        '--allow-file-access-from-files',
         `--user-data-dir=${profile}`,
         '--remote-debugging-port=0',
         'about:blank',
@@ -131,6 +149,18 @@ export class Chrome {
     chrome.session = String(sessionId);
     await chrome.call('Page.enable');
     await chrome.size(viewport.width, viewport.height);
+    if (substitutes.length > 0) {
+      const faces = substitutes
+        .filter((s) => existsSync(s.file))
+        .map((s) => ({ ...s, url: pathToFileURL(s.file).href }));
+      await chrome.call('Page.addScriptToEvaluateOnNewDocument', {
+        source: `for (const f of ${JSON.stringify(faces)}) {
+          const face = new FontFace(f.family, 'local("' + f.family + '"), url("' + f.url + '")', { weight: f.weight, style: f.style });
+          document.fonts.add(face);
+          face.load().catch(() => {});
+        }`,
+      });
+    }
     return chrome;
   }
 
@@ -173,7 +203,7 @@ export class Chrome {
     });
   }
 
-  /** Load a file and wait for it, its pictures with it — or for the timeout. */
+  /** Load a file and wait for it, its pictures and fonts with it — or for the timeout. */
   async open(file: string): Promise<void> {
     let listen: ((m: Message) => void) | undefined;
     const loaded = new Promise<void>((ok) => {
@@ -191,6 +221,7 @@ export class Chrome {
     } finally {
       if (listen) this.listeners.delete(listen);
     }
+    await this.evaluate('document.fonts.ready.then(() => true)');
   }
 
   /** An expression evaluated in the page, and its value as JSON brings it back. */

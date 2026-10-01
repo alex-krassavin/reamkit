@@ -41,7 +41,7 @@ import { fileURLToPath } from 'node:url';
 import { BLANK, diff, pageCount, pages, readPicture, soffice } from './build';
 import { Chrome } from './chrome';
 import type { PageScore } from './build';
-import type { Box } from './chrome';
+import type { Box, Substitute } from './chrome';
 import type { Ppm } from '../scripts/corpus/lib';
 import { Ream } from '@/core/converter/ream';
 
@@ -65,6 +65,36 @@ const MOST_DRAWN = { width: 2400, height: 3600 };
 const MOST_SHEETS = 12;
 /** CSS's own: a point is 4/3 of a pixel on the page and on the source alike. */
 const DPI = 96;
+/**
+ * The faces LibreOffice draws for Office's own fonts: Calibri and Cambria are
+ * set in their metric twins, which ship inside LibreOffice and nowhere else on
+ * a machine without Office. Both pages get them — the comparison is of the
+ * layout, and a Calibri sheet drawn in the browser's sans runs a tenth wider
+ * on either side. (A reader without these faces gets the fallback the page
+ * names; that is the page's business, not the stand's.)
+ */
+const LO_FONTS = '/Applications/LibreOffice.app/Contents/Resources/fonts/truetype';
+const SUBSTITUTES: ReadonlyArray<Substitute> = (
+  [
+    ['Calibri', 'Carlito'],
+    ['Cambria', 'Caladea'],
+  ] as const
+).flatMap(([family, twin]) =>
+  (
+    [
+      ['normal', 'normal', 'Regular'],
+      ['bold', 'normal', 'Bold'],
+      ['normal', 'italic', 'Italic'],
+      ['bold', 'italic', 'BoldItalic'],
+    ] as const
+  ).map(([weight, style, cut]) => ({
+    family,
+    file: `${LO_FONTS}/${twin}-${cut}.ttf`,
+    weight,
+    style,
+  })),
+);
+
 /** Bumped when LibreOffice's side is made differently, so a kept one is redone. */
 const GOLD_RECIPE = 1;
 
@@ -506,7 +536,7 @@ async function main(): Promise<void> {
           .map((f) => resolve(FILES_DIR, f));
   // `--missing` builds only the workbooks with no report yet.
   const missing = process.argv.includes('--missing');
-  const chrome = await Chrome.launch(WINDOW);
+  const chrome = await Chrome.launch(WINDOW, SUBSTITUTES);
   try {
     for (const file of files) {
       if (missing && existsSync(resolve(OUT_DIR, stemOf(file), 'report.json'))) continue;
