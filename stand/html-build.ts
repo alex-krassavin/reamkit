@@ -202,12 +202,13 @@ interface Layout {
 /**
  * Where each sheet is on a page, asked of the page itself. LibreOffice heads
  * every sheet with an anchor named `tableN`, and the sheet's pictures and grid
- * follow it up to a rule; ours names a sheet on the element that holds it.
- * A rectangle takes in the tables and pictures inside, which run past a box
- * narrower than they are.
+ * follow it up to a rule; ours names a sheet on the element that holds it, its
+ * grid and drawings on a surface inside. A rectangle takes in the tables and
+ * pictures inside, which run past a box narrower than they are; an empty sheet
+ * has none.
  */
 const FIND_SHEETS = String.raw`(() => {
-  const box = (els) => {
+  const box = (els, origin) => {
     let l = Infinity, t = Infinity, r = -Infinity, b = -Infinity;
     const take = (e) => {
       const q = e.getBoundingClientRect();
@@ -220,6 +221,10 @@ const FIND_SHEETS = String.raw`(() => {
       for (const e of el.querySelectorAll('table,img,svg,figure,canvas,[style*="position"]')) take(e);
     }
     if (l === Infinity) return null;
+    if (origin) {
+      const o = origin.getBoundingClientRect();
+      l = Math.min(l, o.left); t = Math.min(t, o.top);
+    }
     const x = Math.max(0, Math.floor(l + scrollX)), y = Math.max(0, Math.floor(t + scrollY));
     return { x, y, width: Math.ceil(r + scrollX) - x, height: Math.ceil(b + scrollY) - y };
   };
@@ -237,7 +242,15 @@ const FIND_SHEETS = String.raw`(() => {
     return { sheets, whole: box(all) };
   }
   for (const el of document.querySelectorAll('[data-sheet]')) {
-    sheets.push({ name: el.getAttribute('data-sheet') || '', box: box([el]) });
+    // What the sheet holds, not the section: its heading is our own, and the
+    // section is as wide as the page however narrow the grid in it. From the
+    // surface's corner, which is the first cell's, so a sheet of drawings alone
+    // keeps the room above and beside them.
+    const surface = el.querySelector('.surface');
+    sheets.push({
+      name: el.getAttribute('data-sheet') || '',
+      box: surface ? box([...surface.children], surface) : box([el]),
+    });
   }
   const root = document.querySelector('article') || document.body;
   return { sheets, whole: box([...root.children]) };
@@ -280,20 +293,74 @@ interface Shot {
   readonly png: Uint8Array;
 }
 
-/** A page's sheets drawn one by one — the first {@link MOST_SHEETS} of them, by name. */
-async function shootSheets(chrome: Chrome, layout: Layout): Promise<Map<string, Shot>> {
-  const out = new Map<string, Shot>();
-  for (const s of layout.sheets.slice(0, MOST_SHEETS)) {
-    if (s.box) out.set(s.name, { box: s.box, png: await chrome.shoot(drawnPart(s.box)) });
+/**
+ * A page's sheets as the rows to compare: those it names, or the page whole as
+ * one — which is also how LibreOffice writes a workbook of a single sheet,
+ * with no anchor to name it by.
+ */
+function sheetsOf(layout: Layout, whole: boolean): Array<Found> {
+  if (!whole && layout.sheets.length > 0) return [...layout.sheets];
+  return [{ name: '', box: layout.whole }];
+}
+
+/** Each sheet of a page drawn — the first {@link MOST_SHEETS} of them. */
+async function shoot(chrome: Chrome, sheets: ReadonlyArray<Found>): Promise<Array<Shot | null>> {
+  const out: Array<Shot | null> = [];
+  for (const [i, s] of sheets.entries()) {
+    out.push(
+      i < MOST_SHEETS && s.box ? { box: s.box, png: await chrome.shoot(drawnPart(s.box)) } : null,
+    );
   }
   return out;
 }
 
-/** A page drawn whole. */
-async function shootWhole(chrome: Chrome, layout: Layout): Promise<Shot | null> {
-  return layout.whole
-    ? { box: layout.whole, png: await chrome.shoot(drawnPart(layout.whole)) }
-    : null;
+/**
+ * The rows of the report: the two pages' sheets paired by name where both
+ * name them alike, the rest in order — a sheet nameless on one side is the
+ * next one unpaired on the other — in the gold's order, then any only ours has.
+ */
+function pair(
+  gold: ReadonlyArray<Found>,
+  goldShots: ReadonlyArray<Shot | null>,
+  ours: ReadonlyArray<Found>,
+  oursShots: ReadonlyArray<Shot | null>,
+): Array<Row> {
+  const taken = new Set<number>();
+  const match = gold.map((g) => {
+    const i = ours.findIndex((o, k) => !taken.has(k) && o.name !== '' && o.name === g.name);
+    if (i >= 0) taken.add(i);
+    return i;
+  });
+  let next = 0;
+  for (const [gi, oi] of match.entries()) {
+    if (oi >= 0) continue;
+    while (next < ours.length && taken.has(next)) next++;
+    if (next >= ours.length) break;
+    match[gi] = next;
+    taken.add(next);
+  }
+  const rows: Array<Row> = gold.map((g, gi) => {
+    const oi = match[gi]!;
+    const o = oi >= 0 ? ours[oi] : undefined;
+    return {
+      name: g.name || o?.name || 'the whole page',
+      gold: goldShots[gi] ?? null,
+      ours: oi >= 0 ? (oursShots[oi] ?? null) : null,
+      goldBox: g.box,
+      oursBox: o?.box ?? null,
+    };
+  });
+  for (const [oi, o] of ours.entries()) {
+    if (taken.has(oi)) continue;
+    rows.push({
+      name: o.name || 'the whole page',
+      gold: null,
+      ours: oursShots[oi] ?? null,
+      goldBox: null,
+      oursBox: o.box,
+    });
+  }
+  return rows;
 }
 
 interface Row {
@@ -339,77 +406,33 @@ export async function build(book: string, chrome: Chrome): Promise<HtmlReport> {
   // Ours first: whether OUR page says where its sheets are decides whether
   // the two are compared a sheet at a time or each whole.
   const t1 = Date.now();
-  let ours: Layout | null = null;
-  let oursSheets = new Map<string, Shot>();
-  let oursWhole: Shot | null = null;
+  let perSheet = false;
+  let ours: Array<Found> = [];
+  let oursShots: Array<Shot | null> = [];
   try {
     if (existsSync(oursPage)) {
-      ours = await lay(chrome, oursPage);
-      if (ours.sheets.length > 0) oursSheets = await shootSheets(chrome, ours);
-      else oursWhole = await shootWhole(chrome, ours);
+      const layout = await lay(chrome, oursPage);
+      perSheet = layout.sheets.length > 0;
+      ours = sheetsOf(layout, !perSheet);
+      oursShots = await shoot(chrome, ours);
     }
   } catch (e) {
     errors.push(`our page: ${(e as Error).message}`);
   }
   const goldPage = resolve(dir, 'gold', 'gold.html');
-  let gold: Layout | null = null;
-  let goldSheets = new Map<string, Shot>();
-  let goldWhole: Shot | null = null;
+  let gold: Array<Found> = [];
+  let goldShots: Array<Shot | null> = [];
   try {
     if (existsSync(goldPage)) {
-      gold = await lay(chrome, goldPage);
-      if (gold.sheets.length > 0 && ours !== null && ours.sheets.length > 0) {
-        goldSheets = await shootSheets(chrome, gold);
-      } else {
-        goldWhole = await shootWhole(chrome, gold);
-      }
+      const layout = await lay(chrome, goldPage);
+      gold = sheetsOf(layout, !perSheet);
+      goldShots = await shoot(chrome, gold);
     }
   } catch (e) {
     errors.push(`gold page: ${(e as Error).message}`);
   }
-  const perSheet = goldSheets.size > 0 && oursSheets.size > 0;
-  if (!perSheet && ours !== null && oursWhole === null) {
-    // Ours named its sheets and the gold could not: ours whole after all.
-    try {
-      oursWhole = await shootWhole(chrome, await lay(chrome, oursPage));
-    } catch (e) {
-      errors.push(`our page: ${(e as Error).message}`);
-    }
-  }
   const renderMs = Date.now() - t1;
-
-  // The rows: the sheets by name, in the gold's order, then any only ours has.
-  const rows: Array<Row> = [];
-  if (perSheet) {
-    const oursByName = new Map((ours?.sheets ?? []).map((s) => [s.name, s.box]));
-    for (const g of gold?.sheets ?? []) {
-      rows.push({
-        name: g.name,
-        gold: goldSheets.get(g.name) ?? null,
-        ours: oursSheets.get(g.name) ?? null,
-        goldBox: g.box,
-        oursBox: oursByName.get(g.name) ?? null,
-      });
-    }
-    for (const o of ours?.sheets ?? []) {
-      if ((gold?.sheets ?? []).some((g) => g.name === o.name)) continue;
-      rows.push({
-        name: o.name,
-        gold: null,
-        ours: oursSheets.get(o.name) ?? null,
-        goldBox: null,
-        oursBox: o.box,
-      });
-    }
-  } else {
-    rows.push({
-      name: 'the whole page',
-      gold: goldWhole,
-      ours: oursWhole,
-      goldBox: gold?.whole ?? null,
-      oursBox: ours?.whole ?? null,
-    });
-  }
+  const rows = pair(gold, goldShots, ours, oursShots);
 
   for (const f of readdirSync(dir)) {
     if (/^(?:gold|ours|diff)-\d+\.png$/u.test(f)) unlinkSync(resolve(dir, f));
