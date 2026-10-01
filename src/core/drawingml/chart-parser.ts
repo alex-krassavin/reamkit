@@ -469,10 +469,16 @@ function fillColorOf(spPr: PoNode | undefined, resolveColor: ColorResolver): str
   return lnFill ? colorFromSolidFill(lnFill, resolveColor) : undefined;
 }
 
+/** The colour elements a chart's fill names a colour by (§20.1.2.3). */
+const CHART_COLOR_NODES = ['a:srgbClr', 'a:schemeClr', 'a:sysClr', 'a:prstClr'] as const;
+
 function colorFromSolidFill(solid: PoNode, resolveColor: ColorResolver): string | undefined {
   for (const c of poChildren(solid)) {
-    const isSrgb = poIs(c, 'a:srgbClr');
-    if (!isSrgb && !poIs(c, 'a:schemeClr')) continue;
+    // …a system or a preset colour as much as a scheme or an RGB one: Excel
+    // 2007 and 2010 outline a chart in `<a:sysClr val="windowText">`, and
+    // skipped, dataValidationTableRange.xlsx lost the black frame round its
+    // chart and round its plot.
+    if (!CHART_COLOR_NODES.some((name) => poIs(c, name))) continue;
     if (!poAttr(c, 'val')) continue;
     // Chart semantics: stop at the first colour node, even when the resolver
     // does not know the colour (the word drawing-parser continues instead).

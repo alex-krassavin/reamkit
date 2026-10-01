@@ -133,6 +133,30 @@ describe('parseChart', () => {
     );
     expect(bare!.frameFillHex).toBeUndefined();
     expect(bare!.frameLineHex).toBeUndefined();
+    // A system colour names it as well as an RGB one does — Excel 2007 and
+    // 2010 rule a chart in windowText — and is transformed like any other:
+    // windowText at lumMod 15% + lumOff 85% is a light grey.
+    const system = (clr: string): string =>
+      BAR_CHART.replace(
+        '<c:chart>',
+        `<c:spPr><a:ln w="12700"><a:solidFill>${clr}</a:solidFill></a:ln></c:spPr><c:chart>`,
+      );
+    expect(
+      parseChart(
+        enc.encode(system('<a:sysClr val="windowText" lastClr="000000"/>')),
+        defaultColorResolver,
+      )!.frameLineHex,
+    ).toBe('000000');
+    expect(
+      parseChart(
+        enc.encode(
+          system(
+            '<a:sysClr val="windowText" lastClr="000000"><a:lumMod val="15000"/><a:lumOff val="85000"/></a:sysClr>',
+          ),
+        ),
+        defaultColorResolver,
+      )!.frameLineHex,
+    ).toBe('D9D9D9');
   });
 
   it('reads the frame rule width and dash, and the plot rectangle (§21.2.2.145)', () => {
