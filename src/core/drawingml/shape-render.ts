@@ -80,7 +80,9 @@ export function gradientToSolid(gradient: ShapeGradient): string {
  * An SVG `<linearGradient>` / `<radialGradient>` definition for a gradient fill
  * (EP16), shared by the SVG and HTML writers. The linear vector is expressed in
  * `objectBoundingBox` space; the angle is negated because the shape's own path
- * transform flips y (local y-up → page y-down).
+ * transform flips y (local y-up → page y-down) — and a radial centre, given in
+ * fractions down from the box's top, is measured up from its bottom for the
+ * same reason.
  *
  * @param id The gradient element id (referenced by `fill="url(#id)"`).
  * @param g  The gradient fill.
@@ -92,14 +94,16 @@ export function gradientSvgDef(id: string, g: ShapeGradient): string {
     .map((s) => `<stop offset="${n(s.offset)}" stop-color="#${s.colorHex}"/>`)
     .join('');
   if (g.kind === 'radial') {
-    // The centre is in the box's own fractions, which is exactly what SVG's
-    // objectBoundingBox units are; the sweep reaches half the diagonal, as the
-    // centred case does.
+    // The centre is in the box's own fractions, which is what SVG's
+    // objectBoundingBox units are — but the box is the shape's LOCAL one, y up,
+    // and DrawingML counts down from the top: tdf114848.pptx lights its panel
+    // from the top-left corner and we lit it from the bottom-left. The sweep
+    // reaches half the diagonal, as the centred case does.
     const c = g.center;
     if (!c) return `<radialGradient id="${id}">${stops}</radialGradient>`;
     const r = Math.SQRT2 / 2;
     return (
-      `<radialGradient id="${id}" cx="${n(c.x)}" cy="${n(c.y)}" r="${n(r)}">` +
+      `<radialGradient id="${id}" cx="${n(c.x)}" cy="${n(1 - c.y)}" r="${n(r)}">` +
       `${stops}</radialGradient>`
     );
   }
