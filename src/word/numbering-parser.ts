@@ -240,7 +240,9 @@ const CSS_UNITS: ReadonlyMap<string, number> = new Map([
 ]);
 
 function cssLengthPt(raw: string | undefined): number | undefined {
-  const m = raw !== undefined ? /^\s*(-?[\d.]+)\s*([a-z%]*)\s*$/u.exec(raw) : null;
+  // Trimmed first: blanks on both sides of an empty unit were split every
+  // way between the two `\s*` that surrounded it — quadratic in a long run.
+  const m = raw !== undefined ? /^(-?[\d.]+)\s*([a-z%]*)$/u.exec(raw.trim()) : null;
   if (!m) return undefined;
   const n = Number(m[1]);
   if (!Number.isFinite(n)) return undefined;

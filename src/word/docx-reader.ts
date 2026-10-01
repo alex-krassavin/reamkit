@@ -42,6 +42,7 @@ import {
   parseThemeLineWidths,
 } from '@/core/drawingml/theme-parser';
 import { OpcPackage, isOoxmlRel, parseCoreProperties } from '@/core/opc';
+import { firstTagMatch } from '@/core/opc/tag-scan';
 import {
   EMPTY_NUMBERING,
   EMPTY_SECTION,
@@ -383,6 +384,17 @@ function makeDiagramResolver(
   };
 }
 
+// The number a part's name ends in before its extension — `data3.xml` → `3`,
+// `''` with none — as `/(\d*)\.[^.]+$/u` read it off, read back from the end:
+// that expression tried every digit of a long run as its start.
+function partIndex(path: string): string {
+  const dot = path.lastIndexOf('.');
+  if (dot < 0 || dot === path.length - 1) return '';
+  let from = dot;
+  while (from > 0 && path.charCodeAt(from - 1) >= 0x30 && path.charCodeAt(from - 1) <= 0x39) from--;
+  return path.slice(from, dot);
+}
+
 // A diagram's other parts, wherever the producer hung them: off the data part
 // itself, or off the part that owns the diagram — the same split `drawingFromOwner`
 // deals with, and Word writes the layout and the colours next to the data rel
@@ -395,11 +407,10 @@ function siblingPart(
 ): Uint8Array | undefined {
   const own = pkg.getPartRelationships(dataPart).find((r) => r.type.endsWith(type));
   if (own) return pkg.resolveRelatedPart(dataPart, own)?.data;
-  const index = (path: string): string => /(\d*)\.[^.]+$/u.exec(path)?.[1] ?? '';
-  const want = index(dataPart);
+  const want = partIndex(dataPart);
   const rels = pkg.getPartRelationships(ownerPart).filter((r) => r.type.endsWith(type));
   const rel =
-    rels.find((r) => index(r.target) === want) ?? (rels.length === 1 ? rels[0] : undefined);
+    rels.find((r) => partIndex(r.target) === want) ?? (rels.length === 1 ? rels[0] : undefined);
   return rel ? pkg.resolveRelatedPart(ownerPart, rel)?.data : undefined;
 }
 
@@ -418,10 +429,9 @@ function drawingFromOwner(
     .getPartRelationships(ownerPart)
     .filter((r) => r.type.endsWith('/diagramDrawing'));
   if (drawings.length === 0) return undefined;
-  const index = (path: string): string => /(\d*)\.[^.]+$/u.exec(path)?.[1] ?? '';
-  const want = index(dataPart);
+  const want = partIndex(dataPart);
   const rel =
-    drawings.find((r) => index(r.target) === want) ??
+    drawings.find((r) => partIndex(r.target) === want) ??
     (drawings.length === 1 ? drawings[0] : undefined);
   return rel ? pkg.resolveRelatedPart(ownerPart, rel) : undefined;
 }
@@ -660,11 +670,17 @@ function detectDocxLanguage(
   stylesData: Uint8Array | undefined,
   documentData: Uint8Array,
 ): string | undefined {
-  const re = /<w:lang\b[^>]*\bw:val="([^"]+)"/;
   const decoder = new TextDecoder();
   for (const data of [stylesData, documentData]) {
     if (!data) continue;
-    const m = re.exec(decoder.decode(data));
+    // Sticky and run through tagMatches: searched for as it is, a part of
+    // `<w:lang` with no `>` was read to its end from each of them.
+    const m = firstTagMatch(
+      decoder.decode(data),
+      '<w:lang',
+      true,
+      /<w:lang\b[^>]*\bw:val="([^"]+)"/y,
+    );
     if (m?.[1]) return m[1];
   }
   return undefined;

@@ -1075,7 +1075,7 @@ interface CollectedRun {
  */
 function macroButtonText(instr: string): string | undefined {
   const m = /^\s*MACROBUTTON\s+\S+\s(.*)$/su.exec(instr);
-  const shown = m?.[1]?.replace(/\s+$/u, '');
+  const shown = m?.[1]?.trimEnd();
   return shown !== undefined && shown !== '' ? shown : undefined;
 }
 

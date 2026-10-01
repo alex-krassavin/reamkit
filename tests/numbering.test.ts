@@ -47,6 +47,33 @@ describe('parseNumbering', () => {
     expect(lvl.picBullet?.heightPt).toBeCloseTo(18, 6); // 0.25in
   });
 
+  it('a picture bullet sized by a length with a long run of blanks reads in linear time', () => {
+    // The two `\s*` round an empty unit split the run every way between them.
+    const width = `0${' '.repeat(100_000)}!`;
+    const start = performance.now();
+    const numbering = parse(
+      `
+      <w:numPicBullet w:numPicBulletId="3">
+        <w:pict>
+          <v:shape style="width:${width};height:9pt" o:bullet="t">
+            <v:imagedata r:id="rId7"/>
+          </v:shape>
+        </w:pict>
+      </w:numPicBullet>
+      <w:abstractNum w:abstractNumId="0">
+        <w:lvl w:ilvl="0">
+          <w:numFmt w:val="bullet"/>
+          <w:lvlText w:val="&#xF0B7;"/>
+          <w:lvlPicBulletId w:val="3"/>
+        </w:lvl>
+      </w:abstractNum>
+      <w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>`,
+      (relId) => (relId === 'rId7' ? ('res-1' as ResourceId) : undefined),
+    );
+    expect(performance.now() - start).toBeLessThan(1000);
+    expect(numbering.abstractNums.get('0')!.levels.get(0)!.picBullet?.widthPt).toBeUndefined();
+  });
+
   it('a picture bullet with no picture is not a bullet', () => {
     // §17.9.21 — lvlPicBulletId.docx declares a three-inch `v:shape` with no
     // `v:imagedata`; the level's own glyph is what Word draws.
