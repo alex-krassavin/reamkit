@@ -717,6 +717,11 @@ const CF_NUMBER_FORMAT_ID = 1_000_001;
 const MAX_SHEET_TEXT_CHARS = 1_000_000;
 
 interface PrintModelOptions {
+  // The sheet as a SCREEN shows it rather than as it prints: one table at full
+  // size — no print scale, no column bands, no manual page breaks, no printed
+  // headings and no centring on the paper. The caller leaves the print area
+  // and the repeated titles out as well. See ProjectSheetOptions.screen.
+  readonly screen?: boolean;
   // ECMA-376 §18.2.5 — _xlnm.Print_Area: render only this range (clipped to the
   // used range). Absent ⇒ the whole used range.
   readonly printArea?: CellRange;
@@ -999,6 +1004,7 @@ export function worksheetToBody(
     styles,
     date1904,
     charTwipsUnit,
+    print.screen === true,
   );
 
   // Print area (when defined) overrides the rendered window: Excel prints only
@@ -1227,26 +1233,28 @@ export function worksheetToBody(
   // The extent that has to fit is the grid's OR the drawings', whichever
   // reaches further — see PrintContext.drawingExtentPt.
   const drawing = print.drawingExtentPt;
-  const printScale = computePrintScale(
-    worksheet,
-    Math.max(totalGridTwips, Math.round((drawing?.widthPt ?? 0) * TWIPS_PER_POINT)),
-    sheetContentWidthTwips(worksheet),
-    Math.max(totalGridHeightTwips, Math.round((drawing?.heightPt ?? 0) * TWIPS_PER_POINT)),
-    sheetContentHeightTwips(worksheet),
-    {
-      rowTwips: fitRowTwips,
-      rowBreaks: fitRowBreaks,
-      titleTwips: fitTitleTwips,
-      colTwips: visibleWidths,
-      colBreaks: fitColBreaks,
-    },
-  );
+  const printScale = print.screen
+    ? 1
+    : computePrintScale(
+        worksheet,
+        Math.max(totalGridTwips, Math.round((drawing?.widthPt ?? 0) * TWIPS_PER_POINT)),
+        sheetContentWidthTwips(worksheet),
+        Math.max(totalGridHeightTwips, Math.round((drawing?.heightPt ?? 0) * TWIPS_PER_POINT)),
+        sheetContentHeightTwips(worksheet),
+        {
+          rowTwips: fitRowTwips,
+          rowBreaks: fitRowBreaks,
+          titleTwips: fitTitleTwips,
+          colTwips: visibleWidths,
+          colBreaks: fitColBreaks,
+        },
+      );
   const scaled = printScale < 0.999;
   if (print.scaleSink) print.scaleSink.value = printScale;
 
   // Manual <rowBreaks>: each brk id is the 0-based row that starts a new page →
   // force a page break before that (absolute) row.
-  const breakRows = new Set(honouredBreaks(worksheet, 'rows'));
+  const breakRows = new Set(print.screen ? [] : honouredBreaks(worksheet, 'rows'));
 
   // DoS guard: bound the total rendered text per sheet. A crafted file can
   // reference a multi-MB string from thousands of cells (poc-shared-strings:
@@ -1331,7 +1339,13 @@ export function worksheetToBody(
     }
     const wide = worksheet.fitToPage ? (worksheet.pageSetup?.fitToWidth ?? 1) : 1;
     const width = sheetContentWidthTwips(worksheet);
-    if (colCount > 1 && bandsAcross(worksheet, wide) && (total > width || breaks.size > 0)) {
+    // A screen has no bands, and text runs on across the whole row.
+    if (
+      !print.screen &&
+      colCount > 1 &&
+      bandsAcross(worksheet, wide) &&
+      (total > width || breaks.size > 0)
+    ) {
       for (const band of computeColumnBands(widthsForBands, width, breaks)) {
         for (let i = band.start; i <= band.end; i++) {
           bandEndOfCol.set(visibleCols[i] ?? i, visibleCols[band.end] ?? band.end);
@@ -1897,7 +1911,7 @@ export function worksheetToBody(
   };
   // <printOptions horizontalCentered="1"> centers the sheet within the print
   // margins.
-  const centered = worksheet.printOptions?.horizontalCentered === true;
+  const centered = !print.screen && worksheet.printOptions?.horizontalCentered === true;
   const tableProperties: TableProperties = {
     // A spreadsheet cell insets its text by about 2 px (1.5 pt at 96 DPI), not
     // by a word processor's 108 twips / 5.4 pt. The wider inset shifted every
@@ -1960,6 +1974,7 @@ export function worksheetToBody(
   const bandWidths = scaledColumnWidths(visibleWidths, printScale, scaled);
   const bandTotal = bandWidths.reduce((sum, w) => sum + w, 0);
   if (
+    !print.screen &&
     colCount > 1 &&
     bandsAcross(worksheet, fitWide) &&
     (bandTotal > contentWidthTwips || colBreaksLocal.size > 0)
@@ -2011,9 +2026,10 @@ export function worksheetToBody(
   // §18.3.1.70 — the printed row and column headings, when the sheet asks for
   // them. NumberFormatTests.xlsx does, and both references print the letters
   // across the top and the numbers down the side.
-  const headed = worksheet.printOptions?.headings
-    ? withHeadingBand(rows, bandWidths, colStart, rowNumbers)
-    : undefined;
+  const headed =
+    !print.screen && worksheet.printOptions?.headings
+      ? withHeadingBand(rows, bandWidths, colStart, rowNumbers)
+      : undefined;
   const table: Table = {
     properties: frozen ? { ...tableProperties, frozen } : tableProperties,
     // The print scale shrinks the whole sheet, columns included — `bandWidths`
@@ -2710,7 +2726,8 @@ export function cellPaintsSomething(cell: WorksheetCell | undefined, styles: Xls
 
 /**
  * How many empty columns past the used range the last column's text needs to
- * run into, bounded by the printable width (Excel stops at the page edge too).
+ * run into, bounded by the printable width (Excel stops at the page edge too)
+ * — or, on a `screen`, which has no edge, only by the column cap.
  *
  * Only the last used column can want them — anywhere else the grid already has
  * neighbours. Zero for the overwhelming majority of sheets, which keeps their
@@ -2723,6 +2740,7 @@ function overflowColumnsPastUsedRange(
   styles: XlsxStyles,
   date1904: boolean,
   charTwipsUnit: number,
+  screen: boolean,
 ): number {
   const defaultTwips = defaultColumnTwips(worksheet, charTwipsUnit, DEFAULT_COL_CHARS);
   // The columns past the used range are not necessarily default-width: a `<col>`
@@ -2769,7 +2787,8 @@ function overflowColumnsPastUsedRange(
 
   let gridTwips = 0;
   for (let abs = 0; abs <= usedCol; abs++) gridTwips += widthOf(abs);
-  const limit = sheetContentWidthTwips(worksheet);
+  // A window has no right edge for the text to stop at; the cap below holds.
+  const limit = screen ? Infinity : sheetContentWidthTwips(worksheet);
 
   // Bounded independently of the width budget: a run of `<col width="0.01">`
   // would otherwise take thousands of iterations to fill one page. No page can

@@ -108,6 +108,16 @@ export interface ProjectSheetOptions {
    * which is which; markdown asks for this, and gets `# Sheet1`.
    */
   readonly sheetHeadings?: boolean;
+  /**
+   * Project for a SCREEN rather than for paper: each sheet as Excel shows it in
+   * its window, not as it prints. One table a sheet with all of its columns —
+   * no column bands, no print scale, no print area or repeated titles, no page
+   * breaks — its drawings where they are anchored, every visible tab including
+   * an empty one, and each sheet a section that names its tab
+   * ({@link Section.sheet}). Headers and footers are print furniture and are
+   * left out. A flowed target that shows the workbook, HTML, asks for this.
+   */
+  readonly screen?: boolean;
 }
 
 /**
@@ -132,6 +142,8 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
   // recorded alongside once its blocks are in.
   const sheetSections: Array<SectionProperties> = [];
   const sheetEnds: Array<number> = [];
+  const sheetNames: Array<string> = [];
+  const screen = options.screen === true;
   // Kept for FlowDoc.section, the single-section field the render path falls
   // back to and which other consumers still read.
   let firstSheetSection: SectionProperties | undefined;
@@ -174,7 +186,8 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
     // is three empty tabs whose FIRST has both, and keeping the LAST one
     // standing printed the blank third: a page with nothing on it where
     // LibreOffice prints two lines of formatted text.
-    if (!sheetPrintsAnything(ws, sheet.styles) && ws !== fallbackSheet) {
+    // A screen shows every tab there is, an empty one too.
+    if (!screen && !sheetPrintsAnything(ws, sheet.styles) && ws !== fallbackSheet) {
       printableSheets--;
       continue;
     }
@@ -185,9 +198,12 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
     const scaleSink = { value: 1 };
     const bandSink = { lefts: [0] };
     const drawingExtentPt = drawingReachPt(ws);
-    const printArea = resolvePrintArea(sheet.definedNames, sheetIdx);
-    const titleRows = resolvePrintTitleRows(sheet.definedNames, sheetIdx);
+    // A print area and the titles repeated on every page are what PRINTS; the
+    // window shows the whole sheet, once.
+    const printArea = screen ? undefined : resolvePrintArea(sheet.definedNames, sheetIdx);
+    const titleRows = screen ? undefined : resolvePrintTitleRows(sheet.definedNames, sheetIdx);
     const gridBody = worksheetToBody(ws.grid, sheet.sharedStrings, sheet.styles, sheet.date1904, {
+      ...(screen ? { screen } : {}),
       ...(printArea ? { printArea } : {}),
       ...(titleRows ? { titleRows } : {}),
       gridLines: ws.grid.printOptions?.gridLines === true,
@@ -210,35 +226,44 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
       ...(drawingExtentPt ? { drawingExtentPt } : {}),
     });
 
-    // Each sheet's header/footer band and page geometry are its own.
-    const sheetSection = withHeaderFooter(
-      sectionFromWorksheet(ws.grid),
-      ws,
-      headersFooters,
-      scaleSink.value,
-      sheet.styles.fonts[0]?.sizePt,
-      printed,
-      options.fileName,
-      sheet.themePalette,
-      options.now,
-    );
+    // Each sheet's header/footer band and page geometry are its own — and a
+    // screen has no page for a header or footer to be printed on.
+    const sheetSection = screen
+      ? sectionFromWorksheet(ws.grid)
+      : withHeaderFooter(
+          sectionFromWorksheet(ws.grid),
+          ws,
+          headersFooters,
+          scaleSink.value,
+          sheet.styles.fonts[0]?.sizePt,
+          printed,
+          options.fileName,
+          sheet.themePalette,
+          options.now,
+        );
     if (printed === 0) firstSheetSection = sheetSection;
     sheetSections.push(sheetSection);
+    sheetNames.push(ws.name);
 
     // Each sheet after the first starts on its own PDF page. We do NOT print the
     // sheet name (Calc/Excel `--convert-to pdf` emit it nowhere), so the page
     // break is an empty page-break-only paragraph — unless the caller asked for
     // the names, in which case the heading is the paragraph and carries the
     // break itself, and there is no empty one to keep beside it.
+    // A screen has no pages to break: its sheets are sections, which name
+    // themselves.
     if (options.sheetHeadings === true) {
       body.push({
         kind: 'paragraph',
         paragraph: {
-          properties: { outlineLevel: 0, ...(printed > 0 ? { pageBreakBefore: true } : {}) },
+          properties: {
+            outlineLevel: 0,
+            ...(printed > 0 && !screen ? { pageBreakBefore: true } : {}),
+          },
           runs: [{ text: ws.name, properties: {} }],
         },
       });
-    } else if (printed > 0) {
+    } else if (printed > 0 && !screen) {
       body.push({ kind: 'paragraph', paragraph: PAGE_BREAK_PARAGRAPH });
     }
 
@@ -295,12 +320,14 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
     for (const shape of ws.shapes ?? []) {
       drawings.push({
         kind: 'shape',
-        shape: centreShape(
-          scaleShape(shape, scaleSink.value),
-          ws.grid,
-          drawingExtentPt,
-          scaleSink.value,
-        ),
+        shape: screen
+          ? shape
+          : centreShape(
+              scaleShape(shape, scaleSink.value),
+              ws.grid,
+              drawingExtentPt,
+              scaleSink.value,
+            ),
       });
     }
 
@@ -319,8 +346,9 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
     // grid produces — and every trace of it fell off the document. Down first,
     // then over, the way Excel paginates; a sheet whose drawings all fit one
     // page deep bands exactly as before.
+    // …none of which a screen does: it has no pages to band onto.
     const drawingBands =
-      gridBody.length === 0
+      gridBody.length === 0 && !screen
         ? bandDrawings(controlBlocks, printableHeightPt(ws.grid), scaleSink.value, DOWN).flatMap(
             (row) => bandDrawings(row, printableWidthPt(ws.grid), scaleSink.value),
           )
@@ -332,12 +360,14 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
       for (const shape of drawingBands[band]!) {
         drawings.push({
           kind: 'shape',
-          shape: centreShape(
-            scaleShape(shape, scaleSink.value),
-            ws.grid,
-            drawingExtentPt,
-            scaleSink.value,
-          ),
+          shape: screen
+            ? shape
+            : centreShape(
+                scaleShape(shape, scaleSink.value),
+                ws.grid,
+                drawingExtentPt,
+                scaleSink.value,
+              ),
         });
       }
     }
@@ -414,9 +444,15 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
       detail: `${String(sheet.metafilePictures)} picture(s) not rendered — a WMF/EMF/PICT metafile is replayed, not embedded; the anchor keeps its space`,
     });
   }
+  // On a screen every sheet is a section, one alone included: the section is
+  // what names it.
   const sections: Array<Section> =
-    sheetSections.length > 1
-      ? sheetSections.map((properties, i) => ({ properties, endIndex: sheetEnds[i]! }))
+    sheetSections.length > 1 || screen
+      ? sheetSections.map((properties, i) => ({
+          properties,
+          endIndex: sheetEnds[i]!,
+          ...(screen ? { sheet: { name: sheetNames[i]! } } : {}),
+        }))
       : [];
 
   return {

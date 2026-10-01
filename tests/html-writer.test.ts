@@ -4,7 +4,7 @@ import { buildDocxFromBody } from './fixtures/build-docx';
 import { buildXlsx } from './fixtures/build-xlsx';
 import { createConverter } from '@/core/converter/facade';
 import { Ream } from '@/core/converter/ream';
-import { ConversionLossError } from '@/core/ir';
+import { ConversionLossError, pt } from '@/core/ir';
 import { htmlWriter, writeHtml } from '@/html/html-writer';
 import { readDocx } from '@/word/docx-reader';
 
@@ -87,6 +87,35 @@ describe('html writer (FlowDoc adapter)', () => {
     expect(html).toContain('42');
   });
 
+  it("lays each sheet out whole, under its tab's name", async () => {
+    // Thirty 20-character columns are some 4000pt: printed, the sheet is cut
+    // into column bands a page wide, and the page breaks between them and
+    // between the sheets. On a screen it is one table, and every tab shows —
+    // the empty one too.
+    const wide = Array.from({ length: 30 }, (_, i) => `c${String(i + 1)}`);
+    const xlsx = buildXlsx({
+      sheets: [
+        { name: 'Wide', rows: [wide], columns: [{ min: 1, max: 30, widthChars: 20 }] },
+        { name: 'Empty', rows: [] },
+        { name: 'R&D', rows: [['x']] },
+      ],
+    });
+    const html = decode(await Ream.parse(xlsx).convert('html'));
+    expect(
+      [...html.matchAll(/<section class="sheet" data-sheet="([^"]*)">/gu)].map((m) => m[1]),
+    ).toEqual(['Wide', 'Empty', 'R&amp;D']);
+    const wideSheet = html.slice(
+      html.indexOf('data-sheet="Wide"'),
+      html.indexOf('data-sheet="Empty"'),
+    );
+    expect(wideSheet.match(/<table/gu)).toHaveLength(1);
+    expect(wideSheet).toContain('c30');
+    expect(html).not.toContain('break-before:page');
+    expect(html).toContain('<h2 class="sheet-name">R&amp;D</h2>');
+    // No page, so no page-wide column for the sheet to be squeezed into.
+    expect(html).toContain('<article>');
+  });
+
   it('sets a grid row at its height and a cell at the bottom of it', async () => {
     const xlsx = buildXlsx({
       rows: [['tall'], ['plain']],
@@ -100,6 +129,44 @@ describe('html writer (FlowDoc adapter)', () => {
     // A fixed table is given the width of its grid, or a browser ignores the
     // fixed layout and sizes the columns to their content.
     expect(html).toMatch(/<table style="width:[\d.]+pt;table-layout:fixed">/u);
+  });
+
+  it("places a sheet's drawing on its surface where it is anchored", () => {
+    const { doc } = readDocx(buildDocxFromBody('<w:p><w:r><w:t>x</w:t></w:r></w:p>'));
+    const html = decode(
+      writeHtml({
+        ...doc,
+        sections: [
+          { properties: { headers: [], footers: [] }, endIndex: 2, sheet: { name: 'Plot' } },
+        ],
+        body: [
+          {
+            kind: 'shape' as const,
+            shape: {
+              float: {
+                wrap: 'none' as const,
+                posH: { relativeFrom: 'margin' as const, offsetPt: pt(100) },
+                posV: { relativeFrom: 'margin' as const, offsetPt: pt(50) },
+              },
+              width: pt(80),
+              height: pt(40),
+              geometry: { kind: 'preset' as const, preset: 'rect' },
+              fill: { kind: 'solid' as const, colorHex: 'FF0000' },
+              paragraphProperties: {},
+            },
+          },
+          {
+            kind: 'paragraph' as const,
+            paragraph: { properties: {}, runs: [{ text: 'under it', properties: {} }] },
+          },
+        ],
+      }).bytes,
+    );
+    expect(html).toContain(
+      '<div class="drawing" style="position:absolute;left:100pt;top:50pt;width:80pt;height:40pt">',
+    );
+    // The surface reaches the drawing's far corner, so the next sheet starts below it.
+    expect(html).toContain('<div class="surface" style="min-width:180pt;min-height:90pt">');
   });
 
   it('reports headers/footers as a dropped loss; strict throws', async () => {

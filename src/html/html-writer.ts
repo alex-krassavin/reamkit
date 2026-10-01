@@ -110,8 +110,10 @@ export function writeHtml(flow: FlowDoc): WriteResult {
   out.push('<body>');
   // A document-shaped column: the first section's content width, like the
   // page the source was authored for (A4 + 1" margins when unspecified —
-  // the same fallback the layout engine uses).
-  out.push(`<article style="max-width: ${fmt(contentWidthPt(flow))}pt">`);
+  // the same fallback the layout engine uses). A workbook laid out for the
+  // screen has no page: a sheet is as wide as its columns.
+  const sheets = flow.sections.some((s) => s.sheet !== undefined);
+  out.push(sheets ? '<article>' : `<article style="max-width: ${fmt(contentWidthPt(flow))}pt">`);
 
   if (flow.headersFooters && flow.headersFooters.size > 0) {
     losses.push({
@@ -121,7 +123,8 @@ export function writeHtml(flow: FlowDoc): WriteResult {
     });
   }
 
-  for (const el of flow.body) emitBlock(out, el, ctx);
+  if (sheets) emitSheets(out, flow, ctx);
+  else for (const el of flow.body) emitBlock(out, el, ctx);
 
   emitNotesSection(out, flow.footnotes, ctx.notes.footnotes, 'fn', ctx);
   emitNotesSection(out, flow.endnotes, ctx.notes.endnotes, 'en', ctx);
@@ -167,6 +170,11 @@ const BASE_CSS = [
   'th{text-align:inherit}',
   '.tab{display:inline-block;min-width:18pt}',
   'img{vertical-align:baseline}',
+  // A worksheet laid out for the screen: its tab's name over a surface that
+  // its drawings are placed on.
+  '.sheet{margin:0 0 24pt}',
+  '.sheet-name{font:600 11pt/1.4 sans-serif;margin:0 0 6pt;color:#333}',
+  '.surface{position:relative}',
   '.notes{margin-top:18pt;font-size:smaller}',
   '.notes hr{margin:0 0 6pt;border:none;border-top:0.75pt solid #000;width:144pt;margin-left:0}',
   // Comment-range highlight (CM2c) + nested reply indentation (CM4).
@@ -188,6 +196,63 @@ interface EmitCtx {
     endnotes: ReadonlyMap<string, number>;
     comments: ReadonlyMap<string, number>;
   };
+  // Inside a worksheet's surface (Section.sheet): a float is placed where it
+  // is anchored, from the surface's top-left corner, instead of in line.
+  readonly surface?: boolean;
+}
+
+/**
+ * A workbook laid out for the screen: each sheet a section of its own, headed
+ * by its tab's name, its grid and drawings on one surface. The surface is the
+ * positioned box the drawings are placed in, and it is made as large as the
+ * furthest of them — a chart below the last row is outside the grid, and a box
+ * only as tall as the grid let the next sheet run under it.
+ */
+function emitSheets(out: Array<string>, flow: FlowDoc, ctx: EmitCtx): void {
+  let start = 0;
+  for (const section of flow.sections) {
+    const els = flow.body.slice(start, section.endIndex);
+    start = section.endIndex;
+    if (!section.sheet) {
+      for (const el of els) emitBlock(out, el, ctx);
+      continue;
+    }
+    const name = section.sheet.name;
+    out.push(`<section class="sheet" data-sheet="${escapeAttr(name)}">`);
+    out.push(`<h2 class="sheet-name">${escapeText(name)}</h2>`);
+    let right = 0;
+    let bottom = 0;
+    for (const el of els) {
+      const at = surfaceBox(el);
+      if (!at) continue;
+      right = Math.max(right, at.x + at.width);
+      bottom = Math.max(bottom, at.y + at.height);
+    }
+    const reach =
+      right > 0 || bottom > 0 ? `min-width:${fmt(right)}pt;min-height:${fmt(bottom)}pt` : '';
+    out.push(`<div class="surface"${reach ? ` style="${reach}"` : ''}>`);
+    const onSurface: EmitCtx = { ...ctx, surface: true };
+    for (const el of els) emitBlock(out, el, onSurface);
+    out.push('</div>');
+    out.push('</section>');
+  }
+  for (const el of flow.body.slice(start)) emitBlock(out, el, ctx);
+}
+
+/**
+ * Where a floating drawing sits on a worksheet's surface, in points from its
+ * top-left corner — or `undefined` for a block that is not a float placed by
+ * offsets (a paragraph, a table, an inline picture).
+ */
+function surfaceBox(
+  el: BodyElement,
+): { x: number; y: number; width: number; height: number } | undefined {
+  if (el.kind === 'paragraph' || el.kind === 'table') return undefined;
+  const block = el.kind === 'image' ? el.image : el.kind === 'chart' ? el.chart : el.shape;
+  const x = block.float?.posH?.offsetPt;
+  const y = block.float?.posV?.offsetPt;
+  if (x === undefined || y === undefined) return undefined;
+  return { x, y, width: block.width, height: block.height };
 }
 
 // Anchor targets referenced by some internal link anywhere in the body.
@@ -324,6 +389,19 @@ function emitCommentsSection(
 }
 
 function emitBlock(out: Array<string>, el: BodyElement, ctx: EmitCtx): void {
+  // On a worksheet's surface a drawing is where its anchor puts it, over the
+  // grid — in line it was stacked above the grid, a chart beside the figures
+  // it plots moved up and away from them.
+  const at = ctx.surface ? surfaceBox(el) : undefined;
+  if (at) {
+    out.push(
+      `<div class="drawing" style="position:absolute;left:${fmt(at.x)}pt;top:${fmt(at.y)}pt;` +
+        `width:${fmt(at.width)}pt;height:${fmt(at.height)}pt">`,
+    );
+    emitBlock(out, el, { ...ctx, surface: false });
+    out.push('</div>');
+    return;
+  }
   if (el.kind === 'paragraph') {
     emitParagraph(out, el.paragraph, ctx);
   } else if (el.kind === 'table') {

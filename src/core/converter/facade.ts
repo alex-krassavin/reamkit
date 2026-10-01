@@ -174,12 +174,12 @@ export function createConverter(opts: CreateConverterOptions = {}): Converter {
     }
 
     if (to === 'html') {
-      // FlowDoc → html writer directly: no layout and no fonts — zero I/O.
-      const { doc: flow, losses: readLosses } = readToFlow(
-        reader,
-        bytes,
-        rest.now ? { now: rest.now } : undefined,
-      );
+      // FlowDoc → html writer directly: no layout and no fonts — zero I/O. A
+      // workbook is projected for the screen, as Ream.convert does.
+      const { doc: flow, losses: readLosses } = readToFlow(reader, bytes, {
+        ...(rest.now ? { now: rest.now } : {}),
+        screen: true,
+      });
       losses.push(...readLosses);
       const html = writeHtml(flow);
       losses.push(...html.losses);

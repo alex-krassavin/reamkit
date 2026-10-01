@@ -286,7 +286,20 @@ export class Ream {
 
     if (to === 'html') {
       // Flow medium: no layout, no fonts to embed — zero I/O.
-      const html = writeHtml(flow);
+      //
+      // A workbook re-projects for the screen: a web page shows the sheet as
+      // Excel's window does — every column at once, the drawings over the
+      // grid, the tabs by name — and the printed page it is parsed into is cut
+      // into column bands and shrunk to fit paper that is not there.
+      const html = writeHtml(
+        this.sheet
+          ? projectSheetDoc(this.sheet, {
+              ...(options.now ? { now: options.now } : {}),
+              ...(options.fileName ? { fileName: options.fileName } : {}),
+              screen: true,
+            })
+          : flow,
+      );
       losses.push(...html.losses);
       this.enforceStrict(options, losses);
       return { bytes: html.bytes, losses };

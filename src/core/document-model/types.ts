@@ -1923,6 +1923,14 @@ export interface SectionColumns {
 export interface Section {
   readonly properties: SectionProperties;
   readonly endIndex: number;
+  /**
+   * The worksheet this section IS, where a workbook was projected for a screen
+   * rather than for paper (`ProjectSheetOptions.screen`): its tab's name. Such
+   * a section is one surface with no pages — the grid as Excel shows it — and
+   * a float in it is placed from the surface's top-left corner, which is the
+   * corner of the first cell.
+   */
+  readonly sheet?: { readonly name: string };
 }
 
 /** The parsed WordprocessingML document: body, stylesheet, numbering and section setup. */
