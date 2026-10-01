@@ -376,7 +376,7 @@ function worksheetXml(
     `<worksheet xmlns="${MAIN_NS}" xmlns:r="${R_NS}">` +
     (grid.fitToPage ? '<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>' : '') +
     dimension +
-    sheetViewsXml(grid.pane) +
+    sheetViewsXml(grid.pane, grid.showGridLines) +
     colsXml +
     `<sheetData>${rowsXml}</sheetData>` +
     mergesXml +
@@ -401,9 +401,13 @@ function worksheetXml(
 
 // §18.3.1.66 <sheetViews><sheetView><pane> — re-emit a frozen pane so the freeze
 // survives a round-trip. The reader reads only xSplit/ySplit/state; topLeftCell
-// and activePane are written for Excel's benefit but ignored on re-read.
-function sheetViewsXml(pane: SheetPane | undefined): string {
-  if (!pane || (pane.frozenRows <= 0 && pane.frozenCols <= 0)) return '';
+// and activePane are written for Excel's benefit but ignored on re-read. A
+// sheet that hides its gridlines says so on the view (§18.3.1.87).
+function sheetViewsXml(pane: SheetPane | undefined, showGridLines?: boolean): string {
+  const grid = showGridLines === false ? ' showGridLines="0"' : '';
+  if (!pane || (pane.frozenRows <= 0 && pane.frozenCols <= 0)) {
+    return grid ? `<sheetViews><sheetView${grid} workbookViewId="0"/></sheetViews>` : '';
+  }
   const { frozenRows, frozenCols } = pane;
   const topLeftCell = cellRef(frozenRows, frozenCols);
   const activePane =
@@ -412,7 +416,7 @@ function sheetViewsXml(pane: SheetPane | undefined): string {
     (frozenCols > 0 ? ` xSplit="${frozenCols}"` : '') +
     (frozenRows > 0 ? ` ySplit="${frozenRows}"` : '') +
     ` topLeftCell="${topLeftCell}" activePane="${activePane}" state="frozen"`;
-  return `<sheetViews><sheetView workbookViewId="0"><pane${attrs}/></sheetView></sheetViews>`;
+  return `<sheetViews><sheetView${grid} workbookViewId="0"><pane${attrs}/></sheetView></sheetViews>`;
 }
 
 // §18.5.1.2 xl/tables/tableN.xml. The reader keeps no column names, so generic

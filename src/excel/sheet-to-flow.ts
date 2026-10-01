@@ -206,7 +206,11 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
       ...(screen ? { screen } : {}),
       ...(printArea ? { printArea } : {}),
       ...(titleRows ? { titleRows } : {}),
-      gridLines: ws.grid.printOptions?.gridLines === true,
+      // The grid a window draws is the view's; the one paper gets is the print
+      // options'.
+      gridLines: screen
+        ? ws.grid.showGridLines !== false
+        : ws.grid.printOptions?.gridLines === true,
       sheetGrids,
       sheetName: ws.name,
       definedNames: sheet.definedNames,

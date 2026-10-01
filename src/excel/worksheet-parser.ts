@@ -114,6 +114,7 @@ export function parseWorksheet(data: Uint8Array, theme?: ThemePalette): ParsedWo
   const rowBreaks = parseBreaks(wsObj, 'rowBreaks');
   const colBreaks = parseBreaks(wsObj, 'colBreaks');
   const pane = parsePane(wsObj);
+  const showGridLines = parseShowGridLines(wsObj);
   const drawingNode = wsObj['drawing'];
   const drawingRelId =
     drawingNode && typeof drawingNode === 'object'
@@ -153,6 +154,7 @@ export function parseWorksheet(data: Uint8Array, theme?: ThemePalette): ParsedWo
     ...(rowBreaks.length > 0 ? { rowBreaks } : {}),
     ...(colBreaks.length > 0 ? { colBreaks } : {}),
     ...(pane ? { pane } : {}),
+    ...(showGridLines === false ? { showGridLines } : {}),
     ...(drawingRelId !== undefined ? { drawingRelId } : {}),
     ...(legacyDrawingRelId !== undefined ? { legacyDrawingRelId } : {}),
     ...(conditionalFormats.length > 0 ? { conditionalFormats } : {}),
@@ -387,6 +389,19 @@ function parsePane(ws: Record<string, unknown>): SheetPane | undefined {
   const frozenRows = count('ySplit');
   if (frozenCols === 0 && frozenRows === 0) return undefined;
   return { frozenRows, frozenCols };
+}
+
+// ECMA-376 §18.3.1.87 — <sheetViews><sheetView showGridLines>: the first view's
+// say on whether the window draws the gridlines. Only an explicit "no" is
+// returned; absent or anything else is the default, shown.
+function parseShowGridLines(ws: Record<string, unknown>): false | undefined {
+  const views = ws['sheetViews'];
+  if (!views || typeof views !== 'object') return undefined;
+  const viewRaw = (views as Record<string, unknown>)['sheetView'];
+  const view = Array.isArray(viewRaw) ? viewRaw[0] : viewRaw;
+  if (!view || typeof view !== 'object') return undefined;
+  const raw = strAttr(view as Record<string, unknown>, 'showGridLines');
+  return raw === '0' || raw === 'false' ? false : undefined;
 }
 
 // ECMA-376 §18.3.1.74/§18.3.1.14 — <rowBreaks>/<colBreaks> with <brk id=".."/>.

@@ -101,6 +101,8 @@ export interface XlsxSheetSpec {
   readonly colBreaks?: ReadonlyArray<number>;
   /** <sheetView><pane state="frozen"> — frozen leading rows / columns. */
   readonly freeze?: { readonly rows?: number; readonly cols?: number };
+  /** <sheetView showGridLines="0"> — the window draws no gridlines. */
+  readonly hideGridLines?: boolean;
   /** Raw <conditionalFormatting> markup injected into the worksheet. */
   readonly conditionalFormattingXml?: string;
   /** Raw <dataValidations> markup injected into the worksheet (E-SHEET SV1). */
@@ -554,14 +556,17 @@ export function buildXlsx(
       : '';
     const freezeCols = sheet.freeze?.cols ?? 0;
     const freezeRows = sheet.freeze?.rows ?? 0;
+    const gridAttr = sheet.hideGridLines ? ' showGridLines="0"' : '';
     const sheetViewsXml =
       freezeCols > 0 || freezeRows > 0
-        ? '<sheetViews><sheetView workbookViewId="0"><pane' +
+        ? `<sheetViews><sheetView${gridAttr} workbookViewId="0"><pane` +
           (freezeCols > 0 ? ` xSplit="${freezeCols}"` : '') +
           (freezeRows > 0 ? ` ySplit="${freezeRows}"` : '') +
           ` state="frozen"/>` +
           '</sheetView></sheetViews>'
-        : '';
+        : gridAttr
+          ? `<sheetViews><sheetView${gridAttr} workbookViewId="0"/></sheetViews>`
+          : '';
     const xml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
   ${sheetPrXml}

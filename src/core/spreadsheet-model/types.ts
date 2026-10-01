@@ -243,6 +243,13 @@ export interface ParsedWorksheet {
    * (E-SHEET SE2/SE3).
    */
   readonly pane?: SheetPane;
+  /**
+   * ECMA-376 §18.3.1.87 `<sheetView showGridLines>` — whether the sheet's
+   * window draws the cell gridlines. A VIEW setting, like the pane: what
+   * prints is `<printOptions gridLines>`. Carried for a screen projection and
+   * the round trip; absent ⇒ shown, the default.
+   */
+  readonly showGridLines?: boolean;
 }
 
 /**

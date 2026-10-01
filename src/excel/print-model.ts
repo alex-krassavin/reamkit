@@ -709,6 +709,11 @@ function scaleRunFont(props: RunProperties, scale: number): RunProperties {
 // declared cell border still reads as the heavier line on the page.
 const PRINT_GRIDLINE_HEX = 'C0C0C0';
 
+// …and on a screen, the lighter grey of a spreadsheet window's grid, at the
+// thinnest line there is: a border the sheet declares must win the edge they
+// share, and in a collapsed table the wider line wins.
+const SCREEN_GRIDLINE: Border = { style: 'single', width: pt(0.5), colorHex: 'D4D4D4' };
+
 // A synthetic id for a conditional format's own number format, which arrives as
 // a code rather than through the workbook's <numFmts> table.
 const CF_NUMBER_FORMAT_ID = 1_000_001;
@@ -1941,7 +1946,8 @@ export function worksheetToBody(
     // reference render on a four-column sheet whose columns were all declared
     // the same width.
     layout: 'fixed',
-    ...(print.gridLines
+    ...(print.gridLines && print.screen ? { gridlines: SCREEN_GRIDLINE } : {}),
+    ...(print.gridLines && !print.screen
       ? {
           borders: {
             top: thin,

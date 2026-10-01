@@ -116,6 +116,37 @@ describe('html writer (FlowDoc adapter)', () => {
     expect(html).toContain('<article>');
   });
 
+  it("draws the window's gridlines, but not over a fill nor where the sheet hides them", async () => {
+    const STYLES = `
+      <fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts>
+      <fills count="3">
+        <fill><patternFill patternType="none"/></fill>
+        <fill><patternFill patternType="gray125"/></fill>
+        <fill><patternFill patternType="solid"><fgColor rgb="FFFFFF00"/></patternFill></fill>
+      </fills>
+      <borders count="1"><border/></borders>
+      <cellXfs count="2">
+        <xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>
+        <xf numFmtId="0" fontId="0" fillId="2" borderId="0" applyFill="1"/>
+      </cellXfs>`;
+    const xlsx = buildXlsx({
+      stylesXml: STYLES,
+      sheets: [
+        { name: 'Grid', rows: [['plain', { value: 'filled', styleIndex: 1 }]] },
+        { name: 'Clean', rows: [['plain']], hideGridLines: true },
+      ],
+    });
+    const html = decode(await Ream.parse(xlsx).convert('html'));
+    const sheet = (name: string): string =>
+      html.slice(html.indexOf(`data-sheet="${name}"`)).split('</section>')[0]!;
+    // Four edges round the plain cell; the yellow one is covered by its fill.
+    expect(sheet('Grid').match(/0\.5pt solid #D4D4D4/gu)).toHaveLength(4);
+    expect(
+      /<td style="([^"]*)">\s*<p[^>]*><span[^>]*>filled/u.exec(sheet('Grid'))?.[1],
+    ).not.toContain('D4D4D4');
+    expect(sheet('Clean')).not.toContain('D4D4D4');
+  });
+
   it('sets a grid row at its height and a cell at the bottom of it', async () => {
     const xlsx = buildXlsx({
       rows: [['tall'], ['plain']],

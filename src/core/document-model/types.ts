@@ -1065,6 +1065,14 @@ export interface TableProperties {
   readonly defaultCellMargins?: CellMargins;
   readonly borders?: CellBorders;
   /**
+   * A worksheet's gridlines as its WINDOW draws them (§18.3.1.87), where the
+   * sheet was projected for a screen: the line a cell's edge takes when no
+   * border claims it — but not around a filled cell, whose fill covers them.
+   * A screen-only hint: the paginated layout draws a grid only where the
+   * sheet PRINTS one, and that comes as `borders`.
+   */
+  readonly gridlines?: Border;
+  /**
    * ECMA-376 §17.4.27 (`w:jc`) / xlsx `<printOptions horizontalCentered>`.
    * Centers or right-aligns a table narrower than the content width; absent ⇒ left.
    */

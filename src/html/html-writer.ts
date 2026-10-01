@@ -968,10 +968,13 @@ function emitCell(
   // border-collapse the browser performs its own conflict resolution.
   const t = table.properties.borders;
   const c = cell.properties.borders;
-  pushBorder(css, 'top', c?.top ?? (pos.firstRow ? t?.top : t?.insideH));
-  pushBorder(css, 'bottom', c?.bottom ?? (pos.lastRow ? t?.bottom : t?.insideH));
-  pushBorder(css, 'left', c?.left ?? (pos.firstCol ? t?.left : t?.insideV));
-  pushBorder(css, 'right', c?.right ?? (pos.lastCol ? t?.right : t?.insideV));
+  // A worksheet's grid on a screen: whatever edge the cell's own borders and
+  // the table's leave bare — unless the cell is filled, which covers it.
+  const g = cell.properties.shading ? undefined : table.properties.gridlines;
+  pushBorder(css, 'top', c?.top ?? (pos.firstRow ? t?.top : t?.insideH) ?? g);
+  pushBorder(css, 'bottom', c?.bottom ?? (pos.lastRow ? t?.bottom : t?.insideH) ?? g);
+  pushBorder(css, 'left', c?.left ?? (pos.firstCol ? t?.left : t?.insideV) ?? g);
+  pushBorder(css, 'right', c?.right ?? (pos.lastCol ? t?.right : t?.insideV) ?? g);
   if (cell.properties.shading) css.push(`background-color:#${cell.properties.shading.colorHex}`);
   // Where the content sits in a box taller than itself: the top unless the
   // cell says — and a spreadsheet cell says the bottom by default (§18.8.1).
