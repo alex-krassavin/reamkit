@@ -20,12 +20,52 @@ const MAX_EXPANSION = 65_536;
 /** Longest total the substitutions may add to one part. */
 const MAX_TOTAL = 1_048_576;
 
-const DOCTYPE = /<!DOCTYPE\s[^[>]*(?:\[[\s\S]*?\]\s*)?>/;
+const DOCTYPE = /<!DOCTYPE\s[^[>]*(?:\[[\s\S]*?\]\s*)?>/y;
 const ENTITY_DECL = /<!ENTITY\s+([^\s%<>&;]+)\s+(?:"([^"]*)"|'([^']*)')\s*>/g;
 const REFERENCE = /&([^\s;&<>]+);/g;
 
 /** The five entities XML predefines; a declaration never overrides them. */
 const PREDEFINED = new Set(['lt', 'gt', 'amp', 'apos', 'quot']);
+
+/**
+ * The first `<!DOCTYPE …>` of a part — what {@link DOCTYPE} finds searching
+ * from the start — tried only where it holds. A search tries every
+ * `<!DOCTYPE`, reads on to the first `[` or `>` after it, and from a `[` on to
+ * a `]` a `>` follows: a part of `<!DOCTYPE ` written over and over with none
+ * of those sent it to the end of the part from each one, before the parser
+ * ever saw the part. Every `<!DOCTYPE` before the same first `[` or `>` fares
+ * as the one before it, and a `[` that no `]…>` follows fails every one that
+ * reaches it, so those are passed over and the expression runs once.
+ */
+function findDoctype(xml: string): RegExpExecArray | null {
+  let stop = -1; // the first `[` or `>` the last declaration reached
+  let close: number | undefined; // the last `]` a `>` follows, once wanted
+  for (let at = xml.indexOf('<!DOCTYPE'); at >= 0; at = xml.indexOf('<!DOCTYPE', at + 1)) {
+    if (!/\s/.test(xml[at + 9] ?? '')) continue;
+    if (stop < at + 10) stop = firstBracketOrEnd(xml, at + 10);
+    if (stop < 0) return null;
+    if (xml[stop] === '[') {
+      close ??= lastBracketClose(xml);
+      if (close < stop) continue;
+    }
+    DOCTYPE.lastIndex = at;
+    return DOCTYPE.exec(xml);
+  }
+  return null;
+}
+
+/** The first `[` or `>` at or after `from`, or -1. */
+function firstBracketOrEnd(xml: string, from: number): number {
+  for (let i = from; i < xml.length; i++) if (xml[i] === '[' || xml[i] === '>') return i;
+  return -1;
+}
+
+/** Where the last `]` stands that, past some whitespace, a `>` follows; or -1. */
+function lastBracketClose(xml: string): number {
+  let last = -1;
+  for (const m of xml.matchAll(/\]\s*>/g)) last = m.index;
+  return last;
+}
 
 /** Escape resolved text so it re-enters the document as characters, not markup. */
 function escape(text: string): string {
@@ -96,7 +136,7 @@ function expander(declared: ReadonlyMap<string, string>): (name: string) => stri
  */
 export function resolveInternalEntities(xml: string): string {
   if (!xml.includes('<!DOCTYPE')) return xml;
-  const doctype = DOCTYPE.exec(xml);
+  const doctype = findDoctype(xml);
   if (!doctype) return xml;
 
   const declared = new Map<string, string>();

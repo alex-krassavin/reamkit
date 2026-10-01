@@ -68,6 +68,29 @@ const TYPE_OF_TAG: Readonly<Record<string, ChartType>> = {
 };
 
 /**
+ * The most points a chart keeps, all its series together: as many as a sheet
+ * has rows, the longest range a series can name. A chart part states its own
+ * point counts — a cache's `c:ptCount`, each point's `idx`, the range of a
+ * `c:f` — and taken at their word, a count of two billion in a part a few
+ * hundred bytes long asked for a dense array that ran the process out of
+ * memory, and one past 2³² − 1 threw.
+ */
+export const MOST_CHART_POINTS = 1_048_576;
+
+/**
+ * How many points each of a chart's `seriesCount` series keeps: an even share
+ * of {@link MOST_CHART_POINTS}, so that the bound holds for the chart and not
+ * series by series — two thousand series, each declaring a sheet's worth of
+ * points, are two billion. A series' points past its share are not read.
+ *
+ * @param seriesCount How many series the chart has.
+ * @returns The points each keeps, at least one.
+ */
+export function pointsPerSeries(seriesCount: number): number {
+  return Math.max(1, Math.floor(MOST_CHART_POINTS / Math.max(1, seriesCount)));
+}
+
+/**
  * Parse a DrawingML chart part (chart1.xml) into a {@link Chart}, reading the
  * CACHED data (`c:numCache` / `c:strCache`) rather than the embedded spreadsheet
  * — the cache holds the last-computed categories and values, exactly what Word
@@ -108,6 +131,10 @@ export function parseChart(
       .filter((c) => poIs(c, 'c:axId'))
       .map((c) => poAttr(c, 'val') ?? '');
   const primaryAxIds = new Set(group ? groupAxIds(group) : []);
+  // Each series' share of the chart's points, known before any is read.
+  const most = pointsPerSeries(
+    groups.reduce((n, g) => n + poChildren(g).filter((c) => poIs(c, 'c:ser')).length, 0),
+  );
   const serNodes: Array<PoNode> = [];
   const series: Array<ChartSeries> = [];
   let secondaryValAxId: string | undefined;
@@ -118,7 +145,7 @@ export function parseChart(
     for (const s of poChildren(g).filter((c) => poIs(c, 'c:ser'))) {
       serNodes.push(s);
       series.push({
-        ...parseSeries(s, resolveColor),
+        ...parseSeries(s, resolveColor, most),
         ...(groupType === type ? {} : { type: groupType }),
         ...(secondary ? { secondaryAxis: true as const } : {}),
       });
@@ -160,8 +187,8 @@ export function parseChart(
   for (const s of serNodes) {
     const cat = poChildren(s).find((c) => poIs(c, 'c:cat'));
     if (cat) {
-      const levels = multiLevelCategories(cat);
-      categories = levels ? levels.categories : denseStrings(cat);
+      const levels = multiLevelCategories(cat, most);
+      categories = levels ? levels.categories : denseStrings(cat, most);
       categoryGroups = levels?.groups;
       categoriesRef ??= refFormula(cat);
       break;
@@ -311,14 +338,14 @@ export function parseChart(
   };
 }
 
-function parseSeries(ser: PoNode, resolveColor: ColorResolver): ChartSeries {
+function parseSeries(ser: PoNode, resolveColor: ColorResolver, most: number): ChartSeries {
   // Category charts carry values in c:val; scatter carries them in c:yVal with
   // the independent variable in c:xVal.
   const valNode =
     poChildren(ser).find((c) => poIs(c, 'c:val')) ?? poChildren(ser).find((c) => poIs(c, 'c:yVal'));
-  const values = valNode ? denseNumbers(valNode) : [];
+  const values = valNode ? denseNumbers(valNode, most) : [];
   const xValNode = poChildren(ser).find((c) => poIs(c, 'c:xVal'));
-  const xValues = xValNode ? denseNumbers(xValNode) : undefined;
+  const xValues = xValNode ? denseNumbers(xValNode, most) : undefined;
   const name = seriesName(ser);
   const colorHex = fillColorOf(
     poChildren(ser).find((c) => poIs(c, 'c:spPr')),
@@ -559,7 +586,7 @@ function cachedTitleText(title: PoNode): string | undefined {
   const tx = poChildren(title).find((c) => poIs(c, 'c:tx'));
   const ref = tx ? poChildren(tx).find((c) => poIs(c, 'c:strRef')) : undefined;
   if (!ref) return undefined;
-  const cached = denseStrings(ref).filter((t) => t.length > 0);
+  const cached = denseStrings(ref, MOST_CHART_POINTS).filter((t) => t.length > 0);
   return cached.length > 0 ? cached.join(' ') : undefined;
 }
 
@@ -724,26 +751,47 @@ function ptCountOf(container: PoNode): number {
   return pc ? (poIntAttr(pc, 'val') ?? 0) : 0;
 }
 
-function denseLength(container: PoNode, pts: ReadonlyArray<{ idx: number }>): number {
-  let max = ptCountOf(container);
-  for (const p of pts) max = Math.max(max, p.idx + 1);
-  return max;
+/** Whether `n` can index a point: a whole number from zero. */
+const isPointIndex = (n: number): boolean => Number.isInteger(n) && n >= 0;
+
+/**
+ * How many slots `count` points and those at `indexes` take — the count, or
+ * past it the last of them, and never more than `most`. A count or an index
+ * that is no whole number (2.5) asked for an array of no possible length and
+ * threw; it counts for nothing.
+ */
+function denseLength(count: number, indexes: ReadonlyArray<number>, most: number): number {
+  let length = isPointIndex(count) ? count : 0;
+  for (const idx of indexes) if (isPointIndex(idx)) length = Math.max(length, idx + 1);
+  return Math.min(length, most);
 }
 
-function denseNumbers(container: PoNode): Array<number> {
+/** A cache's values by point index, gaps 0, at most `most` of them. */
+function denseNumbers(container: PoNode, most: number): Array<number> {
   const pts = readPts(container);
-  const arr = new Array<number>(denseLength(container, pts)).fill(0);
+  const length = denseLength(
+    ptCountOf(container),
+    pts.map((p) => p.idx),
+    most,
+  );
+  const arr = new Array<number>(length).fill(0);
   for (const p of pts) {
     const n = Number(p.v);
-    if (Number.isFinite(n)) arr[p.idx] = n;
+    if (Number.isFinite(n) && isPointIndex(p.idx) && p.idx < length) arr[p.idx] = n;
   }
   return arr;
 }
 
-function denseStrings(container: PoNode): Array<string> {
+/** A cache's texts by point index, gaps empty, at most `most` of them. */
+function denseStrings(container: PoNode, most: number): Array<string> {
   const pts = readPts(container);
-  const arr = new Array<string>(denseLength(container, pts)).fill('');
-  for (const p of pts) arr[p.idx] = p.v;
+  const length = denseLength(
+    ptCountOf(container),
+    pts.map((p) => p.idx),
+    most,
+  );
+  const arr = new Array<string>(length).fill('');
+  for (const p of pts) if (isPointIndex(p.idx) && p.idx < length) arr[p.idx] = p.v;
   return arr;
 }
 
@@ -755,12 +803,14 @@ function denseStrings(container: PoNode): Array<string> {
  * names, both columns of them in turn: WithChartSheet.xlsx's six bars stood in
  * the first six of sixteen slots under a jumble of years and measure names.
  *
- * @param cat The `c:cat` element.
+ * @param cat  The `c:cat` element.
+ * @param most The most categories it keeps (see {@link pointsPerSeries}).
  * @returns The innermost labels and the outer levels' groups, or undefined
  *   for a category axis of one level.
  */
 function multiLevelCategories(
   cat: PoNode,
+  most: number,
 ): { categories: Array<string>; groups: NonNullable<Chart['categoryGroups']> } | undefined {
   const cache = poFindDescendant(cat, 'c:multiLvlStrCache');
   if (!cache) return undefined;
@@ -777,11 +827,19 @@ function multiLevelCategories(
     );
   const [inner, ...outer] = levels;
   if (!inner) return undefined;
-  const categories = new Array<string>(Math.max(count, ...inner.map((p) => p.start + 1))).fill('');
-  for (const p of inner) categories[p.start] = p.label;
+  const length = denseLength(
+    count,
+    inner.map((p) => p.start),
+    most,
+  );
+  const categories = new Array<string>(length).fill('');
+  // A label past the axis's last slot has none to stand in, and a group
+  // starting past it groups nothing.
+  const kept = (p: { start: number }): boolean => isPointIndex(p.start) && p.start < length;
+  for (const p of inner) if (kept(p)) categories[p.start] = p.label;
   return {
     categories,
-    groups: outer.map((level) => [...level].sort((a, b) => a.start - b.start)),
+    groups: outer.map((level) => level.filter(kept).sort((a, b) => a.start - b.start)),
   };
 }
 

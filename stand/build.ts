@@ -19,11 +19,10 @@ import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { execFileSync } from 'node:child_process';
 import {
-  closeSync,
   copyFileSync,
   existsSync,
+  linkSync,
   mkdirSync,
-  openSync,
   readFileSync,
   readdirSync,
   renameSync,
@@ -125,6 +124,19 @@ interface GoldStamp {
   readonly errors: ReadonlyArray<string>;
 }
 
+/**
+ * The stamp an earlier build left beside its gold, or undefined where there is
+ * none to read — or one that no longer parses. Read in one go rather than
+ * checked first, so the answer is about the file read.
+ */
+function readStamp(file: string): GoldStamp | undefined {
+  try {
+    return JSON.parse(readFileSync(file, 'utf8')) as GoldStamp;
+  } catch {
+    return undefined;
+  }
+}
+
 /** The name a file goes by on the stand — its own, minus the extension. */
 export function stemOf(file: string): string {
   return basename(file).replace(/\.pdf$/iu, '');
@@ -145,7 +157,7 @@ const LOCK = resolve(tmpdir(), 'ream-stand-lo.lock');
  * takes turns on it instead.
  */
 export function soffice(args: ReadonlyArray<string>): void {
-  const held = lock();
+  lock();
   try {
     execFileSync(SOFFICE, [`-env:UserInstallation=${PROFILE}`, '--headless', ...args], {
       stdio: 'ignore',
@@ -162,7 +174,6 @@ export function soffice(args: ReadonlyArray<string>): void {
     }
     throw e;
   } finally {
-    closeSync(held);
     rmSync(LOCK, { force: true });
   }
 }
@@ -172,21 +183,44 @@ const SOFFICE = existsSync('/Applications/LibreOffice.app/Contents/MacOS/soffice
   ? '/Applications/LibreOffice.app/Contents/MacOS/soffice'
   : 'soffice';
 
-function lock(): number {
-  for (;;) {
-    try {
-      const fd = openSync(LOCK, 'wx');
-      writeFileSync(fd, String(process.pid));
-      return fd;
-    } catch {
-      // Held — by a live build, or left behind by one that died.
-      const owner = Number(readFileSync(LOCK, 'utf8'));
+function lock(): void {
+  // The pid goes into a file of this process's own, and that file is linked in
+  // as the lock: whoever finds the lock finds its owner in it. A lock created
+  // empty and written after could be read in between, taken for one a dead
+  // build left, and broken under its live owner.
+  const mine = `${LOCK}.${String(process.pid)}`;
+  // Only this user's: the temporary directory may be everyone's.
+  writeFileSync(mine, String(process.pid), { mode: 0o600 });
+  try {
+    for (;;) {
+      try {
+        linkSync(mine, LOCK);
+        return;
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
+      }
+      // Held — by a live build, or left behind by one that died. Or let go of
+      // since the attempt above, and then the next one takes it.
+      const owner = lockOwner();
+      if (owner === undefined) continue;
       if (!alive(owner)) {
         rmSync(LOCK, { force: true });
         continue;
       }
       sleep(250);
     }
+  } finally {
+    rmSync(mine, { force: true });
+  }
+}
+
+/** The pid the lock names, or undefined when there is no lock left to read. */
+function lockOwner(): number | undefined {
+  try {
+    return Number(readFileSync(LOCK, 'utf8'));
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw e;
   }
 }
 
@@ -405,20 +439,18 @@ export function diff(
 /** LibreOffice's own PDF → .docx, and the source page: redone only when the file changes. */
 function goldSide(pdf: string, dir: string, hash: string): GoldStamp {
   const stampFile = resolve(dir, 'gold.json');
-  if (existsSync(stampFile)) {
-    const kept = JSON.parse(readFileSync(stampFile, 'utf8')) as GoldStamp;
-    if (kept.hash === hash && kept.recipe === GOLD_RECIPE) {
-      if (kept.sourceRecipe === SOURCE_RECIPE) return kept;
-      let drawnSource = 0;
-      try {
-        drawnSource = pages(pdf, dir, 'source').length;
-      } catch {
-        drawnSource = 0;
-      }
-      const redrawn: GoldStamp = { ...kept, drawnSource, sourceRecipe: SOURCE_RECIPE };
-      writeFileSync(stampFile, `${JSON.stringify(redrawn, null, 1)}\n`);
-      return redrawn;
+  const kept = readStamp(stampFile);
+  if (kept?.hash === hash && kept.recipe === GOLD_RECIPE) {
+    if (kept.sourceRecipe === SOURCE_RECIPE) return kept;
+    let drawnSource = 0;
+    try {
+      drawnSource = pages(pdf, dir, 'source').length;
+    } catch {
+      drawnSource = 0;
     }
+    const redrawn: GoldStamp = { ...kept, drawnSource, sourceRecipe: SOURCE_RECIPE };
+    writeFileSync(stampFile, `${JSON.stringify(redrawn, null, 1)}\n`);
+    return redrawn;
   }
   const errors: Array<string> = [];
   const source = pageCount(pdf);

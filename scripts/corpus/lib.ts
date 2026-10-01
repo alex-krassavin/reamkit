@@ -82,13 +82,28 @@ export function parseStext(xml: string): Array<StextPage> {
   return pages;
 }
 
+// XML's five named references and its numeric ones — mutool writes `&quot;` and
+// `&apos;` for a quote and an apostrophe — in one pass, so the text a
+// reference stands for is never read again as the start of another:
+// `&amp;lt;` is `&lt;`, not `<`.
+const NAMED: Readonly<Record<string, string>> = {
+  amp: '&',
+  lt: '<',
+  gt: '>',
+  quot: '"',
+  apos: "'",
+};
+
 function decodeEntity(s: string): string {
-  return s
-    .replace(/&#x([0-9A-Fa-f]+);/g, (_, h) => String.fromCodePoint(parseInt(h, 16)))
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(Number(d)));
+  return s.replace(
+    /&(?:#x([0-9A-Fa-f]+)|#(\d+)|(amp|lt|gt|quot|apos));/g,
+    (_, hex: string | undefined, dec: string | undefined, name: string | undefined) =>
+      hex !== undefined
+        ? String.fromCodePoint(parseInt(hex, 16))
+        : dec !== undefined
+          ? String.fromCodePoint(Number(dec))
+          : NAMED[name!]!,
+  );
 }
 
 const SOFFICE_TIMEOUT_MS = 180_000;

@@ -22,7 +22,8 @@ the standard:
    resolved into the effective properties of every run, paragraph and cell.
 4. **Layout** — the box model is laid out into lines and pages: **Knuth–Plass**
    paragraph breaking, **Liang** hyphenation, table auto-layout, the spreadsheet print
-   model (gridlines, print area, fit-to-page, repeated titles, page breaks).
+   model (gridlines, print area, fit-to-page, repeated titles, page breaks) — or, for a
+   screen, Excel's window: each sheet whole, with no paper to fit.
 5. **Text shaping** — Unicode text becomes positioned glyphs: OpenType ligatures and
    kerning (GSUB/GPOS), BiDi reordering (UAX #9), Arabic cursive joining.
 6. **PDF writing** (ISO 32000) — content streams, the cross-reference table, Type0 +
@@ -42,7 +43,9 @@ bytes → reader → FlowDoc → layout → pages → writer → bytes
 ```
 
 `Ream.parse` runs a reader once and hands you the FlowDoc (`doc.flow`); every
-`doc.convert` renders from it without re-reading the source. New formats plug
+`doc.convert` renders from it without re-reading the source. A workbook keeps its
+grid beside it and projects it again for a screen: HTML and SVG get each sheet as
+Excel's window shows it, PDF its printed pages. New formats plug
 in as `DocumentReader`/`DocumentWriter` implementations (the `@experimental`
 interfaces) instead of new end-to-end converters — the SVG preview writer
 (consuming positioned pages) and the HTML and Markdown writers (consuming the
@@ -103,7 +106,10 @@ Ream is a _correct_ typesetter — it lays out faithfully for the font it's give
 clone of any one program. A document Word sets — a `.docx` or a `.doc` — is laid out
 by Word's own rules, each measured in Word: its lines as tall as Word sets its faces,
 two paragraphs the larger of their spacings apart, widow control, a heading kept with
-what it heads, table borders that take their room. When you need the page to track a
+what it heads, table borders that take their room. A workbook is drawn by Excel's:
+its columns in the digit Excel counts them in, its tints in Excel's arithmetic, its
+tables in the styles Excel builds in — each set beside Excel's own PDF of a workbook
+made to ask it. When you need the page to track a
 specific renderer instead, `convert('pdf', { layoutProfile })` switches how text is
 measured, broken into lines and stacked to match it: `'word'` for Microsoft Word,
 `'libreoffice'` for LibreOffice, `'ream'` (the default) for Ream's own typesetter.

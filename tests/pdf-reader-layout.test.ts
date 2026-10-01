@@ -9,6 +9,9 @@ import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
 import type { BodyElement } from '@/core/document-model';
+import type { PdfValue } from '@/pdf/objects';
+import { dict, name as pdfName, stream } from '@/pdf/objects';
+import { PdfDocument } from '@/pdf/writer';
 import { Ream } from '@/core/converter/ream';
 import { OpcPackage } from '@/core/opc';
 import { PdfFile } from '@/pdf-reader/document';
@@ -2425,5 +2428,36 @@ describe('what an annotation writes stands in its own box (§12.5.5)', () => {
     expect(
       paragraphs({ body }).some((p) => p.paragraph.runs.some((r) => r.text.includes('itself'))),
     ).toBe(true);
+  });
+});
+
+describe('a line whose text holds a long run of blanks', () => {
+  it('is laid out in time linear in it', () => {
+    // The blanks a line ends in are measured off its last run; `\s*$` tried
+    // every blank of a run that a word follows before giving up on it. The
+    // face is set small enough that the run stays on the page as one line.
+    const doc = new PdfDocument();
+    const font = doc.add(
+      dict({ Type: pdfName('Font'), Subtype: pdfName('Type1'), BaseFont: pdfName('Helvetica') }),
+    );
+    const show = `BT /F1 0.002 Tf 20 100 Td (x${' '.repeat(100_000)}y) Tj ET`;
+    const content = doc.add(stream({}, new TextEncoder().encode(show)));
+    const pagesMap = dict({ Type: pdfName('Pages'), Kids: [], Count: 1 });
+    const pagesRef = doc.add(pagesMap);
+    const page = doc.add(
+      dict({
+        Type: pdfName('Page'),
+        Parent: pagesRef,
+        MediaBox: [0, 0, 300, 300],
+        Resources: dict({ Font: dict({ F1: font }) }),
+        Contents: content,
+      }),
+    );
+    (pagesMap.get('Kids') as Array<PdfValue>).push(page);
+    const pdf = doc.build(doc.add(dict({ Type: pdfName('Catalog'), Pages: pagesRef })));
+    const start = performance.now();
+    const flow = reconstructByLayout(PdfFile.parse(pdf)).doc;
+    expect(performance.now() - start).toBeLessThan(1000);
+    expect(JSON.stringify(flow.body)).toContain('x');
   });
 });

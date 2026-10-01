@@ -8,6 +8,7 @@ import { fetchFontSet, resolveFamilyKey } from '@/core/fonts';
 import { parseThemeFonts } from '@/core/drawingml/theme-parser';
 import { resolveWordThemeFont } from '@/word/theme-fonts';
 import { OpcPackage } from '@/core/opc';
+import { firstTagMatch, tagMatches } from '@/core/opc/tag-scan';
 import { flowRenderOptions } from '@/core/converter/project';
 import { readDocx } from '@/word/docx-reader';
 import { renderStyledPdf, renderStyledPdfEncrypted, signPdf } from '@/pdf';
@@ -15,6 +16,11 @@ import { renderStyledPdf, renderStyledPdfEncrypted, signPdf } from '@/pdf';
 const STYLES_PART = 'word/styles.xml';
 const THEME_PART = 'word/theme/theme1.xml';
 const MAIN_DOCUMENT_PART = 'word/document.xml';
+
+// A `w:rFonts` naming its ASCII font, outright or by theme slot — sticky, and
+// run through tagMatches: searched for as it is, a part of `<w:rFonts` with no
+// `>` was read to its end from each of them.
+const ASCII_FONT = /<w:rFonts[^>]*?\bw:(ascii|asciiTheme)="([^"]+)"/y;
 
 /**
  * Options for the `.docx` → PDF converters. Extends the low-level
@@ -132,13 +138,11 @@ export function detectDocxFamilyKeys(docx: Uint8Array): Set<FamilyKey> {
   }
   const decoder = new TextDecoder('utf-8');
   const themeFonts = docxThemeFonts(pkg);
-  const re = /<w:rFonts[^>]*?\bw:(ascii|asciiTheme)="([^"]+)"/g;
   for (const part of [STYLES_PART, MAIN_DOCUMENT_PART]) {
     const data = pkg.getPart(part);
     if (!data) continue;
     const xml = decoder.decode(data);
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(xml)) !== null) {
+    for (const m of tagMatches(xml, '<w:rFonts', false, ASCII_FONT)) {
       const name = m[1] === 'ascii' ? m[2] : resolveWordThemeFont(m[2], themeFonts);
       if (name !== undefined) keys.add(resolveFamilyKey(name));
     }
@@ -258,7 +262,11 @@ export function detectDocxFontFamily(docx: Uint8Array): string | undefined {
   const styles = pkg.getPart(STYLES_PART);
   if (styles) {
     const xml = decoder.decode(styles);
-    const def = /<w:docDefaults>[\s\S]*?<w:rFonts[^>]*?\bw:(ascii|asciiTheme)="([^"]+)"/.exec(xml);
+    // The first such `w:rFonts` past `<w:docDefaults>`, as
+    // `/<w:docDefaults>[\s\S]*?<w:rFonts…/` finds it: a later docDefaults
+    // could only find one later still.
+    const at = xml.indexOf('<w:docDefaults>');
+    const def = at < 0 ? undefined : firstTagMatch(xml, '<w:rFonts', false, ASCII_FONT, at + 15);
     const from = def ? named(def[1]!, def[2]!) : undefined;
     if (from !== undefined && from !== '') return from;
   }
@@ -266,9 +274,7 @@ export function detectDocxFontFamily(docx: Uint8Array): string | undefined {
   if (main) {
     const xml = decoder.decode(main);
     const counts = new Map<string, number>();
-    const re = /<w:rFonts[^>]*?\bw:(ascii|asciiTheme)="([^"]+)"/g;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(xml)) !== null) {
+    for (const m of tagMatches(xml, '<w:rFonts', false, ASCII_FONT)) {
       const name = named(m[1]!, m[2]!);
       if (name === undefined) continue;
       counts.set(name, (counts.get(name) ?? 0) + 1);

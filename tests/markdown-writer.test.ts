@@ -87,6 +87,10 @@ describe('markdown writer (FlowDoc adapter)', () => {
     expect(md(p(t('trailing  ')))).toBe('trailing\n');
   });
 
+  it('strips them before a carriage return too, where CommonMark also ends a line', () => {
+    expect(md(p(t('a \t')) + p(t('b &#13;c')))).toBe('a\n\nb\rc\n');
+  });
+
   it('escapes markdown metacharacters in text', () => {
     const out = md(p(t('a *star*, a [bracket], a `tick` and a | pipe')));
     expect(out).toBe('a \\*star\\*, a \\[bracket\\], a \\`tick\\` and a \\| pipe\n');
@@ -204,6 +208,23 @@ describe('markdown writer — lists', () => {
       numberingXml: numbering([{ ilvl: 0, format: 'decimal', text: '%1.' }]),
     });
     expect(out).toBe('# 1. Introduction\n');
+  });
+
+  it('numbers an item by the last figure of its marker, however long the rest', () => {
+    // `(\d+)\D*$` tried every digit of a long run as its start; the template
+    // is the file's own, and every item of the list read it.
+    const { doc } = readDocx(
+      buildDocxFromBody(item('a'), {
+        numberingXml: numbering([
+          { ilvl: 0, format: 'decimal', text: `${'9'.repeat(100_000)}.%1` },
+        ]),
+      }),
+    );
+    const start = performance.now();
+    const { bytes, losses } = writeMarkdown(doc);
+    expect(performance.now() - start).toBeLessThan(1000);
+    expect(decode(bytes)).toBe('1. a\n');
+    expect(losses.some((l) => l.detail.includes('flattened'))).toBe(true);
   });
 
   it('reports a marker alphabet markdown cannot keep', () => {
@@ -443,6 +464,15 @@ describe('markdown writer — links and pictures', () => {
     expect(out).toContain('<a id="chapter-one"></a>Here');
   });
 
+  it('leaves out of the anchor what the bookmark name starts and ends with', () => {
+    // Word names its own bookmarks `_Toc…` and `_Ref…`.
+    const name = '_Ref (draft) 2.';
+    const body =
+      p(`<w:hyperlink w:anchor="${name}">${t('see')}</w:hyperlink>`) +
+      `<w:bookmarkStart w:id="1" w:name="${name}"/>${p(t('Here'))}<w:bookmarkEnd w:id="1"/>`;
+    expect(md(body)).toBe('[see](#ref-draft-2)\n\n<a id="ref-draft-2"></a>Here\n');
+  });
+
   it('inlines a picture as a data URI by default', () => {
     const out = md(p(`<w:r>${drawing('rId50')}</w:r>`), {
       images: { rId50: { contentType: 'image/png', extension: 'png', bytes: PNG } },
@@ -632,5 +662,42 @@ describe('markdown writer — the md target', () => {
     });
     expect(decode(await Ream.parse(docx).convert('html'))).toContain('<h3');
     expect(decode(await Ream.parse(docx).convert('md'))).toContain('### H');
+  });
+});
+
+describe('markdown writer — a long run of blanks', () => {
+  // A run of blanks that something other than the end of the line follows took
+  // the regular expressions that trimmed it time quadratic in its length: each
+  // blank began a fresh search for the line's end. A hundred thousand of them
+  // took tens of seconds; the text is the document's, so its length is the
+  // sender's.
+  const blanks = ' '.repeat(100_000);
+  const bullets =
+    '<w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:start w:val="1"/>' +
+    '<w:numFmt w:val="bullet"/><w:lvlText w:val=""/></w:lvl></w:abstractNum>' +
+    '<w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>';
+
+  /** Markdown for the body, and how long the writer alone took over it. */
+  function timed(bodyXml: string, options?: Parameters<typeof buildDocxFromBody>[1]) {
+    const { doc } = readDocx(buildDocxFromBody(bodyXml, options));
+    const start = performance.now();
+    const out = decode(writeMarkdown(doc).bytes);
+    return { out, ms: performance.now() - start };
+  }
+
+  it('is written in time linear in its length', () => {
+    const { out, ms } = timed(p(t(`x${blanks}x`)));
+    expect(out).toBe(`x${blanks}x\n`);
+    expect(ms).toBeLessThan(1000);
+  });
+
+  it('…in a list item as well', () => {
+    const item = p(
+      '<w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr>' +
+        t(`x${blanks}x`),
+    );
+    const { out, ms } = timed(item, { numberingXml: bullets });
+    expect(out).toBe(`- x${blanks}x\n`);
+    expect(ms).toBeLessThan(1000);
   });
 });

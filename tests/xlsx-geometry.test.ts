@@ -400,6 +400,40 @@ describe('grid geometry', () => {
     expect(text.some((t) => /^#+$/.test(t))).toBe(false);
   });
 
+  it('narrows a General number to the text its column holds, and fills it with # only when nothing fits', () => {
+    // Excel's own PDF (2026-10-02). A column's width carries the 5px of the
+    // cell's padding (§18.3.1.13), so ten wide holds 9.29 digits of text and
+    // 1234567890 is 1.235E+09 there, where we counted the padding as room and
+    // drew all ten digits. Twelve wide holds eleven digits and no minus sign
+    // besides them, so -10000000000 is -1E+10 there.
+    const drawn = (value: number, widthChars: number): Array<string> =>
+      placed(buildXlsx({ rows: [[value, 'x']], columns: [{ min: 1, max: 1, widthChars }] })).map(
+        (i) => i.text,
+      );
+    expect(drawn(1234567890, 10)).toContain('1.235E+09');
+    expect(drawn(-10000000000, 12)).toContain('-1E+10');
+    // Nothing General may write of 1E+21 fits five wide, and Excel fills the
+    // cell with #, where we drew it to be clipped to 1E+2 — a hundred. A
+    // number under 1 always fits, as 0.
+    const huge = drawn(1e21, 5);
+    expect(huge.some((t) => /^#+$/.test(t))).toBe(true);
+    expect(huge).not.toContain('1E+21');
+    expect(drawn(0.0000123, 5)).toContain('0');
+    // A merged cell has the whole merge to stand in: measured by its first
+    // column alone, tdf118668.xlsx's 7.72 across two columns came out 7.7.
+    const merged = placed(
+      buildXlsx({
+        rows: [[1234.5678, null, 'x']],
+        columns: [
+          { min: 1, max: 1, widthChars: 2 },
+          { min: 2, max: 2, widthChars: 8 },
+        ],
+        mergeRefs: ['A1:B1'],
+      }),
+    ).map((i) => i.text);
+    expect(merged).toContain('1234.5678');
+  });
+
   it('stops the overflow at a neighbour that paints its own fill', () => {
     // An empty cell carrying a fill is not free space: spanning over it to give
     // the text room would take its paint with it. Clip instead — visibly short

@@ -10,7 +10,7 @@ import { eighthPtToPt, emuToPt, halfPtToPt, twipsToPt } from '@/core/ir';
 import { convertDocxToPdfSync } from '@/core/converter';
 import { defaultColorResolver } from '@/core/drawingml/colors';
 import { buildChartScene } from '@/core/drawingml/chart-geometry';
-import { parseChart } from '@/core/drawingml/chart-parser';
+import { MOST_CHART_POINTS, parseChart, pointsPerSeries } from '@/core/drawingml/chart-parser';
 import { OpcPackage } from '@/core/opc';
 import { parseDocument } from '@/word';
 import { readDocx } from '@/word/docx-reader';
@@ -687,5 +687,95 @@ describe('an auto-generated chart title (§21.2.2.213)', () => {
     expect(
       parseChart(enc.encode(chartXml('', oneSeries)), defaultColorResolver)?.title,
     ).toBeUndefined();
+  });
+});
+
+describe('the points a chart part declares', () => {
+  /** A column chart of `series` series, each with the value cache `cache`. */
+  const withCache = (cache: string, series = 1): string =>
+    `<c:chartSpace ${C_NS}><c:chart><c:plotArea><c:barChart><c:barDir val="col"/>` +
+    Array.from(
+      { length: series },
+      (_, i) =>
+        `<c:ser><c:idx val="${String(i)}"/><c:order val="${String(i)}"/>` +
+        `<c:val><c:numRef><c:numCache>${cache}</c:numCache></c:numRef></c:val></c:ser>`,
+    ).join('') +
+    '</c:barChart></c:plotArea></c:chart></c:chartSpace>';
+  const valuesOf = (xml: string): ReadonlyArray<ReadonlyArray<number>> =>
+    parseChart(enc.encode(xml), defaultColorResolver)!.series.map((s) => s.values);
+
+  it('keeps the empty points a cache counts past its last value', () => {
+    // A range with blank rows after its data leaves their slots on the axis.
+    const cache =
+      '<c:ptCount val="5"/><c:pt idx="0"><c:v>3</c:v></c:pt><c:pt idx="2"><c:v>7</c:v></c:pt>';
+    expect(valuesOf(withCache(cache))[0]).toEqual([3, 0, 7, 0, 0]);
+  });
+
+  it('keeps no more points than a sheet has rows, whatever the cache counts', () => {
+    // A count past 2³² − 1 threw for want of an array that long, an index out
+    // there did the same, and a count of two billion took all the memory.
+    for (const cache of [
+      '<c:ptCount val="5000000000"/><c:pt idx="0"><c:v>3</c:v></c:pt>',
+      '<c:ptCount val="1"/><c:pt idx="0"><c:v>3</c:v></c:pt><c:pt idx="4294967295"><c:v>7</c:v></c:pt>',
+    ]) {
+      const [values] = valuesOf(withCache(cache));
+      expect(values).toHaveLength(MOST_CHART_POINTS);
+      expect(values![0]).toBe(3);
+    }
+  });
+
+  it('reads a count or an index that is no whole number as none', () => {
+    // 2.5 slots is no length an array can have, and the chart failed to read.
+    const cache =
+      '<c:ptCount val="2.5"/><c:pt idx="0"><c:v>3</c:v></c:pt><c:pt idx="1.5"><c:v>7</c:v></c:pt>';
+    expect(valuesOf(withCache(cache))[0]).toEqual([3]);
+  });
+
+  it('shares the points among the series, so the chart as a whole is bounded', () => {
+    // Two thousand series, each counting a sheet's worth of points, are two
+    // billion of them.
+    const series = valuesOf(
+      withCache('<c:ptCount val="1048576"/><c:pt idx="0"><c:v>3</c:v></c:pt>', 2000),
+    );
+    expect(series).toHaveLength(2000);
+    for (const values of series) expect(values).toHaveLength(pointsPerSeries(2000));
+    expect(pointsPerSeries(2000) * 2000).toBeLessThanOrEqual(MOST_CHART_POINTS);
+  });
+
+  it('bounds the categories of several levels, and reads more than a call takes', () => {
+    // §21.2.2.115 — their count and starts are the file's too; and spread into
+    // one call, 200 000 labels overflowed the stack.
+    const labels = Array.from(
+      { length: 200_000 },
+      (_, i) => `<c:pt idx="${String(i)}"><c:v>c${String(i)}</c:v></c:pt>`,
+    ).join('');
+    const cat = (count: string, inner: string): string =>
+      `<c:cat><c:multiLvlStrRef><c:multiLvlStrCache><c:ptCount val="${count}"/>` +
+      `<c:lvl>${inner}</c:lvl><c:lvl><c:pt idx="0"><c:v>G</c:v></c:pt>` +
+      '<c:pt idx="99999999999"><c:v>far</c:v></c:pt></c:lvl>' +
+      '</c:multiLvlStrCache></c:multiLvlStrRef></c:cat>';
+    const parse = (c: string): ReturnType<typeof parseChart> =>
+      parseChart(
+        enc.encode(BAR_CHART.replace(/<c:cat>[\s\S]*?<\/c:cat>/, c)),
+        defaultColorResolver,
+      );
+    const counted = parse(cat('5000000000', '<c:pt idx="0"><c:v>a</c:v></c:pt>'))!;
+    // As many as each of its two series keeps.
+    expect(counted.categories).toHaveLength(pointsPerSeries(counted.series.length));
+    expect(counted.categoryGroups).toEqual([[{ start: 0, label: 'G' }]]);
+    const many = parse(cat('200000', labels))!;
+    expect(many.categories).toHaveLength(200_000);
+    expect(many.categories[199_999]).toBe('c199999');
+  });
+
+  it("bounds a title's cache too", () => {
+    const title =
+      '<c:title><c:tx><c:strRef><c:f>Sheet1!$A$1</c:f><c:strCache><c:ptCount val="5000000000"/>' +
+      '<c:pt idx="0"><c:v>Formula Title</c:v></c:pt></c:strCache></c:strRef></c:tx></c:title>';
+    const chart = parseChart(
+      enc.encode(BAR_CHART.replace(/<c:title>[\s\S]*?<\/c:title>/, title)),
+      defaultColorResolver,
+    );
+    expect(chart?.title).toBe('Formula Title');
   });
 });

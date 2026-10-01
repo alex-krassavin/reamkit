@@ -318,7 +318,9 @@ const CSS_UNITS: ReadonlyMap<string, number> = new Map([
 
 function cssLengthPt(value: string | undefined): number | undefined {
   if (value === undefined) return undefined;
-  const m = /^\s*(-?[\d.]+)\s*([a-z]*)\s*$/i.exec(value);
+  // Trimmed first: blanks on both sides of an empty unit were split every
+  // way between the two `\s*` that surrounded it — quadratic in a long run.
+  const m = /^(-?[\d.]+)\s*([a-z]*)$/i.exec(value.trim());
   if (!m) return undefined;
   const n = Number(m[1]);
   if (!Number.isFinite(n)) return undefined;

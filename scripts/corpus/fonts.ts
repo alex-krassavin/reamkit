@@ -27,7 +27,7 @@
 // its name, the way `.lo-cache` keeps the reference renders. `CORPUS_FONTS=
 // roboto` restores the old single-family measurement for a side-by-side.
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -56,6 +56,18 @@ const bufferOf = (bytes: Uint8Array): ArrayBuffer =>
   bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 
 /**
+ * A cached font's bytes, or undefined when the cache has none to read. Read in
+ * one go rather than checked first, so the answer is about the file read.
+ */
+function readCached(file: string): Uint8Array | undefined {
+  try {
+    return new Uint8Array(readFileSync(file));
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * A `fetch` for the font path that answers from disk when it can. A miss is
  * fetched once and written under {@link FONT_CACHE_DIR} by the file's own name
  * (`Carlito_400Regular.ttf`), which is unique across the curated families.
@@ -64,10 +76,8 @@ export function cachedFontFetch(): FetchLike {
   return async (url: string) => {
     mkdirSync(FONT_CACHE_DIR, { recursive: true });
     const file = resolve(FONT_CACHE_DIR, basename(new URL(url).pathname));
-    if (existsSync(file)) {
-      const bytes = new Uint8Array(readFileSync(file));
-      return { ok: true, arrayBuffer: () => Promise.resolve(bufferOf(bytes)) };
-    }
+    const kept = readCached(file);
+    if (kept) return { ok: true, arrayBuffer: () => Promise.resolve(bufferOf(kept)) };
     const res = await fetch(url);
     if (!res.ok) return { ok: false, arrayBuffer: () => Promise.resolve(new ArrayBuffer(0)) };
     const buf = await res.arrayBuffer();

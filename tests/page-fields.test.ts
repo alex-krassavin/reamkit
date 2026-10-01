@@ -175,6 +175,22 @@ describe('MACROBUTTON (§17.16.5.44)', () => {
     expect(runsOf(' MACROBUTTON AddToContacts ')).toBe('');
   });
 
+  it('trims a display text with a long run of blanks inside in time linear in it', () => {
+    // `\s+$` tried every blank of the run before giving up at the word after it.
+    const blanks = ' '.repeat(100_000);
+    const instr = ` MACROBUTTON Go x${blanks}y `;
+    const docx = buildDocxFromBody(
+      '<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r>' +
+        `<w:r><w:instrText xml:space="preserve">${instr}</w:instrText></w:r>` +
+        '<w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>',
+    );
+    const start = performance.now();
+    const el = Ream.parse(docx).flow.body[0] as BodyElement;
+    expect(performance.now() - start).toBeLessThan(1000);
+    if (el.kind !== 'paragraph') throw new Error('expected a paragraph');
+    expect(el.paragraph.runs.map((r) => r.text).join('')).toBe(`x${blanks}y`);
+  });
+
   it('leaves a field that caches its own result alone', () => {
     const body =
       '<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r>' +

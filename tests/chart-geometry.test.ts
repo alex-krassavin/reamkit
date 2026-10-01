@@ -46,10 +46,10 @@ const barChart = (barDir: 'col' | 'bar'): Chart => ({
 
 describe('niceScale', () => {
   it("scales an axis as Excel does: the ends from the data's spread, the step 1-2-5", () => {
-    // Measured against Excel's own PDF of eight column charts (2026-10-01).
+    // Measured against Excel's own PDF of its column charts (2026-10-01/02).
     // The near end at zero unless the spread is under a sixth of the far one,
-    // 5% of the spread beyond the data, then the smallest 1/2/5 × 10ⁿ step
-    // that leaves at most ten intervals.
+    // 5% of the far end's reach from the near one beyond the data, then the
+    // smallest 1/2/5 × 10ⁿ step that leaves at most ten intervals.
     expect(niceScale(2336, 3750)).toEqual({ min: 0, max: 4000, step: 500 });
     expect(niceScale(-1, 1.2)).toEqual({ min: -1.5, max: 1.5, step: 0.5 });
     expect(niceScale(0.3, 4.7)).toEqual({ min: 0, max: 5, step: 0.5 });
@@ -58,6 +58,9 @@ describe('niceScale', () => {
     expect(niceScale(0.012, 0.047)).toEqual({ min: 0, max: 0.05, step: 0.005 });
     // 57362.xlsx's 12-value bar: room above it, the axis labelled to 14.
     expect(niceScale(0, 12)).toEqual({ min: 0, max: 14, step: 2 });
+    // 96 reaches 100.8 from zero, past ten steps of 10, and Excel runs it
+    // 0…120 by 20. Five per cent of the data's own spread stopped at 97.3.
+    expect(niceScale(70, 96)).toEqual({ min: 0, max: 120, step: 20 });
   });
 
   it('steps more coarsely only where the labels would not fit', () => {
@@ -72,34 +75,61 @@ describe('niceScale', () => {
 
 describe('formatTick', () => {
   it('keeps integers integral and trims fractional zeros', () => {
-    expect(formatTick(100, 20)).toBe('100');
-    expect(formatTick(0, 20)).toBe('0');
-    expect(formatTick(0.5, 0.5)).toBe('0.5');
+    expect(formatTick(100)).toBe('100');
+    expect(formatTick(0)).toBe('0');
+    expect(formatTick(0.5)).toBe('0.5');
     // General shows no trailing zero, whatever the step's decimals.
-    expect(formatTick(0.05, 0.005)).toBe('0.05');
-    expect(formatTick(0.045, 0.005)).toBe('0.045');
-    expect(formatTick(1, 0.5)).toBe('1');
+    expect(formatTick(0.05)).toBe('0.05');
+    expect(formatTick(0.045)).toBe('0.045');
+    expect(formatTick(1)).toBe('1');
+  });
+
+  it("writes a tick in the nine characters Excel's axis gives General", () => {
+    // Each a label in Excel's own PDF of its charts (2026-10-01/02): the
+    // number as it is where it fits, the sign counted; else rounded to the
+    // places that fit, down to 0.0001; else scientific, rounded to fit.
+    const excel: ReadonlyArray<readonly [number, string]> = [
+      [0.25, '0.25'],
+      [0.75, '0.75'],
+      [0.1 + 0.2, '0.3'],
+      [26.1975, '26.1975'],
+      [500000000, '500000000'],
+      [-50000000, '-50000000'],
+      [0.0000003, '0.0000003'],
+      [0.123456789, '0.1234568'],
+      [-0.123456789, '-0.123457'],
+      [9 * 1.23456789, '11.111111'],
+      [0.000123456789, '0.0001235'],
+      [123456771.2, '123456771'],
+      [1e9, '1E+09'],
+      [-1e8, '-1E+08'],
+      [1234567890, '1.235E+09'],
+      [-1234567890, '-1.23E+09'],
+      [0.0000123456789, '1.235E-05'],
+      [3.5e-7, '3.5E-07'],
+      [1.23456789e300, '1.23E+300'],
+      [5e-151, '5E-151'],
+    ];
+    expect(excel.map(([v]) => formatTick(v))).toEqual(excel.map(([, label]) => label));
+  });
+
+  it('writes any double in nine characters, without throwing', () => {
+    // Places counted from the step and written by toFixed threw past a
+    // hundred of them, which a step of 1E-150 asked for.
+    for (let e = -323; e <= 307; e++) {
+      for (const v of [10 ** e, -7.5 * 10 ** e, 9.99999 * 10 ** e]) {
+        expect(formatTick(v).length).toBeLessThanOrEqual(9);
+      }
+    }
   });
 });
 
 describe('font subsetting reaches every string a chart draws', () => {
-  it('keeps the glyphs an axis title and a typed data label need', () => {
-    // The subset is built from the strings the document draws. Axis titles and
-    // author-typed data labels were left out of that walk, so a character
-    // appearing ONLY there was dropped from the embedded font and drew blank —
-    // with the text layer still claiming it. shape-macro-ext-ref.xlsx printed
-    // "Translation X [mm]" as "Translation    mm".
+  /** Whether the font embedded for a page holding `chart` keeps every one of `chars`. */
+  const keeps = (chart: Chart, chars: ReadonlyArray<string>): boolean => {
     const registry = FontRegistry.fromBytes({
       regular: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Regular.ttf')),
     });
-    const { title: _title, ...noTitle } = barChart('col');
-    const chart: Chart = {
-      ...noTitle,
-      categories: ['a', 'b', 'c'],
-      series: [{ name: 'n', values: [1, 2, 3], pointLabels: [{ idx: 0, text: 'Ж' }] }],
-      catAxisTitle: 'Щ',
-      valAxisTitle: 'Э',
-    };
     const laid = layoutStyledDocument(
       [
         {
@@ -118,11 +148,41 @@ describe('font subsetting reaches every string a chart draws', () => {
       },
     );
     const res = [...laid.fontResources.values()][0]!;
-    for (const ch of ['Щ', 'Э', 'Ж']) {
+    return chars.every((ch) => {
       const gid = res.parsed.glyphForCodepoint(ch.codePointAt(0)!);
-      expect(gid).toBeGreaterThan(0);
-      expect(res.gids.has(gid)).toBe(true);
-    }
+      return gid > 0 && res.gids.has(gid);
+    });
+  };
+
+  it('keeps the glyphs an axis title and a typed data label need', () => {
+    // The subset is built from the strings the document draws. Axis titles and
+    // author-typed data labels were left out of that walk, so a character
+    // appearing ONLY there was dropped from the embedded font and drew blank —
+    // with the text layer still claiming it. shape-macro-ext-ref.xlsx printed
+    // "Translation X [mm]" as "Translation    mm".
+    const { title: _title, ...noTitle } = barChart('col');
+    const chart: Chart = {
+      ...noTitle,
+      categories: ['a', 'b', 'c'],
+      series: [{ name: 'n', values: [1, 2, 3], pointLabels: [{ idx: 0, text: 'Ж' }] }],
+      catAxisTitle: 'Щ',
+      valAxisTitle: 'Э',
+    };
+    expect(keeps(chart, ['Щ', 'Э', 'Ж'])).toBe(true);
+  });
+
+  it('keeps the E and the + of a tick in scientific notation', () => {
+    // An axis to 3E+09 is labelled 1E+09, 1.5E+09…, and an E and a + found
+    // nowhere else on the page drew blank between the digits: "1.5   09".
+    const chart: Chart = {
+      type: 'bar',
+      barDir: 'col',
+      hasLegend: false,
+      categories: ['a', 'b'],
+      series: [{ name: 'n', values: [1e9, 2.5e9] }],
+    };
+    expect(buildBarScene(chart, W, H, measure).labels.map((l) => l.text)).toContain('1.5E+09');
+    expect(keeps(chart, ['E', '+'])).toBe(true);
   });
 });
 
@@ -346,6 +406,215 @@ describe('a value axis the author fixed (§21.2.2.157)', () => {
         .labels.map((l) => l.text)
         .filter((t) => /^\d+$/.test(t)),
     ).not.toContain('300');
+  });
+});
+
+describe('a step the author fixed (§21.2.2.98)', () => {
+  /** The value axis's labels, bottom up, of a column chart of `values`. */
+  const axisLabels = (
+    axis: Partial<Chart>,
+    values: ReadonlyArray<number> = [10, 25],
+  ): Array<string> =>
+    buildBarScene(
+      {
+        type: 'bar',
+        barDir: 'col',
+        grouping: 'clustered',
+        hasLegend: false,
+        categories: ['a', 'b'],
+        series: [{ name: 'S', values }],
+        ...axis,
+      },
+      W,
+      H,
+      measure,
+    )
+      .labels.map((l) => l.text)
+      .filter((t) => t !== 'a' && t !== 'b');
+
+  it('rounds the automatic ends out to it from where the padding leaves them', () => {
+    // Excel's own PDF: 10…25 by 0.1 runs 0…26.3 — 25 and 5% of 25 — and
+    // 100…110 by 0.1 runs 95…110.8 — 110 and 5% of 15. We ran the first to 30.
+    const tenths = axisLabels({ valAxisMajorUnit: 0.1 });
+    expect(tenths).toHaveLength(264);
+    expect([tenths[0], tenths[1], tenths.at(-1)]).toEqual(['0', '0.1', '26.3']);
+    const far = axisLabels({ valAxisMajorUnit: 0.1 }, [100, 110]);
+    expect([far[0], far.at(-1)]).toEqual(['95', '110.8']);
+  });
+
+  it('is widened to a 500th of the axis where it would cut it finer', () => {
+    // Excel's own PDF: steps of 0.05, 0.01 and 0.001 on 0…26.25 all run by
+    // 0.0525. A step of 0.001 drew 30 003 labels, 0.00001 ran out of stack,
+    // and 1E-200 asked for more labels than an array holds.
+    for (const step of [0.05, 0.01, 0.001, 0.00001, 1e-200, 1e-320]) {
+      const labels = axisLabels({ valAxisMajorUnit: step });
+      expect(labels).toHaveLength(501);
+      expect([labels[0], labels[1], labels[3], labels.at(-1)]).toEqual([
+        '0',
+        '0.0525',
+        '0.1575',
+        '26.25',
+      ]);
+    }
+    // A step that cuts it into exactly 500 is kept…
+    expect(axisLabels({ valAxisMajorUnit: 0.0525 })).toHaveLength(501);
+    // …and the automatic ends round out to the widened step: −10…25 by 0.01
+    // runs −11.781…26.796 by 0.077, a 500th of −11.75…26.75.
+    const across = axisLabels({ valAxisMajorUnit: 0.01 }, [-10, 25]);
+    expect(across).toHaveLength(502);
+    expect([across[0], across[1], across[153], across.at(-1)]).toEqual([
+      '-11.781',
+      '-11.704',
+      '0',
+      '26.796',
+    ]);
+  });
+
+  it('leaves the step of two fixed ends to divide the span they fix', () => {
+    // −1E+300…1E+300 runs by 2E+299 in Excel; padding the ends first stepped
+    // it by 5E+299, and JavaScript wrote the labels -1e+300.
+    expect(axisLabels({ valAxisMin: -1e300, valAxisMax: 1e300 })).toEqual([
+      '-1E+300',
+      '-8E+299',
+      '-6E+299',
+      '-4E+299',
+      '-2E+299',
+      '0',
+      '2E+299',
+      '4E+299',
+      '6E+299',
+      '8E+299',
+      '1E+300',
+    ]);
+  });
+});
+
+describe('an axis over values a file can choose', () => {
+  const numbersIn = (scene: unknown): Array<number> => {
+    const out: Array<number> = [];
+    const walk = (o: unknown): void => {
+      if (typeof o === 'number') out.push(o);
+      else if (Array.isArray(o)) o.forEach(walk);
+      else if (o !== null && typeof o === 'object') Object.values(o).forEach(walk);
+    };
+    walk(scene);
+    return out;
+  };
+
+  it('scales the far ends of the double range in finite numbers', () => {
+    // The spread of −1.7E+308…1.7E+308 is Infinity, and the search for its
+    // step never ended.
+    const huge = [-1.7e308, 1.7e308];
+    const bars = buildBarScene(
+      { ...barChart('col'), categories: ['a', 'b'], series: [{ name: 'S', values: huge }] },
+      W,
+      H,
+      measure,
+    );
+    const scatter = buildScatterScene(
+      {
+        type: 'scatter',
+        categories: [],
+        hasLegend: false,
+        series: [{ name: 'S', values: [1, 2], xValues: huge }],
+      },
+      W,
+      H,
+      measure,
+    );
+    for (const scene of [bars, scatter]) {
+      expect(numbersIn(scene).every(Number.isFinite)).toBe(true);
+      expect(scene.labels.map((l) => l.text)).toContain('-1.8E+308');
+    }
+  });
+
+  it('labels values far under 1E-9, as Excel does', () => {
+    // Ticks were summed with a tolerance of 1E-9 and ran on to it — more than
+    // an array holds. Excel's own PDF: 0, 5E-151, … 3.5E-150.
+    const tiny = buildBarScene(
+      {
+        type: 'bar',
+        barDir: 'col',
+        grouping: 'clustered',
+        hasLegend: false,
+        categories: ['a', 'b'],
+        series: [{ name: 'S', values: [1e-150, 3e-150] }],
+      },
+      W,
+      H,
+      measure,
+    );
+    expect(tiny.labels.map((l) => l.text).filter((t) => t !== 'a' && t !== 'b')).toEqual([
+      '0',
+      '5E-151',
+      '1E-150',
+      '1.5E-150',
+      '2E-150',
+      '2.5E-150',
+      '3E-150',
+      '3.5E-150',
+    ]);
+  });
+
+  it('reads a series too long to spread into one call', () => {
+    // Math.min(...values) throws once there are more values than the stack
+    // takes arguments; 200 000 is past that.
+    const values = Array.from({ length: 200_000 }, (_, i) => i % 97);
+    const series = [{ name: 'S', values, xValues: values }];
+    const chart: Chart = { type: 'bar', barDir: 'col', categories: [], hasLegend: true, series };
+    expect(() => buildBarScene(chart, W, H, measure)).not.toThrow();
+    expect(() => buildLineScene({ ...chart, type: 'line' }, W, H, measure)).not.toThrow();
+    expect(() => buildScatterScene({ ...chart, type: 'scatter' }, W, H, measure)).not.toThrow();
+  });
+});
+
+describe('a series that overrides many of its points', () => {
+  it("finds each point's own colour and label in time linear in them", () => {
+    // §21.2.2.52 c:dPt, §21.2.2.47 c:dLbl — every point's override was searched
+    // for through the whole list: 100 000 of them took four seconds a chart.
+    const n = 100_000;
+    const values = Array.from({ length: n }, () => 1);
+    const pointColors = Array.from({ length: n }, (_, idx) => ({
+      idx,
+      colorHex: idx % 2 === 1 ? 'FF0000' : '00FF00',
+    }));
+    const pointLabels = Array.from({ length: n }, (_, idx) => ({ idx, text: `p${String(idx)}` }));
+    const timed = <T>(f: () => T): { result: T; ms: number } => {
+      const start = performance.now();
+      const result = f();
+      return { result, ms: performance.now() - start };
+    };
+    const bars = timed(() =>
+      buildBarScene(
+        {
+          type: 'bar',
+          barDir: 'col',
+          hasLegend: false,
+          categories: [],
+          series: [{ name: 'S', values, pointColors }],
+        },
+        W,
+        H,
+        measure,
+      ),
+    );
+    expect(bars.ms).toBeLessThan(1000);
+    expect(bars.result.rects.filter((r) => r.fillHex === 'FF0000')).toHaveLength(n / 2);
+    const pie = timed(() =>
+      buildPieScene(
+        {
+          type: 'pie',
+          hasLegend: false,
+          categories: [],
+          series: [{ name: 'S', values, pointLabels }],
+        },
+        W,
+        H,
+        measure,
+      ),
+    );
+    expect(pie.ms).toBeLessThan(1000);
+    expect(pie.result.labels.filter((l) => l.text.startsWith('p'))).toHaveLength(n);
   });
 });
 

@@ -134,8 +134,26 @@ const FORMAT_COLORS: ReadonlyMap<string, string> = new Map([
   ['yellow', 'FFFF00'],
 ]);
 
+// The `[…]` codes of a format, sought only as far as its last `]`. None starts
+// after that, and an expression looking for a `]` that is not there runs to
+// the end of the format from every `[` — quadratic in a code of brackets that
+// never close.
+const BRACKET_CODE = /\[([^\]]*)\]/g;
+
+function bracketCodes(format: string): IterableIterator<RegExpMatchArray> {
+  return format.slice(0, format.lastIndexOf(']') + 1).matchAll(BRACKET_CODE);
+}
+
+/** The format with each `[…]` code replaced by what `fn` makes of its inside. */
+function replaceBracketCodes(format: string, fn: (body: string) => string): string {
+  const end = format.lastIndexOf(']') + 1;
+  return (
+    format.slice(0, end).replace(BRACKET_CODE, (_, body: string) => fn(body)) + format.slice(end)
+  );
+}
+
 function colorOfSection(section: string): string | undefined {
-  for (const m of section.matchAll(/\[([^\]]*)\]/g)) {
+  for (const m of bracketCodes(section)) {
     const body = m[1]!.trim().toLowerCase();
     const named = FORMAT_COLORS.get(body);
     if (named !== undefined) return named;
@@ -299,7 +317,7 @@ function isDateFormat(code: string): boolean {
   // Strip quoted literals and [] codes, then look for any date token. The
   // "m" letter alone is ambiguous (month vs minute) so it can't be a sole
   // signal, but its presence alongside d/y/h/s already implies dates.
-  const cleaned = code.replace(/"[^"]*"/g, '').replace(/\[[^\]]*\]/g, '');
+  const cleaned = replaceBracketCodes(code.replace(/"[^"]*"/g, ''), () => '');
   return /[dyhs]|m+/i.test(cleaned) && /[dyhs]/i.test(cleaned);
 }
 
@@ -495,9 +513,14 @@ function formatExcelDate(rawValue: string, format: string, date1904: boolean): s
       case 'elapsed-s':
         out += elapsed(totalSeconds, t.text.length);
         break;
-      case 'subsec':
-        out += (totalSeconds - Math.floor(totalSeconds)).toFixed(subsecDigits).substring(1);
+      case 'subsec': {
+        // toFixed stops at a hundred places, and a format asking for more is the
+        // file's to write; the places past those are zeros.
+        const places = Math.min(subsecDigits, 100);
+        const fraction = (totalSeconds - Math.floor(totalSeconds)).toFixed(places);
+        out += fraction.substring(1) + '0'.repeat(subsecDigits - places);
         break;
+      }
       case 'm':
         out += t.text.length >= 2 ? pad2(minute) : String(minute);
         break;
@@ -520,9 +543,8 @@ function defaultNumberRender(rawValue: string): string {
   // JavaScript's way, `3e-104`, and General is Excel's format: an upper-case E
   // and a signed exponent of at least two digits. 57236.xlsx stores three such
   // values and we printed all three with a lower-case e where every other
-  // reader prints `3E-104`. The spelling already lives in `scientificToWidth`
-  // below; this is the same rule, reached by the values that FIT their column
-  // and so never get there.
+  // reader prints `3E-104`. A cell in a column writes them through
+  // `generalRenderings` below, spelled the same way.
   return excelExponent(String(n));
 }
 
@@ -534,23 +556,29 @@ function excelExponent(rendered: string): string {
 }
 
 /**
- * A General number rounded to the decimals that fit `maxChars` characters.
+ * The most characters General writes in a cell, its sign apart: however wide
+ * the column, 123456789012345 is 1.23457E+14 and 0.123456789012345 is
+ * 0.123456789 — Excel's own PDF (2026-10-02).
+ */
+const GENERAL_CELL_CHARS = 11;
+
+/**
+ * A General number in its column: the most precise of the ways General may
+ * write it ({@link generalRenderings}) that `fits`.
  *
- * General is not a fixed format: a spreadsheet shows as many decimal places as
- * the column has room for and ROUNDS to that, so 4.3900875881221957 in a
- * column eight characters wide reads 4.390088. We rendered every stored digit
- * and let the cell clip it, which turns the same value into 4.390087 — off by
- * one in the last place shown, with nothing to say a digit was cut.
+ * General is not a fixed format: a spreadsheet shows as many places as the
+ * column has room for and ROUNDS to that, so 4.3900875881221957 in a column
+ * eight characters wide reads 4.390088. We rendered every stored digit and let
+ * the cell clip it, which turns the same value into 4.390087 — off by one in
+ * the last place shown, with nothing to say a digit was cut. A number too wide
+ * for every way of writing it comes back in its finest, and the cell fills
+ * with `#` (CellProperties.hashOnOverflow); one under 1 always fits as `0` or
+ * `-0`, which is what Excel prints in a column too narrow for anything else.
  *
- * The integer part is never dropped: a number too wide even without decimals
- * keeps them all and the cell says so its own way (see hashOnOverflow).
- *
- * `fits` decides, and it must measure in the face this will be DRAWN in rather
- * than count characters against the column's width in the document's unit.
- * Counted that way we produced nine digits for a column that holds nine of
- * Excel's and eight of ours, and the layout clipped the ninth — the very
- * truncation this exists to prevent. Fewer digits than the reference shows is a
- * coarser number; a clipped one is a different number.
+ * `fits` decides whether a rendering has room. The print model asks it in the
+ * document's own terms — the column's width less the padding it carries, in
+ * the font's widest digits — because that is the room Excel gives up places
+ * against, whatever face the page is drawn in.
  *
  * @param rawValue The cell's stored value.
  * @param fits     Whether a rendering will fit the cell.
@@ -558,48 +586,104 @@ function excelExponent(rendered: string): string {
 export function generalToWidth(rawValue: string, fits: (text: string) => boolean): string {
   const n = Number(rawValue);
   if (!Number.isFinite(n)) return defaultNumberRender(rawValue);
-  const full = defaultNumberRender(rawValue);
-  if (fits(full)) return full;
-  const dot = full.indexOf('.');
-  // No decimals to give up — the number is too wide as an integer, and General
-  // answers that with scientific notation rather than a number that reads as a
-  // smaller one: 1161014163 in a default-width column is 1.16E+09, never
-  // "1161014" (escape-unicode.xlsx).
-  if (dot < 0) return scientificToWidth(n, fits) ?? full;
-  // Give up decimals one at a time until it fits — rounding at each step, so
-  // the last digit shown is the right one.
-  let shortened = full;
-  for (let decimals = full.length - dot - 2; decimals >= 0; decimals--) {
-    const shifted = Number(`${Number(n.toPrecision(15))}e${decimals}`);
-    const rounded = shifted < 0 ? -Math.round(-shifted) : Math.round(shifted);
-    const back = Number(`${rounded}e${-decimals}`);
-    if (!Number.isFinite(back)) break;
-    shortened = defaultNumberRender(String(back));
-    if (fits(shortened)) return shortened;
+  let widest: string | undefined;
+  for (const text of generalRenderings(n, GENERAL_CELL_CHARS)) {
+    if (fits(text)) return text;
+    widest ??= text;
   }
-  // Dropping decimals was not enough — the integer part alone overruns.
-  return scientificToWidth(n, fits) ?? shortened;
+  return widest ?? defaultNumberRender(rawValue);
 }
 
 /**
- * `value` in scientific notation with as many mantissa decimals as `fits`
- * allows, spelled Excel's way: an upper-case `E`, a signed exponent of at least
- * two digits. Undefined when even a bare `1E+09` will not fit — the cell then
- * says so with hashes rather than shrinking further.
+ * Every way General may write `value` in `chars` characters, the most precise
+ * first. One rule, measured in Excel's own PDF on chart axes, which give it
+ * nine characters with the sign among them, and in cells, eleven with the
+ * sign apart (2026-10-01/02):
+ *
+ *  - the number as it is, its first 15 significant digits, where that fits:
+ *    0.000012345, 0.0000003, 12345678901;
+ *  - else rounded to fewer places or written in scientific notation, whichever
+ *    keeps the finer last digit — 0.123456789, not 1.23457E-01; 1.23457E-10,
+ *    not 0; 4E-04, not 0, in a column five characters wide — and of two as
+ *    fine, the plain one down to 0.0001 and the scientific one below it: 0.0001
+ *    for 0.000123456 but 1E-05 for 1.00049E-05;
+ *  - a whole part longer than the room only in scientific notation, and never
+ *    with the zeros a mantissa or a fraction ends in: 1E+10, 2.5E+12.
+ *
+ * The digits are the 15 of {@link decimalOf}, rounded half away from zero, so
+ * 1.2345E-05 is 1.235E-05, where `toExponential` rounded the binary double
+ * down to 1.234E-05.
+ *
+ * @param value      The number.
+ * @param chars      How many characters General has.
+ * @param signCounts Whether a minus sign takes one of them.
+ * @returns The renderings, sign included, finest first.
  */
-function scientificToWidth(value: number, fits: (text: string) => boolean): string | undefined {
-  for (let decimals = MAX_SCIENTIFIC_DECIMALS; decimals >= 0; decimals--) {
-    const [mantissa, exp] = value.toExponential(decimals).split('e');
-    const sign = exp!.startsWith('-') ? '-' : '+';
-    const digits = exp!.replace(/^[-+]/, '').padStart(2, '0');
-    const out = `${mantissa!}E${sign}${digits}`;
-    if (fits(out)) return out;
+export function* generalRenderings(
+  value: number,
+  chars: number,
+  signCounts = false,
+): Generator<string, void, undefined> {
+  if (value === 0 || !Number.isFinite(value)) {
+    yield value === 0 ? '0' : String(value);
+    return;
   }
-  return undefined;
+  const sign = value < 0 ? '-' : '';
+  const room = chars - (signCounts ? sign.length : 0);
+  const { digits, exponent } = decimalOf(value);
+  let shown = digits.length;
+  while (shown > 1 && digits[shown - 1] === '0') shown--;
+  const exactPlaces = Math.max(0, shown - 1 - exponent);
+  const exact = placeDigits(digits, exponent, exactPlaces);
+  if (exact.length <= room) yield sign + exact;
+  const forms: Array<{ text: string; place: number; plain: boolean }> = [];
+  if (exponent < room) {
+    const most = Math.min(exactPlaces, room - Math.max(exponent, 0) - 2);
+    for (let places = Math.max(0, most); places >= 0; places--) {
+      const text = withoutTrailingZeros(placeDigits(digits, exponent, places));
+      if (text.length <= room) forms.push({ text, place: -decimalsIn(text), plain: true });
+    }
+  }
+  const tail = (e: number): string =>
+    `E${e < 0 ? '-' : '+'}${String(Math.abs(e)).padStart(2, '0')}`;
+  for (let places = Math.max(0, room - tail(exponent).length - 2); places >= 0; places--) {
+    let e = exponent;
+    let mantissa = placeDigits(digits, 0, places);
+    // Rounding can carry into a new leading digit, and so into the exponent:
+    // 9.9996E+09 is 1E+10.
+    if (mantissa.length > 1 && mantissa[1] !== '.') {
+      e += 1;
+      mantissa = placeDigits('1', 0, places);
+    }
+    const stripped = withoutTrailingZeros(mantissa);
+    const text = stripped + tail(e);
+    if (text.length <= room) forms.push({ text, place: e - decimalsIn(stripped), plain: false });
+  }
+  const plainFirst = exponent >= -4;
+  forms.sort(
+    (a, b) => a.place - b.place || (a.plain === b.plain ? 0 : a.plain === plainFirst ? -1 : 1),
+  );
+  const seen = new Set<string>(exact.length <= room ? [exact] : []);
+  for (const form of forms) {
+    if (seen.has(form.text)) continue;
+    seen.add(form.text);
+    yield sign + form.text;
+  }
 }
 
-/** Excel never shows more mantissa decimals than this under General. */
-const MAX_SCIENTIFIC_DECIMALS = 10;
+/** A decimal without the zeros that end its fraction, nor a point left bare. */
+function withoutTrailingZeros(fixed: string): string {
+  if (!fixed.includes('.')) return fixed;
+  let end = fixed.length;
+  while (fixed[end - 1] === '0') end--;
+  return fixed.slice(0, fixed[end - 1] === '.' ? end - 1 : end);
+}
+
+/** How many places a plain decimal shows after its point. */
+const decimalsIn = (fixed: string): number => {
+  const dot = fixed.indexOf('.');
+  return dot < 0 ? 0 : fixed.length - dot - 1;
+};
 
 function applyFormatString(rawValue: string, format: string): string {
   const n = Number(rawValue);
@@ -661,11 +745,44 @@ function countDigitPlaceholders(s: string): number {
   return n;
 }
 
-// §18.8.31 scientific notation: `0.00E+00`, `##0.0E+0` (engineering), `0.0e-0`.
-// The mantissa is normalised so its integer part holds `intDigits` significant
-// figures (1 for `0.00E+00`, 3 for `##0.0E+0` → exponent snaps to a multiple of
-// 3); the exponent is zero-padded to the placeholder count and carries a sign
-// (always for `E+`, only when negative for `E-`). The `E`/`e` case is preserved.
+/**
+ * The decimal a spreadsheet takes a double for: its first 15 significant
+ * digits, and the power of ten the first of them stands at.
+ *
+ * Excel shows a number as those 15 digits and zeros after them, however many
+ * places its format asks for: 0.1 under thirty places is 0.1 and twenty-nine
+ * zeros, 1/3 is fifteen threes and zeros, 1E+21 under `0.00` is a 1, twenty-one
+ * zeros and `.00` — its own PDF of each (2026-10-01).
+ */
+function decimalOf(value: number): { digits: string; exponent: number } {
+  const [mantissa, exponent] = Math.abs(value).toExponential(14).split('e');
+  return { digits: mantissa!.replace('.', ''), exponent: Number(exponent) };
+}
+
+/**
+ * Those digits at `decimals` places — the first standing at `exponent` —
+ * rounded half away from zero, as plain digits with a point and no sign.
+ */
+function placeDigits(digits: string, exponent: number, decimals: number): string {
+  // How many of the digits fall before the cut; the rest decide the rounding.
+  const kept = exponent + 1 + decimals;
+  let units: string;
+  if (kept >= digits.length) units = digits + '0'.repeat(kept - digits.length);
+  else if (kept < 0) units = '';
+  else units = digits[kept]! >= '5' ? incremented(digits.slice(0, kept)) : digits.slice(0, kept);
+  const padded = units.replace(/^0+/, '').padStart(decimals + 1, '0');
+  const whole = padded.slice(0, padded.length - decimals);
+  return decimals > 0 ? `${whole}.${padded.slice(whole.length)}` : whole;
+}
+
+/** A string of decimal digits plus one. */
+function incremented(digits: string): string {
+  let at = digits.length - 1;
+  while (at >= 0 && digits[at] === '9') at--;
+  if (at < 0) return `1${'0'.repeat(digits.length)}`;
+  return `${digits.slice(0, at)}${String(Number(digits[at]) + 1)}${'0'.repeat(digits.length - at - 1)}`;
+}
+
 /**
  * `value` rounded to `decimals` places the way a spreadsheet rounds: on the
  * DECIMAL number, half away from zero.
@@ -676,23 +793,28 @@ function countDigitPlaceholders(s: string): number {
  * every other reader show 1.0%. AverageTaxRates.xlsx had eleven of its
  * percentages a tenth low for exactly this reason.
  *
- * Rounding to 15 significant digits first collapses the binary noise back to
- * the decimal the author typed; shifting through a string exponent then keeps
- * the scaling exact, so the final round sees 9.5 and not 9.499999999999998.
+ * The digits are the 15 of {@link decimalOf} and zeros after them, placed by
+ * hand: past seventeen significant digits `toFixed` printed the binary
+ * expansion (0.1 under twenty places as 0.10000000000000000555), from 1E+21 on
+ * it wrote the exponent (`1e+21.00`), and past a hundred places it threw.
  */
 function toFixedDecimal(value: number, decimals: number): string {
-  if (!Number.isFinite(value)) return value.toFixed(decimals);
-  const decimal = Number(value.toPrecision(15));
-  const shifted = Number(`${decimal}e${decimals}`);
-  if (!Number.isFinite(shifted)) return value.toFixed(decimals);
-  // Excel rounds a half away from zero; Math.round takes it towards +∞.
-  const rounded = shifted < 0 ? -Math.round(-shifted) : Math.round(shifted);
-  const back = Number(`${rounded}e${-decimals}`);
-  return Number.isFinite(back) ? back.toFixed(decimals) : value.toFixed(decimals);
+  if (!Number.isFinite(value)) return String(value);
+  const { digits, exponent } = decimalOf(value);
+  const placed = placeDigits(digits, exponent, decimals);
+  return value < 0 && /[1-9]/.test(placed) ? `-${placed}` : placed;
 }
 
+// §18.8.31 scientific notation: `0.00E+00`, `##0.0E+0` (engineering), `0.0e-0`.
+// The mantissa is normalised so its integer part holds `intDigits` significant
+// figures (1 for `0.00E+00`, 3 for `##0.0E+0` → exponent snaps to a multiple of
+// 3); the exponent is zero-padded to the placeholder count and carries a sign
+// (always for `E+`, only when negative for `E-`). The `E`/`e` case is preserved.
 function formatScientific(value: number, cleaned: string, negativeSection: boolean): string {
-  const m = /^(.*?)([eE])([+-])(.*)$/.exec(cleaned);
+  // `.` stops at a line end, so a format holding one has no match; saying so
+  // first spares the expression from reading its tail out to that line end
+  // after every `e+` in front of it.
+  const m = hasLineEnd(cleaned) ? null : /^(.*?)([eE])([+-])(.*)$/.exec(cleaned);
   if (!m) return cleaned;
   const mantissaFmt = m[1]!;
   const eChar = m[2]!;
@@ -706,20 +828,23 @@ function formatScientific(value: number, cleaned: string, negativeSection: boole
   );
   const decimals = dot >= 0 ? countDigitPlaceholders(mantissaFmt.slice(dot + 1)) : 0;
 
+  // The mantissa is the decimal's own digits, rounded half away from zero like
+  // any other number shown: Excel prints 1234.5 under `0.000E+00` as 1.235E+03
+  // and 1.45 under `0.0E+00` as 1.5E+00, where the binary mantissa's `toFixed`
+  // gave 1.234 and 1.4.
   let exp = 0;
-  let mant = Math.abs(value);
-  if (mant !== 0) {
-    exp = Math.floor(Math.log10(mant));
-    exp -= ((exp % intDigits) + intDigits) % intDigits; // engineering grouping
-    mant = mant / Math.pow(10, exp);
+  let mantStr = placeDigits('0', 0, decimals);
+  if (value !== 0) {
+    const { digits, exponent } = decimalOf(value);
+    exp = exponent - (((exponent % intDigits) + intDigits) % intDigits); // engineering grouping
+    mantStr = placeDigits(digits, exponent - exp, decimals);
     // Rounding the mantissa can carry it up to 10^intDigits — renormalise.
-    if (Number(mant.toFixed(decimals)) >= Math.pow(10, intDigits)) {
+    if (mantStr.split('.')[0]!.length > intDigits) {
       exp += intDigits;
-      mant = mant / Math.pow(10, intDigits);
+      mantStr = placeDigits(digits, exponent - exp, decimals);
     }
   }
 
-  const mantStr = mant.toFixed(decimals);
   const expDigits = countDigitPlaceholders(expFmt) || 2;
   const expStr = String(Math.abs(exp)).padStart(expDigits, '0');
   const expSign = exp < 0 ? '-' : expSignFmt === '+' ? '+' : '';
@@ -737,11 +862,85 @@ function formatScientific(value: number, cleaned: string, negativeSection: boole
  * conditions) is decoration here and goes.
  */
 function resolveBracketCodes(format: string): string {
-  return format.replace(/\[([^\]]*)\]/g, (_, body: string) => {
+  return replaceBracketCodes(format, (body) => {
     const currency = /^\$([^-]*)(?:-.*)?$/.exec(body);
     const symbol = currency?.[1]?.replace(/"/g, '') ?? '';
     return symbol.length > 0 ? `"${symbol}"` : '';
   });
+}
+
+const isPlaceholder = (c: string | undefined): boolean => c === '0' || c === '#' || c === '?';
+const isAsciiDigit = (c: string | undefined): boolean => c !== undefined && c >= '0' && c <= '9';
+const isSpace = (c: string | undefined): boolean => c !== undefined && /\s/.test(c);
+
+// The four line ends `.` does not match.
+const isLineEnd = (c: number): boolean => c === 0x0a || c === 0x0d || c === 0x2028 || c === 0x2029;
+
+function hasLineEnd(s: string): boolean {
+  for (let i = 0; i < s.length; i++) if (isLineEnd(s.charCodeAt(i))) return true;
+  return false;
+}
+
+/**
+ * A fraction section cut into head, numerator, denominator and tail — what
+ * `/^(.*?)([0#?]+)\s*\/\s*([0#?]+|\d+)(.*)$/` makes of it, in one pass. The
+ * expression, lazy at the front, took every position of a run of placeholders
+ * in turn as the start of the numerator and read the rest of the run from
+ * each: quadratic in a long run no slash follows. A start inside a run sees
+ * the same rest as the run's first, so only the first is tried. The head
+ * cannot cross a line end, nor the tail hold one.
+ */
+function fractionParts(
+  s: string,
+): { head: string; num: string; den: string; tail: string } | undefined {
+  let firstEnd = s.length;
+  let lastEnd = -1;
+  for (let i = 0; i < s.length; i++) {
+    if (!isLineEnd(s.charCodeAt(i))) continue;
+    firstEnd = Math.min(firstEnd, i);
+    lastEnd = i;
+  }
+  for (let start = 0; start < firstEnd; ) {
+    if (!isPlaceholder(s[start])) {
+      start++;
+      continue;
+    }
+    let numEnd = start;
+    while (isPlaceholder(s[numEnd])) numEnd++;
+    let slash = numEnd;
+    while (isSpace(s[slash])) slash++;
+    if (s[slash] === '/') {
+      let den = slash + 1;
+      while (isSpace(s[den])) den++;
+      let denEnd = den;
+      const inDen = isPlaceholder(s[den]) ? isPlaceholder : isAsciiDigit;
+      while (inDen(s[denEnd])) denEnd++;
+      if (denEnd > den && lastEnd < denEnd) {
+        return {
+          head: s.slice(0, start),
+          num: s.slice(start, numEnd),
+          den: s.slice(den, denEnd),
+          tail: s.slice(denEnd),
+        };
+      }
+    }
+    start = numEnd;
+  }
+  return undefined;
+}
+
+/**
+ * The last run of placeholders in the head and what follows it — what
+ * `/([0#?]+)([^0#?]*)$/` matches, read back from the end: that expression
+ * retried every placeholder of an earlier run, and is quadratic in a long one.
+ */
+function lastPlaceholderRun(head: string): { at: number; after: string } | undefined {
+  let end = head.length;
+  while (end > 0 && !isPlaceholder(head[end - 1])) end--;
+  if (end === 0) return undefined;
+  let at = end - 1;
+  while (at > 0 && isPlaceholder(head[at - 1])) at--;
+  return { at, after: head.slice(end) };
 }
 
 /**
@@ -758,11 +957,9 @@ function formatFraction(
   cleaned: string,
   negativeSection: boolean,
 ): string | undefined {
-  const m = /^(.*?)([0#?]+)\s*\/\s*([0#?]+|\d+)(.*)$/.exec(cleaned);
+  const m = fractionParts(cleaned);
   if (!m) return undefined;
-  const head = m[1]!;
-  const denFmt = m[3]!;
-  const tail = m[4]!;
+  const { head, den: denFmt, tail } = m;
 
   // The integer part, if any, is the LAST placeholder run in the head — whatever
   // separates it from the fraction is a literal, and need not be a bare space:
@@ -770,10 +967,10 @@ function formatFraction(
   // the head, the run went unfound there, so 1.2 came out as the improper
   // `#  6/5` — the `#` printed as itself and the whole number folded into the
   // numerator — where every reader shows `1  1/5`.
-  const intMatch = /([0#?]+)([^0#?]*)$/.exec(head);
-  const hasInteger = intMatch !== null;
-  const literalPrefix = unquoteLiteral(head.substring(0, intMatch ? intMatch.index : head.length));
-  const separator = intMatch ? unquoteLiteral(intMatch[2]!) : ' ';
+  const intMatch = lastPlaceholderRun(head);
+  const hasInteger = intMatch !== undefined;
+  const literalPrefix = unquoteLiteral(head.substring(0, intMatch ? intMatch.at : head.length));
+  const separator = intMatch ? unquoteLiteral(intMatch.after) : ' ';
 
   const magnitude = Math.abs(value);
   const whole = hasInteger ? Math.floor(magnitude) : 0;
@@ -887,8 +1084,7 @@ function applyNumericSection(value: number, format: string, negativeSection: boo
     else if (intPlaceholders[i] === '?') spaces += ' ';
   }
   const intDigits = zeros + significant;
-  let numberPart =
-    spaces + (useThousands ? intDigits.replace(/\B(?=(\d{3})+(?!\d))/g, ',') : intDigits);
+  let numberPart = spaces + (useThousands ? groupThousands(intDigits) : intDigits);
   if (decimals > 0) {
     let dec = decRaw ?? ''.padEnd(decimals, '0');
     if (dec.length < decimals) dec = dec.padEnd(decimals, '0');
@@ -913,6 +1109,37 @@ function applyNumericSection(value: number, format: string, negativeSection: boo
   if (value < 0 && !negativeSection) signPrefix = '-';
 
   return `${literalPrefix}${signPrefix}${numberPart}${isPercent ? '%' : ''}${literalSuffix}`;
+}
+
+/**
+ * The digits with a comma before every third from the right of each run — what
+ * `/\B(?=(\d{3})+(?!\d))/g` puts one at — in one pass. That expression read
+ * ahead over the rest of the run from every position, and the run is as long
+ * as the format has zeros, applied in every cell the format shows. A comma
+ * goes where the rest of the run is a whole number of threes and the character
+ * before is a word character, as `\B` asks: a digit inside the run, a letter
+ * at its start.
+ */
+function groupThousands(s: string): string {
+  const isWord = (i: number): boolean => i >= 0 && /\w/.test(s[i]!);
+  let out = '';
+  let from = 0;
+  for (let start = 0; start < s.length; ) {
+    if (!isAsciiDigit(s[start])) {
+      start++;
+      continue;
+    }
+    let end = start;
+    while (isAsciiDigit(s[end])) end++;
+    for (let at = start; at < end; at++) {
+      if ((end - at) % 3 === 0 && isWord(at - 1)) {
+        out += `${s.slice(from, at)},`;
+        from = at;
+      }
+    }
+    start = end;
+  }
+  return out + s.slice(from);
 }
 
 interface SplitNumberFormat {

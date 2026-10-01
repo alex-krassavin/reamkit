@@ -353,7 +353,7 @@ function freeTextContents(file: PdfFile, annot: PdfDict): string | undefined {
         ? found
         : undefined;
   if (raw === undefined) return undefined;
-  const text = textString(raw).replace(/\s+$/u, '');
+  const text = textString(raw).trimEnd();
   return text.length > 0 ? text : undefined;
 }
 
@@ -442,7 +442,9 @@ function defaultAppearance(
   const form = acro instanceof Map ? file.get(acro, 'DA') : undefined;
   const da = own ?? (typeof form === 'string' ? form : '');
   const tf = /\/([^\s/]+)\s+([\d.]+)\s+Tf/u.exec(da);
-  const rgb = /([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+rg/u.exec(da);
+  // Tried only where a run of figures starts: a match never starts inside one,
+  // and every start inside a long run read the rest of it again.
+  const rgb = /(?<![\d.])([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+rg/u.exec(da);
   const gray = /(^|\s)([\d.]+)\s+g(\s|$)/u.exec(da);
   const color = rgb
     ? `${num(Number(rgb[1]))} ${num(Number(rgb[2]))} ${num(Number(rgb[3]))}`

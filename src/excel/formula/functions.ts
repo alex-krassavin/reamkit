@@ -831,7 +831,7 @@ interface NumCrit {
 interface TextCrit {
   readonly kind: 'text';
   readonly negate: boolean;
-  readonly re: RegExp;
+  readonly wildcard: Wildcard;
 }
 
 // Parse a COUNTIF/SUMIF criteria scalar into a predicate spec. A bare number or
@@ -851,7 +851,7 @@ function parseCriteria(s: Scalar): NumCrit | TextCrit | { e: FErr } {
   }
   const n = Number(text.trim());
   if (text.trim() !== '' && Number.isFinite(n)) return { kind: 'num', op, n };
-  return { kind: 'text', negate: op === '<>', re: wildcardToRegExp(text) };
+  return { kind: 'text', negate: op === '<>', wildcard: wildcard(text) };
 }
 
 function matchCriteria(cell: Scalar, crit: NumCrit | TextCrit): boolean {
@@ -875,32 +875,82 @@ function matchCriteria(cell: Scalar, crit: NumCrit | TextCrit): boolean {
   }
   const text = cell.t === 'str' ? cell.v : cell.t === 'blank' ? '' : undefined;
   if (text === undefined) return false;
-  const hit = crit.re.test(text);
+  const hit = crit.wildcard.test(text);
   return crit.negate ? !hit : hit;
+}
+
+/** A text matched against an Excel wildcard pattern. */
+interface Wildcard {
+  readonly test: (text: string) => boolean;
+}
+
+/** A piece of a wildcard pattern between two stars, and how many units it spans. */
+interface WildcardPiece {
+  readonly at: RegExp;
+  readonly search: RegExp;
+  readonly width: number;
 }
 
 // Excel wildcard text criteria: `*` = any run, `?` = one char, `~` escapes the
 // next wildcard. Case-insensitive, anchored to the whole string.
-function wildcardToRegExp(pattern: string): RegExp {
-  let out = '^';
+//
+// Matched piece by piece rather than as one `^….*….*…$`: that expression
+// backtracks through every way of placing its stars — the text's length to
+// the power of how many there are — and a criteria of a few stars over one
+// long cell did not come back. Between the stars the pattern is a run of fixed
+// width, a `?` or a character being one code unit, so the first run must
+// start the text, the last must end it, and each one between takes the
+// earliest place after the one before, which leaves the most room for the
+// rest. Each run is still an expression with the same flags, so what a letter
+// matches is what it matched before.
+function wildcard(pattern: string): Wildcard {
+  const pieces: Array<Array<string>> = [[]];
   for (let i = 0; i < pattern.length; i++) {
     const ch = pattern[i]!;
+    const atoms = pieces[pieces.length - 1]!;
     if (
       ch === '~' &&
       (pattern[i + 1] === '*' || pattern[i + 1] === '?' || pattern[i + 1] === '~')
     ) {
-      out += escapeRe(pattern[i + 1]!);
+      atoms.push(escapeRe(pattern[i + 1]!));
       i++;
     } else if (ch === '*') {
-      out += '.*';
-    } else if (ch === '?') {
-      out += '.';
+      pieces.push([]);
     } else {
-      out += escapeRe(ch);
+      atoms.push(ch === '?' ? '.' : escapeRe(ch));
     }
   }
-  out += '$';
-  return new RegExp(out, 'is');
+  const all = pieces.map(
+    (atoms): WildcardPiece => ({
+      at: new RegExp(atoms.join(''), 'isy'),
+      search: new RegExp(atoms.join(''), 'gis'),
+      width: atoms.length,
+    }),
+  );
+  const fits = (piece: WildcardPiece, text: string, at: number): boolean => {
+    piece.at.lastIndex = at;
+    return piece.at.test(text);
+  };
+  const first = all[0]!;
+  if (all.length === 1) {
+    return { test: (text) => text.length === first.width && fits(first, text, 0) };
+  }
+  const last = all[all.length - 1]!;
+  const between = all.slice(1, -1).filter((piece) => piece.width > 0);
+  return {
+    test(text) {
+      const end = text.length - last.width;
+      if (end < first.width || !fits(first, text, 0) || !fits(last, text, end)) return false;
+      let at = first.width;
+      for (const piece of between) {
+        piece.search.lastIndex = at;
+        const found = piece.search.exec(text);
+        if (found === null || found.index + piece.width > end) return false;
+        at = found.index + piece.width;
+      }
+      return true;
+    },
+  };
 }
 
 function escapeRe(ch: string): string {
@@ -1541,10 +1591,11 @@ function matchFn(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext): FValue {
       ? refGet(range.sheet, ctx, rect.r0, rect.c0 + i)
       : refGet(range.sheet, ctx, rect.r0 + i, rect.c0);
   if (type === 0) {
-    const re = target.t === 'str' ? wildcardToRegExp(target.v) : undefined;
+    const wild = target.t === 'str' ? wildcard(target.v) : undefined;
     for (let i = 0; i < len; i++) {
       const cell = at(i);
-      if (re ? cell.t === 'str' && re.test(cell.v) : scalarEquals(cell, target)) return num(i + 1);
+      if (wild ? cell.t === 'str' && wild.test(cell.v) : scalarEquals(cell, target))
+        return num(i + 1);
     }
     return err('#N/A');
   }
@@ -1615,10 +1666,10 @@ function lookupFn(args: ReadonlyArray<Ast>, ev: Ev, ctx: EvalContext, vh: 'v' | 
       ? refGet(sh, ctx, rect.r0 + i, rect.c0 + line - 1)
       : refGet(sh, ctx, rect.r0 + line - 1, rect.c0 + i);
   if (!approx) {
-    const re = target.t === 'str' ? wildcardToRegExp(target.v) : undefined;
+    const wild = target.t === 'str' ? wildcard(target.v) : undefined;
     for (let i = 0; i < vecLen; i++) {
       const k = keyAt(i);
-      if (re ? k.t === 'str' && re.test(k.v) : scalarEquals(k, target)) return resultAt(i);
+      if (wild ? k.t === 'str' && wild.test(k.v) : scalarEquals(k, target)) return resultAt(i);
     }
     return err('#N/A');
   }

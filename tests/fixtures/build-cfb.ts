@@ -161,11 +161,15 @@ export function buildCfb(
   while (dir.length % 4 !== 0) dir.push(unallocatedEntry());
   const firstDirSector = allocRegular(concat(dir));
 
-  // --- the FAT sector last: it describes every content sector plus itself.
+  // --- the FAT sectors last: they describe every content sector plus
+  // themselves, 128 entries a sector — one sector unless the streams are big,
+  // and at most the 109 the header's own DIFAT can list.
   const fatSectorIndex = sectors.length;
-  fat.push(FATSECT);
-  const fatSector = u32Array(fat, SECTOR, FREESECT);
-  sectors.push(fatSector); // (its own FAT entry already pushed above)
+  let fatSectorCount = 1;
+  while (fatSectorIndex + fatSectorCount > fatSectorCount * (SECTOR / 4)) fatSectorCount++;
+  if (fatSectorCount > 109) throw new Error('buildCfb: streams too big for a header-only DIFAT');
+  for (let i = 0; i < fatSectorCount; i++) fat.push(FATSECT);
+  sectors.push(u32Array(fat, SECTOR, FREESECT)); // (their own FAT entries already pushed above)
 
   // --- header.
   const header = new Uint8Array(SECTOR);
@@ -176,14 +180,16 @@ export function buildCfb(
   hv.setUint16(28, 0xfffe, true); // little-endian
   hv.setUint16(30, 9, true); // sector shift → 512
   hv.setUint16(32, 6, true); // mini sector shift → 64
-  hv.setUint32(44, 1, true); // number of FAT sectors
+  hv.setUint32(44, fatSectorCount, true); // number of FAT sectors
   hv.setUint32(48, firstDirSector, true);
   hv.setUint32(56, CUTOFF, true); // mini stream cutoff
   hv.setUint32(60, firstMiniFatSector, true);
   hv.setUint32(64, numMiniFatSectors, true);
   hv.setUint32(68, ENDOFCHAIN, true); // first DIFAT sector
   hv.setUint32(72, 0, true); // number of DIFAT sectors
-  for (let i = 0; i < 109; i++) hv.setUint32(76 + i * 4, i === 0 ? fatSectorIndex : FREESECT, true);
+  for (let i = 0; i < 109; i++) {
+    hv.setUint32(76 + i * 4, i < fatSectorCount ? fatSectorIndex + i : FREESECT, true);
+  }
 
   return concat([header, ...sectors]);
 }

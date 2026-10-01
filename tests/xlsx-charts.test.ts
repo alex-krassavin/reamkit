@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { buildXlsx } from './fixtures/build-xlsx';
 import { sheetDrawings } from './fixtures/sheet-drawings';
 import { Ream } from '@/core/converter/ream';
+import { MOST_CHART_POINTS } from '@/core/drawingml/chart-parser';
 import { FontRegistry } from '@/core/font';
 import { flowRenderOptions } from '@/core/converter/project';
 import { layoutStyledDocument } from '@/layout/styled-layout';
@@ -100,6 +101,24 @@ describe('charts on xlsx sheets (§20.5 SpreadsheetDrawingML)', () => {
     );
     expect(fills).toContain('112233'); // bars use the custom cycle
     expect(fills).not.toContain('4472C4'); // not the built-in accent palette
+  });
+
+  it('reads no more cells than a series keeps from a range the file names', () => {
+    // A chart without caches reads its references from the sheet, and the
+    // range is the file's to name: each of B2:B99999999999's hundred billion
+    // cells was searched for through the whole sheet.
+    const chartXml = `<c:chartSpace ${C_NS}><c:chart><c:plotArea><c:barChart>
+      <c:barDir val="col"/><c:grouping val="clustered"/>
+      <c:ser><c:idx val="0"/><c:order val="0"/>
+        <c:cat><c:strRef><c:f>Sheet1!$A$2:$A$99999999999</c:f></c:strRef></c:cat>
+        <c:val><c:numRef><c:f>Sheet1!$B$2:$B$99999999999</c:f></c:numRef></c:val>
+      </c:ser>
+    </c:barChart></c:plotArea></c:chart></c:chartSpace>`;
+    const flow = Ream.parse(buildXlsx({ rows: ROWS, sheetChart: { chartXml } })).flow;
+    const chart = flow.charts?.get('xl/charts/chart1.xml');
+    expect(chart?.series[0]?.values).toHaveLength(MOST_CHART_POINTS);
+    expect(chart?.series[0]?.values.slice(0, 3)).toEqual([4, 9, 0]);
+    expect(chart?.categories.slice(0, 3)).toEqual(['A', 'B', '']);
   });
 
   it('sheets without drawings are untouched', () => {

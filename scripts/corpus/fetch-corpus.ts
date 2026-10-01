@@ -13,8 +13,9 @@
 //
 // Usage: tsx scripts/corpus/fetch-corpus.ts [--limit 60] [--source <id-prefix>]
 
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdirSync, renameSync, writeFileSync } from 'node:fs';
+import { basename, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { SOURCES } from './sources';
@@ -38,6 +39,23 @@ interface GhEntry {
 }
 
 const headers = { Accept: 'application/vnd.github+json', 'User-Agent': 'docgen-corpus' };
+
+/**
+ * Whether a listing's name is a file name of its directory and nothing more.
+ * The name is the network's word, and `resolve(dir, '../../x.docx')` would
+ * write outside the corpus.
+ */
+function isPlainName(name: string): boolean {
+  return name !== '.' && name !== '..' && !name.includes('\\') && basename(name) === name;
+}
+
+/** Git's blob id of the bytes — what the contents listing's `sha` names. */
+function gitBlobSha(bytes: Uint8Array): string {
+  return createHash('sha1')
+    .update(`blob ${String(bytes.length)}\0`)
+    .update(bytes)
+    .digest('hex');
+}
 
 async function listDir(s: Source): Promise<Array<GhEntry>> {
   const url = `https://api.github.com/repos/${s.repo}/contents/${s.path}?ref=${s.ref}`;
@@ -77,6 +95,10 @@ async function main(): Promise<void> {
       `${s.id}: ${picked.length}/${all.length} files (${s.repo}/${s.path}, ${s.license})`,
     );
     for (const e of picked) {
+      if (!isPlainName(e.name)) {
+        console.error(`  skip ${JSON.stringify(e.name)}: not a plain file name`);
+        continue;
+      }
       const dest = resolve(dir, e.name);
       if (!existsSync(dest)) {
         const res = await fetch(e.download_url!, { headers });
@@ -84,7 +106,18 @@ async function main(): Promise<void> {
           console.error(`  skip ${e.name}: HTTP ${res.status}`);
           continue;
         }
-        writeFileSync(dest, new Uint8Array(await res.arrayBuffer()));
+        // Only the blob the listing named is written — its size and its git
+        // id — so a cut-short or substituted download never enters the corpus.
+        const bytes = new Uint8Array(await res.arrayBuffer());
+        if (bytes.length !== e.size || gitBlobSha(bytes) !== e.sha) {
+          console.error(`  skip ${e.name}: not the blob the listing names`);
+          continue;
+        }
+        // Written beside it and renamed into place: under its own name a file
+        // is always whole, so the check above never keeps a half-written one.
+        const part = `${dest}.${String(process.pid)}.part`;
+        writeFileSync(part, bytes);
+        renameSync(part, dest);
       }
       manifest.push({
         source: s.id,

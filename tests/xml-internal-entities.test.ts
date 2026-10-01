@@ -67,4 +67,24 @@ describe('internal DTD subset (§4.2.2)', () => {
     const out = resolveInternalEntities('<!DOCTYPE r[<!ENTITY evil "<b>&amp;</b>">]><r>&evil;</r>');
     expect(out).toBe('<r>&lt;b&gt;&amp;amp;&lt;/b&gt;</r>');
   });
+
+  it('takes the first declaration that closes, past one that never does', () => {
+    // The `[` of the first opens a subset nothing closes; the second ends at its `>`.
+    const out = resolveInternalEntities('<!DOCTYPE x [ <!DOCTYPE r><r>&amp;</r>');
+    expect(out).toBe('<!DOCTYPE x [ <r>&amp;</r>');
+  });
+
+  // The declaration is looked for before the parser sees the part, in raw
+  // text the file decides. Searched for by one expression, a part of
+  // `<!DOCTYPE ` written over and over was read to its end from each of them.
+  it('gives up on declarations that never close in time linear in them', () => {
+    for (const unclosed of [
+      `${'<!DOCTYPE '.repeat(40_000)}r`,
+      `${'<!DOCTYPE [ '.repeat(80_000)}<r/>`,
+    ]) {
+      const start = performance.now();
+      expect(resolveInternalEntities(unclosed)).toBe(unclosed);
+      expect(performance.now() - start).toBeLessThan(1000);
+    }
+  });
 });

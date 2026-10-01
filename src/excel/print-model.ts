@@ -1630,6 +1630,8 @@ function gridBody(
 
       const ws = cellMatrix[r]?.[c];
       let text = ws ? resolveCellText(ws, sharedStrings, styles, date1904) : '';
+      // Whether a General number is too wide for every way General may write it.
+      let generalOverflow = false;
       // General is not a fixed format: a spreadsheet shows as many decimals as
       // the column has room for and ROUNDS to that, and falls back to
       // scientific notation when the integer part alone will not fit. Rendering
@@ -1656,13 +1658,27 @@ function gridBody(
         // Excel and LibreOffice print 1563287.125. Dividing by our own digit
         // puts the estimate back in the document's terms, exactly as
         // `tooWideToShow` does.
+        // …and the room is the column's less the 5px its width carries for the
+        // cell's padding (§18.3.1.13): Excel's own PDF fits 4, 5, 6, 9 and 11
+        // digits in columns 5, 6, 7, 10 and 12 wide, where counting the
+        // padding as room kept one digit more than it shows, and clipped
+        // -10000000000 at the column's edge where Excel writes -1E+10. A
+        // merged cell's room is the whole merge's: measured by its first
+        // column alone, tdf118668.xlsx's 7.72 across two columns came out 7.7.
         const digit = charWidthUnits('0');
         if (unit > 0 && digit > 0) {
-          const room = columnWidths[c]! / unit;
-          text = generalToWidth(
-            ws.rawValue,
-            (candidate) => estimateChars(candidate) / digit <= room,
-          );
+          let widthTwips = columnWidths[c]!;
+          if (merge) {
+            widthTwips = 0;
+            for (let a = merge.startColumn; a <= Math.min(merge.endColumn, colWindowEnd); a++) {
+              const i = a - colStart;
+              if (i >= 0 && i < colCount && !hiddenCols.has(i)) widthTwips += columnWidths[i]!;
+            }
+          }
+          const room = (widthTwips - COL_PADDING_TWIPS) / unit;
+          const fits = (candidate: string): boolean => estimateChars(candidate) / digit <= room;
+          text = generalToWidth(ws.rawValue, fits);
+          generalOverflow = !fits(text);
         }
       }
       // The full (pre-truncation) text feeds conditional-format text/dup rules (W5).
@@ -2003,17 +2019,21 @@ function gridBody(
         // the text finally renders at. The render font is not the workbook's,
         // and a face a few percent wider would otherwise fill a column with `#`
         // that every other reader shows the value in — trading a value that is
-        // slightly wrong for no value at all. Only under a format of the cell's
-        // own: a General number narrows by dropping decimals, and text stays
+        // slightly wrong for no value at all. A General number has already
+        // narrowed as far as General goes (generalToWidth), and when even its
+        // narrowest form will not fit it is hashed as well: Excel's own PDF
+        // fills a column four characters wide with `#` for 10000000000 and for
+        // 1E+21, which we clipped to 10000 and to 1E+2 — a hundred. Text stays
         // text, because a clipped word is still recognisably that word.
         ...(!wrapText &&
         !rotated &&
         !shrinkToFit &&
         !merge &&
         ws?.type === 'n' &&
-        (xf?.numFmtId ?? 0) !== 0 &&
         text.length > 0 &&
-        tooWideToShow(text, charTwips(xf, styles, textTwipsUnit), columnWidths[c]!)
+        (generalOverflow ||
+          ((xf?.numFmtId ?? 0) !== 0 &&
+            tooWideToShow(text, charTwips(xf, styles, textTwipsUnit), columnWidths[c]!)))
           ? { hashOnOverflow: true }
           : {}),
         // §18.8.1 `<alignment vertical>` — a spreadsheet cell sits at the BOTTOM

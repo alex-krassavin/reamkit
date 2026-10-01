@@ -192,7 +192,10 @@ function typedField(file: PdfFile, annot: PdfDict): boolean {
  */
 function withoutVariableText(file: PdfFile, stream: PdfStream): PdfStream {
   const text = new TextDecoder('latin1').decode(file.streamData(stream));
-  const stripped = text.replace(/\/Tx\s+BMC[\s\S]*?EMC/gu, '');
+  // No marked span ends past the last `EMC`; searched for in the whole stream,
+  // a `/Tx BMC` that none closes read on to the end of it from every one.
+  const end = text.lastIndexOf('EMC') + 'EMC'.length;
+  const stripped = text.slice(0, end).replace(/\/Tx\s+BMC[\s\S]*?EMC/gu, '') + text.slice(end);
   // The bytes come back decoded, so the filters that encoded them go too.
   const dict = new Map(stream.dict);
   dict.delete('Filter');

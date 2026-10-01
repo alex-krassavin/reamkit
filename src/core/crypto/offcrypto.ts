@@ -271,30 +271,103 @@ function agileKeyData(attrs: Record<string, string>): AgileKeyData {
 // the password one (Office 2013 writes both). Only the password opens a file
 // from a password.
 function passwordKeyEncryptor(xml: string): Record<string, string> {
-  const re = /<[A-Za-z0-9]*:?encryptedKey\b([^>]*)\/?>/gu;
-  let m = re.exec(xml);
-  while (m) {
-    const attrs = parseAttrs(m[1] ?? '');
+  for (const raw of elementsNamed(xml, 'encryptedKey')) {
+    const attrs = parseAttrs(raw);
     if (attrs['spinCount'] !== undefined) return attrs;
-    m = re.exec(xml);
   }
   throw new Error('No password key encryptor in the encryption descriptor');
 }
 
 function attrsOf(xml: string, tag: string): Record<string, string> {
-  const m = new RegExp(`<[A-Za-z0-9]*:?${tag}\\b([^>]*)/?>`, 'u').exec(xml);
-  return m ? parseAttrs(m[1] ?? '') : {};
+  const raw = elementsNamed(xml, tag)[0];
+  return raw === undefined ? {} : parseAttrs(raw);
 }
 
-function parseAttrs(raw: string): Record<string, string> {
-  const out: Record<string, string> = {};
-  const re = /([A-Za-z0-9_:]+)\s*=\s*"([^"]*)"/gu;
-  let m = re.exec(raw);
-  while (m) {
-    out[m[1]!.replace(/^.*:/u, '')] = m[2]!;
-    m = re.exec(raw);
+// The descriptor is read by hand rather than by regular expression. It is the
+// document's own bytes, read before any password is checked, and the
+// expressions that read it the obvious way are quadratic on it: one retries a
+// run of name characters that no `=` follows from every character along it,
+// another rescans to the end of the stream for each `<tag` that no `>` closes.
+// The scans below find the same things in one pass each.
+
+// The attribute text of each element named `tag`, bare or prefixed, in
+// document order — what `/<[A-Za-z0-9]*:?tag\b([^>]*)\/?>/g` captured.
+function elementsNamed(xml: string, tag: string): Array<string> {
+  const out: Array<string> = [];
+  let open = xml.indexOf('<');
+  while (open >= 0) {
+    const end = nameEnd(xml, open + 1, tag);
+    if (end < 0) {
+      open = xml.indexOf('<', open + 1);
+      continue;
+    }
+    const close = xml.indexOf('>', end);
+    // No `>` after this name is none after any later one either.
+    if (close < 0) break;
+    out.push(xml.slice(end, close));
+    open = xml.indexOf('<', close + 1);
   }
   return out;
+}
+
+// Where the name opening at `from` ends when it is `tag` — after a prefix and
+// a colon, or ending a run of letters and digits, the two ways
+// `[A-Za-z0-9]*:?tag\b` reads one, the prefixed first — and -1 when it is not.
+function nameEnd(xml: string, from: number, tag: string): number {
+  let end = from;
+  while (isAlnum(xml.charCodeAt(end))) end++;
+  const prefixed = end + 1 + tag.length;
+  if (xml[end] === ':' && xml.startsWith(tag, end + 1) && !isWordChar(xml.charCodeAt(prefixed))) {
+    return prefixed;
+  }
+  if (end - from >= tag.length && xml.startsWith(tag, end - tag.length)) {
+    return isWordChar(xml.charCodeAt(end)) ? -1 : end;
+  }
+  return -1;
+}
+
+// `name="value"` pairs, the prefix dropped from each name — what
+// `/([A-Za-z0-9_:]+)\s*=\s*"([^"]*)"/g` found. A name is a whole run of name
+// characters: every tail of the run ends where the run does, so when the run
+// is not followed by `= "…"` none of them is, and the scan moves past it.
+function parseAttrs(raw: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  let at = 0;
+  while (at < raw.length) {
+    if (!isNameChar(raw.charCodeAt(at))) {
+      at++;
+      continue;
+    }
+    let end = at;
+    while (isNameChar(raw.charCodeAt(end))) end++;
+    let k = skipSpace(raw, end);
+    if (raw[k] === '=') {
+      k = skipSpace(raw, k + 1);
+      const close = raw[k] === '"' ? raw.indexOf('"', k + 1) : -1;
+      if (close >= 0) {
+        const name = raw.slice(at, end);
+        out[name.slice(name.lastIndexOf(':') + 1)] = raw.slice(k + 1, close);
+        at = close + 1;
+        continue;
+      }
+    }
+    at = end;
+  }
+  return out;
+}
+
+// The character classes those expressions used. Past the end of the string
+// `charCodeAt` gives NaN, which is in none of them.
+const isAlnum = (c: number): boolean =>
+  (c >= 0x30 && c <= 0x39) || (c >= 0x41 && c <= 0x5a) || (c >= 0x61 && c <= 0x7a); // 0-9 A-Z a-z
+const isWordChar = (c: number): boolean => isAlnum(c) || c === 0x5f; // \w: those and `_`
+const isNameChar = (c: number): boolean => isWordChar(c) || c === 0x3a; // and `:`
+
+// Past the `\s*` that starts at `from`.
+function skipSpace(s: string, from: number): number {
+  let at = from;
+  while (at < s.length && /\s/u.test(s[at]!)) at++;
+  return at;
 }
 
 // ——— small helpers ——————————————————————————————————————————————————————

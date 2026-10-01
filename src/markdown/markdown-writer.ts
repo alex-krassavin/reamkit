@@ -192,8 +192,30 @@ function joinBlocks(blocks: ReadonlyArray<string>): string {
     .map(trimHardBreaks)
     .filter((b) => b.length > 0)
     .join('\n\n');
-  return body.length > 0 ? `${body.replace(/[ \t]+$/gm, '')}\n` : '';
+  return body.length > 0 ? `${trimLineEnds(body)}\n` : '';
 }
+
+/**
+ * The text without the spaces and tabs that end its lines — what
+ * `/[ \t]+$/gm` leaves, a line ending wherever `$` does under `m`: at LF, CR,
+ * U+2028, U+2029 and the end of the text. The expression retries every blank
+ * of a long run that something else follows, and is quadratic on it; this is
+ * one pass.
+ */
+function trimLineEnds(text: string): string {
+  const out: Array<string> = [];
+  let start = 0;
+  for (let i = 0; i <= text.length; i++) {
+    if (i < text.length && !isLineEnd(text.charCodeAt(i))) continue;
+    let end = i;
+    while (end > start && (text[end - 1] === ' ' || text[end - 1] === '\t')) end--;
+    out.push(text.slice(start, end), text.slice(i, i + 1));
+    start = i + 1;
+  }
+  return out.join('');
+}
+
+const isLineEnd = (c: number): boolean => c === 0x0a || c === 0x0d || c === 0x2028 || c === 0x2029;
 
 /**
  * Drop a hard break sitting at either end of a block: at the end there is no
@@ -394,7 +416,7 @@ function emitListItem(
   const cont = ' '.repeat(top.indent + top.markerWidth);
   // A soft break inside an item continues at the item's content column.
   const body = inline.replaceAll('\\\n', `\\\n${cont}`);
-  const line = `${pad}${bullet} ${body}`.replace(/\s+$/, '');
+  const line = `${pad}${bullet} ${body}`.trimEnd();
 
   // Items of one list are a single block joined by plain newlines — a blank
   // line between them would make the list loose, wrapping every item's text in
@@ -424,11 +446,27 @@ function listBullet(
   }
   // §17.9.11 — a multi-level template ("%1.%2.") ends with THIS level's own
   // number; markdown has one number per item, so the parents' are lost.
-  const digits = /(\d+)\D*$/.exec(marker);
-  if (marker.replace(/\D+/g, '').length > (digits?.[1]?.length ?? 0)) {
+  const digits = lastNumber(marker);
+  if (marker.replace(/\D+/g, '').length > (digits?.length ?? 0)) {
     lose(ctx, 'degraded', FEATURES.lists, 'multi-level list marker flattened to one number');
   }
-  return `${digits ? Number(digits[1]) : counter}.`;
+  return `${digits !== undefined ? Number(digits) : counter}.`;
+}
+
+/**
+ * The last run of digits in a marker — what `/(\d+)\D*$/` matched, read back
+ * from the end: that expression tried every digit of a long run as its start.
+ * The template the marker comes from is the file's, so the run can be any
+ * length, and every item of the list reads it.
+ */
+function lastNumber(marker: string): string | undefined {
+  const isDigit = (i: number): boolean => /\d/.test(marker[i] ?? '');
+  let end = marker.length;
+  while (end > 0 && !isDigit(end - 1)) end--;
+  if (end === 0) return undefined;
+  let start = end - 1;
+  while (start > 0 && isDigit(start - 1)) start--;
+  return marker.slice(start, end);
 }
 
 function numberingLevel(
@@ -619,8 +657,9 @@ function destination(url: string): string {
 function bookmarkSlug(name: string): string {
   const slug = name
     .toLowerCase()
-    .replace(/[^\p{L}\p{N}]+/gu, '-')
-    .replace(/^-+|-+$/g, '');
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter((word) => word.length > 0)
+    .join('-');
   return slug.length > 0 ? slug : 'bookmark';
 }
 
@@ -1057,7 +1096,7 @@ function applyMarks(
 ): string {
   const escaped = escapeInline(text);
   const lead = new RegExp(`^${SPAN_EDGE}*`).exec(escaped)?.[0] ?? '';
-  const trail = new RegExp(`${SPAN_EDGE}*$`).exec(escaped)?.[0] ?? '';
+  const trail = trailingEdge(escaped);
   const core = escaped.slice(lead.length, escaped.length - trail.length);
   if (core.length === 0) return escaped;
 
@@ -1089,6 +1128,24 @@ function applyMarks(
     out = `<${tag}>${out}</${tag}>`;
   }
   return `${lead}${linkify(out, marks, ctx)}${trail}`;
+}
+
+/**
+ * The whitespace and hard breaks the escaped text ends in — what
+ * `${SPAN_EDGE}*$` matches, read back from the end instead. Tried from the
+ * front, that expression rescans a long run of whitespace from each of its
+ * characters whenever something other than the end follows the run, and is
+ * quadratic on it.
+ */
+function trailingEdge(escaped: string): string {
+  let from = escaped.length;
+  while (from > 0) {
+    const c = escaped[from - 1]!;
+    // A backslash is an edge only as the hard break, with its newline after it.
+    if (c === '\\' ? escaped[from] !== '\n' : !/\s/u.test(c)) break;
+    from--;
+  }
+  return escaped.slice(from);
 }
 
 // CommonMark §2.1 counts the start and end of a line as whitespace, and its
