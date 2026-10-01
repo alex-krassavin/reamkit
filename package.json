@@ -84,6 +84,8 @@
     "corpus:pixel": "tsx scripts/corpus/pixel-scout.ts",
     "stand": "tsx stand/serve.ts",
     "stand:build": "tsx stand/build.ts",
+    "stand:html": "tsx stand/serve.ts html",
+    "stand:html:build": "tsx stand/html-build.ts",
     "typecheck:dist": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
