@@ -751,10 +751,18 @@ function textHtml(text: string): string {
 
 function emitTable(out: Array<string>, table: Table, ctx: EmitCtx): void {
   const css: Array<string> = [];
+  const fixed = table.properties.layout === 'fixed';
   if (table.properties.widthPt !== undefined) css.push(`width:${fmt(table.properties.widthPt)}pt`);
   else if (table.properties.widthFraction !== undefined) {
     css.push(`width:${fmt(table.properties.widthFraction * 100)}%`);
+  } else if (fixed && table.grid.length > 0) {
+    // A fixed table is as wide as its grid. CSS lays a table out by its
+    // columns only when the table has a width of its own (CSS 2.1 §17.5.2.1):
+    // left `auto`, `table-layout:fixed` is ignored and the browser sizes the
+    // columns to their content — a sheet's column widths are the author's.
+    css.push(`width:${fmt(table.grid.reduce((sum, w) => sum + w, 0))}pt`);
   }
+  if (fixed) css.push('table-layout:fixed');
   if (table.properties.alignment === 'center') css.push('margin-left:auto;margin-right:auto');
   else if (table.properties.alignment === 'right') css.push('margin-left:auto');
   out.push(`<table${css.length > 0 ? ` style="${css.join(';')}"` : ''}>`);
@@ -797,7 +805,16 @@ function emitTable(out: Array<string>, table: Table, ctx: EmitCtx): void {
 
   for (let ri = 0; ri < table.rows.length; ri++) {
     const row = table.rows[ri]!;
-    out.push('<tr>');
+    // §17.4.81 — a row as tall as it says, or taller where its content needs
+    // it: a browser grows a row past its `height` as `atLeast` does. A
+    // spreadsheet row is always given one, and its default is not a browser's
+    // line — Calibri 11's row is 15pt where the text needs about 13.
+    const { height, heightRule } = row.properties;
+    out.push(
+      height !== undefined && heightRule !== 'auto'
+        ? `<tr style="height:${fmt(height)}pt">`
+        : '<tr>',
+    );
     for (let ci = 0; ci < row.cells.length; ci++) {
       const cell = row.cells[ci]!;
       const merge = cell.properties.merge;
@@ -878,6 +895,10 @@ function emitCell(
   pushBorder(css, 'left', c?.left ?? (pos.firstCol ? t?.left : t?.insideV));
   pushBorder(css, 'right', c?.right ?? (pos.lastCol ? t?.right : t?.insideV));
   if (cell.properties.shading) css.push(`background-color:#${cell.properties.shading.colorHex}`);
+  // Where the content sits in a box taller than itself: the top unless the
+  // cell says — and a spreadsheet cell says the bottom by default (§18.8.1).
+  if (cell.properties.verticalAlign === 'center') css.push('vertical-align:middle');
+  else if (cell.properties.verticalAlign === 'bottom') css.push('vertical-align:bottom');
   // §18.8.1 — a cell that does not wrap shows ONE line, cut at its own box.
   // The paginated writers cut it themselves (the PDF and SVG emitters clip the
   // line to the cell); HTML renders the document model rather than a laid-out

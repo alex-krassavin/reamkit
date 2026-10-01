@@ -87,6 +87,21 @@ describe('html writer (FlowDoc adapter)', () => {
     expect(html).toContain('42');
   });
 
+  it('sets a grid row at its height and a cell at the bottom of it', async () => {
+    const xlsx = buildXlsx({
+      rows: [['tall'], ['plain']],
+      rowHeights: [{ row: 0, heightPt: 30, customHeight: true }],
+      columns: [{ min: 1, max: 1, widthChars: 10 }],
+    });
+    const html = decode(await Ream.parse(xlsx).convert('html'));
+    expect(html).toContain('<tr style="height:30pt">');
+    expect(html).toContain('<tr style="height:15pt">');
+    expect(html).toMatch(/<td style="[^"]*vertical-align:bottom/u);
+    // A fixed table is given the width of its grid, or a browser ignores the
+    // fixed layout and sizes the columns to their content.
+    expect(html).toMatch(/<table style="width:[\d.]+pt;table-layout:fixed">/u);
+  });
+
   it('reports headers/footers as a dropped loss; strict throws', async () => {
     const docx = buildDocxFromBody(
       '<w:p><w:r><w:t>body</w:t></w:r></w:p>' +
