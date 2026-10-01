@@ -2240,13 +2240,29 @@ function gridBody(
   // them: a row-number column in front of the grid and a letters row over it,
   // as tall as the sheet's own rows at the print scale. Where they go in, the
   // drawings anchored to the grid have to move with it (headingSink).
+  // The scale takes the headings down with the sheet — the numbers' column,
+  // their type and their boxes: left at full size, the numbers stood 11pt
+  // tall in rows a fit-to-width sheet had brought down to 3pt, and every row
+  // grew to hold them.
+  const headingColTwips = scaled
+    ? Math.max(1, Math.round(HEADING_COL_TWIPS * printScale))
+    : HEADING_COL_TWIPS;
   const headings =
     !print.screen && worksheet.printOptions?.headings
       ? {
-          dxPt: twipsToPt(HEADING_COL_TWIPS),
+          dxPt: twipsToPt(headingColTwips),
           dyPt:
             (worksheet.defaultRowHeightPt ?? defaultRowHeightPtFor(print.defaultFontPt)) *
             printScale,
+          band: {
+            colTwips: headingColTwips,
+            ...(scaled
+              ? {
+                  fontPt: (print.defaultFontPt ?? DEFAULT_FONT_PT) * printScale,
+                  lineWidthPt: 0.5 * printScale,
+                }
+              : {}),
+          },
         }
       : undefined;
   const reportHeadings = (): void => {
@@ -2285,7 +2301,11 @@ function gridBody(
         titleRowIndex,
         Math.round((print.drawingExtentPt?.widthPt ?? 0) * TWIPS_PER_POINT * printScale),
         headings
-          ? { columns: visibleCols.map((c) => c + colStart), rowNumbers, lettersPt: headings.dyPt }
+          ? {
+              columns: visibleCols.map((c) => c + colStart),
+              rowNumbers,
+              band: { ...headings.band, lettersPt: headings.dyPt },
+            }
           : undefined,
         sheetLeftPt !== undefined
           ? { sheetLeftPt, drawings: scaledBoxes(print.drawingBoxesPt, printScale) }
@@ -2334,7 +2354,10 @@ function gridBody(
         bandWidths,
         visibleCols.map((c) => c + colStart),
         rowNumbers,
-        headings.dyPt,
+        {
+          ...headings.band,
+          lettersPt: headings.dyPt,
+        },
       )
     : undefined;
   if (headed) reportHeadings();
@@ -2351,7 +2374,7 @@ function gridBody(
     ...sheetFrame(
       sheetLeftPt,
       bandWidths.map((w) => twipsToPt(w)),
-      headed ? twipsToPt(HEADING_COL_TWIPS) : 0,
+      headed ? twipsToPt(headingColTwips) : 0,
     ),
   };
 

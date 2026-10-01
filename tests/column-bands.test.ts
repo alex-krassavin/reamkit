@@ -150,6 +150,33 @@ describe('printed headings + bands (§18.3.1.70)', () => {
       expect(second?.properties.pageBreakBefore ?? false).toBe(false);
     }
   });
+
+  it('shrinks the headings with a sheet the print scale fits to the page', () => {
+    // Twenty wide columns fitted one page across: everything on the page is
+    // scaled, the row numbers' column and their type with it. Left at full
+    // size, 11pt numbers in rows brought down to a few points grew every row
+    // to hold them, and the sheet printed four times as tall as it is.
+    const xlsx = buildXlsx({
+      rows: grid(20, 20),
+      columns: [{ min: 1, max: 20, widthChars: 20 }],
+      printOptions: { headings: true },
+      fitToPage: true,
+      pageSetup: { fitToWidth: 1, fitToHeight: 0 },
+    });
+    const table = Ream.parse(xlsx).flow.body.find((el) => el.kind === 'table');
+    if (table?.kind !== 'table') throw new Error('expected a table');
+    const [numbersPt, firstPt] = table.table.grid;
+    const scale = firstPt! / ((20 * 7 + 5) * 0.75);
+    expect(scale).toBeLessThan(0.3);
+    expect(numbersPt).toBeCloseTo(23 * scale, 0);
+    const numberCell = table.table.rows[1]!.cells[0]!;
+    const dataCell = table.table.rows[1]!.cells[1]!;
+    const sizeOf = (cell: typeof numberCell): number | undefined =>
+      cell.content[0]?.kind === 'paragraph'
+        ? cell.content[0].paragraph.runs[0]?.properties.fontSizePt
+        : undefined;
+    expect(sizeOf(numberCell)).toBeCloseTo(sizeOf(dataCell)!, 2);
+  });
 });
 
 // A drawing WIDER than a band does not stop at the band's edge: the page after
