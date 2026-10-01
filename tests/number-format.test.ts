@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import { buildXlsx } from './fixtures/build-xlsx';
+import { Ream } from '@/core/converter/ream';
 import { applyNumberFormat, generalToWidth, numberFormatColorHex } from '@/excel';
 
 const noCustom = new Map<number, string>();
@@ -459,5 +461,72 @@ describe('applyNumberFormat — a format code built to stall it', () => {
     const { out, ms } = timed(`${'['.repeat(100_000)}0`, '1234.5');
     expect(out).toBe(`${'['.repeat(100_000)}1235`);
     expect(ms).toBeLessThan(1000);
+  });
+});
+
+describe('applyNumberFormat — the digits Excel shows', () => {
+  // Each expectation is what Excel itself printed for the value and the code,
+  // in a PDF of a probe workbook (2026-10-01): a double shown as its first 15
+  // significant digits, rounded half away from zero, and zeros after them.
+  const show = (value: string, code: string): string =>
+    applyNumberFormat(value, 164, new Map([[164, code]]));
+  const places = (n: number): string => `0.${'0'.repeat(n)}`;
+
+  it('writes zeros past fifteen significant digits, not the binary expansion', () => {
+    expect(show('0.1', places(20))).toBe('0.10000000000000000000');
+    expect(show(String(1 / 3), places(20))).toBe('0.33333333333333300000');
+    expect(show(String(2 / 3), places(17))).toBe('0.66666666666666700');
+    expect(show('123456.789012345678', places(15))).toBe('123456.789012346000000');
+    expect(show('9876543210.12345', places(15))).toBe('9876543210.123450000000000');
+  });
+
+  it('writes a number of 1E+21 and more out in full', () => {
+    expect(show('1E+21', '0.00')).toBe('1000000000000000000000.00');
+    expect(show('-1E+21', '0.00')).toBe('-1000000000000000000000.00');
+    expect(show('1.23456789012345E+22', '0')).toBe('12345678901234500000000');
+    expect(show('1E+21', '#,##0')).toBe('1,000,000,000,000,000,000,000');
+  });
+
+  it('rounds half away from zero on the decimal, however small the number', () => {
+    expect(show('9.995', '0.00')).toBe('10.00');
+    expect(show('-0.125', '0.00')).toBe('-0.13');
+    expect(show('8.0945E-12', places(15))).toBe('0.000000000008095');
+    expect(show('5E-16', places(15))).toBe('0.000000000000001');
+    expect(show('2.5E-08', places(8))).toBe('0.00000003');
+    expect(show('-2.5E-08', places(8))).toBe('-0.00000003');
+  });
+
+  it('rounds a scientific mantissa on the decimal too', () => {
+    expect(show('1234.5', '0.000E+00')).toBe('1.235E+03');
+    expect(show('0.00012345', '0.000E+00')).toBe('1.235E-04');
+    expect(show('9.9995', '0.000E+00')).toBe('1.000E+01');
+    expect(show('1.45', '0.0E+00')).toBe('1.5E+00');
+    expect(show('0.35', '0E+00')).toBe('4E-01');
+    expect(show('999.95', '##0.0E+0')).toBe('1.0E+3');
+    expect(show('0.00012345', '##0.0E+0')).toBe('123.5E-6');
+    expect(show(String(1 / 3), `${places(18)}E+00`)).toBe('3.333333333333330000E-01');
+  });
+
+  it('shows as many places as a code asks for, past a hundred', () => {
+    // toFixed stops at a hundred places, and one cell whose code asked for more
+    // threw out of the whole conversion.
+    expect(show('0.1', places(101))).toBe(`0.1${'0'.repeat(100)}`);
+    expect(show('1234.5', `${places(101)}E+00`)).toBe(`1.2345${'0'.repeat(97)}E+03`);
+    expect(show('0.5000123456', `hh:mm:ss.${'0'.repeat(101)}`)).toMatch(/^12:00:01\.0666\d{97}$/);
+  });
+
+  it('converts a workbook whose cell asks for more than a hundred places', async () => {
+    const styles =
+      `<numFmts count="1"><numFmt numFmtId="164" formatCode="${places(101)}"/></numFmts>` +
+      '<fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts>' +
+      '<fills count="2"><fill><patternFill patternType="none"/></fill>' +
+      '<fill><patternFill patternType="gray125"/></fill></fills>' +
+      '<borders count="1"><border/></borders>' +
+      '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>' +
+      '<cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>' +
+      '<xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/></cellXfs>';
+    const xlsx = buildXlsx({ rows: [[{ value: 1.5, styleIndex: 1 }]], stylesXml: styles });
+    const html = new TextDecoder().decode(await Ream.parse(xlsx).convert('html'));
+    expect(html).toContain(`1.5${'0'.repeat(100)}`);
   });
 });

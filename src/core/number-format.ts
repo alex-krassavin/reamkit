@@ -513,9 +513,14 @@ function formatExcelDate(rawValue: string, format: string, date1904: boolean): s
       case 'elapsed-s':
         out += elapsed(totalSeconds, t.text.length);
         break;
-      case 'subsec':
-        out += (totalSeconds - Math.floor(totalSeconds)).toFixed(subsecDigits).substring(1);
+      case 'subsec': {
+        // toFixed stops at a hundred places, and a format asking for more is the
+        // file's to write; the places past those are zeros.
+        const places = Math.min(subsecDigits, 100);
+        const fraction = (totalSeconds - Math.floor(totalSeconds)).toFixed(places);
+        out += fraction.substring(1) + '0'.repeat(subsecDigits - places);
         break;
+      }
       case 'm':
         out += t.text.length >= 2 ? pad2(minute) : String(minute);
         break;
@@ -685,6 +690,44 @@ function countDigitPlaceholders(s: string): number {
 // 3); the exponent is zero-padded to the placeholder count and carries a sign
 // (always for `E+`, only when negative for `E-`). The `E`/`e` case is preserved.
 /**
+ * The decimal a spreadsheet takes a double for: its first 15 significant
+ * digits, and the power of ten the first of them stands at.
+ *
+ * Excel shows a number as those 15 digits and zeros after them, however many
+ * places its format asks for: 0.1 under thirty places is 0.1 and twenty-nine
+ * zeros, 1/3 is fifteen threes and zeros, 1E+21 under `0.00` is a 1, twenty-one
+ * zeros and `.00` — its own PDF of each (2026-10-01).
+ */
+function decimalOf(value: number): { digits: string; exponent: number } {
+  const [mantissa, exponent] = Math.abs(value).toExponential(14).split('e');
+  return { digits: mantissa!.replace('.', ''), exponent: Number(exponent) };
+}
+
+/**
+ * Those digits at `decimals` places — the first standing at `exponent` —
+ * rounded half away from zero, as plain digits with a point and no sign.
+ */
+function placeDigits(digits: string, exponent: number, decimals: number): string {
+  // How many of the digits fall before the cut; the rest decide the rounding.
+  const kept = exponent + 1 + decimals;
+  let units: string;
+  if (kept >= digits.length) units = digits + '0'.repeat(kept - digits.length);
+  else if (kept < 0) units = '';
+  else units = digits[kept]! >= '5' ? incremented(digits.slice(0, kept)) : digits.slice(0, kept);
+  const padded = units.replace(/^0+/, '').padStart(decimals + 1, '0');
+  const whole = padded.slice(0, padded.length - decimals);
+  return decimals > 0 ? `${whole}.${padded.slice(whole.length)}` : whole;
+}
+
+/** A string of decimal digits plus one. */
+function incremented(digits: string): string {
+  let at = digits.length - 1;
+  while (at >= 0 && digits[at] === '9') at--;
+  if (at < 0) return `1${'0'.repeat(digits.length)}`;
+  return `${digits.slice(0, at)}${String(Number(digits[at]) + 1)}${'0'.repeat(digits.length - at - 1)}`;
+}
+
+/**
  * `value` rounded to `decimals` places the way a spreadsheet rounds: on the
  * DECIMAL number, half away from zero.
  *
@@ -694,19 +737,16 @@ function countDigitPlaceholders(s: string): number {
  * every other reader show 1.0%. AverageTaxRates.xlsx had eleven of its
  * percentages a tenth low for exactly this reason.
  *
- * Rounding to 15 significant digits first collapses the binary noise back to
- * the decimal the author typed; shifting through a string exponent then keeps
- * the scaling exact, so the final round sees 9.5 and not 9.499999999999998.
+ * The digits are the 15 of {@link decimalOf} and zeros after them, placed by
+ * hand: past seventeen significant digits `toFixed` printed the binary
+ * expansion (0.1 under twenty places as 0.10000000000000000555), from 1E+21 on
+ * it wrote the exponent (`1e+21.00`), and past a hundred places it threw.
  */
 function toFixedDecimal(value: number, decimals: number): string {
-  if (!Number.isFinite(value)) return value.toFixed(decimals);
-  const decimal = Number(value.toPrecision(15));
-  const shifted = Number(`${decimal}e${decimals}`);
-  if (!Number.isFinite(shifted)) return value.toFixed(decimals);
-  // Excel rounds a half away from zero; Math.round takes it towards +∞.
-  const rounded = shifted < 0 ? -Math.round(-shifted) : Math.round(shifted);
-  const back = Number(`${rounded}e${-decimals}`);
-  return Number.isFinite(back) ? back.toFixed(decimals) : value.toFixed(decimals);
+  if (!Number.isFinite(value)) return String(value);
+  const { digits, exponent } = decimalOf(value);
+  const placed = placeDigits(digits, exponent, decimals);
+  return value < 0 && /[1-9]/.test(placed) ? `-${placed}` : placed;
 }
 
 function formatScientific(value: number, cleaned: string, negativeSection: boolean): string {
@@ -727,20 +767,23 @@ function formatScientific(value: number, cleaned: string, negativeSection: boole
   );
   const decimals = dot >= 0 ? countDigitPlaceholders(mantissaFmt.slice(dot + 1)) : 0;
 
+  // The mantissa is the decimal's own digits, rounded half away from zero like
+  // any other number shown: Excel prints 1234.5 under `0.000E+00` as 1.235E+03
+  // and 1.45 under `0.0E+00` as 1.5E+00, where the binary mantissa's `toFixed`
+  // gave 1.234 and 1.4.
   let exp = 0;
-  let mant = Math.abs(value);
-  if (mant !== 0) {
-    exp = Math.floor(Math.log10(mant));
-    exp -= ((exp % intDigits) + intDigits) % intDigits; // engineering grouping
-    mant = mant / Math.pow(10, exp);
+  let mantStr = placeDigits('0', 0, decimals);
+  if (value !== 0) {
+    const { digits, exponent } = decimalOf(value);
+    exp = exponent - (((exponent % intDigits) + intDigits) % intDigits); // engineering grouping
+    mantStr = placeDigits(digits, exponent - exp, decimals);
     // Rounding the mantissa can carry it up to 10^intDigits — renormalise.
-    if (Number(mant.toFixed(decimals)) >= Math.pow(10, intDigits)) {
+    if (mantStr.split('.')[0]!.length > intDigits) {
       exp += intDigits;
-      mant = mant / Math.pow(10, intDigits);
+      mantStr = placeDigits(digits, exponent - exp, decimals);
     }
   }
 
-  const mantStr = mant.toFixed(decimals);
   const expDigits = countDigitPlaceholders(expFmt) || 2;
   const expStr = String(Math.abs(exp)).padStart(expDigits, '0');
   const expSign = exp < 0 ? '-' : expSignFmt === '+' ? '+' : '';
