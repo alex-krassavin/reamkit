@@ -1,6 +1,6 @@
 {
   "name": "reamkit",
-  "version": "1.31.0",
+  "version": "1.32.0",
   "description": "Ream — convert DOCX, XLSX, PPTX, PDF and legacy DOC, XLS and PPT to PDF, SVG, HTML, Markdown, DOCX and XLSX, built from scratch on the ECMA-376 and ISO 32000 specifications. Parse once, convert anywhere.",
   "license": "MIT",
   "author": "Alex Krassavin <info@reamkit.dev>",
