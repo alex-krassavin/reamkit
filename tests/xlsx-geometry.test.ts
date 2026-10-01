@@ -793,6 +793,29 @@ describe('column width unit (§18.3.1.13)', () => {
   });
 });
 
+describe('a row pinned to its height', () => {
+  it('keeps a wrapped line whose baseline the row still holds', () => {
+    // formats.xlsx sets "Hello, / Calc!" in a 23.85pt row: two lines of 10pt
+    // text there, the second a fifth of a point taller than the room left. It
+    // is cut at the cell's edge, its descenders and no more, and not dropped.
+    const stylesXml =
+      `<fonts count="1"><font><sz val="10"/><name val="Arial"/></font></fonts>` +
+      `<fills count="1"><fill><patternFill patternType="none"/></fill></fills>` +
+      `<borders count="1"><border/></borders>` +
+      `<cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>` +
+      `<xf numFmtId="0" fontId="0" fillId="0" borderId="0" applyAlignment="1">` +
+      `<alignment wrapText="1"/></xf></cellXfs>`;
+    const items = placed(
+      buildXlsx({
+        rows: [[{ value: 'Hello,\nCalc!', styleIndex: 1 }]],
+        rowHeights: [{ row: 0, heightPt: 23.85, customHeight: true }],
+        stylesXml,
+      }),
+    );
+    expect(at(items, 'Calc!').y).toBeGreaterThan(at(items, 'Hello,').y);
+  });
+});
+
 describe('cell indent (§18.8.1)', () => {
   it('offsets the text inside the cell, not just the model', () => {
     // The projection has always put `indent` on the paragraph; the table path

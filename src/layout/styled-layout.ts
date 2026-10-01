@@ -7780,11 +7780,17 @@ function clipCellToHeight(cell: CellLayout, heightPt: number): CellLayout {
   let used = 0;
   for (const line of cell.lines) {
     const h = computeLineHeight(line, line.resolved);
-    if (kept.length > 0 && used + h > room) break;
+    // A line stays while its BASELINE is in the row: what hangs below it, a
+    // hair of descender, is cut by the cell's own box, the way Excel and
+    // LibreOffice cut it. Dropped whole for being a fifth of a point too tall,
+    // the second line of formats.xlsx's "Hello, / Calc!" vanished from the
+    // 23.85pt row its two lines of Arial 10 are set in.
+    const below = line.metricDescentPt ?? line.maxFontSizePt * 0.2;
+    if (kept.length > 0 && used + h - below > room) break;
     kept.push(line);
     used += h;
   }
-  return { ...cell, lines: kept, contentHeightPt: used };
+  return { ...cell, lines: kept, contentHeightPt: used, ...(used > room ? { clipped: true } : {}) };
 }
 
 /**
