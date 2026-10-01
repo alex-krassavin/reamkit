@@ -289,8 +289,9 @@ describe('applyNumberFormat — codes real producers write', () => {
         t.length <= n;
     expect(generalToWidth('4.3900875881221957', upTo(8))).toBe('4.390088');
     expect(generalToWidth('-6.1052278206732389', upTo(9))).toBe('-6.105228');
-    // Room for everything ⇒ everything.
-    expect(generalToWidth('4.3900875881221957', upTo(30))).toBe('4.390087588122196');
+    // Room for everything is room for General's eleven characters: Excel's own
+    // PDF writes 4.390087588 in a column forty wide.
+    expect(generalToWidth('4.3900875881221957', upTo(30))).toBe('4.390087588');
     // An integer that will not fit goes scientific rather than reading as a
     // number a thousand times smaller (escape-unicode.xlsx printed "1161014"
     // for 1161014163).
@@ -298,6 +299,60 @@ describe('applyNumberFormat — codes real producers write', () => {
     expect(generalToWidth('1161014163', upTo(30))).toBe('1161014163');
     // Too narrow even for that: the cell says so its own way, with hashes.
     expect(generalToWidth('1161014163', upTo(3))).toBe('1161014163');
+  });
+
+  it('writes General in a cell as Excel does: eleven characters, no zeros at the end', () => {
+    // Each a cell of Excel's own PDF (2026-10-02), its column's room counted in
+    // characters. However wide the column, General writes eleven of them, its
+    // sign apart: we wrote every stored digit.
+    const upTo =
+      (n: number) =>
+      (t: string): boolean =>
+        t.length <= n;
+    const wide: ReadonlyArray<readonly [string, string]> = [
+      ['10000000000', '10000000000'],
+      ['-10000000000', '-10000000000'],
+      ['2500000000000', '2.5E+12'],
+      ['123456789012345', '1.23457E+14'],
+      ['0.123456789012345', '0.123456789'],
+      ['0.30000000000000004', '0.3'],
+      ['1.2345E-05', '0.000012345'],
+      ['1E-07', '0.0000001'],
+      ['3.5E-07', '0.00000035'],
+      ['-1.2345678E-05', '-1.23457E-05'],
+      ['1.23456789E-10', '1.23457E-10'],
+      ['1E+21', '1E+21'],
+    ];
+    expect(wide.map(([v]) => generalToWidth(v, upTo(99)))).toEqual(wide.map(([, t]) => t));
+    // Narrower, the finest that fits: rounded, or scientific where that keeps
+    // a finer last digit, never with the zeros a mantissa ends in — we wrote
+    // 1.000E+10 — and rounded on the decimal (1.2345E-05 is 1.234…E-05 in
+    // binary, and toExponential wrote 1.234E-05).
+    const narrow: ReadonlyArray<readonly [string, number, string]> = [
+      ['10000000000', 9, '1E+10'],
+      ['1234567890', 9, '1.235E+09'],
+      ['1.2345E-05', 9, '1.235E-05'],
+      ['3.5E-07', 9, '3.5E-07'],
+      ['2500000000000', 7, '2.5E+12'],
+      ['99999999999', 7, '1E+11'],
+      ['1E-07', 7, '1E-07'],
+      ['2500000000000', 6, '3E+12'],
+      ['0.0004', 5, '4E-04'],
+      ['0.00123456', 5, '0.001'],
+      ['123456', 5, '1E+05'],
+      ['99.96', 4, '100'],
+      ['1.2345E-05', 4, '0'],
+      ['-1.2345678E-05', 5, '-0'],
+    ];
+    expect(narrow.map(([v, room]) => generalToWidth(v, upTo(room)))).toEqual(
+      narrow.map(([, , t]) => t),
+    );
+    // Of two as fine, the plain one down to 0.0001 and the scientific below it.
+    expect(generalToWidth('0.000123456', upTo(6))).toBe('0.0001');
+    expect(generalToWidth('1.00049E-05', upTo(9))).toBe('1E-05');
+    expect(generalToWidth('0.000099996', upTo(9))).toBe('1E-04');
+    // …unless the number fits as it is.
+    expect(generalToWidth('1E-05', upTo(9))).toBe('0.00001');
   });
 
   it('rounds on the decimal number, half away from zero', () => {

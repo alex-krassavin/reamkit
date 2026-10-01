@@ -543,9 +543,8 @@ function defaultNumberRender(rawValue: string): string {
   // JavaScript's way, `3e-104`, and General is Excel's format: an upper-case E
   // and a signed exponent of at least two digits. 57236.xlsx stores three such
   // values and we printed all three with a lower-case e where every other
-  // reader prints `3E-104`. The spelling already lives in `scientificToWidth`
-  // below; this is the same rule, reached by the values that FIT their column
-  // and so never get there.
+  // reader prints `3E-104`. A cell in a column writes them through
+  // `generalRenderings` below, spelled the same way.
   return excelExponent(String(n));
 }
 
@@ -557,23 +556,29 @@ function excelExponent(rendered: string): string {
 }
 
 /**
- * A General number rounded to the decimals that fit `maxChars` characters.
+ * The most characters General writes in a cell, its sign apart: however wide
+ * the column, 123456789012345 is 1.23457E+14 and 0.123456789012345 is
+ * 0.123456789 — Excel's own PDF (2026-10-02).
+ */
+const GENERAL_CELL_CHARS = 11;
+
+/**
+ * A General number in its column: the most precise of the ways General may
+ * write it ({@link generalRenderings}) that `fits`.
  *
- * General is not a fixed format: a spreadsheet shows as many decimal places as
- * the column has room for and ROUNDS to that, so 4.3900875881221957 in a
- * column eight characters wide reads 4.390088. We rendered every stored digit
- * and let the cell clip it, which turns the same value into 4.390087 — off by
- * one in the last place shown, with nothing to say a digit was cut.
+ * General is not a fixed format: a spreadsheet shows as many places as the
+ * column has room for and ROUNDS to that, so 4.3900875881221957 in a column
+ * eight characters wide reads 4.390088. We rendered every stored digit and let
+ * the cell clip it, which turns the same value into 4.390087 — off by one in
+ * the last place shown, with nothing to say a digit was cut. A number too wide
+ * for every way of writing it comes back in its finest, and the cell fills
+ * with `#` (CellProperties.hashOnOverflow); one under 1 always fits as `0` or
+ * `-0`, which is what Excel prints in a column too narrow for anything else.
  *
- * The integer part is never dropped: a number too wide even without decimals
- * keeps them all and the cell says so its own way (see hashOnOverflow).
- *
- * `fits` decides, and it must measure in the face this will be DRAWN in rather
- * than count characters against the column's width in the document's unit.
- * Counted that way we produced nine digits for a column that holds nine of
- * Excel's and eight of ours, and the layout clipped the ninth — the very
- * truncation this exists to prevent. Fewer digits than the reference shows is a
- * coarser number; a clipped one is a different number.
+ * `fits` decides whether a rendering has room. The print model asks it in the
+ * document's own terms — the column's width less the padding it carries, in
+ * the font's widest digits — because that is the room Excel gives up places
+ * against, whatever face the page is drawn in.
  *
  * @param rawValue The cell's stored value.
  * @param fits     Whether a rendering will fit the cell.
@@ -581,48 +586,104 @@ function excelExponent(rendered: string): string {
 export function generalToWidth(rawValue: string, fits: (text: string) => boolean): string {
   const n = Number(rawValue);
   if (!Number.isFinite(n)) return defaultNumberRender(rawValue);
-  const full = defaultNumberRender(rawValue);
-  if (fits(full)) return full;
-  const dot = full.indexOf('.');
-  // No decimals to give up — the number is too wide as an integer, and General
-  // answers that with scientific notation rather than a number that reads as a
-  // smaller one: 1161014163 in a default-width column is 1.16E+09, never
-  // "1161014" (escape-unicode.xlsx).
-  if (dot < 0) return scientificToWidth(n, fits) ?? full;
-  // Give up decimals one at a time until it fits — rounding at each step, so
-  // the last digit shown is the right one.
-  let shortened = full;
-  for (let decimals = full.length - dot - 2; decimals >= 0; decimals--) {
-    const shifted = Number(`${Number(n.toPrecision(15))}e${decimals}`);
-    const rounded = shifted < 0 ? -Math.round(-shifted) : Math.round(shifted);
-    const back = Number(`${rounded}e${-decimals}`);
-    if (!Number.isFinite(back)) break;
-    shortened = defaultNumberRender(String(back));
-    if (fits(shortened)) return shortened;
+  let widest: string | undefined;
+  for (const text of generalRenderings(n, GENERAL_CELL_CHARS)) {
+    if (fits(text)) return text;
+    widest ??= text;
   }
-  // Dropping decimals was not enough — the integer part alone overruns.
-  return scientificToWidth(n, fits) ?? shortened;
+  return widest ?? defaultNumberRender(rawValue);
 }
 
 /**
- * `value` in scientific notation with as many mantissa decimals as `fits`
- * allows, spelled Excel's way: an upper-case `E`, a signed exponent of at least
- * two digits. Undefined when even a bare `1E+09` will not fit — the cell then
- * says so with hashes rather than shrinking further.
+ * Every way General may write `value` in `chars` characters, the most precise
+ * first. One rule, measured in Excel's own PDF on chart axes, which give it
+ * nine characters with the sign among them, and in cells, eleven with the
+ * sign apart (2026-10-01/02):
+ *
+ *  - the number as it is, its first 15 significant digits, where that fits:
+ *    0.000012345, 0.0000003, 12345678901;
+ *  - else rounded to fewer places or written in scientific notation, whichever
+ *    keeps the finer last digit — 0.123456789, not 1.23457E-01; 1.23457E-10,
+ *    not 0; 4E-04, not 0, in a column five characters wide — and of two as
+ *    fine, the plain one down to 0.0001 and the scientific one below it: 0.0001
+ *    for 0.000123456 but 1E-05 for 1.00049E-05;
+ *  - a whole part longer than the room only in scientific notation, and never
+ *    with the zeros a mantissa or a fraction ends in: 1E+10, 2.5E+12.
+ *
+ * The digits are the 15 of {@link decimalOf}, rounded half away from zero, so
+ * 1.2345E-05 is 1.235E-05, where `toExponential` rounded the binary double
+ * down to 1.234E-05.
+ *
+ * @param value      The number.
+ * @param chars      How many characters General has.
+ * @param signCounts Whether a minus sign takes one of them.
+ * @returns The renderings, sign included, finest first.
  */
-function scientificToWidth(value: number, fits: (text: string) => boolean): string | undefined {
-  for (let decimals = MAX_SCIENTIFIC_DECIMALS; decimals >= 0; decimals--) {
-    const [mantissa, exp] = value.toExponential(decimals).split('e');
-    const sign = exp!.startsWith('-') ? '-' : '+';
-    const digits = exp!.replace(/^[-+]/, '').padStart(2, '0');
-    const out = `${mantissa!}E${sign}${digits}`;
-    if (fits(out)) return out;
+export function* generalRenderings(
+  value: number,
+  chars: number,
+  signCounts = false,
+): Generator<string, void, undefined> {
+  if (value === 0 || !Number.isFinite(value)) {
+    yield value === 0 ? '0' : String(value);
+    return;
   }
-  return undefined;
+  const sign = value < 0 ? '-' : '';
+  const room = chars - (signCounts ? sign.length : 0);
+  const { digits, exponent } = decimalOf(value);
+  let shown = digits.length;
+  while (shown > 1 && digits[shown - 1] === '0') shown--;
+  const exactPlaces = Math.max(0, shown - 1 - exponent);
+  const exact = placeDigits(digits, exponent, exactPlaces);
+  if (exact.length <= room) yield sign + exact;
+  const forms: Array<{ text: string; place: number; plain: boolean }> = [];
+  if (exponent < room) {
+    const most = Math.min(exactPlaces, room - Math.max(exponent, 0) - 2);
+    for (let places = Math.max(0, most); places >= 0; places--) {
+      const text = withoutTrailingZeros(placeDigits(digits, exponent, places));
+      if (text.length <= room) forms.push({ text, place: -decimalsIn(text), plain: true });
+    }
+  }
+  const tail = (e: number): string =>
+    `E${e < 0 ? '-' : '+'}${String(Math.abs(e)).padStart(2, '0')}`;
+  for (let places = Math.max(0, room - tail(exponent).length - 2); places >= 0; places--) {
+    let e = exponent;
+    let mantissa = placeDigits(digits, 0, places);
+    // Rounding can carry into a new leading digit, and so into the exponent:
+    // 9.9996E+09 is 1E+10.
+    if (mantissa.length > 1 && mantissa[1] !== '.') {
+      e += 1;
+      mantissa = placeDigits('1', 0, places);
+    }
+    const stripped = withoutTrailingZeros(mantissa);
+    const text = stripped + tail(e);
+    if (text.length <= room) forms.push({ text, place: e - decimalsIn(stripped), plain: false });
+  }
+  const plainFirst = exponent >= -4;
+  forms.sort(
+    (a, b) => a.place - b.place || (a.plain === b.plain ? 0 : a.plain === plainFirst ? -1 : 1),
+  );
+  const seen = new Set<string>(exact.length <= room ? [exact] : []);
+  for (const form of forms) {
+    if (seen.has(form.text)) continue;
+    seen.add(form.text);
+    yield sign + form.text;
+  }
 }
 
-/** Excel never shows more mantissa decimals than this under General. */
-const MAX_SCIENTIFIC_DECIMALS = 10;
+/** A decimal without the zeros that end its fraction, nor a point left bare. */
+function withoutTrailingZeros(fixed: string): string {
+  if (!fixed.includes('.')) return fixed;
+  let end = fixed.length;
+  while (fixed[end - 1] === '0') end--;
+  return fixed.slice(0, fixed[end - 1] === '.' ? end - 1 : end);
+}
+
+/** How many places a plain decimal shows after its point. */
+const decimalsIn = (fixed: string): number => {
+  const dot = fixed.indexOf('.');
+  return dot < 0 ? 0 : fixed.length - dot - 1;
+};
 
 function applyFormatString(rawValue: string, format: string): string {
   const n = Number(rawValue);
@@ -693,7 +754,7 @@ function countDigitPlaceholders(s: string): number {
  * zeros, 1/3 is fifteen threes and zeros, 1E+21 under `0.00` is a 1, twenty-one
  * zeros and `.00` — its own PDF of each (2026-10-01).
  */
-export function decimalOf(value: number): { digits: string; exponent: number } {
+function decimalOf(value: number): { digits: string; exponent: number } {
   const [mantissa, exponent] = Math.abs(value).toExponential(14).split('e');
   return { digits: mantissa!.replace('.', ''), exponent: Number(exponent) };
 }
@@ -702,7 +763,7 @@ export function decimalOf(value: number): { digits: string; exponent: number } {
  * Those digits at `decimals` places — the first standing at `exponent` —
  * rounded half away from zero, as plain digits with a point and no sign.
  */
-export function placeDigits(digits: string, exponent: number, decimals: number): string {
+function placeDigits(digits: string, exponent: number, decimals: number): string {
   // How many of the digits fall before the cut; the rest decide the rounding.
   const kept = exponent + 1 + decimals;
   let units: string;

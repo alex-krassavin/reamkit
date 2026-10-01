@@ -13,7 +13,7 @@ import type {
   ShapeDash,
 } from '@/core/document-model';
 
-import { applyNumberFormat, decimalOf, placeDigits } from '@/core/number-format';
+import { applyNumberFormat, generalRenderings } from '@/core/number-format';
 
 /**
  * An axis-aligned rectangle in the scene's local y-up frame: bars, scatter
@@ -268,68 +268,19 @@ const AXIS_LABEL_CHARS = 9;
  * A value-axis tick as Excel labels it under General. An axis is not a cell:
  * its General gives every label nine characters, the sign among them, on an
  * axis 150pt or 500pt long, upright or lying alike — Excel's own PDF of 44
- * axes (2026-10-01 and -02):
- *
- *  - the number as it is, its first 15 significant digits, where that fits:
- *    0.25 (we wrote 0.3 on an axis stepped by 0.25), 500000000, −50000000,
- *    0.0000003;
- *  - else rounded to the places that fit, while the whole part fits and the
- *    number is no smaller than 0.0001: 0.1234568, −0.123457, 11.111111,
- *    0.0001235, 123456771;
- *  - else in scientific notation, the mantissa rounded to what fits beside
- *    an exponent of at least two digits: 1E+09, 1.235E+09, −1.23E+09,
- *    1.235E-05, 3.5E-07, 1.23E+300, 5E-151.
- *
- * The digits are rounded on the decimal, half away from zero, as a cell's
- * are. Places counted from the step and written by `toFixed` threw past a
- * hundred of them, which a step of 1E-150 asked for.
+ * axes (2026-10-01 and -02). Within them it is the cells' rule
+ * ({@link generalRenderings}): the number as it is where it fits (0.25 — we
+ * wrote 0.3 on an axis stepped by 0.25 — 500000000, −50000000, 0.0000003),
+ * else the finest of it rounded or in scientific notation (0.1234568,
+ * −0.123457, 123456771, 1E+09, 1.235E+09, −1.23E+09, 1.235E-05, 5E-151).
+ * Places counted from the step and written by `toFixed` threw past a hundred
+ * of them, which a step of 1E-150 asked for.
  *
  * @param v The tick value.
  * @returns The label text.
  */
 export function formatTick(v: number): string {
-  if (v === 0 || !Number.isFinite(v)) return v === 0 ? '0' : String(v);
-  const sign = v < 0 ? '-' : '';
-  const room = AXIS_LABEL_CHARS - sign.length;
-  const { digits, exponent } = decimalOf(v);
-  let shown = digits.length;
-  while (shown > 1 && digits[shown - 1] === '0') shown--;
-  const exact = placeDigits(digits, exponent, Math.max(0, shown - 1 - exponent));
-  if (exact.length <= room) return sign + exact;
-  if (exponent >= -4 && exponent < room) {
-    const places = Math.max(0, room - Math.max(exponent, 0) - 2);
-    const rounded = withoutTrailingZeros(placeDigits(digits, exponent, places));
-    // Rounding up can still carry the whole part past the room: 999999999.7.
-    if (rounded.length <= room) return sign + rounded;
-  }
-  return sign + scientificLabel(digits, exponent, room);
-}
-
-/**
- * `digits`, the first standing at 10^`exponent`, in scientific notation: the
- * mantissa rounded to the places that fit `room` beside an exponent of at
- * least two digits — the rounded number's exponent, where the mantissa
- * carries into it (9.9996E+09 is 1E+10).
- */
-function scientificLabel(digits: string, exponent: number, room: number): string {
-  const tail = (e: number): string =>
-    `E${e < 0 ? '-' : '+'}${String(Math.abs(e)).padStart(2, '0')}`;
-  const places = (e: number): number => Math.max(0, room - tail(e).length - 2);
-  let e = exponent;
-  let mantissa = placeDigits(digits, 0, places(e));
-  if (mantissa.length > 1 && mantissa[1] !== '.') {
-    e += 1;
-    mantissa = placeDigits('1', 0, places(e));
-  }
-  return withoutTrailingZeros(mantissa) + tail(e);
-}
-
-/** A decimal without the zeros that end its fraction, nor a point left bare. */
-function withoutTrailingZeros(fixed: string): string {
-  if (!fixed.includes('.')) return fixed;
-  let end = fixed.length;
-  while (fixed[end - 1] === '0') end--;
-  return fixed.slice(0, fixed[end - 1] === '.' ? end - 1 : end);
+  return generalRenderings(v, AXIS_LABEL_CHARS, true).next().value ?? String(v);
 }
 
 /**
