@@ -594,6 +594,12 @@ export interface CfRuleIconSet {
   readonly iconSet: string;
   readonly cfvos: ReadonlyArray<Cfvo>;
   readonly reverse?: boolean;
+  /**
+   * §18.3.1.49 `showValue` — false means the cell shows its ICON ONLY, as a
+   * status column of ticks and crosses does: the figure is what the icon
+   * already says.
+   */
+  readonly showValue?: boolean;
 }
 
 /**

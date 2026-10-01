@@ -102,7 +102,8 @@ export interface CfOverride {
   /**
    * §18.3.1.28 `<dataBar showValue="0">` — the cell shows its BAR and not its
    * number. Excel's "Show Bar Only": the figure would otherwise sit on top of
-   * its own gauge.
+   * its own gauge. §18.3.1.49 `<iconSet showValue="0">` is the same for an
+   * icon: "Show Icon Only".
    */
   readonly hideValue?: boolean;
 }
@@ -327,6 +328,7 @@ export function buildConditionalFormatter(
           if (!icon && value !== undefined && iconThresholds) {
             const bucket = iconBucket(iconThresholds, value);
             icon = iconToCell(rule.iconSet, iconThresholds.length, bucket, rule.reverse ?? false);
+            if (rule.showValue === false) hideValue = true;
           }
           break;
         case 'top10':

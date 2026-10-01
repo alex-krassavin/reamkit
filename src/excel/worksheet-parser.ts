@@ -931,7 +931,16 @@ function parseIconSetRule(
   const iconSet = strAttr(isObj, 'iconSet') ?? '3TrafficLights1';
   const reverseRaw = strAttr(isObj, 'reverse');
   const reverse = reverseRaw === '1' || reverseRaw === 'true';
-  return { type: 'iconSet', priority, iconSet, cfvos, ...(reverse ? { reverse } : {}) };
+  const showValueRaw = strAttr(isObj, 'showValue');
+  const showValue = showValueRaw === '0' || showValueRaw === 'false' ? false : undefined;
+  return {
+    type: 'iconSet',
+    priority,
+    iconSet,
+    cfvos,
+    ...(reverse ? { reverse } : {}),
+    ...(showValue === false ? { showValue } : {}),
+  };
 }
 
 // §18.3.1.28 <dataBar> — 2 cfvo stops (lower/upper) + a fill <color>; optional

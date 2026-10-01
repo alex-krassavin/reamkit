@@ -449,6 +449,32 @@ describe('conditional formatting — iconSet (E-SHEET SC1c)', () => {
     expect(iconAt(flow, 2)).toEqual({ shape: 'circle', colorHex: '00B050' }); // bucket 2
   });
 
+  it('shows the icon and not the number when the rule says icon only', () => {
+    // §18.3.1.49 `<iconSet showValue="0">` — Excel's "Show Icon Only", which is
+    // what a column of status ticks is: ConditionalFormattingSamples.xlsx sets
+    // it on every Status and Trend column, and we printed each number beside
+    // the icon that already says it.
+    const rule = iconSet('3Arrows', ['percent:0', 'percent:33', 'percent:67']).replace(
+      '<iconSet ',
+      '<iconSet showValue="0" ',
+    );
+    const flow = Ream.parse(
+      buildXlsx({
+        rows: [[10], [90]],
+        stylesXml: PLAIN_STYLES,
+        conditionalFormattingXml: `<conditionalFormatting sqref="A1:A2">${rule}</conditionalFormatting>`,
+      }),
+    ).flow;
+    const table = flow.body.find((el) => el.kind === 'table');
+    if (table?.kind !== 'table') throw new Error('expected a table');
+    const text = (row: number): string =>
+      (table.table.rows[row]?.cells[0]?.content ?? [])
+        .map((b) => (b.kind === 'paragraph' ? b.paragraph.runs.map((r) => r.text).join('') : ''))
+        .join('');
+    expect([text(0), text(1)]).toEqual(['', '']);
+    expect(iconAt(flow, 1)?.shape).toBe('triangleUp');
+  });
+
   it('maps 3Arrows to down/right/up triangles', () => {
     const cf = `<conditionalFormatting sqref="A1:A3">${iconSet('3Arrows', ['percent:0', 'percent:33', 'percent:67'])}</conditionalFormatting>`;
     const flow = Ream.parse(

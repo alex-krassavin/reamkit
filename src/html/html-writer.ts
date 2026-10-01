@@ -1028,7 +1028,9 @@ function emitCell(
   out.push(`<${tag}${attrs.length > 0 ? ` ${attrs.join(' ')}` : ''} style="${css.join(';')}">`);
   // Data-validation dropdown (E-SHEET SV1): a ▾ button floated to the right edge.
   if (cell.properties.dropdown) out.push(cellDropdownSvg());
-  // Conditional-format icon (E-SHEET SC1c): an inline glyph before the value.
+  // Conditional-format icon (E-SHEET SC1c): a glyph at the cell's left edge, on
+  // the value's line. Floated — set in line ahead of the value's paragraph it
+  // made a line of its own, and every row with an icon twice as tall.
   if (cell.properties.icon) out.push(cellIconSvg(cell.properties.icon));
   // Sparkline (E-SHEET SC2): a mini inline-SVG chart in the cell.
   if (cell.properties.sparkline) out.push(cellSparklineSvg(cell.properties.sparkline));
@@ -1116,7 +1118,7 @@ function cellIconSvg(icon: CellIcon): string {
   }
   return (
     `<svg width="10" height="10" viewBox="0 0 10 10" ` +
-    `style="vertical-align:middle;margin-right:3px">${body}</svg>`
+    `style="float:left;margin:2px 3px 0 0">${body}</svg>`
   );
 }
 
