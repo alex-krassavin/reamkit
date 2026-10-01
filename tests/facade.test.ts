@@ -74,7 +74,10 @@ describe('svg writer (stage-6 crash test)', () => {
     const r = await ream.convert(docx, { to: 'svg', fonts: FONTS });
     const svg = new TextDecoder().decode(r.bytes);
     expect(svg.startsWith('<svg ')).toBe(true);
-    expect(svg).toContain('>smoke</text>'); // tokens emit per word
+    // The glyphs are drawn from the face's outlines, and the line's words ride
+    // over them unseen, for search and selection.
+    expect(svg).toMatch(/<use href="#g\d+-\d+"/u);
+    expect(svg).toContain('>svg smoke</text>');
     expect(svg).toContain('cell');
     expect(svg).toContain('fill="#FFCC00"'); // table shading → <rect>
     expect(svg).toContain('data-page="1"');

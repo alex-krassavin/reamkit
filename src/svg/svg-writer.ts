@@ -7,24 +7,22 @@
 // it is the PDF emitter that converts into PDF's y-up frame at emission.
 //
 // Pages stack vertically in one <svg>, separated by a gap — a faithful,
-// dependency-free preview of the laid-out document.
+// dependency-free preview of the laid-out document. Its text is drawn from
+// the faces' own outlines (see svg-text.ts), so it needs no fonts to show.
 
 import type { DocumentWriter, WriteResult } from '@/core/ir/adapters';
 import type { Loss } from '@/core/ir';
-import type {
-  ImageItem,
-  LaidOutDocument,
-  LaidOutPage,
-  PageItem,
-  TextLineItem,
-} from '@/layout/page-doc';
+import type { ImageItem, LaidOutDocument, LaidOutPage, PageItem } from '@/layout/page-doc';
 import type { PathSegment, VectorShape } from '@/core/vector';
+import type { PlacedImage, SvgLineCtx } from '@/svg/svg-text';
 import { svgPathData } from '@/core/vector';
 
 import { FEATURES } from '@/core/ir';
 import { toBase64 } from '@/core/bytes';
 import { gradientSvgDef } from '@/core/drawingml/shape-render';
+import { BORDER_DASHES, washVeil } from '@/layout/line-paint';
 import { paintPlan } from '@/layout/page-doc';
+import { SvgGlyphs, emitSvgLine } from '@/svg/svg-text';
 
 const PAGE_GAP = 12;
 
@@ -54,22 +52,32 @@ export function writeSvg(laid: LaidOutDocument, opts: SvgWriteOptions = {}): Wri
     laid.pages.reduce((s, p) => s + p.height, 0) + gap * Math.max(0, laid.pages.length - 1);
 
   const parts: Array<string> = [];
-  parts.push(
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${fmt(width)}" height="${fmt(height)}" viewBox="0 0 ${fmt(width)} ${fmt(height)}">`,
-  );
+  const ids = { n: 0 }; // unique generated-id counter across the whole document
+  const glyphs = new SvgGlyphs();
+  const ctx: SvgLineCtx = {
+    glyphs,
+    ids,
+    laid,
+    image: (out, placed) => emitPlaced(out, placed, laid, ids),
+    shape: (out, shape) => emitShape(out, shape, ids),
+  };
   let yOffset = 0;
-  const idc = { n: 0 }; // unique gradient-id counter across the whole document
   laid.pages.forEach((page, i) => {
     parts.push(`<g transform="translate(0 ${fmt(yOffset)})" data-page="${i + 1}">`);
     // Page background + outline so stacked pages read as pages.
     parts.push(
       `<rect x="0" y="0" width="${fmt(page.width)}" height="${fmt(page.height)}" fill="#ffffff" stroke="#cccccc"/>`,
     );
-    emitPage(parts, page, laid, losses, idc);
+    emitPage(parts, page, ctx);
     parts.push('</g>');
     yOffset += page.height + gap;
   });
   parts.push('</svg>');
+  // The glyphs the pages used, each once — known only now that they are drawn.
+  parts.unshift(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${fmt(width)}" height="${fmt(height)}" viewBox="0 0 ${fmt(width)} ${fmt(height)}">`,
+    glyphs.defsXml(),
+  );
 
   return { bytes: new TextEncoder().encode(parts.join('\n')), losses };
 }
@@ -85,19 +93,13 @@ export const svgWriter: DocumentWriter<LaidOutDocument> = {
   write: (doc, opts) => writeSvg(doc, opts ?? {}),
 };
 
-function emitPage(
-  out: Array<string>,
-  page: LaidOutPage,
-  laid: LaidOutDocument,
-  losses: Array<Loss>,
-  idc: { n: number },
-): void {
+function emitPage(out: Array<string>, page: LaidOutPage, ctx: SvgLineCtx): void {
   // The shared canonical paint order — one owner for every writer. PageItem
   // coordinates are already top-left/y-down: SVG's native frame.
   const plan = paintPlan(page.commands);
 
   // What the page puts behind its content, in its own order.
-  for (const item of plan.behind) emitPageItem(out, item, laid, losses, idc);
+  for (const item of plan.behind) emitPageItem(out, item, ctx);
 
   for (const f of plan.fills) {
     out.push(
@@ -105,7 +107,7 @@ function emitPage(
     );
   }
 
-  for (const img of plan.images) emitImage(out, img, laid, idc);
+  for (const img of plan.images) emitImage(out, img, ctx);
 
   for (const b of plan.borders) {
     const x2 = b.x + b.width;
@@ -119,64 +121,48 @@ function emitPage(
           : b.side === 'left'
             ? [b.x, yTop, b.x, yBottom]
             : [x2, yTop, x2, yBottom];
+    // §18.18.3's dashed/dotted are line patterns, not weights — the PDF's own.
+    const dash = b.borderStyle !== undefined ? BORDER_DASHES.get(b.borderStyle) : undefined;
     out.push(
-      // §18.18.3's dashed/dotted are line patterns, not weights (see the PDF
-      // emitter's dashPatternFor).
       `<line x1="${fmt(ax)}" y1="${fmt(ay)}" x2="${fmt(bx)}" y2="${fmt(by)}" stroke="#${b.borderColorHex}" stroke-width="${fmt(b.borderSizePt)}"${
-        b.borderStyle === 'dashed'
-          ? ' stroke-dasharray="8 2.5"'
-          : b.borderStyle === 'dashSmallGap'
-            ? ' stroke-dasharray="3 1"'
-            : b.borderStyle === 'dotted'
-              ? ' stroke-dasharray="0.5 1"'
-              : ''
+        dash ? ` stroke-dasharray="${dash.map(fmt).join(' ')}"` : ''
       }/>`,
     );
   }
 
   for (const sh of plan.shapes) {
-    emitShape(out, sh.shape, idc);
+    emitShape(out, sh.shape, ctx.ids);
   }
 
   // A picture paints as one thing, in its own order: a metafile buries a label
   // under a panel it draws afterwards, and the passes above would lift it out.
   for (const picture of plan.pictures) {
-    for (const item of picture) emitPageItem(out, item, laid, losses, idc);
+    for (const item of picture) emitPageItem(out, item, ctx);
   }
 
   // …and a page that states its own paint order paints in it (a slide's shape
   // tree IS that order), kind by kind ignored.
   for (const run of plan.ordered) {
-    for (const item of run) emitPageItem(out, item, laid, losses, idc);
+    for (const item of run) emitPageItem(out, item, ctx);
   }
 
-  for (const t of plan.lines) {
-    emitTextLine(out, t, losses, idc);
-  }
+  for (const t of plan.lines) emitSvgLine(out, t, ctx);
 }
 
 /**
- * One picture. §20.1.8.23 `a:duotone` recolours it between two colours — its
- * dark end and its light end — which is a luminance-to-two-tone map, and SVG
- * states exactly that: luminance into every channel, then a two-entry transfer
- * table per channel.
+ * One picture item, its placement and its effects: §20.1.8.23 `a:duotone`
+ * recolours it between its dark end and its light end — luminance into every
+ * channel, then a two-entry transfer table per channel — and a picture FILL
+ * (§20.1.8.14) is clipped to the outline of the shape it fills.
  *
  * @param out  The SVG fragment sink.
  * @param img  The image item.
- * @param laid The laid-out document, for the image's data URI.
- * @param idc  The shared id counter, for the filter's id.
+ * @param ctx  The document, its id counter, its drawing.
  */
-function emitImage(
-  out: Array<string>,
-  img: ImageItem,
-  laid: LaidOutDocument,
-  idc: { n: number },
-): void {
-  const href = imageHref(img.imageResourceName, laid);
-  if (!href) return;
-  let filter = '';
+function emitImage(out: Array<string>, img: ImageItem, ctx: SvgLineCtx): void {
+  let filter: string | undefined;
   if (img.duotone) {
-    const id = `duo${String(idc.n++)}`;
+    const id = `duo${String(ctx.ids.n++)}`;
     const chan = (hex: string, at: number): number => parseInt(hex.slice(at, at + 2), 16) / 255;
     const table = (at: number): string =>
       `${fmt(chan(img.duotone!.shadowHex, at))} ${fmt(chan(img.duotone!.highlightHex, at))}`;
@@ -189,11 +175,110 @@ function emitImage(
         `<feFuncB type="table" tableValues="${table(4)}"/>` +
         `</feComponentTransfer></filter>`,
     );
-    filter = ` filter="url(#${id})"`;
+    filter = id;
   }
-  out.push(
-    `<image x="${fmt(img.x)}" y="${fmt(img.y)}" width="${fmt(img.width)}" height="${fmt(img.height)}" href="${href}" preserveAspectRatio="none"${filter}/>`,
+  let clipped = false;
+  if (img.clip) {
+    const id = `pic${String(ctx.ids.n++)}`;
+    const [a, b, c, d, e, f] = img.clip.transform;
+    out.push(
+      `<clipPath id="${id}">` +
+        img.clip.paths
+          .map(
+            (p) =>
+              `<path d="${pathData(p.segments)}" transform="matrix(${fmt(a)} ${fmt(b)} ${fmt(c)} ${fmt(d)} ${fmt(e)} ${fmt(f)})"/>`,
+          )
+          .join('') +
+        `</clipPath>`,
+      `<g clip-path="url(#${id})">`,
+    );
+    clipped = true;
+  }
+  emitPlaced(
+    out,
+    {
+      resourceName: img.imageResourceName,
+      x: img.x,
+      y: img.y,
+      width: img.width,
+      height: img.height,
+      ...(img.crop ? { crop: img.crop } : {}),
+      ...(img.rotationDeg !== undefined ? { rotationDeg: img.rotationDeg } : {}),
+      ...(img.flipH === true ? { flipH: true } : {}),
+      ...(img.flipV === true ? { flipV: true } : {}),
+      ...(img.alpha !== undefined ? { alpha: img.alpha } : {}),
+    },
+    ctx.laid,
+    ctx.ids,
+    filter,
+    img.wash,
   );
+  if (clipped) out.push('</g>');
+}
+
+/**
+ * A picture in its box, as the PDF places one: turned about the box's centre
+ * (clockwise, as DrawingML measures), mirrored about it, and — cropped by
+ * `a:srcRect` (§20.1.8.55) — drawn larger than the box with the box as its clip,
+ * so the part that was kept fills it. A wash (§14.1.2.10) is the veil laid over
+ * it.
+ */
+function emitPlaced(
+  out: Array<string>,
+  placed: PlacedImage,
+  laid: LaidOutDocument,
+  ids: { n: number },
+  filter?: string,
+  wash?: { readonly gain: number; readonly black: number },
+): void {
+  const href = imageHref(placed.resourceName, laid);
+  if (!href) return;
+  const { x, y, width, height } = placed;
+  const cx = x + width / 2;
+  const cy = y + height / 2;
+  const turns: Array<string> = [];
+  if (placed.rotationDeg) turns.push(`rotate(${fmt(placed.rotationDeg)} ${fmt(cx)} ${fmt(cy)})`);
+  if (placed.flipH === true || placed.flipV === true) {
+    const sx = placed.flipH === true ? -1 : 1;
+    const sy = placed.flipV === true ? -1 : 1;
+    turns.push(
+      `matrix(${String(sx)} 0 0 ${String(sy)} ${fmt(sx === -1 ? 2 * cx : 0)} ${fmt(sy === -1 ? 2 * cy : 0)})`,
+    );
+  }
+  const open = turns.length > 0 ? `<g transform="${turns.join(' ')}">` : '';
+  if (open) out.push(open);
+  const crop = placed.crop;
+  let clipId: string | undefined;
+  let drawn = { x, y, width, height };
+  if (crop) {
+    const keptW = 1 - crop.left - crop.right;
+    const keptH = 1 - crop.top - crop.bottom;
+    if (keptW > 0 && keptH > 0) {
+      const fullW = width / keptW;
+      const fullH = height / keptH;
+      drawn = { x: x - crop.left * fullW, y: y - crop.top * fullH, width: fullW, height: fullH };
+      clipId = `crop${String(ids.n++)}`;
+      out.push(
+        `<clipPath id="${clipId}"><rect x="${fmt(x)}" y="${fmt(y)}" width="${fmt(width)}" height="${fmt(height)}"/></clipPath>`,
+      );
+    }
+  }
+  const alpha =
+    placed.alpha !== undefined && placed.alpha < 1 ? ` opacity="${fmt(placed.alpha)}"` : '';
+  out.push(
+    `<image x="${fmt(drawn.x)}" y="${fmt(drawn.y)}" width="${fmt(drawn.width)}" height="${fmt(drawn.height)}" href="${href}" preserveAspectRatio="none"` +
+      `${clipId ? ` clip-path="url(#${clipId})"` : ''}${filter ? ` filter="url(#${filter})"` : ''}${alpha}/>`,
+  );
+  const veil = washVeil(wash);
+  if (veil) {
+    const grey = Math.round(veil.grey * 255)
+      .toString(16)
+      .padStart(2, '0');
+    out.push(
+      `<rect x="${fmt(x)}" y="${fmt(y)}" width="${fmt(width)}" height="${fmt(height)}" fill="#${grey}${grey}${grey}" opacity="${fmt(veil.alpha)}"/>`,
+    );
+  }
+  if (open) out.push('</g>');
 }
 
 /**
@@ -201,29 +286,21 @@ function emitImage(
  * (what stands behind the content, and a picture's own primitives) rather than
  * in the by-kind passes.
  *
- * @param out    The SVG fragment sink.
- * @param item   The item to draw.
- * @param laid   The laid-out document, for image resources.
- * @param losses Where an unrenderable item records itself.
- * @param idc    The shared id counter for generated defs.
+ * @param out  The SVG fragment sink.
+ * @param item The item to draw.
+ * @param ctx  The document, its glyphs, its id counter and its drawing.
  */
-function emitPageItem(
-  out: Array<string>,
-  item: PageItem,
-  laid: LaidOutDocument,
-  losses: Array<Loss>,
-  idc: { n: number },
-): void {
+function emitPageItem(out: Array<string>, item: PageItem, ctx: SvgLineCtx): void {
   if (item.type === 'shape') {
-    emitShape(out, item.shape, idc);
+    emitShape(out, item.shape, ctx.ids);
     return;
   }
   if (item.type === 'line') {
-    emitTextLine(out, item, losses, idc);
+    emitSvgLine(out, item, ctx);
     return;
   }
   if (item.type === 'image') {
-    emitImage(out, item, laid, idc);
+    emitImage(out, item, ctx);
     return;
   }
   if (item.type === 'fill') {
@@ -233,78 +310,40 @@ function emitPageItem(
   }
 }
 
-function emitTextLine(
-  out: Array<string>,
-  item: TextLineItem,
-  losses: Array<Loss>,
-  idc: { n: number },
-): void {
-  // A cell whose text overran its box is painted inside it, so the glyph that
-  // straddles the edge is cut rather than dropped — the SVG twin of the PDF
-  // emitter's `q … re W n … Q`. The layout already cut the string to one glyph
-  // past the edge; this is what makes drawing that glyph safe.
-  const clip = item.clip;
-  if (clip) {
-    const id = `clip${idc.n++}`;
-    out.push(
-      `<clipPath id="${id}"><rect x="${fmt(clip.x)}" y="${fmt(clip.y)}" ` +
-        `width="${fmt(clip.width)}" height="${fmt(clip.height)}"/></clipPath>`,
-      `<g clip-path="url(#${id})">`,
-    );
-  }
-  const y = item.baselineY;
-  let x: number = item.originX;
-  // SVG's y grows downward, so a counter-clockwise page rotation is a negative
-  // one here. The pivot is the line's own origin, as in the PDF text matrix.
-  const rot = item.rotationDeg
-    ? ` transform="rotate(${fmt(-item.rotationDeg)} ${fmt(item.originX)} ${fmt(item.baselineY)})"`
-    : '';
-  for (const tok of item.line.tokens) {
-    if (tok.kind === 'image') {
-      x += tok.widthPt; // inline image boxes reserve space; not rendered in v0
-      continue;
-    }
-    if (tok.kind === 'math') {
-      losses.push({
-        severity: 'dropped',
-        feature: FEATURES.math,
-        detail: 'inline math box not rendered by the SVG writer (v0)',
-      });
-      x += tok.widthPt;
-      continue;
-    }
-    if (tok.text.trim().length > 0) {
-      out.push(
-        `<text x="${fmt(x)}" y="${fmt(y)}"${rot} font-family="sans-serif" font-size="${fmt(tok.fontSizePt)}" fill="#${tok.resolvedRun.colorHex}">${escapeXml(tok.text)}</text>`,
-      );
-    }
-    x += tok.widthPt;
-  }
-  if (clip) out.push('</g>');
-}
-
-function emitShape(out: Array<string>, shape: VectorShape, idc: { n: number }): void {
+function emitShape(out: Array<string>, shape: VectorShape, ids: { n: number }): void {
   const [a, b, c, d, e, f] = shape.transform;
   // The stored CTM maps the shape's local y-up frame straight into the
   // top-left page frame — SVG's matrix() convention verbatim.
   const transform = `matrix(${fmt(a)} ${fmt(b)} ${fmt(c)} ${fmt(d)} ${fmt(e)} ${fmt(f)})`;
   let fill: string;
   if (shape.fillGradient) {
-    const id = `grad${idc.n++}`;
+    const id = `grad${String(ids.n++)}`;
     out.push(gradientSvgDef(id, shape.fillGradient));
     fill = `url(#${id})`;
   } else {
     fill = shape.fillColorHex ? `#${shape.fillColorHex}` : 'none';
   }
-  const stroke = shape.stroke
-    ? ` stroke="#${shape.stroke.colorHex}" stroke-width="${fmt(shape.stroke.widthPt)}"`
+  // §20.1.2.3.1 — a fill the document made transparent lets what is behind it
+  // show through.
+  const fillAlpha =
+    shape.fillAlpha !== undefined && shape.fillAlpha < 1 && fill !== 'none'
+      ? ` fill-opacity="${fmt(shape.fillAlpha)}"`
+      : '';
+  // The stroke in the shape's local units, as the PDF sets its width after
+  // the same matrix — with its caps, joins and dashes.
+  const s = shape.stroke;
+  const stroke = s
+    ? ` stroke="#${s.colorHex}" stroke-width="${fmt(s.widthPt)}"` +
+      (s.cap !== undefined ? ` stroke-linecap="${s.cap}"` : '') +
+      (s.join !== undefined ? ` stroke-linejoin="${s.join}"` : '') +
+      (s.dash && s.dash.length > 0 ? ` stroke-dasharray="${s.dash.map(fmt).join(' ')}"` : '')
     : '';
   // §20.1.8.40 — the drop shadow, drawn first so the shape lands on top of it.
   // SVG can blur, so here the softness the source asked for is the softness
   // drawn: `blurRad` is the full spread, and a Gaussian's is about 2σ.
   const shadow = shape.shadow;
   if (shadow) {
-    const id = `shadow${idc.n++}`;
+    const id = `shadow${String(ids.n++)}`;
     if (shadow.blurPt > 0) {
       out.push(
         `<filter id="${id}" x="-50%" y="-50%" width="200%" height="200%">` +
@@ -331,7 +370,9 @@ function emitShape(out: Array<string>, shape: VectorShape, idc: { n: number }): 
   for (const path of shape.paths) {
     const d2 = pathData(path.segments);
     const rule = path.fillRule === 'evenodd' ? ' fill-rule="evenodd"' : '';
-    out.push(`<path d="${d2}" fill="${fill}"${rule}${stroke} transform="${transform}"/>`);
+    out.push(
+      `<path d="${d2}" fill="${fill}"${fillAlpha}${rule}${stroke} transform="${transform}"/>`,
+    );
   }
 }
 
@@ -353,14 +394,6 @@ function imageHref(resourceName: string, laid: LaidOutDocument): string | undefi
     return `data:${res.prepared.mimeType};base64,${toBase64(bytes)}`;
   }
   return undefined;
-}
-
-function escapeXml(s: string): string {
-  return s
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;');
 }
 
 function fmt(n: number): string {
