@@ -39,7 +39,7 @@ import {
   parseXfrm,
   shadowFromOuterShdw,
 } from '@/word/drawing-parser';
-import { makeColWidthPt, makeRowHeightPt } from '@/excel/sheet-drawing';
+import { makeColWidthPt, makeRowHeightPt, onTheSheet } from '@/excel/sheet-drawing';
 
 interface SheetShape {
   readonly shape: ShapeBlock;
@@ -620,6 +620,15 @@ export interface AnchorBox {
 // The shape's size from its anchor: full tracks in [from..to) plus the offset
 // difference (twoCellAnchor), or the explicit ext (one-cell / absolute anchor).
 function anchorBox(
+  anchor: PoNode,
+  colWidthPt: (col: number) => number,
+  rowHeightPt: (row: number) => number,
+): AnchorBox | undefined {
+  const box = anchorBoxAnywhere(anchor, colWidthPt, rowHeightPt);
+  return box && onTheSheet(box.xPt, box.yPt) ? box : undefined;
+}
+
+function anchorBoxAnywhere(
   anchor: PoNode,
   colWidthPt: (col: number) => number,
   rowHeightPt: (row: number) => number,

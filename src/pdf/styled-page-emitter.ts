@@ -349,7 +349,7 @@ function assembleStyledPdf(
         tagFor: (structId) => builder.node(structId).type,
       };
     }
-    const { content: contentBytes, links } = emitPageContent(
+    const { content: contentBytes, links } = emitPageLayers(
       page,
       pageTagging,
       gradientNames,
@@ -819,6 +819,36 @@ function dashPatternFor(style: BorderStyle | undefined): string {
   const pattern = style !== undefined ? BORDER_DASHES.get(style) : undefined;
   return pattern ? `[${pattern.map(formatNumber).join(' ')}]` : '';
 }
+
+/**
+ * A page's content stream in its layers: its own items, then — when some of
+ * them stand IN FRONT of its text (PageItemBase.over) — those, painted again
+ * pass by pass over what the first layer left, their own text last. Each layer
+ * is a balanced stream of its own, so the two simply follow one another.
+ */
+function emitPageLayers(
+  page: LaidOutPage,
+  ...rest: DropFirst<Parameters<typeof emitPageContent>>
+): { content: Uint8Array; links: Array<LinkRegion> } {
+  if (!page.commands.some((c) => c.over === true)) return emitPageContent(page, ...rest);
+  const base = emitPageContent(
+    { ...page, commands: page.commands.filter((c) => c.over !== true) },
+    ...rest,
+  );
+  const front = emitPageContent(
+    { ...page, commands: page.commands.filter((c) => c.over === true) },
+    ...rest,
+  );
+  const content = new Uint8Array(base.content.length + 1 + front.content.length);
+  content.set(base.content, 0);
+  content[base.content.length] = 0x0a;
+  content.set(front.content, base.content.length + 1);
+  return { content, links: [...base.links, ...front.links] };
+}
+
+type DropFirst<T extends ReadonlyArray<unknown>> = T extends readonly [unknown, ...infer R]
+  ? R
+  : never;
 
 function emitPageContent(
   page: LaidOutPage,

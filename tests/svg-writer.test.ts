@@ -70,6 +70,22 @@ describe('a workbook as images of its sheets', () => {
     expect(svg).toContain('column 20');
   });
 
+  it('draws what floats over a sheet over the words in its cells', async () => {
+    // A spreadsheet's drawings cover the cells under them — a note's box
+    // hides the value beside its cell. The page paints its text after its
+    // shapes, so they come as a second layer, after the cells' text.
+    const svg = await svgOf(
+      buildXlsx({
+        rows: [['under', 'covered']],
+        sheetShape: { preset: 'rect', fillHex: 'FF0000', anchor: { from: [1, 0], to: [3, 2] } },
+      }),
+    );
+    const cellWords = svg.indexOf('>covered</text>');
+    const shape = svg.indexOf('fill="#FF0000"');
+    expect(cellWords).toBeGreaterThan(0);
+    expect(shape).toBeGreaterThan(cellWords);
+  });
+
   it("rules the window's gridlines, and none where the sheet hides them", async () => {
     const shown = await svgOf(buildXlsx({ rows: [['x', 'y']] }));
     const hidden = await svgOf(

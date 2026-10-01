@@ -320,6 +320,13 @@ export interface PageItemBase {
    */
   readonly behind?: boolean;
   /**
+   * The item stands IN FRONT of the page's text and covers it — a drawing
+   * floating over a spreadsheet's cells. A page paints its text after its
+   * shapes, so such items are painted as a second layer, every pass again,
+   * once the first layer's text is down.
+   */
+  readonly over?: boolean;
+  /**
    * The picture this item belongs to, when it is part of one. A metafile is a
    * list of drawing orders, and text among them is BOTH over what came before
    * and under what comes after: an embedded diagram writes a label, lays a

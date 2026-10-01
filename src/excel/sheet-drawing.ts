@@ -155,6 +155,7 @@ export function parseSheetDrawing(
         : from
           ? spanPt(0, 0, from.row, from.rowOffPt, rowHeightPt)
           : 0;
+      if (!onTheSheet(xPt, yPt)) continue;
 
       if (chartRelId) {
         const path = partPathOf(chartRelId);
@@ -248,6 +249,19 @@ function spanPt(
   let span = 0;
   for (let i = from; i < to; i++) span += trackPt(i);
   return span - fromOffPt + toOffPt;
+}
+
+/**
+ * Whether a drawing anchored here starts ON the sheet. A cell offset cannot be
+ * negative in anything Excel writes, and a drawing that begins before the
+ * sheet's own corner is one LibreOffice does not import at all (its drawing
+ * fragment keeps only an anchor rectangle at X ≥ 0, Y ≥ 0). tdf66668.xlsx is
+ * LibreOffice's own export of a sheet that reads from the right: each of its
+ * 24 notes left behind a white box the size of the whole sheet at a negative
+ * offset, and drawn they buried every value under them.
+ */
+export function onTheSheet(xPt: number, yPt: number): boolean {
+  return xPt >= 0 && yPt >= 0;
 }
 
 /**

@@ -313,6 +313,13 @@ export interface StyledRenderOptions {
   /** The application whose rules the document is set by (see {@link TypesetBy}). */
   readonly typesetBy?: TypesetBy;
   /**
+   * The document's front floats COVER the text under them. A spreadsheet's
+   * drawings float over its cells — a note's box hides the value beside its
+   * cell, a chart the data it sits on — where the passes a page is painted in
+   * put every line of text over every shape. See `FlowDoc.floatsOverText`.
+   */
+  readonly floatsOverText?: boolean;
+  /**
    * Per-run font resolution: when supplied, each text run picks the registry of
    * its declared family (sans→arimo / serif→tinos / mono→cousine via the run's
    * `w:ascii`) instead of always using `registry`. Absent ⇒ single-family (every
@@ -8582,6 +8589,16 @@ class PageAssembler {
   floatsBehind: Array<PageItem> = [];
   floatsFront: Array<PageItem> = [];
   /**
+   * The front floats as the page paints them: over its text, when the
+   * document's floats cover what is under them (StyledRenderOptions
+   * floatsOverText); in the ordinary passes, under it, otherwise.
+   */
+  private inFront(items: ReadonlyArray<PageItem>): ReadonlyArray<PageItem> {
+    return this.ctx.options?.floatsOverText === true
+      ? items.map((item) => ({ ...item, over: true }))
+      : items;
+  }
+  /**
    * Side-wrapping floats (wrapSquare/tight/through): rectangles the body text
    * must flow around. Page-scoped, like the float graphics.
    */
@@ -8960,7 +8977,7 @@ class PageAssembler {
         // shape lands on top of every image.
         ...onSheet(PageAssembler.byZ(this.floatsBehind).map((item) => ({ ...item, behind: true }))),
         ...onSheet(this.current),
-        ...onSheet(PageAssembler.byZ(this.floatsFront)),
+        ...onSheet(this.inFront(PageAssembler.byZ(this.floatsFront))),
         ...onSheet(this.renderNotesBand()),
         ...footer.commands,
       ],

@@ -93,10 +93,29 @@ export const svgWriter: DocumentWriter<LaidOutDocument> = {
   write: (doc, opts) => writeSvg(doc, opts ?? {}),
 };
 
+// A page in its layers: its own items, then the ones that stand IN FRONT of
+// its text (PageItemBase.over), every pass again over what the first left.
 function emitPage(out: Array<string>, page: LaidOutPage, ctx: SvgLineCtx): void {
+  if (!page.commands.some((c) => c.over === true)) {
+    emitLayer(out, page.commands, ctx);
+    return;
+  }
+  emitLayer(
+    out,
+    page.commands.filter((c) => c.over !== true),
+    ctx,
+  );
+  emitLayer(
+    out,
+    page.commands.filter((c) => c.over === true),
+    ctx,
+  );
+}
+
+function emitLayer(out: Array<string>, commands: ReadonlyArray<PageItem>, ctx: SvgLineCtx): void {
   // The shared canonical paint order — one owner for every writer. PageItem
   // coordinates are already top-left/y-down: SVG's native frame.
-  const plan = paintPlan(page.commands);
+  const plan = paintPlan(commands);
 
   // What the page puts behind its content, in its own order.
   for (const item of plan.behind) emitPageItem(out, item, ctx);

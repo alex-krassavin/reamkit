@@ -512,6 +512,8 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
     ...(sheet.chartData && sheet.chartData.size > 0 ? { charts: sheet.chartData } : {}),
     ...(headersFooters.size > 0 ? { headersFooters } : {}),
     ...(sheet.info ? { info: sheet.info } : {}),
+    // A sheet's drawings float over its cells and hide what they cover.
+    floatsOverText: true,
   };
 }
 
