@@ -1138,8 +1138,14 @@ function emitCell(
     const start = (clamp(db.startFraction ?? 0) * 100).toFixed(2);
     const end = (clamp((db.startFraction ?? 0) + db.fraction) * 100).toFixed(2);
     const c = db.colorHex;
+    // Faded from the axis the bar grows out of, unless it is solid; and kept
+    // 2px inside the cell on every side, as Excel keeps it.
+    const [from, to] = db.solid ? [c, c] : db.negative ? ['FFFFFF', c] : [c, 'FFFFFF'];
     css.push(
-      `background-image:linear-gradient(to right,transparent ${start}%,#${c} ${start}%,#${c} ${end}%,transparent ${end}%)`,
+      `background-image:linear-gradient(to right,transparent ${start}%,#${from} ${start}%,#${to} ${end}%,transparent ${end}%)`,
+      'background-repeat:no-repeat',
+      'background-size:calc(100% - 3pt) calc(100% - 3pt)',
+      'background-position:1.5pt 1.5pt',
     );
   }
   const margins = cell.properties.margins ?? table.properties.defaultCellMargins;

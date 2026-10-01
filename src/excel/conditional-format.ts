@@ -28,12 +28,21 @@ import type {
   ConditionalFormat,
   DefinedName,
   Dxf,
+  ExcelTable,
   MergedRange,
   WorksheetCell,
   XlsxBorder,
   XlsxStyles,
 } from '@/core/spreadsheet-model';
-import type { CompiledFormula, EvalContext, FErr, FValue, Rect, Scalar } from '@/excel/formula';
+import type {
+  CompiledFormula,
+  EvalContext,
+  FErr,
+  FValue,
+  FormulaTable,
+  Rect,
+  Scalar,
+} from '@/excel/formula';
 
 import {
   BLANK,
@@ -69,6 +78,7 @@ interface ResolvedDataBar {
   readonly negativeColorHex: string;
   readonly minLen: number;
   readonly maxLen: number;
+  readonly solid: boolean;
 }
 
 type Mutable<T> = { -readonly [K in keyof T]: T[K] };
@@ -98,6 +108,7 @@ export interface CfOverride {
     readonly colorHex: string;
     readonly startFraction?: number;
     readonly negative?: boolean;
+    readonly solid?: boolean;
   };
   readonly icon?: CellIcon;
   /**
@@ -180,7 +191,8 @@ interface FlatRule {
  *                           driving `TODAY()`/`NOW()` and the `timePeriod` windows;
  *                           absent ⇒ those constructs no-op (deterministic output).
  * @param sheetGrids         The whole workbook, for an `expression` rule that reaches
- *                           another sheet (`Sheet2!A1`) or a defined name; absent ⇒
+ *                           another sheet (`Sheet2!A1`), a defined name or a table
+ *                           by its columns (`tblIncome[Amount]`); absent ⇒
  *                           same-sheet references only.
  * @param currentSheet       The rule sheet's name, for resolving sheet-local names.
  * @param definedNames       The workbook defined names visible to `expression` rules.
@@ -195,7 +207,10 @@ export function buildConditionalFormatter(
   // The whole workbook, for an `expression` rule that reaches another sheet
   // (Sheet2!A1) or a defined name. Absent ⇒ same-sheet references only (#REF!/
   // #NAME? for those, exactly as before).
-  sheetGrids?: ReadonlyMap<string, { readonly cells: ReadonlyArray<WorksheetCell> }>,
+  sheetGrids?: ReadonlyMap<
+    string,
+    { readonly cells: ReadonlyArray<WorksheetCell>; readonly tables?: ReadonlyArray<ExcelTable> }
+  >,
   currentSheet?: string,
   definedNames?: ReadonlyArray<DefinedName>,
 ): CellConditionalFormatter | undefined {
@@ -222,7 +237,11 @@ export function buildConditionalFormatter(
   const cross =
     (hasExpr || formulaStops) && sheetGrids
       ? {
-          sheets: [...sheetGrids].map(([name, ws]) => ({ name, cells: ws.cells })),
+          sheets: [...sheetGrids].map(([name, ws]) => ({
+            name,
+            cells: ws.cells,
+            ...(ws.tables ? { tables: ws.tables } : {}),
+          })),
           ...(currentSheet !== undefined ? { currentSheet } : {}),
           definedNames: definedNames ?? [],
         }
@@ -468,7 +487,11 @@ function buildEvalContext(
   nowSerial: number | undefined,
   date1904: boolean,
   cross?: {
-    readonly sheets: ReadonlyArray<{ name: string; cells: ReadonlyArray<WorksheetCell> }>;
+    readonly sheets: ReadonlyArray<{
+      name: string;
+      cells: ReadonlyArray<WorksheetCell>;
+      tables?: ReadonlyArray<ExcelTable>;
+    }>;
     readonly currentSheet?: string;
     readonly definedNames: ReadonlyArray<DefinedName>;
   },
@@ -502,12 +525,36 @@ function buildEvalContext(
     if (dn.localSheetId !== undefined || !nameMap.has(key)) nameMap.set(key, dn);
   }
 
+  // §18.5 — every table of the workbook by its name, where it stands, for a
+  // structured reference (`tblIncome[Amount]`). A table on another sheet is
+  // read there.
+  const tables = new Map<string, FormulaTable>();
+  const onThisSheet: Array<FormulaTable> = [];
+  cross.sheets.forEach((s, i) => {
+    for (const t of s.tables ?? []) {
+      const table: FormulaTable = {
+        ...(i !== currentIdx ? { sheet: i } : {}),
+        ref: { r0: t.ref.startRow, c0: t.ref.startColumn, r1: t.ref.endRow, c1: t.ref.endColumn },
+        headerRowCount: t.headerRowCount,
+        totalsRowCount: t.totalsRowCount ?? 0,
+        columns: t.columns ?? [],
+      };
+      if (t.name !== undefined) tables.set(t.name.toLowerCase(), table);
+      if (i === currentIdx) onThisSheet.push(table);
+    }
+  });
+
   const resolving = new Set<string>(); // guards a name that references another name
   const ctx: EvalContext = {
     ...base,
     sheetIndex: (name) => sheetByName.get(name.toLowerCase()),
     getCellOn: (sheet, row, col) => sheetData(sheet).byKey.get(row * COLS + col) ?? BLANK,
     eachCellOn: (sheet, rect, visit) => eachInMap(sheetData(sheet), rect, visit),
+    table: (name) => tables.get(name.toLowerCase()),
+    tableAt: (row, col) =>
+      onThisSheet.find(
+        (t) => row >= t.ref.r0 && row <= t.ref.r1 && col >= t.ref.c0 && col <= t.ref.c1,
+      ),
     resolveName: (rawName): FValue | undefined => {
       const key = rawName.toLowerCase();
       const dn = nameMap.get(key);
@@ -519,8 +566,10 @@ function buildEvalContext(
       if (ast.k === 'num') return num(ast.v);
       if (ast.k === 'str') return str(ast.v);
       if (ast.k === 'bool') return bool(ast.v);
-      // Only a plain reference name resolves; a name that is itself a formula no-ops.
-      if (ast.k !== 'cell' && ast.k !== 'range') return undefined;
+      // A name that holds a formula is that formula's value: simple-monthly-
+      // budget.xlsx tops its bar at `TotalMonthlyIncome`, which is
+      // `SUM(tblIncome[Amount])`. Evaluated without a cell of its own, the
+      // way a name with absolute references always reads.
       resolving.add(key);
       try {
         return evaluate(ast, ctx, NO_SHIFT);
@@ -884,8 +933,12 @@ function resolveDataBar(
     upper,
     colorHex: rule.colorHex,
     negativeColorHex: 'FF0000', // Excel's default negative bar colour
-    minLen: (rule.minLength ?? 0) / 100,
-    maxLen: (rule.maxLength ?? 100) / 100,
+    // §18.3.1.28 — a bar is 10% long at its lower stop and 90% at its upper
+    // unless the rule says otherwise: Excel draws a quarter of the way up
+    // 0…4000 as 30% of the cell, not 25%.
+    minLen: (rule.minLength ?? 10) / 100,
+    maxLen: (rule.maxLength ?? 90) / 100,
+    solid: rule.gradient === false,
   };
 }
 
@@ -896,12 +949,19 @@ function resolveDataBar(
 function dataBarBar(
   bar: ResolvedDataBar,
   value: number,
-): { fraction: number; colorHex: string; startFraction?: number; negative?: boolean } {
+): {
+  fraction: number;
+  colorHex: string;
+  startFraction?: number;
+  negative?: boolean;
+  solid?: boolean;
+} {
+  const solid = bar.solid ? { solid: true } : {};
   if (bar.lower < 0 && bar.upper > 0) {
     const axis = -bar.lower / (bar.upper - bar.lower); // zero's position in [0,1]
     if (value >= 0) {
       const w = (value / bar.upper) * (1 - axis);
-      return { fraction: w, colorHex: bar.colorHex, startFraction: axis };
+      return { fraction: w, colorHex: bar.colorHex, startFraction: axis, ...solid };
     }
     const w = (Math.abs(value) / Math.abs(bar.lower)) * axis;
     return {
@@ -909,9 +969,10 @@ function dataBarBar(
       colorHex: bar.negativeColorHex,
       startFraction: axis - w,
       negative: true,
+      ...solid,
     };
   }
-  return { fraction: dataBarFraction(bar, value), colorHex: bar.colorHex };
+  return { fraction: dataBarFraction(bar, value), colorHex: bar.colorHex, ...solid };
 }
 
 // Bar length (0..1 of cell width) for a value: its position in [lower,upper]

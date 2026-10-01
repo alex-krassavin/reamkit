@@ -282,6 +282,13 @@ export interface ExcelTable {
   readonly name?: string;
   readonly styleName?: string;
   readonly headerRowCount: number;
+  /** §18.5.1.2 `totalsRowCount` — the totals rows at the foot of the table (default 0). */
+  readonly totalsRowCount?: number;
+  /**
+   * §18.5.1.3 `<tableColumn name>` — the columns' names, left to right: what a
+   * structured reference (`tblIncome[Amount]`) names a column by.
+   */
+  readonly columns?: ReadonlyArray<string>;
   readonly showRowStripes: boolean;
   readonly showColumnStripes: boolean;
   readonly showFirstColumn: boolean;
@@ -596,6 +603,11 @@ export interface CfRuleDataBar {
    * figure does not sit on top of its own gauge.
    */
   readonly showValue?: boolean;
+  /**
+   * The 2009 extension's `<x14:dataBar gradient>` — false paints the bar in
+   * one solid colour, where Excel's default fades it from the axis.
+   */
+  readonly gradient?: boolean;
 }
 
 /**

@@ -233,6 +233,8 @@ export interface XlsxBuilderOptions {
     readonly styleName?: string;
     readonly showRowStripes?: boolean;
     readonly headerRowCount?: number;
+    /** `<tableColumn name>`s, left to right — what a structured reference names. */
+    readonly columns?: ReadonlyArray<string>;
     /** <autoFilter><filterColumn colId><filters><filter val> — slicer selection. */
     readonly filters?: ReadonlyArray<{
       readonly colId: number;
@@ -291,6 +293,7 @@ function buildTableXml(
     styleName?: string;
     showRowStripes?: boolean;
     headerRowCount?: number;
+    columns?: ReadonlyArray<string>;
     filters?: ReadonlyArray<{ colId: number; values: ReadonlyArray<string> }>;
   },
 ): string {
@@ -312,7 +315,13 @@ function buildTableXml(
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <table xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" id="${id}" name="${name}" displayName="${name}" ref="${t.ref}"${hrc} totalsRowShown="0">
   ${autoFilter}
-  <tableColumns count="1"><tableColumn id="1" name="Col"/></tableColumns>
+  ${
+    t.columns
+      ? `<tableColumns count="${t.columns.length}">${t.columns
+          .map((c, i) => `<tableColumn id="${i + 1}" name="${escapeXml(c)}"/>`)
+          .join('')}</tableColumns>`
+      : '<tableColumns count="1"><tableColumn id="1" name="Col"/></tableColumns>'
+  }
   <tableStyleInfo name="${style}" showFirstColumn="0" showLastColumn="0" showRowStripes="${stripes}" showColumnStripes="0"/>
 </table>`;
 }

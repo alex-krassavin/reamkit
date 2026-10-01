@@ -425,8 +425,8 @@ function sheetViewsXml(
   return `<sheetViews><sheetView${grid} workbookViewId="0"><pane${attrs}/></sheetView></sheetViews>`;
 }
 
-// §18.5.1.2 xl/tables/tableN.xml. The reader keeps no column names, so generic
-// tableColumns are synthesized (it ignores them on re-read); the resolved
+// §18.5.1.2 xl/tables/tableN.xml. Its columns keep their names — a structured
+// reference (`tblIncome[Amount]`) finds a column by nothing else; the resolved
 // header/band colours are NOT written — the reader re-derives them from the
 // style name + theme (E-SHEET SD3b).
 function tableXml(t: ExcelTable, id: number): string {
@@ -435,7 +435,8 @@ function tableXml(t: ExcelTable, id: number): string {
   const ncols = t.ref.endColumn - t.ref.startColumn + 1;
   const columns = Array.from(
     { length: ncols },
-    (_, c) => `<tableColumn id="${c + 1}" name="Column${c + 1}"/>`,
+    (_, c) =>
+      `<tableColumn id="${c + 1}" name="${escapeAttr(t.columns?.[c] ?? `Column${c + 1}`)}"/>`,
   ).join('');
   const styleInfo = t.styleName
     ? `<tableStyleInfo name="${escapeAttr(t.styleName)}" showFirstColumn="${
@@ -448,7 +449,9 @@ function tableXml(t: ExcelTable, id: number): string {
     XML_DECL +
     `<table xmlns="${MAIN_NS}" id="${id}" name="${escapeAttr(name)}" displayName="${escapeAttr(
       name,
-    )}" ref="${ref}"${t.headerRowCount !== 1 ? ` headerRowCount="${t.headerRowCount}"` : ''} totalsRowShown="0">` +
+    )}" ref="${ref}"${t.headerRowCount !== 1 ? ` headerRowCount="${t.headerRowCount}"` : ''}${
+      t.totalsRowCount ? ` totalsRowCount="${t.totalsRowCount}"` : ' totalsRowShown="0"'
+    }>` +
     (t.autoFilter ? `<autoFilter ref="${ref}"/>` : '') +
     `<tableColumns count="${ncols}">${columns}</tableColumns>` +
     styleInfo +

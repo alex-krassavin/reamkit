@@ -876,6 +876,8 @@ export interface CellDataBar {
    * axis, and which way that is depends on the sign.
    */
   readonly negative?: boolean;
+  /** The bar is one solid colour, not faded from the axis (`<x14:dataBar gradient="0">`). */
+  readonly solid?: boolean;
 }
 
 /**

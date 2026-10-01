@@ -9,6 +9,9 @@ import { buildXlsx } from './fixtures/build-xlsx';
 import { readXlsxToSheetDoc } from '@/excel/xlsx-reader';
 import { Ream } from '@/core/converter/ream';
 import { convertXlsxToPdfSync } from '@/core/converter';
+import { FontRegistry } from '@/core/font';
+import { flowRenderOptions } from '@/core/converter/project';
+import { layoutStyledDocument } from '@/layout/styled-layout';
 
 const STYLES_WITH_DXF = `
   <fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts>
@@ -83,8 +86,83 @@ describe('conditional formatting — cellIs (E-SHEET SC1)', () => {
     const table = flow.body.find((el) => el.kind === 'table');
     if (table?.kind !== 'table') throw new Error('expected a table');
     const cell = table.table.rows[0]!.cells[0]!;
-    expect(cell.properties.dataBar?.fraction).toBeCloseTo(0.25);
+    // A quarter of the way up the bar's range, and §18.3.1.28's bar runs from
+    // 10% of the cell to 90%: 30%, as Excel draws it.
+    expect(cell.properties.dataBar?.fraction).toBeCloseTo(0.3);
     expect(cell.content).toEqual([]);
+  });
+
+  it('draws a gauge as Excel does: a theme colour, solid, topped at a table total', () => {
+    // simple-monthly-budget.xlsx's "percentage of income spent": a bar over a
+    // merged E4:G5, `<color theme="4"/>`, solid by its 2009 half, topped at a
+    // name that sums a table column. Each part of it dropped the whole rule.
+    const stylesXml = `
+      <fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts>
+      <fills count="1"><fill><patternFill patternType="none"/></fill></fills>
+      <borders count="1"><border/></borders>
+      <cellXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellXfs>`;
+    const id = '{11111111-2222-3333-4444-555555555555}';
+    const flow = Ream.parse(
+      buildXlsx({
+        rows: [
+          ['Item', 'Amount', null, 2336],
+          ['Salary', 2500],
+          ['Other', 1250],
+        ],
+        stylesXml,
+        mergeRefs: ['D1:E2'],
+        tables: [{ ref: 'A1:B3', name: 'tblIncome', columns: ['Item', 'Amount'] }],
+        definedNames: [{ name: 'TotalIncome', value: 'SUM(tblIncome[Amount])' }],
+        conditionalFormattingXml:
+          `<conditionalFormatting sqref="D1"><cfRule type="dataBar" priority="1"><dataBar showValue="0">` +
+          `<cfvo type="num" val="0"/><cfvo type="num" val="TotalIncome"/><color theme="4"/></dataBar>` +
+          `<extLst><ext uri="{B025F937-C7B1-47D3-B67F-A62EFF666E3E}"><x14:id>${id}</x14:id></ext></extLst>` +
+          `</cfRule></conditionalFormatting>`,
+        extLstXml:
+          `<extLst><ext uri="{78C0D931-6437-407d-A8EE-F0AAD7539E65}"><x14:conditionalFormattings><x14:conditionalFormatting>` +
+          `<x14:cfRule type="dataBar" id="${id}"><x14:dataBar minLength="0" maxLength="100" gradient="0">` +
+          `<x14:cfvo type="num"><xm:f>0</xm:f></x14:cfvo><x14:cfvo type="num"><xm:f>TotalIncome</xm:f></x14:cfvo>` +
+          `</x14:dataBar></x14:cfRule><xm:sqref>D1</xm:sqref></x14:conditionalFormatting></x14:conditionalFormattings></ext></extLst>`,
+      }),
+    ).flow;
+    const table = flow.body.find((el) => el.kind === 'table');
+    if (table?.kind !== 'table') throw new Error('expected a table');
+    const bar = table.table.rows[0]!.cells.find((c) => c.properties.dataBar)?.properties.dataBar;
+    // 2336 of the 3750 the table's Amount column sums to, on a 0…100% bar.
+    expect(bar?.fraction).toBeCloseTo(2336 / 3750, 3);
+    expect(bar?.solid).toBe(true);
+    expect(bar?.colorHex).toMatch(/^[0-9A-F]{6}$/);
+  });
+
+  it('paints a bar 2px inside its cell, down the whole of a merge', () => {
+    // Excel's own PDF: a bar over a two-row merge stands 2px clear of the box
+    // on every side and runs the length of what is left.
+    const flow = Ream.parse(
+      buildXlsx({
+        rows: [[50], [null]],
+        mergeRefs: ['A1:B2'],
+        conditionalFormattingXml:
+          `<conditionalFormatting sqref="A1"><cfRule type="dataBar" priority="1"><dataBar>` +
+          `<cfvo type="num" val="0"/><cfvo type="num" val="100"/><color rgb="FF638EC6"/></dataBar>` +
+          `</cfRule></conditionalFormatting>`,
+      }),
+    ).flow;
+    const laid = layoutStyledDocument(flow.body, {
+      registry: FontRegistry.fromBytes({
+        regular: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Regular.ttf')),
+      }),
+      ...flowRenderOptions(flow),
+    });
+    const bar = laid.pages[0]!.commands.find(
+      (c) => c.type === 'shape' && c.shape.fillColorHex === '638EC6',
+    );
+    if (bar?.type !== 'shape') throw new Error('no bar drawn');
+    const ys = bar.shape.paths[0]!.segments.flatMap((sg) => ('y' in sg ? [sg.y] : []));
+    const xs = bar.shape.paths[0]!.segments.flatMap((sg) => ('x' in sg ? [sg.x] : []));
+    // Two 15pt rows, less 1.5pt above and below.
+    expect(Math.max(...ys) - Math.min(...ys)).toBeCloseTo(30 - 3, 1);
+    // Halfway along 10%…90% of two 48pt columns less the insets.
+    expect(Math.max(...xs) - Math.min(...xs)).toBeCloseTo((96 - 3) * 0.5, 1);
   });
 
   it("renders the value in the rule's own number format", () => {

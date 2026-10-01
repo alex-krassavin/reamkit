@@ -3596,6 +3596,8 @@ function rectAtPath(x: number, y: number, w: number, h: number): VectorPath {
 // families (lights, arrows, signs, flags, symbols) draw one prim; the meter
 // families — ratings (a bar histogram) and quarters (a clock pie) — draw several.
 const CF_ICON_SIZE_PT = 9;
+/** How far inside its cell Excel keeps a data bar, on every side — 2px. */
+const DATA_BAR_INSET_PT = 1.5;
 const CF_ICON_GUTTER_PT = 12;
 // The unfilled portion of a meter glyph (ratings bars / quarter pie).
 const CF_ICON_EMPTY_HEX = 'BFBFBF';
@@ -10467,30 +10469,44 @@ function emitRowChunk(
     // shading, under the text. Pushed after the shading fill so it paints on top.
     if (cell.dataBar && cell.mergeRole !== 'middle' && cell.mergeRole !== 'end') {
       const start = Math.max(0, Math.min(1, cell.dataBar.startFraction ?? 0));
-      const barWidth = cell.widthPt * Math.max(0, Math.min(1, cell.dataBar.fraction));
+      // Excel keeps a bar 2px inside its cell on every side, and measures its
+      // length across what is left: 2336 of 3750 is 97pt of the 155 inside a
+      // 159pt merge in its own PDF.
+      const inner = Math.max(0, cell.widthPt - 2 * DATA_BAR_INSET_PT);
+      const barWidth = inner * Math.max(0, Math.min(1, cell.dataBar.fraction));
       if (barWidth > 0) {
         // §18.3.1.28 — Excel paints a data bar as a GRADIENT that fades away
         // from the axis the bar grows out of: solid at the axis end, white at
         // the tip. Drawn flat, databar.xlsx's five gauges read as blocks where
         // both references read as bars. A negative bar grows leftwards, so its
-        // solid end is its right one.
-        const barX = cellX + cell.widthPt * start;
-        const barBottomYUp = rowBottom;
+        // solid end is its right one — and a bar the 2009 extension makes
+        // solid (`gradient="0"`) is one colour throughout.
+        const barX = cellX + DATA_BAR_INSET_PT + inner * start;
+        // A merged cell's bar fills the merge, down through every row of it:
+        // simple-monthly-budget.xlsx's gauge spans E4:G5, and drawn one row
+        // tall it filled the top half of its box.
+        const boxHeightPt = Math.max(row.heightPt, mergedHeights?.[i] ?? row.heightPt);
+        const barHeightPt = Math.max(0, boxHeightPt - 2 * DATA_BAR_INSET_PT);
+        const barBottomYUp = rowBottom + row.heightPt - boxHeightPt + DATA_BAR_INSET_PT;
         out.push({
           type: 'shape',
           shape: {
-            paths: [rectAtPath(0, 0, barWidth, row.heightPt)],
+            paths: [rectAtPath(0, 0, barWidth, barHeightPt)],
             // The solid approximation writers without gradients paint (and the
             // one PDF/A falls back to) is the bar's own colour.
             fillColorHex: cell.dataBar.colorHex,
-            fillGradient: {
-              kind: 'linear' as const,
-              angle: cell.dataBar.negative ? 180 : 0,
-              stops: [
-                { offset: 0, colorHex: cell.dataBar.colorHex },
-                { offset: 1, colorHex: 'FFFFFF' },
-              ],
-            },
+            ...(cell.dataBar.solid
+              ? {}
+              : {
+                  fillGradient: {
+                    kind: 'linear' as const,
+                    angle: cell.dataBar.negative ? 180 : 0,
+                    stops: [
+                      { offset: 0, colorHex: cell.dataBar.colorHex },
+                      { offset: 1, colorHex: 'FFFFFF' },
+                    ],
+                  },
+                }),
             transform: flipTransform([1, 0, 0, 1, barX, barBottomYUp], pageHeight),
           },
         });

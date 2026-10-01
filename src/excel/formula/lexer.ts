@@ -12,6 +12,7 @@ export type TokenKind =
   | 'err'
   | 'word' // a cell ref, function name, defined name, or TRUE/FALSE — parser decides
   | 'sheetq' // a 'quoted sheet name' (only valid immediately before a `!` qualifier)
+  | 'sref' // a structured reference, `Table[...]` or a bare `[...]`, brackets and all
   | 'op' // + - * / ^ & = <> < > <= >= % : ! ( ) ,
   | 'eof';
 
@@ -49,6 +50,30 @@ function isWordStart(ch: string): boolean {
 
 function isWordPart(ch: string): boolean {
   return isWordStart(ch) || isDigit(ch) || ch === '.';
+}
+
+/**
+ * Where the bracket group that opens at `start` closes: past its matching `]`,
+ * nested groups included. A `'` escapes the character after it — a column
+ * named `Q[1]` is written `[Q'[1']]`.
+ *
+ * @param src   The formula source.
+ * @param start The index of the opening `[`.
+ * @returns The index just past the closing `]`.
+ * @throws LexError when the group never closes.
+ */
+function bracketsEnd(src: string, start: number): number {
+  let depth = 0;
+  for (let j = start; j < src.length; j++) {
+    const c = src[j];
+    if (c === "'") {
+      j++;
+      continue;
+    }
+    if (c === '[') depth++;
+    else if (c === ']' && --depth === 0) return j + 1;
+  }
+  throw new LexError('unclosed [');
 }
 
 /**
@@ -143,12 +168,28 @@ export function tokenize(src: string): Array<Token> {
       i = j;
       continue;
     }
-    // Word — cell ref / function name / defined name / TRUE / FALSE.
+    // Word — cell ref / function name / defined name / TRUE / FALSE. A word
+    // that runs straight into `[` is a table's name, and the brackets after it
+    // its structured reference (§18.17.6.4 `tblIncome[Amount]`).
     if (isWordStart(ch)) {
       let j = i + 1;
       while (j < n && isWordPart(src[j]!)) j++;
+      if (src[j] === '[') {
+        const end = bracketsEnd(src, j);
+        out.push({ kind: 'sref', text: src.slice(i, end) });
+        i = end;
+        continue;
+      }
       out.push({ kind: 'word', text: src.slice(i, j) });
       i = j;
+      continue;
+    }
+    // …and brackets with no table before them name the table the cell is in
+    // (`[@Amount]`).
+    if (ch === '[') {
+      const end = bracketsEnd(src, i);
+      out.push({ kind: 'sref', text: src.slice(i, end) });
+      i = end;
       continue;
     }
     // Two-character comparison operators.

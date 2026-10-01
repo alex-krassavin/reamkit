@@ -44,7 +44,7 @@ import type {
 } from '@/core/spreadsheet-model';
 import type { ThemePalette, WorkbookColors } from '@/excel/styles-parser';
 import { INDEXED_COLORS } from '@/core/indexed-colors';
-import { parseDxf } from '@/excel/styles-parser';
+import { parseDxf, workbookColorHex } from '@/excel/styles-parser';
 import { resolveInternalEntities } from '@/core/opc/xml-entities';
 import { parseCellRef } from '@/excel/cell-reference';
 import { parseAreaRef } from '@/excel/defined-name-ref';
@@ -129,7 +129,11 @@ export function parseWorksheet(data: Uint8Array, theme?: ThemePalette): ParsedWo
       ? strAttr(legacyNode as Record<string, unknown>, 'id')
       : undefined;
   const conditionalFormats = [
-    ...parseConditionalFormatting(wsObj),
+    ...parseConditionalFormatting(
+      wsObj,
+      { ...(theme ? { theme } : {}), indexed: INDEXED_COLORS },
+      x14DataBars(wsObj),
+    ),
     // The 2009 extension's rules resolve their own colours; the workbook's
     // indexed table is not in reach here, and a `<x14:dxf>` naming an indexed
     // colour a workbook has REPLACED is rarer than the default is right.
@@ -548,7 +552,60 @@ function parseMerges(ws: Record<string, unknown>): Array<MergedRange> {
 // text tests (`containsText`/`beginsWith`/…), plus `expression` (formula, run by
 // the W9 engine) and `timePeriod` (a clock-relative date window). Only the 2010+
 // extension variants (`dataBar2010`, `iconSet2010`, …) remain unparsed.
-function parseConditionalFormatting(ws: Record<string, unknown>): Array<ConditionalFormat> {
+/**
+ * The 2009 extension's half of each data bar (`<x14:cfRule type="dataBar"
+ * id>`): what the 2006 rule of the same id cannot say — whether the bar is
+ * faded or solid. Excel writes the two halves of one rule apart, the 2006
+ * one pointing at this by `<x14:id>`.
+ *
+ * @param ws The worksheet element.
+ * @returns The extension's options by rule id.
+ */
+function x14DataBars(ws: Record<string, unknown>): Map<string, X14DataBar> {
+  const out = new Map<string, X14DataBar>();
+  for (const ext of toArray(asObjectNode(ws['extLst'])?.['ext'])) {
+    const group = asObjectNode(asObjectNode(ext)?.['conditionalFormattings']);
+    for (const cf of toArray(group?.['conditionalFormatting'])) {
+      for (const rn of toArray(asObjectNode(cf)?.['cfRule'])) {
+        const node = asObjectNode(rn);
+        const bar = asObjectNode(node?.['dataBar']);
+        const id = node ? strAttr(node, 'id') : undefined;
+        if (!bar || id === undefined) continue;
+        const gradient = strAttr(bar, 'gradient');
+        const minLength = parseNumericAttr(bar, 'minLength');
+        const maxLength = parseNumericAttr(bar, 'maxLength');
+        out.set(id, {
+          ...(gradient === '0' || gradient === 'false' ? { gradient: false } : {}),
+          ...(minLength !== undefined ? { minLength } : {}),
+          ...(maxLength !== undefined ? { maxLength } : {}),
+        });
+      }
+    }
+  }
+  return out;
+}
+
+/** What the 2009 half of a data bar says that its 2006 half cannot. */
+interface X14DataBar {
+  readonly gradient?: false;
+  readonly minLength?: number;
+  readonly maxLength?: number;
+}
+
+/** A 2006 rule's `<extLst><ext><x14:id>` — the id of its 2009 half, if any. */
+function x14IdOf(rule: Record<string, unknown>): string | undefined {
+  for (const ext of toArray(asObjectNode(rule['extLst'])?.['ext'])) {
+    const id = asObjectNode(ext)?.['id'];
+    if (typeof id === 'string') return id;
+  }
+  return undefined;
+}
+
+function parseConditionalFormatting(
+  ws: Record<string, unknown>,
+  colors: WorkbookColors,
+  x14Bars?: ReadonlyMap<string, X14DataBar>,
+): Array<ConditionalFormat> {
   const raw = ws['conditionalFormatting'];
   const items = Array.isArray(raw) ? raw : raw !== undefined ? [raw] : [];
   const out: Array<ConditionalFormat> = [];
@@ -564,7 +621,7 @@ function parseConditionalFormatting(ws: Record<string, unknown>): Array<Conditio
     const rules: Array<CfRule> = [];
     for (const rn of ruleItems) {
       if (!rn || typeof rn !== 'object') continue;
-      const rule = parseCfRule(rn as Record<string, unknown>);
+      const rule = parseCfRule(rn as Record<string, unknown>, colors, x14Bars);
       if (rule) rules.push(rule);
     }
     if (rules.length > 0) out.push({ ranges, rules });
@@ -610,7 +667,7 @@ function parseX14ConditionalFormatting(
       for (const rn of toArray(obj['cfRule'])) {
         const node = asObjectNode(rn);
         if (!node) continue;
-        const rule = parseCfRule(asBaseCfRule(node));
+        const rule = parseCfRule(asBaseCfRule(node), colors);
         if (!rule) continue;
         // colorScale/dataBar/iconSet colour themselves; the rest take a dxf.
         const dxf = parseDxf(node['dxf'], colors);
@@ -786,16 +843,26 @@ const CF_OPERATORS: ReadonlySet<string> = new Set<CfOperator>([
   'notBetween',
 ]);
 
-function parseCfRule(obj: Record<string, unknown>): CfRule | undefined {
+function parseCfRule(
+  obj: Record<string, unknown>,
+  colors: WorkbookColors,
+  x14Bars?: ReadonlyMap<string, X14DataBar>,
+): CfRule | undefined {
   const priority = parseNumericAttr(obj, 'priority') ?? 0;
   const type = strAttr(obj, 'type');
   switch (type) {
     case 'cellIs':
       return parseCellIsRule(obj, priority);
     case 'colorScale':
-      return parseColorScaleRule(obj, priority);
-    case 'dataBar':
-      return parseDataBarRule(obj, priority);
+      return parseColorScaleRule(obj, priority, colors);
+    case 'dataBar': {
+      const rule = parseDataBarRule(obj, priority, colors);
+      const id = x14IdOf(obj);
+      const ext = id !== undefined ? x14Bars?.get(id) : undefined;
+      // The extension's lengths win over the 2006 ones, whose defaults are
+      // 10% and 90%: the budget gauge says 0 and 100 there, and reaches 62%.
+      return rule && ext ? { ...rule, ...ext } : rule;
+    }
     case 'iconSet':
       return parseIconSetRule(obj, priority);
     case 'top10':
@@ -962,13 +1029,17 @@ function parseIconSetRule(
 function parseDataBarRule(
   obj: Record<string, unknown>,
   priority: number,
+  colors: WorkbookColors,
 ): CfRuleDataBar | undefined {
   const db = obj['dataBar'];
   if (!db || typeof db !== 'object') return undefined;
   const dbObj = db as Record<string, unknown>;
   const cfvos = parseCfvos(dbObj['cfvo']);
   if (cfvos.length < 2) return undefined;
-  const colorHex = colorRgbHex(dbObj['color']);
+  // §18.3.1.15 — a theme colour as much as an rgb one: the bar of
+  // simple-monthly-budget.xlsx is `<color theme="4"/>`, and read for rgb alone
+  // the whole rule was dropped and its cell printed the figure it hides.
+  const colorHex = workbookColorHex(dbObj['color'], colors);
   if (!colorHex) return undefined;
   const minLength = parseNumericAttr(dbObj, 'minLength');
   const maxLength = parseNumericAttr(dbObj, 'maxLength');
@@ -1019,12 +1090,13 @@ const CFVO_TYPES: ReadonlySet<string> = new Set<CfvoType>([
 function parseColorScaleRule(
   obj: Record<string, unknown>,
   priority: number,
+  colors: WorkbookColors,
 ): CfRuleColorScale | undefined {
   const cs = obj['colorScale'];
   if (!cs || typeof cs !== 'object') return undefined;
   const csObj = cs as Record<string, unknown>;
   const cfvos = parseCfvos(csObj['cfvo']);
-  const colorsHex = parseScaleColors(csObj['color']);
+  const colorsHex = parseScaleColors(csObj['color'], colors);
   if (cfvos.length < 2 || cfvos.length !== colorsHex.length) return undefined;
   return { type: 'colorScale', priority, cfvos, colorsHex };
 }
@@ -1043,12 +1115,13 @@ function parseCfvos(raw: unknown): Array<Cfvo> {
   return out;
 }
 
-function parseScaleColors(raw: unknown): Array<string> {
+function parseScaleColors(raw: unknown, colors: WorkbookColors): Array<string> {
   const items = Array.isArray(raw) ? raw : raw !== undefined ? [raw] : [];
   const out: Array<string> = [];
   for (const it of items) {
-    const hex = colorRgbHex(it);
-    if (!hex) return []; // theme/indexed colour (no rgb) → drop the rule for v1
+    // rgb, indexed or theme alike; a colour that names nothing drops the rule.
+    const hex = workbookColorHex(it, colors);
+    if (!hex) return [];
     out.push(hex);
   }
   return out;

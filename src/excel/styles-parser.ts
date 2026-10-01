@@ -474,6 +474,18 @@ function averageGradientColor(
   return `${h(r)}${h(g)}${h(b)}`;
 }
 
+/**
+ * A `<color>` of this workbook as 6-hex: its `rgb`, its `indexed` entry, or its
+ * `theme` slot with the `tint` applied (§18.8.3).
+ *
+ * @param node   The `<color>` element, parsed.
+ * @param colors What the workbook's colours point at.
+ * @returns The colour, or undefined for one that names nothing reachable.
+ */
+export function workbookColorHex(node: unknown, colors: WorkbookColors): string | undefined {
+  return colorOf(asObject(node), colors);
+}
+
 function colorOf(
   node: Record<string, unknown> | undefined,
   colors: WorkbookColors,

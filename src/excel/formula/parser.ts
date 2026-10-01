@@ -29,6 +29,21 @@ export interface CellRef {
   readonly row: Axis;
 }
 
+/** A table's part a structured reference names (§18.17.6.4); none named ⇒ `#Data`. */
+export type TableArea = '#All' | '#Data' | '#Headers' | '#Totals' | '#This Row';
+
+/**
+ * §18.17.6.4 — a structured reference: the table (empty for the one the cell
+ * is in), the parts of it, and the columns, first to last (all of them when
+ * undefined). `tblIncome[Amount]` is `{ table: 'tblIncome', areas: [],
+ * columns: ['Amount', 'Amount'] }`.
+ */
+export interface StructuredRef {
+  readonly table: string;
+  readonly areas: ReadonlyArray<TableArea>;
+  readonly columns?: readonly [string, string];
+}
+
 /** The formula syntax tree — a discriminated union over the node kind `k`. */
 export type Ast =
   | { readonly k: 'num'; readonly v: number }
@@ -38,6 +53,7 @@ export type Ast =
   | { readonly k: 'cell'; readonly ref: CellRef; readonly sheet?: string }
   | { readonly k: 'range'; readonly a: CellRef; readonly b: CellRef; readonly sheet?: string }
   | { readonly k: 'name'; readonly name: string }
+  | { readonly k: 'sref'; readonly ref: StructuredRef }
   | { readonly k: 'array'; readonly rows: ReadonlyArray<ReadonlyArray<Ast>> }
   | { readonly k: 'unary'; readonly op: '-' | '+'; readonly x: Ast }
   | { readonly k: 'pct'; readonly x: Ast }
@@ -189,6 +205,8 @@ class Parser {
         // A 'quoted sheet name' is only valid immediately before `!` and a cell.
         this.expect('!');
         return this.parseSheetCell(t.text);
+      case 'sref':
+        return { k: 'sref', ref: parseStructuredRef(t.text) };
       case 'op':
         if (t.text === '(') {
           const e = this.parseExpr(0);
@@ -339,4 +357,105 @@ function columnToIndex(letters: string): number {
     idx = idx * 26 + (up.charCodeAt(i) - 64); // 'A' = 65
   }
   return idx - 1;
+}
+
+const AREAS: ReadonlyMap<string, TableArea> = new Map([
+  ['#all', '#All'],
+  ['#data', '#Data'],
+  ['#headers', '#Headers'],
+  ['#totals', '#Totals'],
+  ['#this row', '#This Row'],
+]);
+
+/**
+ * §18.17.6.4 — read a structured reference's text: `Table[Col]`, `Table[]`,
+ * `Table[#Totals]`, `Table[[#Headers],[A]:[C]]`, `[@Col]`, `[@[Col 2]]`.
+ *
+ * @param text The token: the table's name, if any, and its brackets.
+ * @returns The reference.
+ * @throws ParseError when the brackets name nothing a table has.
+ */
+export function parseStructuredRef(text: string): StructuredRef {
+  const open = text.indexOf('[');
+  const table = text.slice(0, open);
+  let inner = text.slice(open + 1, -1).trim();
+  const areas: Array<TableArea> = [];
+  let columns: [string, string] | undefined;
+  // `@` is `[#This Row],` in short: `[@Amount]`, `[@[Unit Price]]`, `[@]`.
+  if (inner.startsWith('@')) {
+    areas.push('#This Row');
+    inner = inner.slice(1).trim();
+    if (inner.length > 0 && !inner.startsWith('[')) inner = `[${inner}]`;
+  } else if (inner.length > 0 && !inner.startsWith('[')) {
+    // The short form: one part or one column, no brackets of its own.
+    inner = `[${inner}]`;
+  }
+  for (const item of splitTopLevel(inner)) {
+    const range = splitRange(item);
+    if (range) {
+      columns = [unescapeName(range[0]), unescapeName(range[1])];
+      continue;
+    }
+    const body = item.slice(1, -1);
+    const area = AREAS.get(body.trim().toLowerCase());
+    if (area) areas.push(area);
+    else {
+      const name = unescapeName(body);
+      columns = [name, name];
+    }
+  }
+  return { table, areas, ...(columns ? { columns } : {}) };
+}
+
+/** The bracket groups of a list `[a],[b]:[c]`, each with its `:` partner. */
+function splitTopLevel(inner: string): Array<string> {
+  const out: Array<string> = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < inner.length; i++) {
+    const c = inner[i];
+    if (c === "'") {
+      i++;
+      continue;
+    }
+    if (c === '[') depth++;
+    else if (c === ']') depth--;
+    else if (c === ',' && depth === 0) {
+      out.push(inner.slice(start, i).trim());
+      start = i + 1;
+    }
+  }
+  const last = inner.slice(start).trim();
+  if (last.length > 0) out.push(last);
+  for (const item of out) {
+    if (!item.startsWith('[') || !item.endsWith(']')) {
+      throw new ParseError(`bad structured reference part ${item}`);
+    }
+  }
+  return out;
+}
+
+/** `[A]:[C]` → the two columns' bracketed bodies, or undefined for one group. */
+function splitRange(item: string): [string, string] | undefined {
+  let depth = 0;
+  for (let i = 0; i < item.length; i++) {
+    const c = item[i];
+    if (c === "'") {
+      i++;
+      continue;
+    }
+    if (c === '[') depth++;
+    else if (c === ']') depth--;
+    else if (c === ':' && depth === 0) {
+      const a = item.slice(0, i).trim();
+      const b = item.slice(i + 1).trim();
+      return [a.slice(1, -1), b.slice(1, -1)];
+    }
+  }
+  return undefined;
+}
+
+/** A column name as written in a reference, its `'` escapes undone. */
+function unescapeName(name: string): string {
+  return name.trim().replace(/'(.)/g, '$1');
 }
