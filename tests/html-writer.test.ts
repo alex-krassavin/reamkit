@@ -139,12 +139,42 @@ describe('html writer (FlowDoc adapter)', () => {
     const html = decode(await Ream.parse(xlsx).convert('html'));
     const sheet = (name: string): string =>
       html.slice(html.indexOf(`data-sheet="${name}"`)).split('</section>')[0]!;
-    // Four edges round the plain cell; the yellow one is covered by its fill.
-    expect(sheet('Grid').match(/0\.5pt solid #D4D4D4/gu)).toHaveLength(4);
+    // Three edges round the plain cell: the fourth is the yellow one's, and a
+    // fill covers the gridlines on every side of it.
+    expect(sheet('Grid').match(/0\.5pt solid #D4D4D4/gu)).toHaveLength(3);
     expect(
       /<td style="([^"]*)">\s*<p[^>]*><span[^>]*>filled/u.exec(sheet('Grid'))?.[1],
     ).not.toContain('D4D4D4');
     expect(sheet('Clean')).not.toContain('D4D4D4');
+  });
+
+  it('leaves an edge to the neighbour that rules it', async () => {
+    // A gridline and a thin rule come out the same pixel wide, and collapsed
+    // borders then go to the cell above or to the left: a cell ruled all
+    // round lost its top and left sides to the grey grid next to them.
+    const STYLES = `
+      <fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts>
+      <fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>
+      <borders count="2"><border/><border><left style="thin"><color rgb="FF000000"/></left><right style="thin"><color rgb="FF000000"/></right><top style="thin"><color rgb="FF000000"/></top><bottom style="thin"><color rgb="FF000000"/></bottom></border></borders>
+      <cellXfs count="2">
+        <xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>
+        <xf numFmtId="0" fontId="0" fillId="0" borderId="1" applyBorder="1"/>
+      </cellXfs>`;
+    const xlsx = buildXlsx({
+      stylesXml: STYLES,
+      rows: [
+        ['', 'above'],
+        ['beside', { value: 'ruled', styleIndex: 1 }],
+      ],
+    });
+    const html = decode(await Ream.parse(xlsx).convert('html'));
+    const styleOf = (word: string): string =>
+      new RegExp(`<td style="([^"]*)">\\s*<p[^>]*><span[^>]*>${word}<`, 'u').exec(html)?.[1] ?? '';
+    expect(styleOf('ruled')).toContain('border-top:0.75pt solid #000000');
+    expect(styleOf('above')).not.toContain('border-bottom');
+    expect(styleOf('beside')).not.toContain('border-right');
+    // The edges nobody rules keep their gridline.
+    expect(styleOf('above')).toContain('border-top:0.5pt solid #D4D4D4');
   });
 
   it('sets a grid row at its height and a cell at the bottom of it', async () => {

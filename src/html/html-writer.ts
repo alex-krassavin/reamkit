@@ -910,6 +910,10 @@ function emitTable(out: Array<string>, table: Table, ctx: EmitCtx): void {
     });
   });
 
+  // Which cell stands at each grid position — wanted only where the window's
+  // gridlines are drawn, to know whose edge each one is (claimedEdges).
+  const cellGrid = table.properties.gridlines ? gridOfCells(table, colStarts) : undefined;
+
   // Sticky-pane offsets for a frozen worksheet view (E-SHEET SE3). Left offsets
   // are exact (cumulative grid column widths); top offsets sum each row's height,
   // falling back to Excel's ~15pt default for rows without an explicit one.
@@ -948,7 +952,11 @@ function emitTable(out: Array<string>, table: Table, ctx: EmitCtx): void {
       if (merge === 'middle' || merge === 'end') continue;
       const cs = colStarts[ri]![ci]!;
       const rowSpan = merge === 'start' ? mergeRowSpan(table, colStarts, ri, cs) : 1;
+      const claimed = cellGrid
+        ? claimedEdges(cellGrid, ri, cs, cs + (cell.properties.colSpan ?? 1) - 1, rowSpan)
+        : undefined;
       emitCell(out, cell, table, ctx, {
+        ...(claimed && claimed.size > 0 ? { claimed } : {}),
         isHeader: row.properties.isHeader === true,
         firstRow: ri === 0,
         lastRow: ri === table.rows.length - 1,
@@ -962,6 +970,59 @@ function emitTable(out: Array<string>, table: Table, ctx: EmitCtx): void {
     out.push('</tr>');
   }
   out.push('</table>');
+}
+
+/** The cell at each row × grid column (a spanning cell at every column it covers). */
+function gridOfCells(
+  table: Table,
+  colStarts: ReadonlyArray<ReadonlyArray<number>>,
+): Array<Array<TableCell | undefined>> {
+  return table.rows.map((row, ri) => {
+    const line = new Array<TableCell | undefined>(table.grid.length).fill(undefined);
+    row.cells.forEach((cell, ci) => {
+      const start = colStarts[ri]![ci]!;
+      for (let k = 0; k < (cell.properties.colSpan ?? 1); k++) line[start + k] = cell;
+    });
+    return line;
+  });
+}
+
+/**
+ * The edges of a cell (rows `ri`…`ri + rowSpan − 1`, columns `c0`…`c1`) that a
+ * neighbour across them CLAIMS: one that rules its facing side, or is filled.
+ * A window's gridline gives way there. Collapsed borders are settled edge by
+ * edge, wider first and then by position, and a gridline is as wide as a
+ * thin rule once the browser rounds both to a pixel — so the cell above or to
+ * the left won, and a merged range ruled all round showed only two of its four
+ * sides. Excel draws no gridline along a filled cell either. Where only some of
+ * the neighbours claim the edge, the others draw their own gridline on it.
+ */
+function claimedEdges(
+  grid: ReadonlyArray<ReadonlyArray<TableCell | undefined>>,
+  ri: number,
+  c0: number,
+  c1: number,
+  rowSpan: number,
+): Set<'top' | 'bottom' | 'left' | 'right'> {
+  const claims = (
+    cell: TableCell | undefined,
+    facing: 'top' | 'bottom' | 'left' | 'right',
+  ): boolean => {
+    if (!cell) return false;
+    if (cell.properties.shading) return true;
+    const b = cell.properties.borders?.[facing];
+    return b !== undefined && b.style !== 'none';
+  };
+  const out = new Set<'top' | 'bottom' | 'left' | 'right'>();
+  for (let c = c0; c <= c1; c++) {
+    if (claims(grid[ri - 1]?.[c], 'bottom')) out.add('top');
+    if (claims(grid[ri + rowSpan]?.[c], 'top')) out.add('bottom');
+  }
+  for (let r = ri; r < ri + rowSpan; r++) {
+    if (claims(grid[r]?.[c0 - 1], 'right')) out.add('left');
+    if (claims(grid[r]?.[c1 + 1], 'left')) out.add('right');
+  }
+  return out;
 }
 
 function mergeRowSpan(
@@ -994,6 +1055,8 @@ interface CellPos {
   // this cell sits in a frozen top row / left column. undefined ⇒ scrolls.
   readonly stickyTop?: number;
   readonly stickyLeft?: number;
+  /** The sides whose edge a neighbour claims — see {@link claimedEdges}. */
+  readonly claimed?: ReadonlySet<'top' | 'bottom' | 'left' | 'right'>;
 }
 
 function emitCell(
@@ -1017,12 +1080,19 @@ function emitCell(
   const t = table.properties.borders;
   const c = cell.properties.borders;
   // A worksheet's grid on a screen: whatever edge the cell's own borders and
-  // the table's leave bare — unless the cell is filled, which covers it.
+  // the table's leave bare — unless the cell is filled, which covers it, or
+  // the neighbour across the edge claims it.
   const g = cell.properties.shading ? undefined : table.properties.gridlines;
-  pushBorder(css, 'top', c?.top ?? (pos.firstRow ? t?.top : t?.insideH) ?? g);
-  pushBorder(css, 'bottom', c?.bottom ?? (pos.lastRow ? t?.bottom : t?.insideH) ?? g);
-  pushBorder(css, 'left', c?.left ?? (pos.firstCol ? t?.left : t?.insideV) ?? g);
-  pushBorder(css, 'right', c?.right ?? (pos.lastCol ? t?.right : t?.insideV) ?? g);
+  const gridOn = (side: 'top' | 'bottom' | 'left' | 'right'): Border | undefined =>
+    pos.claimed?.has(side) ? undefined : g;
+  pushBorder(css, 'top', c?.top ?? (pos.firstRow ? t?.top : t?.insideH) ?? gridOn('top'));
+  pushBorder(
+    css,
+    'bottom',
+    c?.bottom ?? (pos.lastRow ? t?.bottom : t?.insideH) ?? gridOn('bottom'),
+  );
+  pushBorder(css, 'left', c?.left ?? (pos.firstCol ? t?.left : t?.insideV) ?? gridOn('left'));
+  pushBorder(css, 'right', c?.right ?? (pos.lastCol ? t?.right : t?.insideV) ?? gridOn('right'));
   if (cell.properties.shading) css.push(`background-color:#${cell.properties.shading.colorHex}`);
   // Where the content sits in a box taller than itself: the top unless the
   // cell says — and a spreadsheet cell says the bottom by default (§18.8.1).
