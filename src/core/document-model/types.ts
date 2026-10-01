@@ -1698,6 +1698,11 @@ export interface Chart {
   readonly valAxisMin?: number;
   readonly valAxisMax?: number;
   /**
+   * §21.2.2.98 `c:valAx/c:majorUnit` — the step between the value axis's
+   * labels, when the author fixed it. Absent ⇒ the application's own choice.
+   */
+  readonly valAxisMajorUnit?: number;
+  /**
    * §21.2.2.198 `c:chartSpace/c:spPr` — the frame around the whole chart: its
    * background fill and its outline. Excel writes both on every chart it
    * creates, and both references draw them.

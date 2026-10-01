@@ -45,17 +45,23 @@ const barChart = (barDir: 'col' | 'bar'): Chart => ({
 });
 
 describe('niceScale', () => {
-  it('produces round ticks covering the data, with room above it', () => {
-    // Excel leaves the top datum room to breathe — about 5% before rounding up
-    // to the major unit — so a maximum that lands exactly on a step still
-    // clears the plot frame. 57362.xlsx's 12-value bar touched the ceiling
-    // where both references stop at 14.
-    expect(niceScale(0, 95)).toEqual({ min: 0, max: 100, step: 20 });
-    expect(niceScale(0, 8)).toEqual({ min: 0, max: 10, step: 2 });
-    // Six ticks asked for, six delivered: the step is measured against the
-    // range the data SPANS. Measured against Heckbert's rounded-up range (25
-    // becomes 50) it came out 10, which is four labels for a budget of six.
-    expect(niceScale(0, 25)).toEqual({ min: 0, max: 30, step: 5 });
+  it("scales an axis as Excel does: the ends from the data's spread, the step 1-2-5", () => {
+    // Measured against Excel's own PDF of eight column charts (2026-10-01).
+    // The near end at zero unless the spread is under a sixth of the far one,
+    // 5% of the spread beyond the data, then the smallest 1/2/5 × 10ⁿ step
+    // that leaves at most ten intervals.
+    expect(niceScale(2336, 3750)).toEqual({ min: 0, max: 4000, step: 500 });
+    expect(niceScale(-1, 1.2)).toEqual({ min: -1.5, max: 1.5, step: 0.5 });
+    expect(niceScale(0.3, 4.7)).toEqual({ min: 0, max: 5, step: 0.5 });
+    expect(niceScale(120, 950)).toEqual({ min: 0, max: 1000, step: 100 });
+    expect(niceScale(93, 97)).toEqual({ min: 91, max: 98, step: 1 });
+    expect(niceScale(0.012, 0.047)).toEqual({ min: 0, max: 0.05, step: 0.005 });
+    // 57362.xlsx's 12-value bar: room above it, the axis labelled to 14.
+    expect(niceScale(0, 12)).toEqual({ min: 0, max: 14, step: 2 });
+  });
+
+  it('steps more coarsely only where the labels would not fit', () => {
+    expect(niceScale(0, 3750, 4)).toEqual({ min: 0, max: 4000, step: 1000 });
   });
 
   it('handles a flat range', () => {
@@ -69,6 +75,10 @@ describe('formatTick', () => {
     expect(formatTick(100, 20)).toBe('100');
     expect(formatTick(0, 20)).toBe('0');
     expect(formatTick(0.5, 0.5)).toBe('0.5');
+    // General shows no trailing zero, whatever the step's decimals.
+    expect(formatTick(0.05, 0.005)).toBe('0.05');
+    expect(formatTick(0.045, 0.005)).toBe('0.045');
+    expect(formatTick(1, 0.5)).toBe('1');
   });
 });
 

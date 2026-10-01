@@ -209,6 +209,7 @@ export function parseChart(
   );
   const valAxisMin = axisScaling(plotArea, 'c:min');
   const valAxisMax = axisScaling(plotArea, 'c:max');
+  const valAxisMajorUnit = majorUnitOf(plotArea);
   // §21.2.2.134 — the category axis may run the other way, which is how a
   // ranked bar chart puts its first row at the top.
   const catAxisReversed = axisOrientation(catAxNode) === 'maxMin';
@@ -282,6 +283,7 @@ export function parseChart(
     ...(gridLine ? { gridLine } : {}),
     ...(valAxisMin !== undefined ? { valAxisMin } : {}),
     ...(valAxisMax !== undefined ? { valAxisMax } : {}),
+    ...(valAxisMajorUnit !== undefined ? { valAxisMajorUnit } : {}),
     ...(frameFillHex ? { frameFillHex } : {}),
     ...(frameFillImage ? { frameFillImage } : {}),
     ...(frameLineHex ? { frameLineHex } : {}),
@@ -566,6 +568,14 @@ function axisTitle(plotArea: PoNode, axTag: string): string | undefined {
 function axisOrientation(ax: PoNode | undefined): string | undefined {
   const scaling = ax ? poChildren(ax).find((c) => poIs(c, 'c:scaling')) : undefined;
   return scaling ? poVal(poChildren(scaling).find((c) => poIs(c, 'c:orientation'))) : undefined;
+}
+
+/** §21.2.2.98 `c:valAx/c:majorUnit` — a positive step, or undefined for "auto". */
+function majorUnitOf(plotArea: PoNode): number | undefined {
+  const ax = poChildren(plotArea).find((c) => poIs(c, 'c:valAx'));
+  const node = ax ? poChildren(ax).find((c) => poIs(c, 'c:majorUnit')) : undefined;
+  const v = node ? Number(poAttr(node, 'val')) : Number.NaN;
+  return Number.isFinite(v) && v > 0 ? v : undefined;
 }
 
 function axisScaling(plotArea: PoNode, tag: 'c:min' | 'c:max'): number | undefined {
