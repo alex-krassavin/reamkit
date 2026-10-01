@@ -97,6 +97,28 @@ const book = Ream.parse(xlsxBytes);
 const md = await book.convert('md'); // # Revenue, then its grid; # Costs, then its
 ```
 
+## xlsx → HTML / SVG: a workbook as Excel shows it
+
+A workbook comes out two ways. Its PDF is the printed pages — print area,
+repeated titles, page breaks, fit-to-page, the drawings cut to the page they
+print on. Its HTML and SVG are what Excel's window shows: every visible tab, one
+grid a sheet with all its columns at full size, text running on across the row,
+drawings over the cells where they are anchored, the window's gridlines where
+the sheet asks for them, and a red corner on every cell with a note.
+
+```ts
+const book = Ream.parse(xlsxBytes);
+
+const pdf = await book.convert('pdf', { fonts });  // the printed pages
+const html = await book.convert('html');           // the window: one <section data-sheet> a tab
+const svg = await book.convert('svg', { fonts });  // a picture of each sheet, whole
+```
+
+The HTML needs no fonts — the browser sets the text, and a note shows on hover
+over its cell. The SVG draws every glyph from its face's own outline, so it looks
+the same in any viewer with no font to find; the words are laid over the glyphs
+unseen, so the text can still be searched and selected.
+
 ## xlsx → xlsx: re-emit a workbook
 
 `convert('xlsx')` writes a spreadsheet's grid back to a valid `.xlsx`. Unlike the

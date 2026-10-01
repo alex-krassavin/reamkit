@@ -188,7 +188,8 @@ one comes back in its colours rather than in black, and the loss report says
 where the gradient's shape was flattened to a single colour.
 
 **Output** — `convert('pdf')`, `convert('svg')` (a page-stack preview),
-`convert('html')` (flowed, needs no fonts), `convert('md')` (GitHub-Flavored
+`convert('html')` (flowed, needs no fonts) — a workbook's HTML is Excel's window and
+its SVG a picture of each sheet, whole (SpreadsheetML below) — `convert('md')` (GitHub-Flavored
 Markdown), `convert('docx')` (write WordprocessingML back out) and
 `convert('xlsx')` (write SpreadsheetML back out — spreadsheet input only). The writers are for normalization, sanitization,
 in-browser editing, and round-tripping. The docx round-trip is semantic, not
@@ -411,6 +412,31 @@ yourself, or `{ images: 'drop' }` to omit them.
 
 **SpreadsheetML (§18)**
 - Grids, shared strings, number formats and dates (incl. the 1904 date system).
+- **Measured against Excel itself** — its own PDF of a probe workbook built for each
+  question, and the absolute positions it writes beside every anchored drawing.
+  Columns are counted in the Normal font's digit as Excel counts it: a Chinese,
+  Japanese or Korean face's is a pixel more than its half-width figure (宋体 12 is
+  9px). A column no `<col>` covers and no `defaultColWidth` sets is `baseColWidth`
+  digits and padding, rounded up to Excel's step of eight pixels (Calibri's 64px). A
+  colour's `tint` is worked as Excel works it, in the Windows HLS model, on a theme,
+  `rgb` or indexed colour alike; a workbook with no theme part takes the Office 2023
+  colours Excel starts from.
+- **On a screen — HTML and SVG — a workbook is what Excel's window shows**, not its
+  printed pages: every visible tab, an empty one too; one grid a sheet, all of its
+  columns at full size; no print area, repeated titles, page breaks, printed headings
+  or centring; text running on across the row; the drawings over the cells where they
+  are anchored; the window's gridlines where `showGridLines` asks for them, on every
+  edge no border claims and no fill covers; every noted cell flagged with Excel's
+  red corner, purple for a threaded comment. HTML makes each tab a
+  `<section data-sheet>` under its name and shows a note on hover; SVG draws each
+  sheet whole on a page as large as what is on it, every glyph from its face's own
+  outline with the words laid over it unseen for search and selection. PDF is the
+  printed pages, by the print model below.
+- **Sheets that read from the right** (`rightToLeft`) — the grid, each cell's left
+  and right borders and the drawings turn round as Excel turns them (a right arrow
+  still points right), and on paper the sheet meets the right margin. A cell's text
+  keeps the side its alignment names, and General aligns text by its first strong
+  character on any sheet.
 - **Legacy `.xls`** (BIFF8, Excel 97–2003) — the binary `Workbook` stream inside the
   OLE2/CFB container is read into the same grid model, so an old `.xls` renders to
   PDF/SVG/HTML and even re-writes to `.xlsx`. Cell values, structure (sheets, shared
@@ -438,6 +464,8 @@ yourself, or `{ images: 'drop' }` to omit them.
   pagination**: a sheet wider than the page (and not fit-to-width) splits across
   pages, all rows of the left columns first, then the next band ("down, then over"),
   honouring manual column breaks — instead of being squeezed onto one page width.
+  Printed row and column headings shrink with a sheet the print scale fits; a chart
+  sheet prints landscape unless it says otherwise, its chart filling the page.
 - **Frozen panes** round-trip through the writer and become sticky header rows /
   columns in HTML output. They do not affect PDF — in Excel freezing is a view
   setting that does not print (the printed repeat is the print titles above).
@@ -472,8 +500,18 @@ yourself, or `{ images: 'drop' }` to omit them.
   well as a number.
 - **Sparklines** — per-cell line / column / win-loss mini charts, including
   cross-sheet data ranges and blank-cell gaps.
-- **Excel tables** (`xl/tables`) — banded rows and a styled header row, the
-  colours resolved from the named table style against the workbook theme.
+- **Excel tables** (`xl/tables`) — drawn in the style they name: the sixty styles Excel
+  builds in (TableStyleLight1…21, Medium1…28, Dark1…11, from the standard's own
+  `presetTableStyles.xml`) and the ones a workbook defines in `<tableStyles>`. Each
+  region is laid over the table in §18.8.41's order — the whole table, column and
+  row stripes, last and first columns, header and total rows, their corner cells —
+  with its fill, weight, colour and rules; stripes run through the data rows only.
+  The cell's own formatting stays on top, and its text takes the table's colour only
+  where its font names its colour as the Normal style does. **Structured references**
+  (`Table[Column]`, `[#All]`, `[#Data]`, `[#Headers]`, `[#Totals]`, `[@Column]`,
+  column ranges) evaluate in conditional formatting — a rule's formula, a colour
+  scale's, data bar's or icon set's stops — and so does a defined name that is
+  itself a formula.
 - **Pivot tables** (`xl/pivotTables`) — Excel caches the pivot's output cells in the
   sheet, so the grid renders as data; on top of that Ream applies the named pivot
   style (`pivotTableStyleInfo`) — banded rows and a styled header — and emphasises
@@ -488,11 +526,16 @@ yourself, or `{ images: 'drop' }` to omit them.
   highlights the items the column's autofilter keeps; an OLAP/pivot slicer whose
   items live in a pivot cache degrades to a caption-only box.
 - Charts, **pictures and shapes** anchored to the sheet (the worksheet drawing part)
-  render after the grid — a picture keeps its bytes; a shape its preset/custom
-  geometry, fill, outline, text body and `a:xfrm` rotation/flips (reusing the
-  DrawingML shape readers). All three anchor kinds place a drawing:
-  `twoCellAnchor`, `oneCellAnchor` and `absoluteAnchor`; a group (`xdr:grpSp`)
-  maps its children through the group's own coordinate space.
+  stand where they are anchored, over the cells — a picture keeps its bytes; a shape
+  its preset/custom geometry, fill, outline, text body and `a:xfrm` rotation/flips
+  (reusing the DrawingML shape readers). All three anchor kinds place a drawing:
+  `twoCellAnchor`, `oneCellAnchor` and `absoluteAnchor`, counted in the grid's own
+  column unit, a hidden row or column taking no room; a group (`xdr:grpSp`) maps its
+  children through the group's own coordinate space. On paper each page shows the
+  part of every drawing over its own rows and columns, cut off where they end — a
+  chart across a page break prints in two pieces, a drawing in the print titles
+  repeats, nothing outside the print area prints, and the rows a drawing reaches
+  print. A drawing marked `fPrintsWithSheet="0"` shows on a screen only.
 - **SmartArt** — the pre-rendered drawing (`diagrams/drawing#.xml`, the `dsp:`
   namespace) where the file caches one, and otherwise the diagram laid out from
   its own `data`/`layout`/`colors`/`quickStyle` parts; either way each label
@@ -506,25 +549,32 @@ yourself, or `{ images: 'drop' }` to omit them.
   several `<r>` runs renders one document-model run per run, each with its own
   bold / italic / underline / colour / size / super- or sub-script); **wrapped
   text** (`wrapText` cells keep their full text and wrap to the cell, growing the
-  row); **left indent** (`indent`); **non-solid pattern fills** (gray / hatch
+  row); **indent** (`indent` — three spaces of the Normal font a level, from the side
+  the cell is aligned to); **non-solid pattern fills** (gray / hatch
   patterns blend foreground over background to a representative solid) and
   **gradient fills** (summarised to the mean of their stops); **diagonal cell
   borders** (up / down strokes across the cell); **text rotation** (`textRotation`
   — rotated / vertical cells render their text stacked top-to-bottom); and
   **shrink-to-fit** (`shrinkToFit` scales the cell's font down to its column width).
 - **Cell comments / notes** — legacy notes (`xl/comments`) and modern threaded
-  comments (`xl/threadedComments`, authors resolved through `xl/persons`) are read
-  and listed in a "Comments" section after the grid — a heading then one line per
-  comment, `<cell> — <author>: <text>` — mirroring Excel's "print comments at end of
-  sheet". The legacy VML note box is ignored; only the text + author are surfaced.
+  comments (`xl/threadedComments`, authors resolved through `xl/persons`) are read.
+  A note the sheet shows (its VML shape visible) is drawn where Excel draws it: in its
+  `x:Anchor` box, the comment's runs in their own faces, VML's hard shadow and a line
+  to the cell's corner. A window always shows them; paper follows the page setup's
+  `cellComments` — nothing by default (reported as a loss), the shown notes in place
+  under `asDisplayed`, and under `atEnd` a "Comments" section after the grid, one
+  line per comment: `<cell> — <author>: <text>`.
 - **Form controls** — checkboxes, option buttons, spinners, scroll bars, list /
   drop-downs and buttons (the worksheet's `<controls>`, each resolved to its
-  `ctrlProp` part for type + state) are listed in a "Form controls" section after
-  the grid, each with a type-appropriate affordance and its state (`[x]` / `[ ]`
-  for a checked box, `(o)` for an option button, the value for a spinner). The
-  control's anchored VML shape isn't drawn in place.
+  `ctrlProp` part for type + state) are drawn in place, where their anchor or their
+  VML shape puts them — a shape inside a `<v:group>` through the group's own
+  coordinate space, a box given in points alone on the rows Excel counted it by.
+  One the file gives no geometry is listed in a "Form controls" section after the
+  grid, with a type-appropriate affordance and its state (`[x]` / `[ ]` for a
+  checked box, `(o)` for an option button, the value for a spinner).
 - **ActiveX controls** — the embedded OLE controls (`<oleObjects>` → `xl/activeX`)
-  are listed in an "ActiveX controls" section the same way: the `progId` gives the
+  are drawn in place from the VML shape that shares their id, and otherwise listed in
+  an "ActiveX controls" section the same way: the `progId` gives the
   control type and the `<ax:ocxPr>` property bag its visible state (caption,
   checked/value, group). A control persisted only to its binary `.bin`
   (MS-OFORMS) renders as its type without the caption — reading that property bag
@@ -612,7 +662,12 @@ yourself, or `{ images: 'drop' }` to omit them.
 
 **Graphics & math**
 - DrawingML shapes (preset and custom geometry, gradients, group shapes, theme colors).
-- Charts — bar/column, line, pie/doughnut, area, scatter, stacked.
+- Charts — bar/column, line, pie/doughnut, area, scatter, stacked. A value axis Excel
+  is left to scale takes Excel's ends and step; the category axis lies where it
+  crosses (`crosses`, `crossesAt`) with its labels where `tickLblPos` puts them, a
+  reversed one keeps its values at its start, and a crowded one is thinned by the
+  labels it draws; categories on several levels (`c:multiLvlStrCache`) are labelled
+  in rows; a long title wraps; system colours (`sysClr`) are read and transformed.
 - OfficeMath — fractions, scripts, radicals, n-ary operators, functions, limits,
   delimiters, matrices, accents; inline and display.
 
