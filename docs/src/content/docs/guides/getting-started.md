@@ -22,7 +22,7 @@ Runtime dependencies are minimal: `fflate` (ZIP/Deflate) and `fast-xml-parser`.
 ## Convert a document
 
 Parse once into the format-neutral interlayer, then convert to any target.
-The format (docx/xlsx/pptx/pdf) is sniffed from the bytes. No fonts to wire up — an
+The format — any of the seven — is sniffed from the bytes. No fonts to wire up — an
 open metric-compatible substitute (Arimo for sans, Tinos for serif, Cousine for
 monospace, plus Carlito/Caladea for Calibri/Cambria — the same families LibreOffice
 substitutes) is fetched automatically based on the document's referenced fonts.
@@ -37,7 +37,7 @@ import { Ream } from 'reamkit';
 // e.g. from an <input type="file"> or a fetch() — anything that yields bytes.
 const bytes = new Uint8Array(await file.arrayBuffer());
 
-const doc = Ream.parse(bytes);          // docx, xlsx, pptx or pdf — sniffed
+const doc = Ream.parse(bytes);          // docx, xlsx, pptx, pdf, doc, xls or ppt — sniffed
 const pdf = await doc.convert('pdf');   // async — fetches a font if needed
 const svg = await doc.convert('svg');   // same parse, different target
 const html = await doc.convert('html');  // flowed HTML — needs no fonts at all
@@ -52,7 +52,7 @@ window.open(url);
 
 ## Open a password-protected document
 
-An encrypted `.docx`/`.xlsx` is not a zip: ECMA-376 §2.3 puts the whole package
+An encrypted `.docx`/`.xlsx`/`.pptx` is not a zip: ECMA-376 §2.3 puts the whole package
 inside an OLE container, so it has to be decrypted before anything can read it.
 Pass the password to `parse` and that happens for you — both Office schemes
 (the 2007 standard one and the agile one 2010 and later write), and the same
@@ -107,7 +107,7 @@ const pdf = await Ream.parse(bytes).convert('pdf', { fonts });
 
 ```ts
 const doc = Ream.parse(bytes);
-doc.format;    // 'docx' | 'xlsx' | 'pptx' | 'pdf'
+doc.format;    // 'docx' | 'xlsx' | 'pptx' | 'pdf' | 'doc' | 'xls' | 'ppt'
 doc.flow;      // the parsed interlayer tree (paragraphs, tables, images, …)
 doc.losses;    // anything dropped/degraded while reading
 

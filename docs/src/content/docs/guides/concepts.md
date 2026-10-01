@@ -53,11 +53,15 @@ The same seam runs in reverse for **PDF input**. A PDF reader is just another
 clean tree: a tagged PDF is rebuilt from its logical structure tree, an untagged
 one heuristically from glyph positions (lines by baseline, paragraphs by spacing
 and indent, the page read for its own gutters — as many columns of prose as it
-was set in, blocks set side by side read down each on its own, a running head or
-foot kept out of the body, a ruled grid rebuilt as a table, a gap no word space
-could be — or one that lands on a stop the lines around it share — written as a
-tab on that stop, and consecutive lines standing on the same stops rebuilt as a
-table of their own). Which reading it gets is the
+was set in, breaking to the next column and balancing the last page where the
+page does, blocks set side by side read down each on its own, a running head or
+foot made the section's header or footer with its page number as a field, a
+ruled grid rebuilt as a table, a gap no word space could be — or one that lands
+on a stop the lines around it share — written as a tab on that stop,
+consecutive lines standing on the same stops rebuilt as a table of their own,
+a table set across the columns read whole, a code listing kept line for line, a
+drawing kept with the labels set on it as one figure, and an index's hanging
+entries an entry apiece). Which reading it gets is the
 FILE's to decide — a paper is mostly lines and re-flows, a form is mostly marks
 and keeps its page, with nothing for a caller to configure. The result is an ordinary
 FlowDoc, so `Ream.parse(pdfBytes)` converts onward to HTML, Markdown, docx or a re-laid PDF
@@ -65,7 +69,12 @@ like any other source. A PDF names FACES (`Inter-SemiBold`, `ArialMT`), which is
 what a layout finds the document's own program by; beside them the FlowDoc
 carries the family each face belongs to (`faceFamilies`, a `FaceFamily` apiece),
 the name a writer that hands the text to another program — a `.docx` — gives
-it, with the kind of face it is for a program that has to substitute.
+it, with the kind of face it is for a program that has to substitute. And it
+carries the faces themselves (`faceOutlines`): the outline of every character
+each face drew and the advance the page set it at, its kerning pairs and the
+ligatures the page drew, from which the `.docx` writer rebuilds a TrueType font
+and embeds it where its licence lets it — so the document is set in the type it
+was set in, on a machine that has none of its fonts.
 
 ## Bytes in, bytes out
 
@@ -91,12 +100,16 @@ you give it.
 ## Renderer parity
 
 Ream is a _correct_ typesetter — it lays out faithfully for the font it's given, not a
-clone of any one program. When you need the page to track a specific renderer instead,
-`convert('pdf', { layoutProfile })` switches the line-height model, line breaking and
-default kerning to match it: `'word'` for Microsoft Word, `'libreoffice'` for
-LibreOffice, `'ream'` (the default) for Ream's own typesetter. Combined with the
-metric-compatible substitutes above, visual parity no longer needs the other tool's
-private font metrics — only a font engineered to reproduce them and its layout rules.
+clone of any one program. A document Word sets — a `.docx` or a `.doc` — is laid out
+by Word's own rules, each measured in Word: its lines as tall as Word sets its faces,
+two paragraphs the larger of their spacings apart, widow control, a heading kept with
+what it heads, table borders that take their room. When you need the page to track a
+specific renderer instead, `convert('pdf', { layoutProfile })` switches how text is
+measured, broken into lines and stacked to match it: `'word'` for Microsoft Word,
+`'libreoffice'` for LibreOffice, `'ream'` (the default) for Ream's own typesetter.
+Combined with the metric-compatible substitutes above, visual parity no longer needs
+the other tool's private font metrics — only a font engineered to reproduce them and
+its layout rules.
 
 ## Document model
 

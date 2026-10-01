@@ -164,10 +164,16 @@ ones Ream writes) is rebuilt from its structure tree — headings, paragraphs,
 tables, lists in reading order, through the role map a document names its own
 elements by, with an inline element (a span, a link, MathML) kept in its
 parent's line; an untagged PDF is reconstructed heuristically
-from glyph positions — in the columns of prose the page was set in, with a
+from glyph positions — in the columns of prose the page was set in, breaking to
+the next column and balancing the last page where the page does, with a
 running head or foot kept out of the body and its page number written as a
-field, a page ruled into a grid rebuilt as a table with its own columns and row
-heights, a word the line broke in half put back together, and a bracketed block
+field — counted in the page's own numerals, front matter in roman, and a foot
+to each side where a book signs its even and odd pages apart — a page ruled into
+a grid rebuilt as a table with its own columns and row heights, a table set
+across the columns read whole, a code listing kept line for line, a drawing kept
+with the labels set on it as one figure, a list's items and an index's hanging
+entries a paragraph apiece, a heading on a dark bar given the bar as its
+shading, a word the line broke in half put back together, and a bracketed block
 of rows and columns read as an OfficeMath matrix.
 
 A page that is not prose in columns is read ACROSS: an invoice sets its labels
@@ -214,8 +220,13 @@ is read off the shape the page draws, and a face that cannot be addressed by
 character at all is DRAWN from its outlines rather than guessed at. The result
 is an ordinary `FlowDoc`, so it converts onward like any other source. Written
 to `.docx`, a run names its face's family — `Inter`, not `Inter-SemiBold`, a
-font no word processor has — and a picture keeps its crop, its turn and its
-opacity, a line its dash.
+font no word processor has — and the face itself travels with the document:
+rebuilt as TrueType from the outlines the page drew, at the advances it set them
+at, with its kerning and the ligatures the page drew, and embedded where its
+licence lets it, so Word and LibreOffice break each line where the page broke
+it on a machine that has none of the document's fonts. A word space TeX shrank
+to fit a line is written as narrow as TeX set it, a picture keeps its crop, its
+turn and its opacity, and a line its dash.
 
 A form or a drawing is not a reflowable document, though — its rules and boxes
 are placed absolutely, and a label an inch from the box it labels says nothing.
@@ -546,6 +557,11 @@ Fonts embedded in the document itself (`w:embed`, including obfuscated
 substitution. A `w:rFonts` that names a **theme** slot rather than a family
 resolves through the theme's major / minor fonts before any of this runs.
 
+A face the network fails to deliver is not remembered as failed: the next
+conversion asks for it again, so a server that builds its provider chain once
+and reuses it keeps working after a dropped connection. A required face that
+cannot be fetched still throws, with the network's error as its `cause`.
+
 The substitute set is Latin, so a document holding another writing system is
 served separately: a Noto face is fetched per SCRIPT — Japanese, Korean,
 Chinese, Arabic, Hebrew, Thai, geometric symbols — and only for the scripts the
@@ -560,21 +576,23 @@ const pdf = await Ream.parse(bytes).convert('pdf');
 
 ## Renderer parity
 
-Ream is a correct typesetter: it lays out faithfully for the font you give it. For
-closer _visual parity_ with a specific renderer, pass a `layoutProfile` — it switches
-the line-height model, line breaking and default kerning to match that tool. Paired
-with the metric-compatible substitutes above (so the same glyph advances are in play),
-the page geometry tracks the target closely:
+Ream is a correct typesetter: it lays out faithfully for the font you give it, and a
+document Word sets — a `.docx` or a `.doc` — stands its lines as Word sets them, by
+rules measured in Word. For closer _visual parity_ with a specific renderer, pass a
+`layoutProfile` — it switches how text is measured, broken into lines and stacked to
+match that tool. Paired with the metric-compatible substitutes above (so the same
+glyph advances are in play), the page geometry tracks the target closely:
 
 ```ts
 const pdf = await doc.convert('pdf', { fonts, layoutProfile: 'libreoffice' });
 // 'word' targets Microsoft Word; 'ream' (the default) is Ream's own typesetter.
 ```
 
-`'libreoffice'` derives line height from the font's hhea metrics and breaks lines
-greedily (first-fit); `'word'` uses the OS/2 win metrics and turns kerning off (Word's
-default). The profile applies to flowing text (DOCX/PPTX); spreadsheet geometry follows
-Excel's row model regardless.
+`'libreoffice'` breaks lines greedily (first-fit) and takes each line from the face in
+hand — its hhea line, or its OS/2 typo line where the face asks for that; `'word'`
+measures without kerning (Word's default), breaks first-fit and stands every line as
+Word sets it, whatever the document. The profile applies to flowing text (DOCX/PPTX);
+spreadsheet geometry follows Excel's row model regardless.
 
 ## Strict mode (compliance flows)
 
