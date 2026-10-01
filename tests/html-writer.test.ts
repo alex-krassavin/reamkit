@@ -179,6 +179,53 @@ describe('html writer (FlowDoc adapter)', () => {
     expect(html).toContain('text-align:right');
   });
 
+  it("keeps the whole of a run's style when the run names its font", async () => {
+    // The family is a CSS string inside a double-quoted attribute: written in
+    // double quotes it ended the attribute, and a browser dropped the size,
+    // weight and colour after it.
+    const docx = buildDocxFromBody(
+      '<w:p><w:r><w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:b/>' +
+        '<w:color w:val="4E5B6F"/><w:sz w:val="50"/></w:rPr><w:t>Budget</w:t></w:r></w:p>',
+    );
+    const html = decode(await Ream.parse(docx).convert('html'));
+    expect(/<span style="([^"]*)">Budget<\/span>/u.exec(html)?.[1]).toBe(
+      "font-family:'Century Gothic',sans-serif;font-size:25pt;font-weight:700;color:#4E5B6F",
+    );
+  });
+
+  it('follows a family with its metric twin and its class, and escapes the name', () => {
+    const { doc } = readDocx(buildDocxFromBody('<w:p><w:r><w:t>x</w:t></w:r></w:p>'));
+    const run = (text: string, ascii: string) => ({ text, properties: { fontFamily: { ascii } } });
+    const html = decode(
+      writeHtml({
+        ...doc,
+        body: [
+          {
+            kind: 'paragraph' as const,
+            paragraph: {
+              properties: {},
+              runs: [
+                run('calibri', 'Calibri'),
+                run('cambria', 'Cambria'),
+                run('courier', 'Courier New'),
+                run('quoted', 'O\'Brien "Sans"'),
+              ],
+            },
+          },
+        ],
+      }).bytes,
+    );
+    const family = (text: string): string | undefined =>
+      new RegExp(`<span style="font-family:([^"]*?);font-size:[^"]*">${text}</span>`, 'u').exec(
+        html,
+      )?.[1];
+    expect(family('calibri')).toBe("'Calibri',Carlito,sans-serif");
+    expect(family('cambria')).toBe("'Cambria',Caladea,serif");
+    expect(family('courier')).toBe("'Courier New',monospace");
+    // A quote of either kind stays inside the name: escaped for CSS, then for the attribute.
+    expect(family('quoted')).toBe("'O\\'Brien &quot;Sans&quot;',sans-serif");
+  });
+
   // ── charts and shapes as inline SVG ──────────────────────────────────────
 
   const C_NS =

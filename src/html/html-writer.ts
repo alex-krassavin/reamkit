@@ -43,6 +43,7 @@ import type {
 import type { StrokeStyle } from '@/core/vector';
 import type { ResolvedParagraphProperties, ResolvedRunProperties } from '@/core/style-cascade';
 import type { DocumentWriter, WriteResult } from '@/core/ir/adapters';
+import type { FamilyKey } from '@/core/fonts/remote-fonts';
 import type { FlowDoc } from '@/core/ir/flow';
 import type { Loss, ResourceId, ResourceStore } from '@/core/ir';
 import { buildSparkline } from '@/core/drawingml/sparkline-geometry';
@@ -63,6 +64,7 @@ import { detectImageFormat } from '@/core/images';
 import { sanitizeHref } from '@/core/links';
 import { FEATURES } from '@/core/ir';
 import { headingLevelOf } from '@/core/outline';
+import { resolveFamilyStyle } from '@/core/fonts/remote-fonts';
 import {
   EMPTY_STYLE_SHEET,
   resolveParagraphProperties,
@@ -647,7 +649,7 @@ function runHtml(run: Run, p: Paragraph, ctx: EmitCtx): string {
   const resolved = resolveRunProperties(run.properties, p.properties, EMPTY_STYLE_SHEET);
   const style = runCss(resolved);
   const dir = resolved.rtl ? ' dir="rtl"' : '';
-  let html = `<span${dir}${style ? ` style="${style}"` : ''}>${textHtml(run.text)}</span>`;
+  let html = `<span${dir}${style ? ` style="${escapeAttr(style)}"` : ''}>${textHtml(run.text)}</span>`;
   if (resolved.verticalAlign === 'superscript') html = `<sup>${html}</sup>`;
   else if (resolved.verticalAlign === 'subscript') html = `<sub>${html}</sub>`;
   // §17.13.4 comment range: highlight the commented span (CM2c).
@@ -678,7 +680,7 @@ function runHtml(run: Run, p: Paragraph, ctx: EmitCtx): string {
 function runCss(r: ResolvedRunProperties): string {
   const css: Array<string> = [];
   const family = r.fontFamily.ascii;
-  if (family) css.push(`font-family:${JSON.stringify(family)}`);
+  if (family) css.push(`font-family:${fontStack(family)}`);
   css.push(`font-size:${fmt(r.fontSizePt)}pt`);
   if (r.bold) css.push('font-weight:700');
   if (r.italic) css.push('font-style:italic');
@@ -694,6 +696,31 @@ function runCss(r: ResolvedRunProperties): string {
   if (r.colorHex !== '000000') css.push(`color:#${r.colorHex}`);
   return css.join(';');
 }
+
+/**
+ * A family as CSS asks for it: the document's own, then — where the page is
+ * read without that font, which for Calibri is anywhere Office is not — its
+ * open metric twin, then the class of face it is. Without the class a browser
+ * that lacks the font falls to its default, a serif: a Calibri sheet came out
+ * in Times.
+ *
+ * The name is a CSS string in SINGLE quotes. The declaration goes into a
+ * double-quoted `style` attribute, where a double quote ended the attribute
+ * and took the size, weight and colour after the family with it.
+ */
+function fontStack(family: string): string {
+  const name = family.replace(/\s+/gu, ' ').replaceAll('\\', '\\\\').replaceAll("'", "\\'");
+  return [`'${name}'`, ...FALLBACKS[resolveFamilyStyle(family).key]].join(',');
+}
+
+/** What follows a family in its stack, by the open substitute it maps to. */
+const FALLBACKS: Readonly<Record<FamilyKey, ReadonlyArray<string>>> = {
+  carlito: ['Carlito', 'sans-serif'],
+  caladea: ['Caladea', 'serif'],
+  arimo: ['sans-serif'],
+  tinos: ['serif'],
+  cousine: ['monospace'],
+};
 
 function decorationStyle(u: ResolvedRunProperties['underline'] & string): string | undefined {
   switch (u) {
