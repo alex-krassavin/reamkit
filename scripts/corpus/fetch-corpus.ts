@@ -13,7 +13,7 @@
 //
 // Usage: tsx scripts/corpus/fetch-corpus.ts [--limit 60] [--source <id-prefix>]
 
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -84,7 +84,11 @@ async function main(): Promise<void> {
           console.error(`  skip ${e.name}: HTTP ${res.status}`);
           continue;
         }
-        writeFileSync(dest, new Uint8Array(await res.arrayBuffer()));
+        // Written beside it and renamed into place: under its own name a file
+        // is always whole, so the check above never keeps a half-written one.
+        const part = `${dest}.${String(process.pid)}.part`;
+        writeFileSync(part, new Uint8Array(await res.arrayBuffer()));
+        renameSync(part, dest);
       }
       manifest.push({
         source: s.id,
