@@ -52,7 +52,27 @@ drawn between two blocks given to the block it separates as that paragraph's
 border, a rule typed out of hyphens left on the line of its own it was written
 on, a band repeated at the top or bottom of every sheet as a running head or
 foot with its regions and its page number as a field, and a bracketed block of
-rows and columns as an OfficeMath matrix), which is approximate. The margins are
+rows and columns as an OfficeMath matrix), which is approximate. A page in
+columns is read down them: a gutter is the white between two columns, not where
+most of a ragged column's lines end; a JUSTIFIED column, flush on both sides, is
+prose as surely as a ragged one; and a column a few ems wide beside a gap the
+page's lines run across is a table's. A page that turns to its next column short
+of the foot breaks there, and a last page set in balanced columns ends their
+section on that page. A line set wholly in a typewriter face is CODE, a listing
+kept line for line with its comments on the stops the page set them at; a row of
+four cells and more is a TABLE's, read whole where it reaches across the gutter,
+the line over it its heading, a rule across it the border of the row under it and
+a rule drawn down it the division between two of its columns; a drawing and the
+words set on it — boxes and arrows, a bar chart — are one FIGURE, set as an
+inline group in its column; a line that opens with a bullet or a hanging label
+opens a list item, and an INDEX's entries hang, each a paragraph with the lines
+that carry it on. A box filled behind a single line — a heading on a dark bar —
+is that paragraph's shading. A running band's numeral that changes from page to
+page is the page's NUMBER, counted in the numerals the page prints: front matter
+in roman starts a section of its own, a book that leaves its blank pages out is
+counted all the same, and a book that signs its even and odd pages at opposite
+edges gets a foot to each side (§17.10.1). A page whose words run down its sheet
+comes back as a section set that way (§17.6.20 `tbRl`). The margins are
 measured to the page's INK — a blank is
 not ink, and a picture is: a sheet whose one line of text sits over a picture
 wider than that line keeps a measure the picture still fits. Text comes
@@ -64,6 +84,12 @@ font ships none, which is every PDF from TeX — from the glyph NAMES its
 declares (Annex D.2 Standard, WinAnsi and MacRoman, or a symbolic font's own
 built-in one — ZapfDingbats is a font of PICTURES and is read as pictures,
 Annex D.6), and a code the differences leave `.notdef` is no character at all.
+The names TeX gives its Greek and its mathematics — `alpha`, `epsilon1`,
+`asteriskmath` — are read like any other, and an accent TeX strikes over a letter
+it has no glyph for is composed with that letter: "naïve", not "na¨ıve". A word
+space is read where the page STEPS one as wide as most of its face's space as
+well as where it draws one, a dot stepped on after a word is the rest of an
+ellipsis, and a dash closed up to its word takes no space where a line breaks.
 A ligature comes back as the letters it joins — "ﬁrst" is `first` to a search
 and to an edit — and a composite font the file names but does not embed, with
 `Identity-H` and no `/ToUnicode`, is read in the glyph order of the face it
@@ -90,7 +116,13 @@ of the program itself; a face's own name outweighs the flags that contradict it
 (a `-Light` face is not bold for a ForceBold hint), and a family the
 substitution tables know decides whether it is a serif, a sans or a typewriter
 face. The embedded font programs themselves are carried into the output, so a
-rebuilt page is set in the type it was set in.
+rebuilt page is set in the type it was set in. Written to `.docx`, each face the
+page drew with is rebuilt as TrueType — the outline of every character it drew,
+at the advance the page set it at, with its kerning pairs (GPOS `kern`) and the
+ligatures the page drew (GSUB `liga`) — and embedded where its licence (OS/2
+`fsType`) lets it, and a word space TeX shrank to fit a line is written as narrow
+as TeX set it (§17.3.2.43 `w:w`): a re-set line breaks where the page broke it,
+on a machine that has none of the document's fonts.
 **Raster images, hyperlinks and vector artwork** are lifted back out too (JPEG
 verbatim but for a baseline CMYK one, which every viewer reads in Adobe's
 inverted convention and which is decoded instead, Adobe's YCCK included, and
@@ -136,7 +168,8 @@ appearances rebuilt, §12.7.2
 old appearance), the text
 render modes (§9.3.6 `Tr` — stroked type keeps its outline, and the invisible
 modes an OCR layer uses are marked rather than painted), the box a viewer shows
-(§14.11.2 `/CropBox` — which sizes the page AND clips the marks outside it) and
+(§14.11.2 `/CropBox` — which sizes the page AND clips the marks outside it; a
+media box with no area is the Letter sheet a page that states none gets) and
 the page's own `/Rotate` (§14.11.1). A file's optional content is honoured
 (§8.11 — the layers its default configuration turns off stay off, on `/OC … BDC`
 marked content and on an XObject's own `/OC`, through an `/OCMD`'s policies).
@@ -164,7 +197,19 @@ multi-section geometry, footnotes/endnotes, charts and OfficeMath all write
 back, and so do a paragraph's tab stops (§17.3.1.38) and its own rules
 (§17.3.1.24 `w:pBdr`), and the page-number fields a running foot is written with
 (§17.16.19 `w:fldSimple` — `PAGE` and `NUMPAGES`, so the second sheet does not
-say it is the first). A picture keeps how it is drawn into its frame — its crop
+say it is the first). So do a paragraph's shading (§17.3.1.31 `w:shd`) and how
+far its rules stand off it, its widow control and whether it keeps with the next
+paragraph or keeps its lines together (§17.3.1.44, §17.3.1.14–15); a run's width
+and character spacing (§17.3.2.43 `w:w`, §17.3.2.35 `w:spacing`), its kerning and
+its ligatures (`w:kern`, `w14:ligatures`); a line break, as `w:br` rather than a
+newline inside the text; a line spaced in lines, in the 240ths `w:lineRule="auto"`
+counts; a table's indent (§17.4.65 `w:tblInd`); a drawing group (`wpg:wgp`); and a
+section's page-number numerals (§17.6.12 `w:pgNumType`) and the way its lines run
+(§17.6.20 `w:textDirection`). The document's settings write back too — headers of
+its own for the even pages, a gutter at the head, `doNotExpandShiftReturn` and the
+compatibility mode (§17.15.1) — and the styles part states the defaults the
+writer leaves out, which Word would otherwise take from its own Normal template.
+A picture keeps how it is drawn into its frame — its crop
 (§20.1.8.55 `a:srcRect`), its turn and mirror (§20.1.7.6 `a:xfrm`) and its
 opacity (`a:alphaModFix`) — so a cropped picture read from Word and saved again
 no longer comes back whole and squeezed into the frame its crop was sized for; a
@@ -211,8 +256,10 @@ between them and is read as a re-flowable document — paragraphs and tables in
 reading order, from the structure tree where the file has one, and where it has
 none, in the columns of PROSE the page was set in, with its running head and
 foot kept out of the body, its blocks set side by side read down each on its
-own, its ruled grids and its rows-on-the-same-stops rebuilt as tables, and the
-lines it drew between blocks given to the paragraphs they separate; what a form
+own, its ruled grids, its rows-on-the-same-stops and its tables across the
+columns rebuilt as tables, its listings kept line for line, its figures kept
+with their labels, and the lines it drew between blocks given to the paragraphs
+they separate; what a form
 field or a button writes still stands where the page placed it, over the box it
 is written on.
 A form or a
@@ -269,11 +316,30 @@ yourself, or `{ images: 'drop' }` to omit them.
   vertical merge and grid span, nested tables, **table styles** (`w:tblStyle` with
   conditional formats: banding, first/last row/column).
 - Lists and numbering (`abstractNum`, level overrides), multi-level.
-- Sections — per-section page size and orientation, headers and footers,
-  **multi-column layout** (`w:cols`).
+- Sections — per-section page size and orientation, headers and footers (a
+  pair for the even and the odd pages, `w:evenAndOddHeaders`, and a first page
+  of its own), **multi-column layout** (`w:cols`), and **lines that run down the
+  sheet** (§17.6.20 `w:textDirection` `tbRl` / `btLr` — the text turned a
+  quarter, the header and footer left across the sheet, as Word sets them).
 - **Hyperlinks** — external (clickable PDF annotations + HTML `<a>`, scheme-allowlisted)
   and internal: bookmarks become named destinations / `#`-anchors.
-- **Fields** — `PAGE` / `NUMPAGES` render real page numbers in headers and footers.
+- **Fields** — `PAGE` / `NUMPAGES` render real page numbers in headers and
+  footers, in the numerals the section names (§17.6.12 `w:pgNumType w:fmt` —
+  front matter in roman, a body that starts again at 1).
+- **Laid out the way Word sets it** — each rule measured in Word for Mac. A line
+  stands as tall as Word sets its faces: the face's hhea line, or its typo line
+  where it asks for that, the tallest ascent and the deepest descent on the line
+  taken apart, a list marker adding its ascent, a picture standing on the
+  baseline. Two paragraphs stand the larger of their spacings apart, not the
+  sum, and a space before is dropped at the head of a page or column where Word
+  drops it; automatic spacing is 14pt in every compatibility mode. A paragraph's
+  first and last lines never stand alone (§17.3.1.44 widow control), a heading
+  goes to the next page with what it heads (`w:keepNext`), and a paragraph asked
+  to stay whole does (`w:keepLines`). A table's horizontal borders take the room
+  they are wide, and a Word 2010 table (compatibility mode 14 and earlier) stands
+  out by its first cell's margin. Each page sets its body below the header and
+  above the footer it shows, and a page break typed on a line of its own stays
+  on the page it ends.
 - **Footnotes and endnotes** — notes at the bottom of the referencing page behind
   Word's separator rule; endnotes after the body.
 - **Review comments** (`w:commentReference`) — a bracketed superscript marker in the
@@ -293,10 +359,12 @@ yourself, or `{ images: 'drop' }` to omit them.
   thirty-two, run-length and bit-field forms included),
   including **legacy VML pictures** (`<w:pict>` / `<w:object>` — ActiveX and
   OLE-object previews, images from older Word); floating drawings
-  (`wp:anchor`) render outside the text flow — wrap-none (incl. `behindDoc`)
-  for watermarks/stamps/text boxes, and side wrapping
-  (`square`/`tight`/`through`) where the body text flows around the exclusion
-  area, on **both sides** of it where the drawing leaves room. A drawing
+  (`wp:anchor`) render outside the text flow — wrap-none (incl. `behindDoc`,
+  which Word reads beside no other wrap) for watermarks/stamps/text boxes, and
+  side wrapping (`square`/`tight`/`through`) where the body text flows around
+  the exclusion area, on **both sides** of it where the drawing leaves room,
+  each line holding what its indents and the drawing's stand-off leave. A
+  drawing anchored to a paragraph that breaks to a new page goes with it. A drawing
   **anchored inside a table cell** is placed against the cell (or against the
   page, where `layoutInCell` is off), and a picture's **washout**
   (`@gain`/`@blacklevel`) prints as the contrast and brightness it asks for.
@@ -566,10 +634,14 @@ yourself, or `{ images: 'drop' }` to omit them.
   family (`asciiTheme="minorHAnsi"`) resolves through the theme's major / minor
   fonts, and a **narrow** family is measured at the narrow advance widths rather
   than the regular ones.
-- **Renderer-compatibility `layoutProfile`** (`'word'` / `'libreoffice'`) — matches a
-  target renderer's line-height model, line breaking and default kerning; with the
+- **Renderer-compatibility `layoutProfile`** (`'word'` / `'libreoffice'`) — matches how a
+  target renderer measures text, breaks it into lines and stacks the lines; with the
   metric-compatible open substitutes (Carlito / Caladea / Arimo / Tinos / Cousine) this
-  tracks the target closely **without its private font metrics**.
+  tracks the target closely **without its private font metrics**. Under the default
+  profile a document Word sets — a `.docx` or a `.doc` — stands its lines as Word
+  does, from a table of the line Word gives each family it is known for; `'word'`
+  stands every document's lines that way, and `'libreoffice'` takes each line from
+  the face in hand.
 
 **PDF / compliance**
 - PDF/A-1, -2, -3 at levels a / b / u — all formally **veraPDF-validated**.
@@ -610,8 +682,24 @@ yourself, or `{ images: 'drop' }` to omit them.
   embedded face in an EOT container and, unlike Word's, it is compressed with a
   codec of its own; the deck renders in a substitute and says so rather than
   silently dropping the family.
+- **Where a section's lines run down the sheet, a table and an inline picture
+  turn with them**, where Word sets a table flat in the corner of the sheet and
+  keeps an inline picture upright in its line. A PDF page whose words run UP its
+  sheet, or stand on their heads, has no section to be set in that way — Word and
+  LibreOffice lay a section's text across the sheet or down it — and is set
+  across it, with a loss that says so.
+- **A book's running foot names no chapter.** Read from a PDF, each side's foot
+  says what most of that side's pages say and the page's number; the chapter a
+  page is in, named differently in every chapter, is left out rather than set
+  once and printed on every page. LibreOffice also seats a book's left and right
+  pages by the number its first page carries, and may sign a page with the other
+  side's foot where Word, which takes each page's own number, does not.
 ## Validation
 
 Development is corpus-driven: documents are converted, compared against a LibreOffice
 "golden" render (structural text diff + rasterized visual diff), and PDF/A output is
-gated through veraPDF. Untrusted corpus files run inside a locked-down Docker sandbox.
+gated through veraPDF. A PDF read back as `.docx` is set beside its source page on a
+bench of some four hundred files, and the documents a change is for are opened in
+Word and in LibreOffice and counted page for page against the source; a rule of
+Word's layout is measured in Word before it is written. Untrusted corpus files run
+inside a locked-down Docker sandbox.
