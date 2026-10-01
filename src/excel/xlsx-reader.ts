@@ -32,7 +32,7 @@ import type {
   XlsxStyles,
 } from '@/core/spreadsheet-model';
 import type { TableFilterColumn } from '@/excel/table-parser';
-import type { VmlNote, VmlShapeBox } from '@/excel/vml-drawing';
+import type { VmlAnchor, VmlNote, VmlShapeBox } from '@/excel/vml-drawing';
 import type { SlicerCacheDef, SlicerDef } from '@/excel/slicer-parser';
 
 import type { ProjectSheetOptions } from '@/excel/sheet-to-flow';
@@ -80,7 +80,7 @@ import {
 } from '@/excel/sheet-shape-parser';
 
 import { projectSheetDoc } from '@/excel/sheet-to-flow';
-import { resolveCellText } from '@/excel/print-model';
+import { columnUnitTwips, resolveCellText } from '@/excel/print-model';
 
 const WORKBOOK_PART = 'xl/workbook.xml';
 const SHARED_STRINGS_PART = 'xl/sharedStrings.xml';
@@ -177,6 +177,9 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
 
   const stylesData = pkg.getPart(STYLES_PART);
   const styles = stylesData ? parseXlsxStyles(stylesData, themePalette) : EMPTY_XLSX_STYLES;
+  // §18.3.1.13 — what a drawing's anchor counts its columns in: the grid's own
+  // unit, so that it lands on the cells the grid draws (columnUnitTwips).
+  const colUnit = columnUnitTwips(styles);
   // Threaded-comment authors (E-SHEET W7): xl/persons/person.xml maps person ids
   // to display names. Workbook-scoped, resolved once and shared across sheets.
   const persons = new Map<string, string>();
@@ -244,6 +247,7 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
           drawing.path,
           pkg,
           worksheet,
+          colUnit,
         );
         for (const ref of chartRefs) {
           if (!chartData.has(ref.chartPartPath)) {
@@ -293,6 +297,7 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
             themeFillStyles,
             themeEffectStyles,
             screenOnlyShapes,
+            colUnit,
           );
           if (parsed.length > 0) shapes = parsed;
         }
@@ -305,7 +310,7 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
         //
         // A frame is paired with the drawing at its own index: the relationship
         // names no frame, and a producer writes them in step.
-        const frames = parseDiagramFrames(drawing.data, worksheet);
+        const frames = parseDiagramFrames(drawing.data, worksheet, colUnit);
         if (frames.length > 0) {
           const drawingRels = pkg.getPartRelationships(drawing.path);
           const dsp = drawingRels.filter((r) => r.type.endsWith('/diagramDrawing'));
@@ -454,9 +459,9 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
     // The legacy VML drawing is read before the <control> list because it is
     // the only part that carries geometry — an ActiveX control's box lives in
     // the `Pict` shape that shares its `shapeId`, nowhere else.
-    const legacyVml = readLegacyVml(pkg, resolved.path, wsRels, worksheet);
+    const legacyVml = readLegacyVml(pkg, resolved.path, wsRels, worksheet, colUnit);
     if (comments && legacyVml.notes.length > 0) {
-      comments = withShownNotes(comments, legacyVml.notes, worksheet);
+      comments = withShownNotes(comments, legacyVml.notes, worksheet, colUnit);
     }
 
     let formControls: Array<SheetFormControl> | undefined;
@@ -479,7 +484,10 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
         // of bare names, its captions and values sitting unread in the .bin.
         // The <control> element carries no progId, so the type comes from the
         // class id.
-        const box = fc.shapeId !== undefined ? legacyVml.boxes.get(fc.shapeId) : undefined;
+        const box =
+          fc.shapeId !== undefined
+            ? (legacyVml.anchoredBoxes.get(fc.shapeId) ?? legacyVml.boxes.get(fc.shapeId))
+            : undefined;
         if (part && ACTIVEX_PART.test(part.path)) {
           resolvedAx.push({
             ...activeXState(part),
@@ -788,16 +796,19 @@ function readLegacyVml(
   sheetPath: string,
   wsRels: ReadonlyArray<Relationship>,
   worksheet: ParsedWorksheet,
+  colUnitTwips?: number,
 ): {
   controls: Array<SheetFormControl>;
   notes: ReadonlyArray<VmlNote>;
   boxes: ReadonlyMap<string, VmlShapeBox>;
+  anchoredBoxes: ReadonlyMap<string, VmlShapeBox>;
   nonPrinting: ReadonlySet<string>;
 } {
   const empty = {
     controls: [],
     notes: [],
     boxes: new Map<string, VmlShapeBox>(),
+    anchoredBoxes: new Map<string, VmlShapeBox>(),
     nonPrinting: new Set<string>(),
   };
   const relId = worksheet.legacyDrawingRelId;
@@ -809,14 +820,23 @@ function readLegacyVml(
     (worksheet.formControls ?? []).map((fc) => fc.shapeId).filter((id) => id !== undefined),
   );
   const drawing = parseVmlDrawing(part.data);
+  // A control stands on the cells its anchor names, measured as the grid is.
+  const colWidthPt = makeColWidthPt(worksheet, colUnitTwips);
+  const rowHeightPt = makeRowHeightPt(worksheet);
+  const anchoredBoxes = new Map<string, VmlShapeBox>();
+  for (const [id, anchor] of drawing.anchors) {
+    const box = anchoredBox(anchor, colWidthPt, rowHeightPt);
+    if (box) anchoredBoxes.set(id, box);
+  }
   const out: Array<SheetFormControl> = [];
   for (const shape of drawing.controls) {
     if (shape.shapeId !== undefined && activeXShapeIds.has(shape.shapeId)) continue;
+    const box = (shape.anchor && anchoredBox(shape.anchor, colWidthPt, rowHeightPt)) ?? shape.box;
     out.push({
       objectType: shape.objectType,
       ...(shape.caption ? { name: shape.caption, caption: shape.caption } : {}),
       ...(shape.checked ? { checked: true } : {}),
-      ...(shape.box ? { box: shape.box } : {}),
+      ...(box ? { box } : {}),
       ...(shape.fontSizePt !== undefined ? { fontSizePt: shape.fontSizePt } : {}),
     });
   }
@@ -824,8 +844,38 @@ function readLegacyVml(
     controls: out,
     notes: drawing.notes,
     boxes: drawing.boxes,
+    anchoredBoxes,
     nonPrinting: drawing.nonPrinting,
   };
+}
+
+/**
+ * A legacy VML shape's box by the cells its `<x:Anchor>` names — on the grid
+ * we draw, whatever measure of the columns the producer wrote its `style` in.
+ *
+ * @param anchor      The anchor: cells and pixels into them.
+ * @param colWidthPt  The sheet's column widths.
+ * @param rowHeightPt The sheet's row heights.
+ * @returns The box, or undefined for an anchor that names no box on the sheet.
+ */
+function anchoredBox(
+  anchor: VmlAnchor,
+  colWidthPt: (col: number) => number,
+  rowHeightPt: (row: number) => number,
+): VmlShapeBox | undefined {
+  if (anchor[0] < 0 || anchor[2] < 0) return undefined;
+  const x0 = trackPt(anchor[0], anchor[1], colWidthPt);
+  const x1 = trackPt(anchor[4], anchor[5], colWidthPt);
+  const y0 = trackPt(anchor[2], anchor[3], rowHeightPt);
+  const y1 = trackPt(anchor[6], anchor[7], rowHeightPt);
+  return x1 > x0 && y1 > y0 ? { xPt: x0, yPt: y0, widthPt: x1 - x0, heightPt: y1 - y0 } : undefined;
+}
+
+/** Where `offsetPx` pixels into track `index` stands, in points from the first track. */
+function trackPt(index: number, offsetPx: number, track: (i: number) => number): number {
+  let total = 0;
+  for (let i = 0; i < index; i++) total += track(i);
+  return total + offsetPx * PT_PER_PX;
 }
 
 // A VML anchor's offsets are pixels at 96 per inch.
@@ -851,17 +901,14 @@ function withShownNotes(
   comments: ReadonlyArray<SheetComment>,
   notes: ReadonlyArray<VmlNote>,
   worksheet: ParsedWorksheet,
+  colUnitTwips?: number,
 ): Array<SheetComment> {
   const shown = new Map<string, VmlNote>();
   for (const n of notes) if (n.visible) shown.set(`${n.row}:${n.column}`, n);
   if (shown.size === 0) return [...comments];
-  const colWidthPt = makeColWidthPt(worksheet);
+  const colWidthPt = makeColWidthPt(worksheet, colUnitTwips);
   const rowHeightPt = makeRowHeightPt(worksheet);
-  const along = (index: number, offsetPx: number, track: (i: number) => number): number => {
-    let total = 0;
-    for (let i = 0; i < index; i++) total += track(i);
-    return total + offsetPx * PT_PER_PX;
-  };
+  const along = trackPt;
   return comments.map((c) => {
     if (c.threaded) return c;
     let cell: { row: number; column: number };
@@ -872,15 +919,7 @@ function withShownNotes(
     }
     const note = shown.get(`${cell.row}:${cell.column}`);
     if (!note) return c;
-    let box: VmlShapeBox | undefined;
-    const a = note.anchor;
-    if (a && a[0] >= 0 && a[2] >= 0) {
-      const x0 = along(a[0], a[1], colWidthPt);
-      const x1 = along(a[4], a[5], colWidthPt);
-      const y0 = along(a[2], a[3], rowHeightPt);
-      const y1 = along(a[6], a[7], rowHeightPt);
-      if (x1 > x0 && y1 > y0) box = { xPt: x0, yPt: y0, widthPt: x1 - x0, heightPt: y1 - y0 };
-    }
+    let box = note.anchor ? anchoredBox(note.anchor, colWidthPt, rowHeightPt) : undefined;
     if (!box && note.box && note.box.xPt >= 0 && note.box.yPt >= 0) box = note.box;
     if (!box) return c;
     // The line runs to the cell's top-right corner — its merge's, when the

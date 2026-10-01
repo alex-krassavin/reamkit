@@ -520,6 +520,38 @@ describe('grid geometry', () => {
     expect(image?.image.width).toBeCloseTo(120, 1);
   });
 
+  it("counts an anchor's columns in the unit the grid measures them in", () => {
+    // §18.3.1.13 — a column is measured in the digit of the workbook's Normal
+    // font: Arial 11's is 8px, Calibri 11's Excel's 7. Counted in 7px while
+    // the grid counts 8, a drawing stood short of the cells it is anchored to
+    // by a seventh of every column before it.
+    const doc = Ream.parse(
+      buildXlsx({
+        rows: [['A', 'B', 'C']],
+        stylesXml:
+          '<fonts count="1"><font><sz val="11"/><name val="Arial"/></font></fonts>' +
+          '<fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>' +
+          '<borders count="1"><border/></borders>' +
+          '<cellXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellXfs>',
+        sheetImage: {
+          pngBytes: buildTinyPng(4, 4, [0, 0, 255, 255]),
+          anchor: { from: [2, 0], to: [3, 1] },
+        },
+      }),
+    );
+    const table = doc.flow.body.find((el) => el.kind === 'table');
+    if (table?.kind !== 'table') throw new Error('no table');
+    const image = sheetDrawings(doc.flow.body).find((el) => el.kind === 'image');
+    if (image?.kind !== 'image') throw new Error('no image');
+    // Column C starts where the grid's first two columns end, and is one wide.
+    expect(image.image.float?.posH?.offsetPt).toBeCloseTo(
+      table.table.grid[0]! + table.table.grid[1]!,
+      1,
+    );
+    expect(image.image.width).toBeCloseTo(table.table.grid[2]!, 1);
+    expect(table.table.grid[0]).toBeCloseTo(54.75, 1);
+  });
+
   it('gives each sheet its own page geometry', () => {
     // A workbook's sheets set their paper independently, and applying the first
     // sheet's setup to the whole document silently reprints the others on the

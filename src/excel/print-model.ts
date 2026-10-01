@@ -266,7 +266,7 @@ export const DEFAULT_COL_TWIPS = 960;
  * column is "8.43 characters" in its own interface and `width="9.140625"` in
  * every file that writes it out, because the stored form carries the padding.
  */
-const DEFAULT_COL_CHARS = 9.140625;
+export const DEFAULT_COL_CHARS = 9.140625;
 
 /**
  * The column-width unit in twips: the Maximum Digit Width of the font the
@@ -384,6 +384,26 @@ function maximumDigitTwips(name: string, sizePt: number | undefined): number {
   // width formulas do — Calibri 11 is 7.61px and Excel's unit is 7.
   const px = Math.trunc(em * size * (96 / 72));
   return px > 0 ? px * TWIPS_PER_PIXEL : TWIPS_PER_EXCEL_CHAR;
+}
+
+/**
+ * §18.3.1.13 — the unit a sheet's columns are measured in: the Maximum Digit
+ * Width of the workbook's Normal font, in twips — the font's own where the
+ * workbook names it, the face we render with where it names none. A drawing's
+ * anchor counts columns in the same unit, or it lands beside the cells it is
+ * anchored to: 45540_form_Footer.xlsx sets its form in 宋体 12, whose digit
+ * is 8px, and anchored at Excel's 7px its check boxes stood a column off
+ * their labels.
+ *
+ * @param styles       The workbook's styles (its first font is the Normal style's).
+ * @param digitWidthPt The render font's digit width, for a workbook that names no font.
+ * @returns The unit, in twips.
+ */
+export function columnUnitTwips(styles: XlsxStyles, digitWidthPt?: number): number {
+  const font = styles.fonts[0];
+  return font?.name === undefined
+    ? digitTwips(digitWidthPt)
+    : maximumDigitTwips(font.name, font.sizePt);
 }
 
 function digitTwips(digitWidthPt: number | undefined): number {
@@ -979,10 +999,7 @@ function gridBody(
   // where ours took half of one.
   // §18.8.1 — what one level of a cell's indent is, in the normal style's font.
   const indentTwips = indentLevelTwips(styles);
-  const charTwipsUnit =
-    styles.fonts[0]?.name === undefined
-      ? digitTwips(print.digitWidthPt)
-      : maximumDigitTwips(styles.fonts[0].name, styles.fonts[0].sizePt);
+  const charTwipsUnit = columnUnitTwips(styles, print.digitWidthPt);
   // …but only the COLUMNS are measured in it. `charWidthUnits` already returns
   // each character's real width expressed in Excel's own 7px unit, so measuring
   // text with the render font's digit as well applies the same ratio twice —

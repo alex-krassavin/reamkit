@@ -192,9 +192,13 @@ describe('form controls — end to end (E-SHEET W8)', () => {
     const caption = flow.body.flatMap((e) => (e.kind === 'shape' && e.shape.text ? [e.shape] : []));
     expect(caption).toHaveLength(1);
     // Its band is 9 pages down, so what is left is the remainder of the printable
-    // height (785.2pt for A4 with this sheet's 1cm margins).
-    expect(caption[0]?.float?.posV?.offsetPt).toBeCloseTo(7331.25 - 9 * 785.2, 1);
-    expect(caption[0]?.float?.posH?.offsetPt).toBeCloseTo(122.25, 2);
+    // height (785.2pt for A4 with this sheet's 1cm margins). It stands on the
+    // cells its `<x:Anchor>` names — C517, 6px across and 12px down — measured
+    // as our grid measures them: 7337.25pt down and 123pt across. The shape's
+    // `style` says 7331.25 and 122.25, LibreOffice's own measure of the rows
+    // and columns it wrote the file from.
+    expect(caption[0]?.float?.posV?.offsetPt).toBeCloseTo(7337.25 - 9 * 785.2, 1);
+    expect(caption[0]?.float?.posH?.offsetPt).toBeCloseTo(123, 2);
   });
 
   it("draws a control's caption, never its name", () => {

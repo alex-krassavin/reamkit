@@ -38,9 +38,10 @@ const parser = new XMLParser({
  * CSS `style` attribute (`margin-left`/`margin-top`/`width`/`height`).
  *
  * The same rectangle is also expressed by `<x:ClientData><x:Anchor>` as
- * (column, offset px, row, offset px) pairs, which needs the sheet's column
- * widths and row heights to resolve. The style is already absolute, and the two
- * agree exactly in every file checked, so this reads the simpler one.
+ * (column, offset px, row, offset px) pairs (VmlAnchor). The style is in the
+ * producer's own measure of the columns, which is not ours wherever the two
+ * measure a digit differently; the anchor counts cells, and lands on the grid
+ * we draw. A reader takes the anchor where there is one.
  */
 export interface VmlShapeBox {
   readonly xPt: number;
@@ -48,6 +49,12 @@ export interface VmlShapeBox {
   readonly widthPt: number;
   readonly heightPt: number;
 }
+
+/**
+ * `<x:Anchor>` — LeftColumn, LeftOffset, TopRow, TopOffset, RightColumn,
+ * RightOffset, BottomRow, BottomOffset: cells, 0-based, and pixels into them.
+ */
+export type VmlAnchor = readonly [number, number, number, number, number, number, number, number];
 
 /** A form control declared by a legacy VML shape's `<x:ClientData>`. */
 export interface VmlFormControl {
@@ -63,6 +70,8 @@ export interface VmlFormControl {
   readonly firstButton?: boolean;
   /** Where the control sits, from the shape's `style` (§{@link VmlShapeBox}). */
   readonly box?: VmlShapeBox;
+  /** …and by the cells it covers, `<x:Anchor>` ({@link VmlAnchor}). */
+  readonly anchor?: VmlAnchor;
   /** `<v:textbox><font size>` — twentieths of a point, so 160 is 8pt. */
   readonly fontSizePt?: number;
 }
@@ -82,7 +91,7 @@ export interface VmlNote {
    * `<x:Anchor>` — LeftColumn, LeftOffset, TopRow, TopOffset, RightColumn,
    * RightOffset, BottomRow, BottomOffset: the box in cells, offsets in pixels.
    */
-  readonly anchor?: readonly [number, number, number, number, number, number, number, number];
+  readonly anchor?: VmlAnchor;
   /** The same box from the shape's `style`, already in points. */
   readonly box?: VmlShapeBox;
   /** `fillcolor` / `strokecolor`, as 6-hex. */
@@ -107,6 +116,8 @@ export interface VmlDrawing {
    * the one thing that says where it goes.
    */
   readonly boxes: ReadonlyMap<string, VmlShapeBox>;
+  /** Shape id → `<x:Anchor>`, for every shape that carries one. */
+  readonly anchors: ReadonlyMap<string, VmlAnchor>;
   /**
    * Shape ids whose `<x:ClientData>` clears `<x:PrintObject>` — Excel's "Print
    * object" checkbox, the legacy spelling of §18.3.1.20 `<controlPr print>`.
@@ -167,6 +178,7 @@ export function parseVmlDrawing(data: Uint8Array): VmlDrawing {
   const out: Array<VmlFormControl> = [];
   const notes: Array<VmlNote> = [];
   const boxes = new Map<string, VmlShapeBox>();
+  const anchors = new Map<string, VmlAnchor>();
   const nonPrinting = new Set<string>();
   for (const raw of asArray(root['shape'])) {
     const shape = asObject(raw);
@@ -184,6 +196,8 @@ export function parseVmlDrawing(data: Uint8Array): VmlDrawing {
     if (shapeId && box) boxes.set(shapeId, box);
     const client = asObject(shape['ClientData']);
     if (!client) continue;
+    const anchor = anchorOf(client);
+    if (shapeId && anchor) anchors.set(shapeId, anchor);
     // Excel's "Print object", the legacy spelling of §18.3.1.20's `print`.
     // Absent means print — only `False` takes the shape off the page.
     const prints = flatText(client['PrintObject'])?.toLowerCase() !== 'false';
@@ -201,6 +215,7 @@ export function parseVmlDrawing(data: Uint8Array): VmlDrawing {
     const control: Mutable<VmlFormControl> = { objectType };
     if (shapeId) control.shapeId = shapeId;
     if (box) control.box = box;
+    if (anchor) control.anchor = anchor;
     const caption = textboxText(shape['textbox']);
     if (caption) control.caption = caption;
     const fontSizePt = textboxFontSizePt(shape['textbox']);
@@ -211,7 +226,15 @@ export function parseVmlDrawing(data: Uint8Array): VmlDrawing {
     if ('FirstButton' in client) control.firstButton = true;
     out.push(control);
   }
-  return { controls: out, notes, boxes, nonPrinting };
+  return { controls: out, notes, boxes, anchors, nonPrinting };
+}
+
+/** `<x:Anchor>`'s eight whole numbers, or undefined when it is not that. */
+function anchorOf(client: Record<string, unknown>): VmlAnchor | undefined {
+  const numbers = (flatText(client['Anchor']) ?? '').split(',').map((n) => Number(n.trim()));
+  return numbers.length === 8 && numbers.every((n) => Number.isInteger(n))
+    ? (numbers as unknown as VmlAnchor)
+    : undefined;
 }
 
 // What a note's shape says about its box. Excel's own notes are pale yellow
@@ -227,11 +250,7 @@ function noteOf(
   if (!Number.isInteger(row) || !Number.isInteger(column) || row < 0 || column < 0) {
     return undefined;
   }
-  const numbers = (flatText(client['Anchor']) ?? '').split(',').map((n) => Number(n.trim()));
-  const anchor =
-    numbers.length === 8 && numbers.every((n) => Number.isInteger(n))
-      ? (numbers as unknown as VmlNote['anchor'])
-      : undefined;
+  const anchor = anchorOf(client);
   const shadowNode = asObject(shape['shadow']);
   const shadowOn = shadowNode ? strAttr(shadowNode, 'on') : undefined;
   const textAlign = /text-align:\s*(left|center|right)/i

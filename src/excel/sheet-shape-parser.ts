@@ -194,6 +194,7 @@ function buildShape(
  *                   `<a:effectRef idx>` indexes for a gallery-styled shadow.
  * @param screenOnly Collects the shapes whose anchor does not print with the
  *                   sheet (§20.5.2.3 `fPrintsWithSheet="0"`).
+ * @param colUnitTwips The unit the sheet's columns are measured in (columnUnitTwips).
  */
 export function parseSheetShapes(
   drawingXml: Uint8Array,
@@ -203,11 +204,12 @@ export function parseSheetShapes(
   themeFillStyles: ReadonlyArray<PoNode> = [],
   themeEffectStyles: ReadonlyArray<PoNode> = [],
   screenOnly?: Set<ShapeBlock>,
+  colUnitTwips?: number,
 ): Array<ShapeBlock> {
   const tree = parseXml(drawingXml);
   const wsDr = tree.find((n) => poIs(n, 'xdr:wsDr'));
   if (!wsDr) return [];
-  const colWidthPt = makeColWidthPt(worksheet);
+  const colWidthPt = makeColWidthPt(worksheet, colUnitTwips);
   const rowHeightPt = makeRowHeightPt(worksheet);
 
   const shapes: Array<SheetShape> = [];
@@ -259,16 +261,18 @@ export function parseSheetShapes(
  *
  * @param drawingXml The drawing part bytes.
  * @param worksheet  The host worksheet, for the column/row track geometry.
+ * @param colUnitTwips The unit its columns are measured in (columnUnitTwips).
  * @returns One box per diagram frame, in the order the drawing writes them.
  */
 export function parseDiagramFrames(
   drawingXml: Uint8Array,
   worksheet: ParsedWorksheet,
+  colUnitTwips?: number,
 ): Array<AnchorBox> {
   const tree = parseXml(drawingXml);
   const wsDr = tree.find((n) => poIs(n, 'xdr:wsDr'));
   if (!wsDr) return [];
-  const colWidthPt = makeColWidthPt(worksheet);
+  const colWidthPt = makeColWidthPt(worksheet, colUnitTwips);
   const rowHeightPt = makeRowHeightPt(worksheet);
   const out: Array<AnchorBox> = [];
   for (const anchor of poChildren(wsDr)) {

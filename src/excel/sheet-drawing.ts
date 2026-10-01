@@ -11,7 +11,7 @@ import type { ParsedWorksheet } from '@/core/spreadsheet-model';
 import { emuToPt } from '@/core/ir';
 import {
   COL_PADDING_TWIPS,
-  DEFAULT_COL_TWIPS,
+  DEFAULT_COL_CHARS,
   DEFAULT_ROW_TWIPS,
   TWIPS_PER_EXCEL_CHAR,
   columnTwips,
@@ -99,18 +99,20 @@ const TWIPS_PER_PT = 20;
  * @param drawingPartPath The drawing part path, for resolving its relationships.
  * @param pkg             The OPC package, used to resolve relId → part path.
  * @param worksheet       The host worksheet, for the column/row track geometry.
+ * @param colUnitTwips    The unit its columns are measured in (columnUnitTwips).
  */
 export function parseSheetDrawing(
   drawingXml: Uint8Array,
   drawingPartPath: string,
   pkg: OpcPackage,
   worksheet: ParsedWorksheet,
+  colUnitTwips?: number,
 ): SheetDrawing {
   const tree = parser.parse(new TextDecoder().decode(drawingXml)) as Record<string, unknown>;
   const root = tree['wsDr'];
   if (!root || typeof root !== 'object') return { charts: [], pictures: [] };
   const rootObj = root as Record<string, unknown>;
-  const colWidthPt = makeColWidthPt(worksheet);
+  const colWidthPt = makeColWidthPt(worksheet, colUnitTwips);
   const rowHeightPt = makeRowHeightPt(worksheet);
   const rels = pkg.getPartRelationships(drawingPartPath);
   const partPathOf = (relId: string): string | undefined => {
@@ -315,16 +317,23 @@ export function onTheSheet(xPt: number, yPt: number): boolean {
  * where present, else the default — the same conversions the print model uses.
  * Exported so the sheet-shape parser (E-SHEET W2) sizes shape anchors with the same
  * track geometry.
+ *
+ * @param ws        The sheet.
+ * @param unitTwips The unit its columns are measured in — the grid's own
+ *                  (columnUnitTwips), or Excel's 7px digit.
+ * @returns The accessor.
  */
-export function makeColWidthPt(ws: ParsedWorksheet): (col: number) => number {
+export function makeColWidthPt(
+  ws: ParsedWorksheet,
+  unitTwips: number = TWIPS_PER_EXCEL_CHAR,
+): (col: number) => number {
   // §18.3.1.13: a rendered column is `chars × MDW + 5px`, and the 5px is not
   // optional — the grid has always added it. Here it was dropped, so an anchor
   // drifted 3.75pt left for every explicitly-sized column before it, and the
   // drawing and the cell it is anchored to disagreed about where that column
   // starts. shape-macro-ext-ref.xlsx put its macro button 3pt short of the
   // column band its own anchor names.
-  const widthPt = (chars: number): number =>
-    columnTwips(chars, TWIPS_PER_EXCEL_CHAR) / TWIPS_PER_PT;
+  const widthPt = (chars: number): number => columnTwips(chars, unitTwips) / TWIPS_PER_PT;
   return (col: number): number => {
     for (const c of ws.columns) {
       if (col >= c.min - 1 && col <= c.max - 1) {
@@ -350,13 +359,10 @@ export function makeColWidthPt(ws: ParsedWorksheet): (col: number) => number {
     // answer beside it: `<a:ext cx="9753600">` is 768.
     if (ws.defaultColWidthChars !== undefined) return widthPt(ws.defaultColWidthChars);
     if (ws.baseColWidthChars !== undefined) {
-      return (
-        (columnTwips(ws.baseColWidthChars, TWIPS_PER_EXCEL_CHAR) + 2 * COL_PADDING_TWIPS) /
-        TWIPS_PER_PT
-      );
+      return (columnTwips(ws.baseColWidthChars, unitTwips) + 2 * COL_PADDING_TWIPS) / TWIPS_PER_PT;
     }
-    // DEFAULT_COL_TWIPS is 960 — Excel's 8.43 characters WITH the padding.
-    return DEFAULT_COL_TWIPS / TWIPS_PER_PT;
+    // Excel's 8.43 characters WITH the padding — 64px at a 7px digit.
+    return widthPt(DEFAULT_COL_CHARS);
   };
 }
 
