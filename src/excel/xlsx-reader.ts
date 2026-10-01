@@ -49,7 +49,7 @@ import {
 } from '@/excel';
 import { bytesInclude, packageHasPart } from '@/core/bytes';
 import { parseChart, withChartColorStyle } from '@/core/drawingml/chart-parser';
-import { DEFAULT_THEME_PALETTE, makeColorResolver } from '@/core/drawingml/colors';
+import { OFFICE_2023_THEME_PALETTE, makeColorResolver } from '@/core/drawingml/colors';
 import {
   parseTheme,
   parseThemeEffectStyles,
@@ -1025,7 +1025,9 @@ function buildThemePalette(
   pkg: OpcPackage,
   workbookRels: ReadonlyArray<Relationship>,
 ): Map<string, string> {
-  const palette = new Map(DEFAULT_THEME_PALETTE);
+  // A workbook with no theme part is coloured with the theme Excel itself
+  // starts from, Office 2023's; one with a theme states every slot it uses.
+  const palette = new Map(OFFICE_2023_THEME_PALETTE);
   for (const rel of workbookRels) {
     if (!isOoxmlRel(rel.type, 'theme')) continue;
     const resolved = pkg.resolveRelatedPart(WORKBOOK_PART, rel);

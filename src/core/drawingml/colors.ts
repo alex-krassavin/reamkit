@@ -209,6 +209,26 @@ export const DEFAULT_THEME_PALETTE: ReadonlyMap<string, string> = new Map([
 ]);
 
 /**
+ * The Office 2023 theme's palette — what Excel colours a workbook that carries
+ * no theme part with. Its own PDF of theme slots 0…9 in such a workbook
+ * (2026-10-01) paints exactly these: accent1 is 156082, not 2013's 4472C4.
+ */
+export const OFFICE_2023_THEME_PALETTE: ReadonlyMap<string, string> = new Map([
+  ['dk1', '000000'],
+  ['lt1', 'FFFFFF'],
+  ['dk2', '0E2841'],
+  ['lt2', 'E8E8E8'],
+  ['accent1', '156082'],
+  ['accent2', 'E97132'],
+  ['accent3', '196B24'],
+  ['accent4', '0F9ED5'],
+  ['accent5', 'A02B93'],
+  ['accent6', '4EA72E'],
+  ['hlink', '467886'],
+  ['folHlink', '96607D'],
+]);
+
+/**
  * Which theme slot each `schemeClr` name stands for. Only the text/background
  * aliases are ever remapped; anything absent resolves under its own name.
  */

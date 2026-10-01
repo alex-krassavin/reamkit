@@ -64,7 +64,8 @@ describe('Excel tables — banding projection (E-SHEET SC3)', () => {
     // §18.8.40 — TableStyleMedium2 as the standard defines it: the header in
     // accent1, the first row stripe in accent1 lightened by 80%, the second
     // stripe nothing. The first stripe is the first data row: Excel's own PDF
-    // shades it, and the row after it is white.
+    // shades it, and the row after it is white — in 156082 and C0E6F5, the
+    // Office 2023 theme's, for a workbook that carries none.
     const flow = Ream.parse(
       buildXlsx({
         rows: fourByTwo,
@@ -72,11 +73,11 @@ describe('Excel tables — banding projection (E-SHEET SC3)', () => {
       }),
     ).flow;
     const grid = shadingGrid(flow);
-    expect(grid[0]![0]).toBe('4472C4'); // header row
-    expect(grid[0]![1]).toBe('4472C4'); // the whole of it
-    expect(grid[1]![0]).toBe('D9E1F2'); // 1st data row: the first stripe
+    expect(grid[0]![0]).toBe('156082'); // header row
+    expect(grid[0]![1]).toBe('156082'); // the whole of it
+    expect(grid[1]![0]).toBe('C0E6F5'); // 1st data row: the first stripe
     expect(grid[2]![0]).toBeUndefined(); // 2nd: the second stripe, unfilled
-    expect(grid[3]![0]).toBe('D9E1F2'); // 3rd: the first stripe again
+    expect(grid[3]![0]).toBe('C0E6F5'); // 3rd: the first stripe again
   });
 
   it('rules the rows apart and the totals off, as the style draws them', () => {
@@ -93,20 +94,20 @@ describe('Excel tables — banding projection (E-SHEET SC3)', () => {
     const table = flow.body.find((el) => el.kind === 'table');
     if (table?.kind !== 'table') throw new Error('expected a table');
     const cell = (r: number, c: number) => table.table.rows[r]!.cells[c]!;
-    expect(cell(1, 0).properties.borders?.bottom?.colorHex).toBe('8EA9DB');
-    expect(cell(2, 1).properties.borders?.right?.colorHex).toBe('8EA9DB');
+    expect(cell(1, 0).properties.borders?.bottom?.colorHex).toBe('44B3E1');
+    expect(cell(2, 1).properties.borders?.right?.colorHex).toBe('44B3E1');
     // No rule between the columns: Medium2 draws none.
     expect(cell(2, 0).properties.borders?.right).toBeUndefined();
     const total = cell(3, 0);
-    expect(total.properties.borders?.top).toMatchObject({ style: 'double', colorHex: '4472C4' });
+    expect(total.properties.borders?.top).toMatchObject({ style: 'double', colorHex: '156082' });
     const run =
       total.content[0]?.kind === 'paragraph' ? total.content[0].paragraph.runs[0] : undefined;
     expect(run?.properties.bold).toBe(true);
     // The stripes run through the data rows only: the totals row, where the
     // first stripe would come round again, is not one.
     expect(shadingGrid(flow).map((row) => row[0])).toEqual([
-      '4472C4',
-      'D9E1F2',
+      '156082',
+      'C0E6F5',
       undefined,
       undefined,
     ]);
