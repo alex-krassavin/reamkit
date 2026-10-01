@@ -418,6 +418,46 @@ describe('buildBarScene', () => {
     );
   });
 
+  it('reads the values along the top of a ranking that runs top down (§21.2.2.33)', () => {
+    // The value axis lies at the first category, which a reversed axis puts at
+    // the top — unless the file says it crosses at the last.
+    const chart: Chart = {
+      ...barChart('bar'),
+      series: [barChart('bar').series[0]!],
+      hasLegend: false,
+      catAxisReversed: true,
+    };
+    const valueLabels = (c: Chart) =>
+      buildChartScene(c, W, H, measure)!.labels.filter((l) => /^\d+$/.test(l.text));
+    const plotTop = (c: Chart) =>
+      Math.max(
+        ...buildChartScene(c, W, H, measure)!
+          .rects.filter((r) => r.fillHex === '4472C4')
+          .map((r) => r.y + r.h),
+      );
+    for (const l of valueLabels(chart)) expect(l.y).toBeGreaterThan(plotTop(chart));
+    const atFoot = { ...chart, valAxisCrosses: 'max' as const };
+    for (const l of valueLabels(atFoot)) expect(l.y).toBeLessThan(plotTop(atFoot));
+  });
+
+  it('labels a crowded axis from where it starts, and counts its points down when reversed', () => {
+    // No categories: the points' indices, which a reversed axis counts from the
+    // top — and the first is labelled, wherever the thinning falls.
+    const many: Chart = {
+      ...barChart('bar'),
+      categories: [],
+      hasLegend: false,
+      catAxisReversed: true,
+      series: [{ name: 'S', values: Array.from({ length: 60 }, (_, i) => i + 1) }],
+    };
+    const names = buildChartScene(many, W, H, measure)!
+      .labels.filter((l) => l.align === 'right')
+      .sort((a, b) => b.y - a.y)
+      .map((l) => l.text);
+    expect(names[0]).toBe('1');
+    expect(Number(names[1])).toBeGreaterThan(1);
+  });
+
   it('fills the whole slot when the file asks for no gap', () => {
     // §21.2.2.75 `gapWidth="0"` — both references draw bars that touch.
     const scene = buildBarScene(

@@ -153,6 +153,17 @@ describe('parseChart', () => {
     expect(low.catTickLabelPos).toBe('low');
     expect(low.catAxisCrosses).toBe('max');
     expect(catAx('<c:crossesAt val="2.5"/>')!.catAxisCrosses).toBe(2.5);
+    // …and where the value axis crosses the category axis.
+    const valMax = parseChart(
+      enc.encode(
+        BAR_CHART.replace(
+          '<c:valAx><c:axId val="222"/></c:valAx>',
+          '<c:valAx><c:axId val="222"/><c:crosses val="max"/></c:valAx>',
+        ),
+      ),
+      defaultColorResolver,
+    )!;
+    expect(valMax.valAxisCrosses).toBe('max');
   });
 
   it('reads the chart-space frame beside <c:chart> (§21.2.2.198)', () => {

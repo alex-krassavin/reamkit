@@ -219,6 +219,7 @@ export function parseChart(
   // §21.2.2.33/§21.2.2.34/§21.2.2.207 — where the category axis crosses the
   // value axis, and where its labels stand.
   const catAxisCrosses = axisCrossing(catAxNode);
+  const valAxisCrosses = axisCrossing(valAxNode);
   const tickLblPos = catAxNode
     ? poVal(poChildren(catAxNode).find((c) => poIs(c, 'c:tickLblPos')))
     : undefined;
@@ -286,6 +287,7 @@ export function parseChart(
     ...(catAxisTitle ? { catAxisTitle } : {}),
     ...(catAxisReversed ? { catAxisReversed } : {}),
     ...(catAxisCrosses !== undefined ? { catAxisCrosses } : {}),
+    ...(valAxisCrosses !== undefined ? { valAxisCrosses } : {}),
     ...(catTickLabelPos ? { catTickLabelPos } : {}),
     ...(valAxisTitle ? { valAxisTitle } : {}),
     ...(secondaryValAxisTitle ? { secondaryValAxisTitle } : {}),

@@ -1726,6 +1726,13 @@ export interface Chart {
    * with values below zero.
    */
   readonly catTickLabelPos?: 'low' | 'high' | 'none';
+  /**
+   * §21.2.2.33 `c:valAx/c:crosses` — where along the category axis the value
+   * axis lies: at the last category (`max`) or the first (absent, `autoZero`).
+   * The first is at the far end when the categories run backwards
+   * ({@link Chart.catAxisReversed}): a ranked bar chart has its values on top.
+   */
+  readonly valAxisCrosses?: 'min' | 'max' | number;
   readonly valAxisTitle?: string; // c:valAx/c:title
   /** §21.2.2.168 — the title of the secondary value axis, when one is drawn. */
   readonly secondaryValAxisTitle?: string;

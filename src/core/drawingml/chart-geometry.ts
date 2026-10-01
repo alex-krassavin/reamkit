@@ -407,6 +407,7 @@ function pushGridTicks(
   plotW: number,
   plotH: number,
   grid: ChartLineStyle | undefined,
+  atEnd = false,
 ): void {
   for (const v of tickVals) {
     if (axis === 'x') {
@@ -422,7 +423,7 @@ function pushGridTicks(
       labels.push({
         text: fmt(v),
         x: gx,
-        y: y0 - CHART_LABEL_PT,
+        y: atEnd ? y0 + plotH + CHART_LABEL_PT * 0.4 : y0 - CHART_LABEL_PT,
         sizePt: CHART_LABEL_PT,
         colorHex: LABEL_COLOR,
         align: 'center',
@@ -439,11 +440,11 @@ function pushGridTicks(
       });
       labels.push({
         text: fmt(v),
-        x: x0 - 3,
+        x: atEnd ? x0 + plotW + 3 : x0 - 3,
         y: gy - CHART_LABEL_PT / 3,
         sizePt: CHART_LABEL_PT,
         colorHex: LABEL_COLOR,
-        align: 'right',
+        align: atEnd ? 'left' : 'right',
       });
     }
   }
@@ -583,8 +584,21 @@ function buildFrame(
   // each a row of its own under the categories' labels (a column chart's).
   const groupLevels = horizontal ? [] : (chart.categoryGroups ?? []);
 
+  // §21.2.2.33 — the value axis lies where it crosses the category axis: at
+  // the first category, unless the file says the last — and the first is at
+  // the far end of an axis that runs backwards. dataValidationTableRange.xlsx
+  // ranks its counties top down and reads their values along the top, as
+  // Excel and Calc draw it; we drew them along the foot.
+  const valAtEnd =
+    chart.catAxisReversed === true
+      ? chart.valAxisCrosses !== 'max'
+      : chart.valAxisCrosses === 'max';
   const title = titleLines(chart, wPt, measure);
-  const top = 4 + titleHeight(title) + (!horizontal && labelsAt === 'end' ? catBand : 0);
+  const top =
+    4 +
+    titleHeight(title) +
+    (!horizontal && labelsAt === 'end' ? catBand : 0) +
+    (horizontal && valAtEnd ? catBand : 0);
   const legend = buildLegendBlock(chart, wPt, hPt, measure);
   const tick2W =
     scale2 && !horizontal
@@ -599,12 +613,14 @@ function buildFrame(
     horizontal && v !== undefined ? measure(fmtVal(v), CHART_LABEL_PT) / 2 : 0;
   const lastTickHalf = tickHalf(tickVals[tickVals.length - 1]);
   const catLabelW = Math.min(wPt * 0.4, widestCat + 6);
+  const tickLabelW = Math.max(0, ...tickVals.map((v) => measure(fmtVal(v), CHART_LABEL_PT))) + 4;
   const plotRight =
     wPt -
     4 -
     legend.rightWidth -
     tick2W -
-    (horizontal && labelsAt === 'end' ? catLabelW : lastTickHalf);
+    (horizontal && labelsAt === 'end' ? catLabelW : lastTickHalf) -
+    (!horizontal && valAtEnd ? tickLabelW : 0);
 
   // The left of the plot holds the axis that stands upright, the foot of it
   // the one that lies along — the value axis in a column chart, the category
@@ -614,19 +630,24 @@ function buildFrame(
   // ticks no wider than "80"). A name is given at most two fifths of the width.
   // The category labels take room only where they stand at the plot's edge;
   // on the zero line they stand inside it.
-  const tickLabelW = Math.max(0, ...tickVals.map((v) => measure(fmtVal(v), CHART_LABEL_PT))) + 4;
   const axisTitleBand = CHART_LABEL_PT * 1.5;
   const leftTitle = horizontal ? chart.catAxisTitle : chart.valAxisTitle;
   const footTitle = horizontal ? chart.valAxisTitle : chart.catAxisTitle;
   const x0 =
     4 +
     (leftTitle ? axisTitleBand : 0) +
-    (horizontal ? (labelsAt === 'start' ? catLabelW : tickHalf(tickVals[0])) : tickLabelW);
+    (horizontal
+      ? labelsAt === 'start'
+        ? catLabelW
+        : tickHalf(tickVals[0])
+      : valAtEnd
+        ? 0
+        : tickLabelW);
   const y0 =
     4 +
     legend.bottomHeight +
     (footTitle ? axisTitleBand : 0) +
-    (horizontal || labelsAt === 'start' ? catBand : 0) +
+    ((horizontal ? !valAtEnd : labelsAt === 'start') ? catBand : 0) +
     (!horizontal && labelsAt === 'start' ? groupLevels.length * catBand : 0);
   const plotW = Math.max(1, plotRight - x0);
   const plotH = Math.max(1, hPt - top - y0);
@@ -696,6 +717,7 @@ function buildFrame(
       plotW,
       plotH,
       chart.gridLine,
+      valAtEnd,
     );
   } else {
     pushGridTicks(
@@ -710,6 +732,7 @@ function buildFrame(
       plotW,
       plotH,
       chart.gridLine,
+      valAtEnd,
     );
   }
 
@@ -766,7 +789,14 @@ function buildFrame(
   // crossing, or beside its end.
   const across =
     labelsAt === 'start' ? 0 : labelsAt === 'end' ? (horizontal ? plotW : plotH) : zeroOffset;
-  for (let c = 0; labelsAt !== 'none' && c < nCats; c += step) {
+  // Every Nth from where the axis starts — its far end when it runs
+  // backwards, so the first category is labelled whichever way it reads.
+  const labelled: Array<number> = [];
+  if (labelsAt !== 'none') {
+    if (chart.catAxisReversed === true) for (let c = nCats - 1; c >= 0; c -= step) labelled.push(c);
+    else for (let c = 0; c < nCats; c += step) labelled.push(c);
+  }
+  for (const c of labelled) {
     const cat = catText(c);
     if (!cat) continue;
     const center = (horizontal ? y0 : x0) + c * slot + slot / 2;
@@ -827,7 +857,9 @@ function buildFrame(
     plotW,
     plotH,
     chart,
-    horizontal ? { x: zeroOffset } : { y: zeroOffset },
+    horizontal
+      ? { x: zeroOffset, ...(valAtEnd ? { y: plotH } : {}) }
+      : { y: zeroOffset, ...(valAtEnd ? { x: plotW } : {}) },
   );
   legend.emit(rects, labels);
 
@@ -1673,11 +1705,11 @@ function withReversedCategories(chart: Chart): Chart {
   return {
     ...chart,
     // An empty category list is not a list of empty labels: the builders label
-    // an unlabelled axis with the point index, and padding it would silence it.
-    categories:
-      chart.categories.length > 0
-        ? Array.from({ length: n }, (_, i) => chart.categories[flip(i)] ?? '')
-        : chart.categories,
+    // an unlabelled axis with the point index — which, run backwards, counts
+    // down.
+    categories: Array.from({ length: n }, (_, i) =>
+      chart.categories.length > 0 ? (chart.categories[flip(i)] ?? '') : String(flip(i) + 1),
+    ),
     series: chart.series.map((s) => ({
       ...s,
       values: Array.from({ length: n }, (_, i) => s.values[flip(i)] ?? 0),
