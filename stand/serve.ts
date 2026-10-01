@@ -11,7 +11,7 @@
 
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, extname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { ServerResponse } from 'node:http';
@@ -190,6 +190,19 @@ function ask(name: string): void {
   next();
 }
 
+/**
+ * A file's bytes, or undefined for a path that names no readable file — absent,
+ * a directory, out of reach. Read in one go rather than checked first, so the
+ * answer is about the bytes sent and not about the file a moment before.
+ */
+function fileBytes(file: string): Buffer | undefined {
+  try {
+    return readFileSync(file);
+  } catch {
+    return undefined;
+  }
+}
+
 function send(res: ServerResponse, status: number, type: string, body: string | Buffer): void {
   res.writeHead(status, { 'content-type': type, 'cache-control': 'no-store' });
   res.end(body);
@@ -214,26 +227,18 @@ const server = createServer((req, res) => {
   if (path.startsWith('/files/')) {
     const file = resolve(FILES_DIR, `.${path.slice('/files'.length)}`);
     // The file itself, to open beside what was made of it.
-    if (file.startsWith(FILES_DIR + sep) && existsSync(file) && statSync(file).isFile()) {
-      send(
-        res,
-        200,
-        TYPES[extname(file).toLowerCase()] ?? 'application/octet-stream',
-        readFileSync(file),
-      );
+    const bytes = file.startsWith(FILES_DIR + sep) ? fileBytes(file) : undefined;
+    if (bytes) {
+      send(res, 200, TYPES[extname(file).toLowerCase()] ?? 'application/octet-stream', bytes);
       return;
     }
   }
   if (path.startsWith('/out/')) {
     const file = resolve(OUT_DIR, `.${path.slice('/out'.length)}`);
     // Nothing outside the stand's output is served.
-    if (file.startsWith(OUT_DIR + sep) && existsSync(file) && statSync(file).isFile()) {
-      send(
-        res,
-        200,
-        TYPES[extname(file).toLowerCase()] ?? 'application/octet-stream',
-        readFileSync(file),
-      );
+    const bytes = file.startsWith(OUT_DIR + sep) ? fileBytes(file) : undefined;
+    if (bytes) {
+      send(res, 200, TYPES[extname(file).toLowerCase()] ?? 'application/octet-stream', bytes);
       return;
     }
   }

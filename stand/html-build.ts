@@ -147,6 +147,19 @@ interface GoldStamp {
   readonly errors: ReadonlyArray<string>;
 }
 
+/**
+ * The stamp an earlier build left beside its gold, or undefined where there is
+ * none to read — or one that no longer parses. Read in one go rather than
+ * checked first, so the answer is about the file read.
+ */
+function readStamp(file: string): GoldStamp | undefined {
+  try {
+    return JSON.parse(readFileSync(file, 'utf8')) as GoldStamp;
+  } catch {
+    return undefined;
+  }
+}
+
 /** The name a file goes by on the stand — its own, minus the extension. */
 export function stemOf(file: string): string {
   return basename(file).replace(WORKBOOK, '');
@@ -160,10 +173,8 @@ export function stemOf(file: string): string {
  */
 function goldSide(book: string, dir: string, hash: string): GoldStamp {
   const stampFile = resolve(dir, 'gold.json');
-  if (existsSync(stampFile)) {
-    const kept = JSON.parse(readFileSync(stampFile, 'utf8')) as GoldStamp;
-    if (kept.hash === hash && kept.recipe === GOLD_RECIPE) return kept;
-  }
+  const kept = readStamp(stampFile);
+  if (kept?.hash === hash && kept.recipe === GOLD_RECIPE) return kept;
   const errors: Array<string> = [];
   const work = resolve(dir, '.work');
   rmSync(work, { recursive: true, force: true });
