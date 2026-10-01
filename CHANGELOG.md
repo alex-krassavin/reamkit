@@ -3,6 +3,200 @@
 All notable changes to **Ream** (`reamkit`) are documented here. The project
 follows [Semantic Versioning](https://semver.org/).
 
+## 1.31.0
+
+A release about three documents and the pages they come back on.
+
+comments.pdf is a conference paper TeX set in two justified columns, with
+figures of boxes and arrows, code listings across the head of a page, a ruled
+table of benchmarks, bar charts and a signature stamp. canvas.pdf is a cheat
+sheet of small tables, two columns to the sheet under dark bars. freeculture.pdf
+is a book of 352 pages that ends in a two-column index. Each was converted to
+`.docx` and opened in Word and in LibreOffice beside its source, page by page,
+until it came back on the pages it has: comments.pdf on 14 in both, every page
+ending in the paragraph the source ends it in, where Word had set it on 28 and
+LibreOffice on 22; canvas.pdf on 2, where it took 5 and 6; freeculture.pdf on
+355 in Word and 354 in LibreOffice, where it took 395 and 376.
+
+Two changes did most of it. A PDF's own faces now travel with its `.docx` —
+rebuilt from the programs the page drew with, kerned and joined as the page set
+them — so a line breaks where the page broke it, not wherever a substitute's
+widths put the break. And a Word document is laid out the way Word sets it:
+lines as tall as Word makes them, the spacing between two paragraphs shared
+rather than added, a paragraph's first and last lines kept from standing alone,
+a heading kept with what it heads — each rule measured in Word before it was
+written.
+
+### Added
+
+- **A PDF's faces travel with its `.docx`.** The reader keeps, per face, the
+  outline of every character the page drew and the advance it set it at —
+  TrueType, CFF and Type 1 alike — and the writer builds a TrueType font of
+  them, with the page's own advances and a Unicode cmap, and embeds it
+  (`w:embedTrueTypeFonts`). A face the page kerned carries its pairs as GPOS
+  `kern`, and its runs ask to be kerned (`w:kern`); a face that drew "fi",
+  "ffl" or Calibri's "tt" as one glyph carries them as GSUB ligatures
+  (`w14:ligatures`), and the document states Word 2013's layout
+  (`compatibilityMode` 15), the only one in which Word forms them. OS/2
+  `fsType` is honoured: a restricted face stays out, with a `fonts.embedding`
+  loss. A face whose program cannot say what the page showed stays out too, and
+  so does one that sets a shaped script. Word opens such a package with Minion
+  Pro and Old Hungarian drawn from it on a machine that has neither.
+
+- **A space as wide as the page set it.** A face's space is the width the file
+  states, not the 500 an unreached `/Widths` reads as — pdfTeX's subsets had
+  embedded spaces twice their own width. A word space TeX shrank to fit a line
+  is written as narrow as TeX set it (§17.3.2.43 `w:w`, never below two fifths
+  of the face's), so a re-set line holds the words the page's does.
+  `RunProperties.widthScale` carries `w:w` — written, laid out and drawn — and
+  `w:spacing` is written back, where it was read and dropped.
+
+- **A figure and the words set on it are one drawing.** Paths that stand
+  together and draw something — a curve or a slant among six paths and more, a
+  chart's bars — are found before the page's text is read, with their axes, the
+  pictures inside them and the labels set on them, and set as one inline group
+  in a paragraph of their own in their column; one that reaches across a gutter
+  spans the columns. The writer writes a drawing group as the `wpg:wgp` it is,
+  where it wrote one empty shape, and a text body that does not wrap as
+  `a:bodyPr @wrap="none"`. A chart whose face numbers its glyphs and says
+  nothing of its codes has its labels drawn as the shapes they are.
+
+- **Code listings, and tables across the columns.** A line set wholly in a
+  typewriter face is a line of code, kept on its own with its comments on the
+  stop the page set them at. A row of four cells and more is a table's, and a
+  block of such rows spans the page where it reaches over the gutter; the line
+  over it heads it, its first column starts where its words do (`w:tblInd`,
+  now written), a rule across it is the top border of the row under it and as
+  wide as the page draws it, and a rule drawn down between two of its columns
+  divides them. A page's gutters are looked for without its listings and its
+  tables.
+
+- **Page numbers are numbers.** The numeral in a running band that changes from
+  page to page is the page's number, decimal or roman as written; where the
+  count starts again a section opens, numbering its pages in those numerals from
+  the number the page prints (`w:pgNumType w:fmt`, read and written —
+  `SectionProperties.pageNumberFormat`), and the band prints a PAGE field. A book
+  that leaves its blank pages out, its count jumping as it does, is numbered all
+  the same. A tagged document's head and foot are read off the words its tree
+  names nowhere.
+
+- **A book's two sides have feet of their own.** Where a book signs its even
+  pages at one edge and its odd ones at the other, each side gets a footer
+  (`w:evenAndOddHeaders`) that says what that side's pages say, and its number.
+  A foot is found by its line nearest the text, so a side that adds a line under
+  its folio has a foot all the same: freeculture.pdf's 235 folios, and the URL
+  under most of them, had been read into its text.
+
+- **A section's lines may run down the sheet.** §17.6.20 `w:textDirection` is
+  read, written and laid out (`tbRl`, `btLr`), and a PDF page whose words run
+  down its sheet is set as such a section: hello_world_rotated.pdf's five pages
+  open in Word with their words down a landscape sheet.
+
+- **A Word document is laid out the way Word sets it.** Each rule was measured
+  in Word for Mac before it was written:
+  - a line stands as tall as its faces make it — the hhea line, or the typo line
+    where a face says to use it — the tallest ascent and the deepest descent
+    taken apart, a list marker adding its ascent, a picture standing on the
+    baseline; nineteen families match Word to within 0.002 of their size;
+  - a paragraph's first and last lines never stand alone on a page
+    (`w:widowControl`), a heading goes to the next page with what it heads, and
+    a paragraph asked to stay whole does (`w:keepNext`, `w:keepLines`) — read
+    from `.docx` and `.doc`, written, and laid out;
+  - two paragraphs stand the larger of their spacings apart, not the sum, and a
+    space before is dropped at the head of a page or column where Word drops
+    it; automatic spacing is 14pt in every compatibility mode;
+  - a table's horizontal borders take the room they are wide, and a Word 2010
+    table stands out by its first cell's margin, its first column in line with
+    the text above it;
+  - each page sets its body below the header and above the footer it shows;
+  - a line beside a float holds what its indents and the float leave, with no
+    fixed gap, and a VML shape stands off its text by Word's 9pt.
+
+### Fixed
+
+- **A page in columns is read down them.**
+  - A gutter is the white between two columns, not where most of a ragged
+    column's lines end: freeculture.pdf's index came back with its columns a
+    third narrower than the page's, thirteen pages run to twenty-seven. A
+    justified column is read in its columns, and a column a few ems wide beside
+    a gap the page's lines run across is a table's.
+  - A page that turns to its next column short of the foot breaks there, the
+    break a paragraph of its own and the next column's first line standing
+    where the page stands it; a last page set in balanced columns ends their
+    section on that page.
+  - A block of prose beside another is set as its paragraphs, not a line
+    apiece; the white under a block across the page is its space after; a page
+    that opens a section starts it on its own sheet, and every section is set on
+    its sheet's margins.
+  - An index's entries hang: each is a paragraph, and the lines that carry one
+    on are part of it.
+
+- **A paragraph ends where the page ends it.** In a justified column a line
+  short of the measure ends its paragraph; a centred line the next one's first
+  word would have fit on ended its; a line that opens with a bullet or a hanging
+  label opens a list item; a line set out on stops is a paragraph of its own,
+  and a run the page reaches with spaces lands on the stop the lines around it
+  share; a line stands on its type's baseline, not on a footnote mark set over
+  it; a paragraph is indented from the edge of its column.
+
+- **Words come back as they read.**
+  - A step as wide as most of the face's space is a word space —
+    freeculture.pdf came back "law,Internet" through all its pages; a dot
+    stepped on after a word is the rest of an ellipsis, a space drawn over a
+    word is none, and a highlight's band runs across the space between the
+    words it marks.
+  - A dash closed up to its word takes no space at a line break: "pages
+    291–300".
+  - An accent TeX strikes over a letter is composed with it: "naïve", not
+    "na¨ıve".
+  - Greek and TeX's mathematics are read by the names its fonts give them, "α"
+    and "∗" among them.
+  - A Type 1 face is as bold as its program says ("NimbusRomNo9L-Medi"), and a
+    CFF flex curve lands where Type 2 says it does: freeculture.pdf's "1" stood
+    with a gap after it, and its "L" had lost its foot.
+
+- **A heading on a bar keeps its bar.** A box filled in one colour behind a
+  single line is written as that paragraph's shading (`w:shd`) with borders of
+  its colour, and moves with the line; the writer writes a paragraph's shading
+  and its rules' `w:space`, which it read and dropped.
+
+- **Pages.** A media box with no area is a Letter sheet (boundingBox_invalid.pdf
+  lost a page to it); what stands off the sheet is a mark on it, not a line of
+  the page; a tagged document opens a page where its source page ended short,
+  spaced from its top only where its tree opens it there; a path inside its clip
+  is drawn however far its curves' handles stand (comments.pdf's signature had
+  come back as a black bar).
+
+- **A `.docx` read and written again.**
+  - `word/settings.xml` is written: even-page headers, a head-bound gutter,
+    `doNotExpandShiftReturn` and the compatibility mode come through.
+  - `word/styles.xml` states the defaults the writer leaves out, which Word
+    otherwise takes from its own Normal — every paragraph 8pt further from the
+    next, lines 1.08 apart, an 11pt run set in 12.
+  - A line spaced in lines is written back in 240ths of a line — Word's own
+    Normal, 1.08 lines, had come back as 0.65 — and a line break as `w:br`, not
+    a newline inside the text.
+  - A drawing the text wraps round is not behind the text; a drawing anchored
+    to a paragraph that breaks to a new page goes with it; a page break on a
+    line of its own stays on the page it ends; a header picture bound to `ve:`
+    (Word 2008 for Mac) is found.
+
+- **A remote face the network lost is asked for again.** A rejected download, a
+  set that failed and a set that came without one of its faces are forgotten as
+  they settle, so one dropped connection no longer breaks a family for the life
+  of a server; a required face still throws, the network's error as its
+  `cause`.
+
+### Internals
+
+- The test suite makes no network request: the Arimo face the library downloads
+  for a document that names no font is checked in, under its OFL-1.1.
+- The model gains `FlowDoc.typesetBy` (`'word'` for a document Word sets, whose
+  rules the layout then follows), `FlowDoc.faceOutlines` and
+  `FlowDoc.compatibilityMode`; `RunProperties.widthScale`, `kerningMinPt` and
+  `ligatures`; `ParagraphProperties.widowControl`, `keepNext` and `keepLines`;
+  `SectionProperties.textDirection` and `pageNumberFormat`.
+
 ## 1.30.0
 
 A release about four hundred pages and the `.docx` each one becomes.
