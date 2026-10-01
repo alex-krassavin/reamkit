@@ -58,6 +58,7 @@ import {
   buildShapeTransform,
   buildStroke,
   gradientSvgDef,
+  lineEndPaths,
 } from '@/core/drawingml/shape-render';
 import { PathBuilder, flipTransform, svgPathData } from '@/core/vector';
 import { detectImageFormat } from '@/core/images';
@@ -438,10 +439,26 @@ const blockFigureCss = (pp: ParagraphProperties): string => {
   return css.length > 0 ? ` style="${css.join(';')}"` : '';
 };
 
-const svgOpen = (w: number, h: number, label: string | undefined): string =>
-  `<svg viewBox="0 0 ${fmt(w)} ${fmt(h)}" width="${fmt(w)}pt" height="${fmt(h)}pt" ` +
-  `style="max-width:100%;height:auto" overflow="visible" xmlns="http://www.w3.org/2000/svg" ` +
-  `role="img"${label ? ` aria-label="${escapeAttr(label)}"` : ''}>`;
+// A straight line has no height, or no width — and a viewport with an empty
+// side paints nothing at all, overflow or not: a horizontal rule, or a note's
+// line to its cell, drew nothing. Such a side is widened by this much each
+// way, and the element moved back by as much, so the line lands where it was.
+const LINE_PAD_PT = 0.5;
+
+const svgOpen = (w: number, h: number, label: string | undefined): string => {
+  const padX = w < 2 * LINE_PAD_PT ? LINE_PAD_PT : 0;
+  const padY = h < 2 * LINE_PAD_PT ? LINE_PAD_PT : 0;
+  const style =
+    padX > 0 || padY > 0
+      ? `margin:${fmt(-padY)}pt 0 0 ${fmt(-padX)}pt;vertical-align:top`
+      : 'max-width:100%;height:auto';
+  return (
+    `<svg viewBox="${fmt(-padX)} ${fmt(-padY)} ${fmt(w + 2 * padX)} ${fmt(h + 2 * padY)}" ` +
+    `width="${fmt(w + 2 * padX)}pt" height="${fmt(h + 2 * padY)}pt" ` +
+    `style="${style}" overflow="visible" xmlns="http://www.w3.org/2000/svg" ` +
+    `role="img"${label ? ` aria-label="${escapeAttr(label)}"` : ''}>`
+  );
+};
 
 const strokeAttrs = (stroke: StrokeStyle | undefined): string => {
   if (!stroke) return '';
@@ -582,7 +599,8 @@ function emitOneShape(out: Array<string>, shape: ShapeBlock, ctx: EmitCtx): void
     : shape.fill.kind === 'solid' && shape.fill.colorHex
       ? `#${shape.fill.colorHex}`
       : 'none';
-  const stroke = strokeAttrs(buildStroke(shape.line));
+  const strokeStyle = buildStroke(shape.line);
+  const stroke = strokeAttrs(strokeStyle);
   const t = shape.transform;
   // Paths are y-up; the same local→page matrix the PDF layout builds (rotation
   // about the center, flips), flipped into the y-down viewport.
@@ -594,19 +612,34 @@ function emitOneShape(out: Array<string>, shape: ShapeBlock, ctx: EmitCtx): void
   const svg: Array<string> = [svgOpen(w, h, shape.altText)];
   if (gradDef) svg.push(`<defs>${gradDef}</defs>`);
   // §20.1.8.40 — the drop shadow under the shape. The inline SVG is clipped to
-  // the shape's own box, so the shadow is drawn as a `drop-shadow` filter on
-  // the path rather than a second path outside it, which keeps the blur the
-  // source asked for without needing room the viewport does not have.
+  // the shape's own box, so the shadow is drawn as a `drop-shadow` filter
+  // rather than a second path outside it, which keeps the blur the source
+  // asked for without needing room the viewport does not have. On a group
+  // AROUND the paths: on a path the offset is taken in its own frame, which
+  // the y-up matrix turns over, and a note's shadow fell up and to the right.
   const shadow = shape.shadow;
-  const shadowFilter = shadow
-    ? ` filter="drop-shadow(${fmt(shadow.dxPt)}px ${fmt(shadow.dyPt)}px ` +
-      `${fmt(shadow.blurPt / 2)}px rgba(${hexToRgbCss(shadow.colorHex)},${fmt(shadow.alpha)}))"`
-    : '';
+  if (shadow) {
+    svg.push(
+      `<g filter="drop-shadow(${fmt(shadow.dxPt)}px ${fmt(shadow.dyPt)}px ` +
+        `${fmt(shadow.blurPt / 2)}px rgba(${hexToRgbCss(shadow.colorHex)},${fmt(shadow.alpha)}))">`,
+    );
+  }
   for (const path of paths) {
     const rule = path.fillRule === 'evenodd' ? ' fill-rule="evenodd"' : '';
     svg.push(
-      `<path d="${svgPathData(path.segments, fmt)}" fill="${fill}"${rule}${stroke}${transform}${shadowFilter}/>`,
+      `<path d="${svgPathData(path.segments, fmt)}" fill="${fill}"${rule}${stroke}${transform}/>`,
     );
+  }
+  if (shadow) svg.push('</g>');
+  // §20.1.8.24 / §20.1.8.42 — the arrowheads the line ends in, solid in its
+  // colour, as the paginated layout draws them. A note's line points at its
+  // cell with one, and here it pointed at nothing.
+  if (strokeStyle) {
+    for (const end of lineEndPaths(paths, shape.line, strokeStyle.widthPt)) {
+      svg.push(
+        `<path d="${svgPathData(end.segments, fmt)}" fill="#${strokeStyle.colorHex}"${transform}/>`,
+      );
+    }
   }
   svg.push('</svg>');
 

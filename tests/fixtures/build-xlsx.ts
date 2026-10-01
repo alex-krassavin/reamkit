@@ -193,6 +193,12 @@ export interface XlsxBuilderOptions {
     readonly ref: string;
     readonly author: string;
     readonly text: string;
+    /**
+     * The note is SHOWN: its VML shape carries `<x:Visible/>` and this
+     * `<x:Anchor>` ("col, dx px, row, dy px, col, dx px, row, dy px"). When
+     * any comment has one, a vmlDrawing part is written for all of them.
+     */
+    readonly shownAnchor?: string;
   }>;
   /** Threaded comments on the FIRST sheet + the workbook person directory (W7). */
   readonly threadedComments?: ReadonlyArray<{
@@ -855,6 +861,43 @@ ${rels.join('\n')}
       first.fileName,
       '  <Relationship Id="rIdCmt" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments" Target="../comments1.xml"/>',
     );
+    // The note shapes, when any note is shown: Excel's own markup, one shape
+    // per comment, `<x:Visible/>` on the shown ones.
+    if (options.comments.some((c) => c.shownAnchor !== undefined)) {
+      const shapes = options.comments.map((c, i) => {
+        const col = /^[A-Z]+/.exec(c.ref)![0];
+        const column = [...col].reduce((n, ch) => n * 26 + ch.charCodeAt(0) - 64, 0) - 1;
+        const row = Number(c.ref.slice(col.length)) - 1;
+        return (
+          `<v:shape id="_x0000_s${1025 + i}" type="#_x0000_t202" style="position:absolute;` +
+          `margin-left:100pt;margin-top:10pt;width:96pt;height:55.5pt;z-index:${i + 1}` +
+          `${c.shownAnchor === undefined ? ';visibility:hidden' : ''}" fillcolor="#ffffe1" o:insetmode="auto">` +
+          '<v:fill color2="#ffffe1"/><v:shadow on="t" color="black" obscured="t"/>' +
+          '<v:path o:connecttype="none"/>' +
+          '<v:textbox style="mso-direction-alt:auto"><div style="text-align:left"></div></v:textbox>' +
+          '<x:ClientData ObjectType="Note"><x:MoveWithCells/><x:SizeWithCells/>' +
+          `<x:Anchor>${c.shownAnchor ?? '1, 15, 0, 2, 3, 15, 4, 16'}</x:Anchor>` +
+          `<x:AutoFill>False</x:AutoFill><x:Row>${row}</x:Row><x:Column>${column}</x:Column>` +
+          `${c.shownAnchor === undefined ? '' : '<x:Visible/>'}</x:ClientData></v:shape>`
+        );
+      });
+      entries['xl/drawings/vmlDrawing1.vml'] = encoder.encode(
+        '<xml xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office" ' +
+          'xmlns:x="urn:schemas-microsoft-com:office:excel">' +
+          '<v:shapetype id="_x0000_t202" coordsize="21600,21600" o:spt="202" path="m,l,21600r21600,l21600,xe">' +
+          '<v:stroke joinstyle="miter"/><v:path gradientshapeok="t" o:connecttype="rect"/></v:shapetype>' +
+          `${shapes.join('')}</xml>`,
+      );
+      first.xml = first.xml.replace(
+        '</worksheet>',
+        '<legacyDrawing xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:id="rIdVml"/></worksheet>',
+      );
+      mergeWorksheetRel(
+        entries,
+        first.fileName,
+        '  <Relationship Id="rIdVml" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/vmlDrawing" Target="../drawings/vmlDrawing1.vml"/>',
+      );
+    }
   }
   // W7: threaded comments — the part + a worksheet rel; persons → workbook rel.
   if (options.threadedComments && options.threadedComments.length > 0 && sheetParts.length > 0) {

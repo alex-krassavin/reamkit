@@ -93,7 +93,36 @@ export interface SheetComment {
   readonly ref: string;
   readonly author?: string;
   readonly text: string;
+  /** The note as written, run by run with each run's own font — the bold "Author:" line included. */
+  readonly runs?: ReadonlyArray<SheetRichRun>;
   readonly threaded: boolean;
+  /**
+   * The note's box, when its legacy VML shape SHOWS it (`<x:Visible/>`):
+   * Excel draws a shown note on the sheet beside its cell, with a line to the
+   * cell's corner, and prints it there when `<pageSetup cellComments>` is
+   * `asDisplayed`. Absent ⇒ the note is only flagged in its cell.
+   */
+  readonly shown?: SheetNoteBox;
+}
+
+/**
+ * Where a shown note stands and how it is painted. Distances are in points
+ * from the sheet's top-left corner, measured in the file's own column order —
+ * a sheet that reads from the right mirrors them with everything else.
+ */
+export interface SheetNoteBox {
+  readonly xPt: number;
+  readonly yPt: number;
+  readonly widthPt: number;
+  readonly heightPt: number;
+  /** The top-right corner of the cell (or merge) the note belongs to — its line ends there. */
+  readonly cornerXPt: number;
+  readonly cornerYPt: number;
+  readonly fillHex: string;
+  readonly lineHex: string;
+  readonly shadow: boolean;
+  /** The side the note's text is set to; absent ⇒ its start. */
+  readonly textAlign?: 'left' | 'center' | 'right';
 }
 
 /**

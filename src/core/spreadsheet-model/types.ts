@@ -856,6 +856,8 @@ export interface SheetRichRun {
   readonly sizePt?: number;
   /** §18.4.2 `<vertAlign>` — superscript / subscript within the cell text. */
   readonly vertAlign?: 'superscript' | 'subscript';
+  /** §18.4.5 `<rFont>` — the run's typeface, where the producer names one. */
+  readonly fontName?: string;
 }
 
 /**

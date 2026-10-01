@@ -9,11 +9,13 @@ import type {
   BodyElement,
   FloatAnchor,
   HeaderFooterReference,
+  Run,
+  RunProperties,
   Section,
   SectionProperties,
   ShapeBlock,
 } from '@/core/document-model';
-import type { ParsedWorksheet, XlsxStyles } from '@/core/spreadsheet-model';
+import type { ParsedWorksheet, SheetRichRun, XlsxStyles } from '@/core/spreadsheet-model';
 import type { Pt } from '@/core/ir';
 import type { FlowDoc } from '@/core/ir/flow';
 import type { Loss } from '@/core/ir/loss';
@@ -225,7 +227,11 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
     // out of the projection. Its blocks are pushed below, in their old place.
     const scaleSink = { value: 1 };
     const bandSink = { lefts: [0] };
-    const drawingExtentPt = drawingReachPt(ws);
+    // §18.7 — a note its VML shape SHOWS is on the sheet, over everything
+    // else: a window draws it there, and so does paper when the sheet prints
+    // its notes `asDisplayed`.
+    const notesShown = screen || ws.grid.pageSetup?.cellComments === 'asDisplayed';
+    const drawingExtentPt = drawingReachPt(ws, notesShown);
     // A print area and the titles repeated on every page are what PRINTS; the
     // window shows the whole sheet, once.
     const printArea = screen ? undefined : resolvePrintArea(sheet.definedNames, sheetIdx);
@@ -407,6 +413,24 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
       }
     }
 
+    if (notesShown) {
+      for (const comment of ws.comments ?? []) {
+        for (const shape of noteShapes(comment, ws.grid.rightToLeft === true)) {
+          drawings.push({
+            kind: 'shape',
+            shape: screen
+              ? shape
+              : centreShape(
+                  scaleShape(shape, scaleSink.value),
+                  ws.grid,
+                  drawingExtentPt,
+                  scaleSink.value,
+                ),
+          });
+        }
+      }
+    }
+
     const placed = withDrawingsByBand(drawings, gridBody, bandSink.lefts);
     body.push(
       ...(ws.grid.rightToLeft === true
@@ -434,12 +458,14 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
     // NamedSheetViews.xlsx says nothing at all, and neither reference prints a
     // word of either. A default the format states and both readers honour is
     // not an unstated one. The omission is reported rather than silent.
-    const printComments =
-      ws.grid.pageSetup?.cellComments === 'atEnd' ||
-      ws.grid.pageSetup?.cellComments === 'asDisplayed';
+    //
+    // `asDisplayed` prints the notes the sheet shows, where it shows them (see
+    // noteShapes above) and nothing for the rest; `atEnd` is this listing. A
+    // window shows its notes in place and never lists them.
+    const listComments = !screen && ws.grid.pageSetup?.cellComments === 'atEnd';
     if (ws.comments && ws.comments.length > 0) {
-      if (printComments) body.push(...commentBlocks(ws.comments));
-      else
+      if (listComments) body.push(...commentBlocks(ws.comments));
+      else if (!notesShown)
         options.losses?.push({
           severity: 'dropped',
           feature: 'comments',
@@ -448,6 +474,18 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
             `<pageSetup cellComments> is "${ws.grid.pageSetup?.cellComments ?? 'none'}"`,
           where: `sheet "${ws.name}"`,
         });
+      else {
+        const hidden = ws.comments.filter((c) => c.shown === undefined).length;
+        if (hidden > 0)
+          options.losses?.push({
+            severity: 'dropped',
+            feature: 'comments',
+            detail: screen
+              ? `${hidden} cell note(s) not shown — a hidden note shows only while its cell is pointed at`
+              : `${hidden} cell note(s) not printed — "asDisplayed" prints the notes the sheet shows`,
+            where: `sheet "${ws.name}"`,
+          });
+      }
     }
 
     // W8: form controls are listed in a "Form controls" section after the grid,
@@ -514,6 +552,130 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
     ...(sheet.info ? { info: sheet.info } : {}),
     // A sheet's drawings float over its cells and hide what they cover.
     floatsOverText: true,
+  };
+}
+
+// Excel's note box: the text stands this far in from the outline, and the
+// hard shadow falls VML's own default distance down and to the right.
+const NOTE_INSET_PT = 1.5;
+const NOTE_SHADOW_PT = 2;
+const NOTE_LINE_PT = 0.75;
+// What a note's runs fall back to: the face and size Excel writes its notes in.
+const NOTE_FACE = 'Tahoma';
+const NOTE_SIZE_PT = 9;
+
+/**
+ * A shown note as Excel draws it: a pale box at the place its VML anchor
+ * names, holding the note's text run by run (the bold "Author:" line first),
+ * with a hard shadow down and to the right — and a thin line from the box to
+ * its cell's top-right corner, ending there in a small arrowhead.
+ *
+ * Built in the file's column order like every other drawing. On a sheet that
+ * reads from the right mirrorDrawings moves both, and the line, which has a
+ * direction the box has not, is turned round here so it still meets the
+ * cell's corner — the corner, too, is mirrored.
+ *
+ * @param comment The note, with the box its shape shows, if it shows one.
+ * @param rtl     Whether the sheet reads from the right.
+ * @returns The line then the box (the box over the line), or nothing.
+ */
+function noteShapes(comment: SheetComment, rtl: boolean): Array<ShapeBlock> {
+  const box = comment.shown;
+  if (!box) return [];
+  const runs: ReadonlyArray<SheetRichRun> = comment.runs ?? [
+    { text: comment.author ? `${comment.author}:\n${comment.text}` : comment.text },
+  ];
+  const frame: ShapeBlock = {
+    ...anchorFloat(box.xPt, box.yPt, 1),
+    width: pt(box.widthPt),
+    height: pt(box.heightPt),
+    geometry: { kind: 'preset', preset: 'rect' },
+    fill: { kind: 'solid', colorHex: box.fillHex },
+    line: { width: pt(NOTE_LINE_PT), colorHex: box.lineHex },
+    ...(box.shadow
+      ? {
+          shadow: {
+            dxPt: NOTE_SHADOW_PT,
+            dyPt: NOTE_SHADOW_PT,
+            blurPt: 0,
+            colorHex: '000000',
+            alpha: 1,
+          },
+        }
+      : {}),
+    text: {
+      content: noteParagraphs(runs, box.textAlign),
+      insetLeft: pt(NOTE_INSET_PT),
+      insetTop: pt(NOTE_INSET_PT),
+      insetRight: pt(NOTE_INSET_PT),
+      insetBottom: pt(NOTE_INSET_PT),
+      anchor: 't',
+    },
+    paragraphProperties: {},
+  };
+  // The line leaves the box at its point nearest the corner; a corner the box
+  // covers needs none.
+  const cx = box.cornerXPt;
+  const cy = box.cornerYPt;
+  const sx = Math.min(Math.max(cx, box.xPt), box.xPt + box.widthPt);
+  const sy = Math.min(Math.max(cy, box.yPt), box.yPt + box.heightPt);
+  if (sx === cx && sy === cy) return [frame];
+  // A preset line runs from its frame's top-left to its bottom-right; the
+  // flips make it run from the box to the corner instead.
+  const flipH = sx > cx !== rtl;
+  const flipV = sy > cy;
+  const line: ShapeBlock = {
+    ...anchorFloat(Math.min(sx, cx), Math.min(sy, cy), 1),
+    width: pt(Math.abs(cx - sx)),
+    height: pt(Math.abs(cy - sy)),
+    geometry: { kind: 'preset', preset: 'line' },
+    fill: { kind: 'none' },
+    line: {
+      width: pt(NOTE_LINE_PT),
+      colorHex: box.lineHex,
+      tailEnd: { type: 'triangle', width: 'sm', length: 'sm' },
+    },
+    ...(flipH || flipV
+      ? { transform: { ...(flipH ? { flipH: true } : {}), ...(flipV ? { flipV: true } : {}) } }
+      : {}),
+    paragraphProperties: {},
+  };
+  return [line, frame];
+}
+
+// A note's text, one paragraph per line: its runs carry their own fonts, and
+// a line break inside a run starts the next paragraph. A break the text ends
+// with draws nothing.
+function noteParagraphs(
+  runs: ReadonlyArray<SheetRichRun>,
+  align: 'left' | 'center' | 'right' | undefined,
+): Array<BodyElement> {
+  const lines: Array<Array<Run>> = [[]];
+  for (const r of runs) {
+    r.text.split(/\r\n|\r|\n/).forEach((part, i) => {
+      if (i > 0) lines.push([]);
+      if (part.length > 0)
+        lines[lines.length - 1]!.push({ text: part, properties: noteRunProps(r) });
+    });
+  }
+  while (lines.length > 1 && lines[lines.length - 1]!.length === 0) lines.pop();
+  return lines.map((line) => ({
+    kind: 'paragraph' as const,
+    paragraph: { properties: align ? { alignment: align } : {}, runs: line },
+  }));
+}
+
+function noteRunProps(r: SheetRichRun): RunProperties {
+  const face = r.fontName ?? NOTE_FACE;
+  return {
+    fontFamily: { ascii: face, hAnsi: face, cs: face },
+    fontSizePt: pt(r.sizePt ?? NOTE_SIZE_PT),
+    colorHex: r.colorHex ?? '000000',
+    ...(r.bold ? { bold: true } : {}),
+    ...(r.italic ? { italic: true } : {}),
+    ...(r.underline ? { underline: 'single' as const } : {}),
+    ...(r.strike ? { strike: true } : {}),
+    ...(r.vertAlign ? { verticalAlign: r.vertAlign } : {}),
   };
 }
 
@@ -1172,7 +1334,10 @@ function activeXLabel(c: SheetActiveXControl): string {
  * past the last value is still printed, and on a sheet whose values sit in a
  * handful of cells it is the drawing that decides the page.
  */
-function drawingReachPt(ws: Sheet): { widthPt: number; heightPt: number } | undefined {
+function drawingReachPt(
+  ws: Sheet,
+  notesShown: boolean,
+): { widthPt: number; heightPt: number } | undefined {
   let widthPt = 0;
   let heightPt = 0;
   for (const shape of ws.shapes ?? []) {
@@ -1190,6 +1355,14 @@ function drawingReachPt(ws: Sheet): { widthPt: number; heightPt: number } | unde
   for (const p of ws.images ?? []) {
     widthPt = Math.max(widthPt, (p.xPt ?? 0) + p.widthPt);
     heightPt = Math.max(heightPt, (p.yPt ?? 0) + p.heightPt);
+  }
+  // …and so is a note the sheet shows, where it is drawn — the shadow it
+  // casts included. Past the last used column, a note no grid reached out to
+  // fell off the image, and on a sheet that reads from the right off its edge.
+  for (const c of notesShown ? (ws.comments ?? []) : []) {
+    if (!c.shown) continue;
+    widthPt = Math.max(widthPt, c.shown.xPt + c.shown.widthPt + NOTE_SHADOW_PT);
+    heightPt = Math.max(heightPt, c.shown.yPt + c.shown.heightPt + NOTE_SHADOW_PT);
   }
   return widthPt > 0 || heightPt > 0 ? { widthPt, heightPt } : undefined;
 }

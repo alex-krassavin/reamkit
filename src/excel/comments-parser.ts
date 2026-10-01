@@ -1,8 +1,9 @@
 // Cell comments / notes (E-SHEET W7). Two parts carry them:
 //   • legacy  xl/comments#.xml  (§18.7) — <authors> + <commentList>, each
 //     <comment ref authorId> with a rich <text>; the author is an index into
-//     <authors>. The accompanying VML drawing (the yellow note box) is ignored —
-//     only the text + author are surfaced.
+//     <authors>. The text is kept run by run as well, for the note's box — the
+//     accompanying VML drawing says whether that box is shown, and where (the
+//     reader pairs the two).
 //   • modern  xl/threadedComments/threadedComment#.xml (a conversation) — each
 //     <threadedComment ref personId> with a plain <text>; the author is a
 //     person id resolved through xl/persons/person.xml.
@@ -12,7 +13,9 @@
 import { XMLParser } from 'fast-xml-parser';
 
 import type { SheetComment } from '@/core/ir/sheet';
+import type { SheetRichRun } from '@/core/spreadsheet-model';
 import { resolveInternalEntities } from '@/core/opc/xml-entities';
+import { richRun as richRunOf } from '@/excel/shared-strings-parser';
 
 const decoder = new TextDecoder('utf-8');
 
@@ -60,7 +63,14 @@ export function parseLegacyComments(data: Uint8Array): Array<SheetComment> {
     const author = Number.isInteger(authorIdx) ? authors[authorIdx] : undefined;
     const text = stripAuthorPrefix(richText(obj['text']), author);
     if (text.length === 0 && !author) continue;
-    out.push({ ref, ...(author ? { author } : {}), text, threaded: false });
+    const runs = richRuns(obj['text']);
+    out.push({
+      ref,
+      ...(author ? { author } : {}),
+      text,
+      ...(runs.length > 0 ? { runs } : {}),
+      threaded: false,
+    });
   }
   return out;
 }
@@ -129,6 +139,25 @@ function richText(node: unknown): string {
   return toArray(obj['r'])
     .map((r) => textOf(asObject(r)?.['t']))
     .join('');
+}
+
+// The same <text>, run by run with each run's own font — the note's box shows
+// it exactly so, the bold "Author:" line included.
+function richRuns(node: unknown): Array<SheetRichRun> {
+  const obj = asObject(node);
+  if (!obj) {
+    const plain = textOf(node);
+    return plain ? [{ text: plain }] : [];
+  }
+  const direct = textOf(obj['t']);
+  if (direct) return [{ text: direct }];
+  const out: Array<SheetRichRun> = [];
+  for (const r of toArray(obj['r'])) {
+    const run = asObject(r);
+    const text = textOf(run?.['t']);
+    if (text.length > 0) out.push(richRunOf(text, run?.['rPr']));
+  }
+  return out;
 }
 
 // Drop a leading "Author:" / "Author:\n" the legacy producer prepends, so the

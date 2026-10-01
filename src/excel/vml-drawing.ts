@@ -67,9 +67,38 @@ export interface VmlFormControl {
   readonly fontSizePt?: number;
 }
 
+/**
+ * A cell note's box — the `ObjectType="Note"` shape Excel keeps beside every
+ * legacy comment. The comment part holds what the note SAYS; this says whether
+ * it is shown and where, and what it is painted with.
+ */
+export interface VmlNote {
+  /** `<x:Row>` / `<x:Column>` — the cell the note belongs to, 0-based. */
+  readonly row: number;
+  readonly column: number;
+  /** `<x:Visible/>` — the note is shown, not merely flagged in its cell. */
+  readonly visible: boolean;
+  /**
+   * `<x:Anchor>` — LeftColumn, LeftOffset, TopRow, TopOffset, RightColumn,
+   * RightOffset, BottomRow, BottomOffset: the box in cells, offsets in pixels.
+   */
+  readonly anchor?: readonly [number, number, number, number, number, number, number, number];
+  /** The same box from the shape's `style`, already in points. */
+  readonly box?: VmlShapeBox;
+  /** `fillcolor` / `strokecolor`, as 6-hex. */
+  readonly fillHex: string;
+  readonly lineHex: string;
+  /** `<v:shadow on="t">` — the hard shadow a note casts down and to the right. */
+  readonly shadow: boolean;
+  /** `<v:textbox><div style="text-align">` — the side its text is set to. */
+  readonly textAlign?: 'left' | 'center' | 'right';
+}
+
 /** A parsed legacy VML drawing: its form controls plus every shape's box. */
 export interface VmlDrawing {
   readonly controls: ReadonlyArray<VmlFormControl>;
+  /** Every cell note's box, shown or not, in document order. */
+  readonly notes: ReadonlyArray<VmlNote>;
   /**
    * Shape id (`o:spid` without its `_x0000_s` prefix) → box, for EVERY shape in
    * the part, controls or not. An ActiveX control's box lives nowhere else: its
@@ -136,6 +165,7 @@ export function parseVmlDrawing(data: Uint8Array): VmlDrawing {
   const tree = parser.parse(decoder.decode(data)) as Record<string, unknown>;
   const root = asObject(tree['xml']) ?? tree;
   const out: Array<VmlFormControl> = [];
+  const notes: Array<VmlNote> = [];
   const boxes = new Map<string, VmlShapeBox>();
   const nonPrinting = new Set<string>();
   for (const raw of asArray(root['shape'])) {
@@ -162,6 +192,11 @@ export function parseVmlDrawing(data: Uint8Array): VmlDrawing {
       continue;
     }
     const objectType = strAttr(client, 'ObjectType');
+    if (objectType === 'Note') {
+      const note = noteOf(shape, client, box);
+      if (note) notes.push(note);
+      continue;
+    }
     if (!objectType || !CONTROL_TYPES.has(objectType)) continue;
     const control: Mutable<VmlFormControl> = { objectType };
     if (shapeId) control.shapeId = shapeId;
@@ -176,7 +211,83 @@ export function parseVmlDrawing(data: Uint8Array): VmlDrawing {
     if ('FirstButton' in client) control.firstButton = true;
     out.push(control);
   }
-  return { controls: out, boxes, nonPrinting };
+  return { controls: out, notes, boxes, nonPrinting };
+}
+
+// What a note's shape says about its box. Excel's own notes are pale yellow
+// (the system's tooltip colour, which older files name `infoBackground`) with
+// a black outline and a shadow; a shape that says nothing else gets the same.
+function noteOf(
+  shape: Record<string, unknown>,
+  client: Record<string, unknown>,
+  box: VmlShapeBox | undefined,
+): VmlNote | undefined {
+  const row = Number(flatText(client['Row'])?.trim());
+  const column = Number(flatText(client['Column'])?.trim());
+  if (!Number.isInteger(row) || !Number.isInteger(column) || row < 0 || column < 0) {
+    return undefined;
+  }
+  const numbers = (flatText(client['Anchor']) ?? '').split(',').map((n) => Number(n.trim()));
+  const anchor =
+    numbers.length === 8 && numbers.every((n) => Number.isInteger(n))
+      ? (numbers as unknown as VmlNote['anchor'])
+      : undefined;
+  const shadowNode = asObject(shape['shadow']);
+  const shadowOn = shadowNode ? strAttr(shadowNode, 'on') : undefined;
+  const textAlign = /text-align:\s*(left|center|right)/i
+    .exec(styleWithin(shape['textbox']) ?? '')?.[1]
+    ?.toLowerCase() as VmlNote['textAlign'];
+  return {
+    row,
+    column,
+    // A shown note says so; a hidden one says nothing, or `visibility:hidden`.
+    visible: 'Visible' in client,
+    ...(anchor ? { anchor } : {}),
+    ...(box ? { box } : {}),
+    fillHex: vmlColorHex(strAttr(shape, 'fillcolor')) ?? 'FFFFE1',
+    lineHex: vmlColorHex(strAttr(shape, 'strokecolor')) ?? '000000',
+    shadow: shadowOn === 't' || shadowOn === 'true',
+    ...(textAlign ? { textAlign } : {}),
+  };
+}
+
+/** The first `style` declared anywhere under `node` — a textbox's `<div style>`. */
+function styleWithin(node: unknown): string | undefined {
+  if (Array.isArray(node)) {
+    for (const n of node) {
+      const found = styleWithin(n);
+      if (found !== undefined) return found;
+    }
+    return undefined;
+  }
+  const obj = asObject(node);
+  if (!obj) return undefined;
+  const own = strAttr(obj, 'style');
+  if (own !== undefined && /text-align/i.test(own)) return own;
+  for (const [key, value] of Object.entries(obj)) {
+    if (key.startsWith('@_')) continue;
+    const found = styleWithin(value);
+    if (found !== undefined) return found;
+  }
+  return undefined;
+}
+
+/** A VML colour — `#rrggbb`, `#rgb`, or one of the few names notes use — as 6-hex. */
+function vmlColorHex(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  const v = value.trim().toLowerCase();
+  const long = /^#([0-9a-f]{6})\b/.exec(v);
+  if (long) return long[1]!.toUpperCase();
+  const short = /^#([0-9a-f]{3})\b/.exec(v);
+  if (short)
+    return [...short[1]!]
+      .map((c) => c + c)
+      .join('')
+      .toUpperCase();
+  if (v.startsWith('infobackground')) return 'FFFFE1';
+  if (v.startsWith('infotext') || v.startsWith('black')) return '000000';
+  if (v.startsWith('white')) return 'FFFFFF';
+  return undefined;
 }
 
 /** CSS length → points. A bare number is pixels, VML's implicit unit. */

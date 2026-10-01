@@ -32,7 +32,7 @@ import type {
   XlsxStyles,
 } from '@/core/spreadsheet-model';
 import type { TableFilterColumn } from '@/excel/table-parser';
-import type { VmlShapeBox } from '@/excel/vml-drawing';
+import type { VmlNote, VmlShapeBox } from '@/excel/vml-drawing';
 import type { SlicerCacheDef, SlicerDef } from '@/excel/slicer-parser';
 
 import type { ProjectSheetOptions } from '@/excel/sheet-to-flow';
@@ -56,7 +56,8 @@ import {
   parseThemeFillStyles,
   parseThemeLineWidths,
 } from '@/core/drawingml/theme-parser';
-import { parseSheetDrawing } from '@/excel/sheet-drawing';
+import { makeColWidthPt, makeRowHeightPt, parseSheetDrawing } from '@/excel/sheet-drawing';
+import { parseCellRef } from '@/excel/cell-reference';
 import { parseTablePartFull } from '@/excel/table-parser';
 import { parsePivotTablePart } from '@/excel/pivot-table-parser';
 import { parseSlicerCachePart, parseSlicerPart } from '@/excel/slicer-parser';
@@ -450,6 +451,9 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
     // the only part that carries geometry — an ActiveX control's box lives in
     // the `Pict` shape that shares its `shapeId`, nowhere else.
     const legacyVml = readLegacyVml(pkg, resolved.path, wsRels, worksheet);
+    if (comments && legacyVml.notes.length > 0) {
+      comments = withShownNotes(comments, legacyVml.notes, worksheet);
+    }
 
     let formControls: Array<SheetFormControl> | undefined;
     if (worksheet.formControls && worksheet.formControls.length > 0) {
@@ -775,11 +779,13 @@ function readLegacyVml(
   worksheet: ParsedWorksheet,
 ): {
   controls: Array<SheetFormControl>;
+  notes: ReadonlyArray<VmlNote>;
   boxes: ReadonlyMap<string, VmlShapeBox>;
   nonPrinting: ReadonlySet<string>;
 } {
   const empty = {
     controls: [],
+    notes: [],
     boxes: new Map<string, VmlShapeBox>(),
     nonPrinting: new Set<string>(),
   };
@@ -803,7 +809,87 @@ function readLegacyVml(
       ...(shape.fontSizePt !== undefined ? { fontSizePt: shape.fontSizePt } : {}),
     });
   }
-  return { controls: out, boxes: drawing.boxes, nonPrinting: drawing.nonPrinting };
+  return {
+    controls: out,
+    notes: drawing.notes,
+    boxes: drawing.boxes,
+    nonPrinting: drawing.nonPrinting,
+  };
+}
+
+// A VML anchor's offsets are pixels at 96 per inch.
+const PT_PER_PX = 0.75;
+
+/**
+ * §18.7 + the legacy VML drawing — a comment's box, where its shape SHOWS it.
+ * The comments part holds what a note says; the VML shape says whether it is
+ * shown and where, and the two meet at the cell (`<x:Row>`/`<x:Column>`
+ * against the comment's `ref`).
+ *
+ * The box is placed by its `<x:Anchor>` — cells plus pixels — so it lands on
+ * the grid we draw, whatever widths the producer measured with; the shape's
+ * `style` is the fallback for an anchor that is missing or unusable
+ * (LibreOffice writes negative columns on a sheet that reads from the right).
+ *
+ * @param comments The sheet's comments, legacy and threaded.
+ * @param notes    The note shapes of the sheet's legacy VML drawing.
+ * @param worksheet The sheet, for its column widths, row heights and merges.
+ * @returns The comments, a shown one carrying its box.
+ */
+function withShownNotes(
+  comments: ReadonlyArray<SheetComment>,
+  notes: ReadonlyArray<VmlNote>,
+  worksheet: ParsedWorksheet,
+): Array<SheetComment> {
+  const shown = new Map<string, VmlNote>();
+  for (const n of notes) if (n.visible) shown.set(`${n.row}:${n.column}`, n);
+  if (shown.size === 0) return [...comments];
+  const colWidthPt = makeColWidthPt(worksheet);
+  const rowHeightPt = makeRowHeightPt(worksheet);
+  const along = (index: number, offsetPx: number, track: (i: number) => number): number => {
+    let total = 0;
+    for (let i = 0; i < index; i++) total += track(i);
+    return total + offsetPx * PT_PER_PX;
+  };
+  return comments.map((c) => {
+    if (c.threaded) return c;
+    let cell: { row: number; column: number };
+    try {
+      cell = parseCellRef(c.ref);
+    } catch {
+      return c;
+    }
+    const note = shown.get(`${cell.row}:${cell.column}`);
+    if (!note) return c;
+    let box: VmlShapeBox | undefined;
+    const a = note.anchor;
+    if (a && a[0] >= 0 && a[2] >= 0) {
+      const x0 = along(a[0], a[1], colWidthPt);
+      const x1 = along(a[4], a[5], colWidthPt);
+      const y0 = along(a[2], a[3], rowHeightPt);
+      const y1 = along(a[6], a[7], rowHeightPt);
+      if (x1 > x0 && y1 > y0) box = { xPt: x0, yPt: y0, widthPt: x1 - x0, heightPt: y1 - y0 };
+    }
+    if (!box && note.box && note.box.xPt >= 0 && note.box.yPt >= 0) box = note.box;
+    if (!box) return c;
+    // The line runs to the cell's top-right corner — its merge's, when the
+    // note sits on the first cell of one.
+    const merge = worksheet.merges.find(
+      (m) => m.startRow === cell.row && m.startColumn === cell.column,
+    );
+    return {
+      ...c,
+      shown: {
+        ...box,
+        cornerXPt: along((merge?.endColumn ?? cell.column) + 1, 0, colWidthPt),
+        cornerYPt: along(cell.row, 0, rowHeightPt),
+        fillHex: note.fillHex,
+        lineHex: note.lineHex,
+        shadow: note.shadow,
+        ...(note.textAlign ? { textAlign: note.textAlign } : {}),
+      },
+    };
+  });
 }
 
 function buildThemePalette(
