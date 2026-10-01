@@ -189,6 +189,12 @@ export interface ParsedWorksheet {
   /** §18.3.1.36 `<drawing r:id>` — the sheet's drawing part (charts/shapes). */
   readonly drawingRelId?: string;
   /**
+   * §18.3.1.99 — the sheet is a `<chartsheet>`: nothing but a chart, which
+   * prints filling the page, and on a landscape one unless the sheet says
+   * otherwise.
+   */
+  readonly chartSheet?: boolean;
+  /**
    * §18.3.1.36 `<legacyDrawing r:id>` — the relationship to the sheet's VML
    * drawing part. A form control put on the sheet by Excel's Forms toolbar is
    * declared there and nowhere else.

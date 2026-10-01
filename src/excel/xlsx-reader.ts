@@ -230,6 +230,15 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
       resolved.path,
       pkg.getPartRelationships(resolved.path),
     );
+    // §18.3.1.99 — a chart sheet is printed landscape unless it, or the
+    // printer settings it keeps, say otherwise: 47813.xlsx's chart is laid out
+    // for a landscape Letter page and came out on a portrait one, cut off.
+    if (worksheet.chartSheet && worksheet.pageSetup?.orientation === undefined) {
+      worksheet = {
+        ...worksheet,
+        pageSetup: { ...worksheet.pageSetup, orientation: 'landscape' },
+      };
+    }
     worksheet = withRichValues(worksheet, richValueText);
 
     // §20.5: the sheet's drawing part — resolve chart frames, pictures and shapes

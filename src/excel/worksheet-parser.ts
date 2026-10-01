@@ -162,6 +162,7 @@ export function parseWorksheet(data: Uint8Array, theme?: ThemePalette): ParsedWo
     ...(showGridLines === false ? { showGridLines } : {}),
     ...(rightToLeft ? { rightToLeft } : {}),
     ...(drawingRelId !== undefined ? { drawingRelId } : {}),
+    ...(tree['worksheet'] === undefined ? { chartSheet: true } : {}),
     ...(legacyDrawingRelId !== undefined ? { legacyDrawingRelId } : {}),
     ...(conditionalFormats.length > 0 ? { conditionalFormats } : {}),
     ...(dataValidations.length > 0 ? { dataValidations } : {}),

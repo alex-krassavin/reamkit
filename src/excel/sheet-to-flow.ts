@@ -338,17 +338,28 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
     // §20.5: the sheet's chart frames render as blocks after its grid,
     // anchor-ordered (resolved chart data lives in sheet.chartData). Paper
     // leaves out what the sheet keeps for the window (§20.5.2.3).
+    // §18.3.1.99 — a chart sheet's chart prints filling the page between its
+    // margins, whatever size the window last gave it.
+    const pageFilling = ws.grid.chartSheet === true && !screen;
     for (const ref of ws.charts ?? []) {
       if (ref.screenOnly && !screen) continue;
       drawings.push({
         kind: 'chart',
-        chart: {
-          ...anchorFloat(ref.xPt, ref.yPt, scaleSink.value),
-          chartRelId: ref.chartPartPath,
-          width: pt(ref.widthPt * scaleSink.value),
-          height: pt(ref.heightPt * scaleSink.value),
-          paragraphProperties: {},
-        },
+        chart: pageFilling
+          ? {
+              ...anchorFloat(0, 0, 1),
+              chartRelId: ref.chartPartPath,
+              width: pt(printableWidthPt(ws.grid)),
+              height: pt(printableHeightPt(ws.grid)),
+              paragraphProperties: {},
+            }
+          : {
+              ...anchorFloat(ref.xPt, ref.yPt, scaleSink.value),
+              chartRelId: ref.chartPartPath,
+              width: pt(ref.widthPt * scaleSink.value),
+              height: pt(ref.heightPt * scaleSink.value),
+              paragraphProperties: {},
+            },
       });
     }
 
