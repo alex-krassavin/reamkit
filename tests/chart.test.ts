@@ -113,6 +113,26 @@ describe('parseChart', () => {
     expect(parseChart(enc.encode(BAR_CHART), defaultColorResolver)!.valAxisMax).toBeUndefined();
   });
 
+  it('reads where the category axis crosses and where its labels stand (§21.2.2.33)', () => {
+    const catAx = (inner: string): ReturnType<typeof parseChart> =>
+      parseChart(
+        enc.encode(
+          BAR_CHART.replace(
+            '<c:catAx><c:axId val="111"/></c:catAx>',
+            `<c:catAx><c:axId val="111"/>${inner}</c:catAx>`,
+          ),
+        ),
+        defaultColorResolver,
+      );
+    const plain = catAx('<c:tickLblPos val="nextTo"/><c:crosses val="autoZero"/>')!;
+    expect(plain.catAxisCrosses).toBeUndefined();
+    expect(plain.catTickLabelPos).toBeUndefined();
+    const low = catAx('<c:tickLblPos val="low"/><c:crosses val="max"/>')!;
+    expect(low.catTickLabelPos).toBe('low');
+    expect(low.catAxisCrosses).toBe('max');
+    expect(catAx('<c:crossesAt val="2.5"/>')!.catAxisCrosses).toBe(2.5);
+  });
+
   it('reads the chart-space frame beside <c:chart> (§21.2.2.198)', () => {
     const framed = BAR_CHART.replace(
       '<c:chart>',

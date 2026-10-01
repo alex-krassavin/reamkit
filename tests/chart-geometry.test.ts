@@ -200,6 +200,69 @@ describe('the chart-space frame (§21.2.2.198)', () => {
   });
 });
 
+describe('where the category axis crosses (§21.2.2.33, §21.2.2.207)', () => {
+  // Values both sides of zero: the category axis lies on the zero line.
+  const signed: Chart = {
+    ...barChart('col'),
+    title: '',
+    hasLegend: false,
+    series: [{ name: 'S1', values: [-10, 20, 15], colorHex: '4472C4' }],
+  };
+  const labelY = (scene: ChartScene, text: string): number =>
+    scene.labels.find((l) => l.text === text)!.y;
+  // The zero line: the top of the bar below it.
+  const zeroY = (scene: ChartScene): number =>
+    Math.max(...scene.rects.filter((r) => r.fillHex === '4472C4').map((r) => r.y));
+
+  it('labels the categories beside it, on the zero line', () => {
+    const scene = buildBarScene(signed, W, H, measure);
+    const zero = zeroY(scene);
+    expect(labelY(scene, 'A')).toBeLessThan(zero);
+    expect(labelY(scene, 'A')).toBeGreaterThan(zero - 2 * 9);
+    // …and draws the axis there, not along the plot's foot.
+    const flat = scene.polylines.filter(
+      (p) => p.points.length === 2 && p.points[0]![1] === p.points[1]![1],
+    );
+    expect(flat.some((p) => Math.abs(p.points[0]![1] - zero) < 0.01)).toBe(true);
+  });
+
+  it('labels them at the low end when the file says so', () => {
+    const low = buildBarScene({ ...signed, catTickLabelPos: 'low' }, W, H, measure);
+    expect(labelY(low, 'A')).toBeLessThan(zeroY(low) - 2 * 9);
+    expect(
+      buildBarScene({ ...signed, catTickLabelPos: 'none' }, W, H, measure).labels,
+    ).not.toContainEqual(expect.objectContaining({ text: 'A' }));
+  });
+
+  it('grows the bars from where it crosses', () => {
+    // Crossing at the minimum, the bars all stand on the plot's foot.
+    const scene = buildBarScene({ ...signed, catAxisCrosses: 'min' }, W, H, measure);
+    const bars = scene.rects.filter((r) => r.fillHex === '4472C4');
+    const foot = Math.min(...bars.map((r) => r.y));
+    for (const r of bars) expect(r.y).toBeCloseTo(foot, 5);
+  });
+
+  it("steps a crowded axis by the labels it draws, a point's index among them", () => {
+    // No categories: the axis is labelled 1…716, and the labels must not run
+    // into one another.
+    const many: Chart = {
+      ...signed,
+      categories: [],
+      series: [{ name: 'S1', values: Array.from({ length: 716 }, (_, i) => Math.sin(i / 50)) }],
+    };
+    const shown = buildBarScene(many, W, H, measure)
+      .labels.filter((l) => /^\d+$/.test(l.text) && l.align === 'center')
+      .sort((a, b) => a.x - b.x);
+    expect(shown.length).toBeGreaterThan(3);
+    for (let i = 1; i < shown.length; i++) {
+      const gap = shown[i]!.x - shown[i - 1]!.x;
+      expect(gap).toBeGreaterThanOrEqual(
+        (measure(shown[i]!.text, 9) + measure(shown[i - 1]!.text, 9)) / 2,
+      );
+    }
+  });
+});
+
 describe('a chart title longer than the chart is wide', () => {
   it('wraps at its spaces, each line within four fifths of the width', () => {
     const title = 'Ranking of Washington Counties on Days per Patient (ALOS) in 2015';

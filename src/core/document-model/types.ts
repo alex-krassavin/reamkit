@@ -1703,6 +1703,20 @@ export interface Chart {
    * and we printed the ranking upside down).
    */
   readonly catAxisReversed?: boolean;
+  /**
+   * §21.2.2.33/§21.2.2.34 `c:catAx/c:crosses`, `c:crossesAt` — where along the
+   * value axis the category axis lies, and so where bars grow from: at the
+   * axis's minimum or maximum, or at a stated value. Absent ⇒ `autoZero`, at
+   * zero (or the end of the value axis nearest it).
+   */
+  readonly catAxisCrosses?: 'min' | 'max' | number;
+  /**
+   * §21.2.2.207 `c:catAx/c:tickLblPos` — where the category labels stand: at
+   * the low or high end of the value axis, or nowhere. Absent ⇒ `nextTo`,
+   * beside the category axis wherever it crosses — on the zero line of a chart
+   * with values below zero.
+   */
+  readonly catTickLabelPos?: 'low' | 'high' | 'none';
   readonly valAxisTitle?: string; // c:valAx/c:title
   /** §21.2.2.168 — the title of the secondary value axis, when one is drawn. */
   readonly secondaryValAxisTitle?: string;

@@ -460,6 +460,12 @@ function axisStroke(style: ChartLineStyle | undefined): { hex: string; widthPt: 
   return { hex: style?.colorHex ?? AXIS_COLOR, widthPt: style?.widthPt ?? 1 };
 }
 
+/**
+ * The two axis lines: the upright one (in the left axis's style) and the one
+ * lying along (in the bottom axis's). The category axis lies where it crosses
+ * the value axis — `cross.y` up a column chart, `cross.x` along a bar chart —
+ * and the other stands at the plot's edge.
+ */
 function pushAxisLines(
   polylines: Array<ChartPolyline>,
   x0: number,
@@ -467,13 +473,16 @@ function pushAxisLines(
   plotW: number,
   plotH: number,
   chart: Chart,
+  cross: { readonly x?: number; readonly y?: number } = {},
 ): void {
   const val = axisStroke(chart.valAxisLine);
+  const x = x0 + (cross.x ?? 0);
+  const y = y0 + (cross.y ?? 0);
   if (val) {
     polylines.push({
       points: [
-        [x0, y0],
-        [x0, y0 + plotH],
+        [x, y0],
+        [x, y0 + plotH],
       ],
       strokeHex: val.hex,
       widthPt: val.widthPt,
@@ -483,8 +492,8 @@ function pushAxisLines(
   if (cat) {
     polylines.push({
       points: [
-        [x0, y0],
-        [x0 + plotW, y0],
+        [x0, y],
+        [x0 + plotW, y],
       ],
       strokeHex: cat.hex,
       widthPt: cat.widthPt,
@@ -535,8 +544,44 @@ function buildFrame(
       : undefined;
   const tickVals2 = scale2 ? ticks(scale2) : [];
 
+  // §21.2.2.33/§21.2.2.207 — where the category axis crosses the value axis
+  // (at zero, unless the file says its minimum, its maximum or a value), and
+  // so where its labels stand: beside it there (`nextTo`), or at the low or
+  // high end of the value axis. A chart with values below zero has them on
+  // its zero line, as Excel and Calc draw it — 47813.xlsx labels its sine and
+  // cosine along the middle, where we put them under the plot.
+  const crosses = chart.catAxisCrosses;
+  const crossValue = Math.min(
+    Math.max(
+      crosses === 'min' ? scale.min : crosses === 'max' ? scale.max : (crosses ?? 0),
+      scale.min,
+    ),
+    scale.max,
+  );
+  const labelsAt: 'start' | 'cross' | 'end' | 'none' =
+    chart.catTickLabelPos === 'none'
+      ? 'none'
+      : chart.catTickLabelPos === 'low'
+        ? 'start'
+        : chart.catTickLabelPos === 'high'
+          ? 'end'
+          : crossValue <= scale.min
+            ? 'start'
+            : crossValue >= scale.max
+              ? 'end'
+              : 'cross';
+  // No <c:cat> means the categories are the point indices, which is what
+  // Excel and Calc both label the axis with — an unlabelled category axis
+  // leaves the bars standing on nothing.
+  const catText = (c: number): string => chart.categories[c] ?? String(c + 1);
+  const widestCat = Math.max(
+    0,
+    ...Array.from({ length: nCats }, (_, c) => measure(catText(c), CHART_LABEL_PT)),
+  );
+  const catBand = CHART_LABEL_PT * 1.6;
+
   const title = titleLines(chart, wPt, measure);
-  const top = 4 + titleHeight(title);
+  const top = 4 + titleHeight(title) + (!horizontal && labelsAt === 'end' ? catBand : 0);
   const legend = buildLegendBlock(chart, wPt, hPt, measure);
   const tick2W =
     scale2 && !horizontal
@@ -547,10 +592,16 @@ function buildFrame(
   // A bar chart's value labels stand centred under their ticks along the
   // foot, so the last one reaches half its width past the plot's end: room is
   // kept for it inside the frame, or "80" is cut in two by the frame's edge.
-  const lastTick = tickVals[tickVals.length - 1];
-  const lastTickHalf =
-    horizontal && lastTick !== undefined ? measure(fmtVal(lastTick), CHART_LABEL_PT) / 2 : 0;
-  const plotRight = wPt - 4 - legend.rightWidth - tick2W - lastTickHalf;
+  const tickHalf = (v: number | undefined): number =>
+    horizontal && v !== undefined ? measure(fmtVal(v), CHART_LABEL_PT) / 2 : 0;
+  const lastTickHalf = tickHalf(tickVals[tickVals.length - 1]);
+  const catLabelW = Math.min(wPt * 0.4, widestCat + 6);
+  const plotRight =
+    wPt -
+    4 -
+    legend.rightWidth -
+    tick2W -
+    (horizontal && labelsAt === 'end' ? catLabelW : lastTickHalf);
 
   // The left of the plot holds the axis that stands upright, the foot of it
   // the one that lies along — the value axis in a column chart, the category
@@ -558,24 +609,29 @@ function buildFrame(
   // by the value ticks whatever the direction ran a bar chart's category names
   // out past the frame (dataValidationTableRange.xlsx's "Grays Harbor" beside
   // ticks no wider than "80"). A name is given at most two fifths of the width.
+  // The category labels take room only where they stand at the plot's edge;
+  // on the zero line they stand inside it.
   const tickLabelW = Math.max(0, ...tickVals.map((v) => measure(fmtVal(v), CHART_LABEL_PT))) + 4;
-  const catLabelW = Math.min(
-    wPt * 0.4,
-    Math.max(0, ...chart.categories.map((t) => measure(t, CHART_LABEL_PT))) + 6,
-  );
   const axisTitleBand = CHART_LABEL_PT * 1.5;
   const leftTitle = horizontal ? chart.catAxisTitle : chart.valAxisTitle;
   const footTitle = horizontal ? chart.valAxisTitle : chart.catAxisTitle;
-  const x0 = 4 + (leftTitle ? axisTitleBand : 0) + (horizontal ? catLabelW : tickLabelW);
-  const y0 = 4 + legend.bottomHeight + (footTitle ? axisTitleBand : 0) + CHART_LABEL_PT * 1.6;
+  const x0 =
+    4 +
+    (leftTitle ? axisTitleBand : 0) +
+    (horizontal ? (labelsAt === 'start' ? catLabelW : tickHalf(tickVals[0])) : tickLabelW);
+  const y0 =
+    4 +
+    legend.bottomHeight +
+    (footTitle ? axisTitleBand : 0) +
+    (horizontal || labelsAt === 'start' ? catBand : 0);
   const plotW = Math.max(1, plotRight - x0);
   const plotH = Math.max(1, hPt - top - y0);
 
   const valueOffset = (v: number): number =>
     ((v - scale.min) / (scale.max - scale.min)) * (horizontal ? plotW : plotH);
-  // The category axis crosses where zero is, or at the end of the axis nearest
-  // it: bars over 93…97 grow up from 91, the bottom of their axis.
-  const zeroOffset = valueOffset(Math.min(Math.max(0, scale.min), scale.max));
+  // Bars grow from where the category axis crosses: zero, or the end of the
+  // axis nearest it — bars over 93…97 grow up from 91, the bottom of their axis.
+  const zeroOffset = valueOffset(crossValue);
 
   // §21.2.2.145 — the plot rectangle's own fill and rule, drawn UNDER the
   // gridlines and the data. Chart_Plot_BorderLine_Style.docx rules its plot in
@@ -697,31 +753,33 @@ function buildFrame(
   // Excel and Calc both thin a crowded axis; drawing all of them turned
   // 47813.xlsx's 1700 points into a solid black bar under the plot. The step is
   // measured, not guessed: the widest label plus a gap, over the slot.
-  const need = horizontal
-    ? CHART_LABEL_PT * 1.4
-    : Math.max(0, ...chart.categories.map((t) => measure(t, CHART_LABEL_PT))) + 4;
+  // The labels measured are the labels drawn: a chart with no <c:cat> is
+  // labelled with its point indices, and measuring the categories it does not
+  // have stepped 47813.xlsx's 716 points by five, its numbers run together.
+  const need = horizontal ? CHART_LABEL_PT * 1.4 : widestCat + 4;
   const step = Math.max(1, Math.ceil(need / Math.max(slot, 0.01)));
-  for (let c = 0; c < nCats; c += step) {
-    // No <c:cat> means the categories are the point indices, which is what
-    // Excel and Calc both label the axis with — an unlabelled category axis
-    // leaves the bars standing on nothing.
-    const cat = chart.categories[c] ?? String(c + 1);
+  // Where the labels stand across the axis: beside the plot's start, on the
+  // crossing, or beside its end.
+  const across =
+    labelsAt === 'start' ? 0 : labelsAt === 'end' ? (horizontal ? plotW : plotH) : zeroOffset;
+  for (let c = 0; labelsAt !== 'none' && c < nCats; c += step) {
+    const cat = catText(c);
     if (!cat) continue;
     const center = (horizontal ? y0 : x0) + c * slot + slot / 2;
     if (horizontal) {
       labels.push({
         text: cat,
-        x: x0 - 3,
+        x: labelsAt === 'end' ? x0 + across + 3 : x0 + across - 3,
         y: center - CHART_LABEL_PT / 3,
         sizePt: CHART_LABEL_PT,
         colorHex: LABEL_COLOR,
-        align: 'right',
+        align: labelsAt === 'end' ? 'left' : 'right',
       });
     } else {
       labels.push({
         text: cat,
         x: center,
-        y: y0 - CHART_LABEL_PT,
+        y: labelsAt === 'end' ? y0 + across + CHART_LABEL_PT * 0.4 : y0 + across - CHART_LABEL_PT,
         sizePt: CHART_LABEL_PT,
         colorHex: LABEL_COLOR,
         align: 'center',
@@ -729,7 +787,15 @@ function buildFrame(
     }
   }
 
-  pushAxisLines(polylines, x0, y0, plotW, plotH, chart);
+  pushAxisLines(
+    polylines,
+    x0,
+    y0,
+    plotW,
+    plotH,
+    chart,
+    horizontal ? { x: zeroOffset } : { y: zeroOffset },
+  );
   legend.emit(rects, labels);
 
   return {

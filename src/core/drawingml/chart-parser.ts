@@ -213,6 +213,14 @@ export function parseChart(
   // §21.2.2.134 — the category axis may run the other way, which is how a
   // ranked bar chart puts its first row at the top.
   const catAxisReversed = axisOrientation(catAxNode) === 'maxMin';
+  // §21.2.2.33/§21.2.2.34/§21.2.2.207 — where the category axis crosses the
+  // value axis, and where its labels stand.
+  const catAxisCrosses = axisCrossing(catAxNode);
+  const tickLblPos = catAxNode
+    ? poVal(poChildren(catAxNode).find((c) => poIs(c, 'c:tickLblPos')))
+    : undefined;
+  const catTickLabelPos =
+    tickLblPos === 'low' || tickLblPos === 'high' || tickLblPos === 'none' ? tickLblPos : undefined;
   // §21.2.2.198 — the chart-space frame sits beside <c:chart>, not inside it.
   const chartSpace = tree.find((c) => poIs(c, 'c:chartSpace'));
   const spaceSpPr = poChildren(chartSpace).find((c) => poIs(c, 'c:spPr'));
@@ -273,6 +281,8 @@ export function parseChart(
     ...(showValues ? { showValues: true } : {}),
     ...(catAxisTitle ? { catAxisTitle } : {}),
     ...(catAxisReversed ? { catAxisReversed } : {}),
+    ...(catAxisCrosses !== undefined ? { catAxisCrosses } : {}),
+    ...(catTickLabelPos ? { catTickLabelPos } : {}),
     ...(valAxisTitle ? { valAxisTitle } : {}),
     ...(secondaryValAxisTitle ? { secondaryValAxisTitle } : {}),
     ...(scatterStyle ? { scatterStyle } : {}),
@@ -571,6 +581,20 @@ function axisTitle(plotArea: PoNode, axTag: string): string | undefined {
  */
 // §21.2.2.157 c:valAx/c:scaling/c:min|c:max — an axis end the author fixed.
 /** §21.2.2.134 `c:scaling/c:orientation` — `minMax` (the default) or `maxMin`. */
+/**
+ * §21.2.2.33/§21.2.2.34 — where an axis crosses the one it is drawn against:
+ * `crossesAt` a value, or `crosses` at that axis's minimum or maximum.
+ * undefined for `autoZero`, the default.
+ */
+function axisCrossing(ax: PoNode | undefined): 'min' | 'max' | number | undefined {
+  if (!ax) return undefined;
+  const at = poChildren(ax).find((c) => poIs(c, 'c:crossesAt'));
+  const value = at ? Number(poAttr(at, 'val')) : Number.NaN;
+  if (Number.isFinite(value)) return value;
+  const crosses = poVal(poChildren(ax).find((c) => poIs(c, 'c:crosses')));
+  return crosses === 'min' || crosses === 'max' ? crosses : undefined;
+}
+
 function axisOrientation(ax: PoNode | undefined): string | undefined {
   const scaling = ax ? poChildren(ax).find((c) => poIs(c, 'c:scaling')) : undefined;
   return scaling ? poVal(poChildren(scaling).find((c) => poIs(c, 'c:orientation'))) : undefined;
