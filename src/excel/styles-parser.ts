@@ -27,11 +27,11 @@ import type {
   XlsxStyles,
   XlsxVerticalAlign,
 } from '@/core/spreadsheet-model';
-import { applyColorMods } from '@/core/drawingml/colors';
 import { resolveAlternateContent } from '@/core/opc/alternate-content';
 import { resolveInternalEntities } from '@/core/opc/xml-entities';
 
 import { INDEXED_COLORS } from '@/core/indexed-colors';
+import { applyTint } from '@/excel/tint';
 
 export { INDEXED_COLORS };
 
@@ -561,20 +561,3 @@ const THEME_SLOTS: ReadonlyArray<string> = [
   'hlink',
   'folHlink',
 ];
-
-/**
- * §18.8.19 `tint` — lighten (positive) or darken (negative) a theme colour by
- * scaling its HSL luminance. Excel writes it on nearly every theme colour it
- * uses, so ignoring it is not much better than ignoring the colour: a `theme="2"
- * tint="-0.5"` band is half as light as its slot.
- */
-function applyTint(hex: string, tint: number): string {
-  if (!Number.isFinite(tint) || tint === 0) return hex;
-  // The same luminance arithmetic DrawingML spells as lumMod/lumOff.
-  return tint < 0
-    ? applyColorMods(hex, [{ kind: 'lumMod', val: 1 + tint }])
-    : applyColorMods(hex, [
-        { kind: 'lumMod', val: 1 - tint },
-        { kind: 'lumOff', val: tint },
-      ]);
-}
