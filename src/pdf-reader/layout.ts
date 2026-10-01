@@ -2515,7 +2515,7 @@ function inkSpan(runs: ReadonlyArray<TextRun>): { x: number; width: number } {
       ? r.spaceWidthPt
       : (r.fontSizePt || 10) * 0.25;
   const lead = (/^\s*/u.exec(first.text)?.[0].length ?? 0) * space(first);
-  const trail = (/\s*$/u.exec(last.text)?.[0].length ?? 0) * space(last);
+  const trail = (last.text.length - last.text.trimEnd().length) * space(last);
   const x = first.x + lead;
   return { x, width: Math.max(0, last.endX - trail - x) };
 }

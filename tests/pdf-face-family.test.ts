@@ -79,4 +79,13 @@ describe('the family a PDF face belongs to', () => {
     // `MS-Mincho` is a family of its own; "Mincho" is no weight.
     expect(familyOfFace('MS-Mincho')).toBe('MS Mincho');
   });
+
+  it('reads a name of a hundred thousand capitals in time linear in it', () => {
+    // From every capital of a run, `([A-Z]+)([A-Z][a-z])` read the rest of the
+    // run again before giving up; the name is the file's own, any length.
+    const name = 'Z'.repeat(100_000);
+    const start = performance.now();
+    expect(familyOfFace(name)).toBe(name);
+    expect(performance.now() - start).toBeLessThan(1000);
+  });
 });

@@ -1504,12 +1504,16 @@ export function familyOfFace(baseFont: string): string {
         ? name.replace(/-/gu, ' ')
         : (GLUED_STYLE.exec(name)?.[1] ?? name);
   const family = whole.replace(/(?:PSMT|PS|MT)$/u, '') || whole;
-  return family
-    .replace(/([a-z])([A-Z])/gu, '$1 $2')
-    .replace(/([A-Z]+)([A-Z][a-z])/gu, '$1 $2')
-    .replace(/\bDeja Vu\b/u, 'DejaVu')
-    .replace(/\s+/gu, ' ')
-    .trim();
+  return (
+    family
+      .replace(/([a-z])([A-Z])/gu, '$1 $2')
+      // From the start of a run of capitals only: a match never starts inside
+      // one, and each start inside a long run read the rest of it again.
+      .replace(/(?<![A-Z])([A-Z]+)([A-Z][a-z])/gu, '$1 $2')
+      .replace(/\bDeja Vu\b/u, 'DejaVu')
+      .replace(/\s+/gu, ' ')
+      .trim()
+  );
 }
 
 /**

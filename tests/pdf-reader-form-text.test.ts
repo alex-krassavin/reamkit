@@ -181,3 +181,99 @@ describe('a field with a value and no appearance (§12.7.3.3)', () => {
     expect(xOf(right)).toBeGreaterThan(xOf(left) + 20);
   });
 });
+
+/** A one-page PDF whose only mark is the annotation `annotOf` makes, under the form `acroForm`. */
+function buildAnnotPdf(
+  annotOf: (doc: PdfDocument) => Map<string, PdfValue>,
+  acroForm: Record<string, PdfValue>,
+): Uint8Array {
+  const doc = new PdfDocument();
+  const font = doc.add(
+    dict({ Type: name('Font'), Subtype: name('Type1'), BaseFont: name('Helvetica') }),
+  );
+  const content = doc.add(stream({}, new TextEncoder().encode('')));
+  const pagesMap = dict({ Type: name('Pages'), Kids: [], Count: 1 });
+  const pagesRef = doc.add(pagesMap);
+  const page = doc.add(
+    dict({
+      Type: name('Page'),
+      Parent: pagesRef,
+      MediaBox: [0, 0, 300, 300],
+      Contents: content,
+      Annots: [annotOf(doc)],
+    }),
+  );
+  (pagesMap.get('Kids') as Array<PdfValue>).push(page);
+  const catalog = doc.add(
+    dict({
+      Type: name('Catalog'),
+      Pages: pagesRef,
+      AcroForm: dict({ Fields: [], DR: dict({ Font: dict({ Helv: font }) }), ...acroForm }),
+    }),
+  );
+  return doc.build(catalog);
+}
+
+describe('annotation text built to stall the reader', () => {
+  // A long run that something other than the end follows: each expression
+  // that read it tried every position of the run, quadratic in its length.
+  const timedText = (pdf: Uint8Array): { text: string; ms: number } => {
+    const start = performance.now();
+    const file = PdfFile.parse(pdf);
+    const text = extractPageText(file, file.pages()[0]!)
+      .map((r) => r.text)
+      .join('');
+    return { text, ms: performance.now() - start };
+  };
+
+  it('reads a FreeText note with a long run of blanks inside, in linear time', () => {
+    const blanks = ' '.repeat(100_000);
+    const note = dict({
+      Type: name('Annot'),
+      Subtype: name('FreeText'),
+      Contents: `x${blanks}y`,
+      DA: '/Helv 12 Tf 0 g',
+      Rect: [40, 200, 260, 222],
+    });
+    const { text, ms } = timedText(buildAnnotPdf(() => note, {}));
+    expect(ms).toBeLessThan(1000);
+    expect(text.startsWith('x')).toBe(true);
+  });
+
+  it('reads a /DA with a long run of figures in it, in linear time', () => {
+    const widget = dict({
+      Type: name('Annot'),
+      Subtype: name('Widget'),
+      FT: name('Tx'),
+      V: 'typed in',
+      DA: `/Helv 12 Tf ${'0'.repeat(100_000)} g`,
+      Rect: [40, 200, 200, 222],
+    });
+    const { text, ms } = timedText(buildAnnotPdf(() => widget, {}));
+    expect(ms).toBeLessThan(1000);
+    expect(text).toContain('typed in');
+  });
+
+  it('rebuilds a field over an appearance of variable text that never ends, in linear time', () => {
+    const widget = (doc: PdfDocument): Map<string, PdfValue> =>
+      dict({
+        Type: name('Annot'),
+        Subtype: name('Widget'),
+        FT: name('Tx'),
+        V: 'typed in',
+        DA: '/Helv 12 Tf 0 g',
+        Rect: [40, 200, 200, 222],
+        AP: dict({
+          N: doc.add(
+            stream(
+              { Type: name('XObject'), Subtype: name('Form'), BBox: [0, 0, 160, 22] },
+              new TextEncoder().encode('/Tx BMC '.repeat(40_000)),
+            ),
+          ),
+        }),
+      });
+    const { text, ms } = timedText(buildAnnotPdf(widget, { NeedAppearances: true }));
+    expect(ms).toBeLessThan(1000);
+    expect(text).toContain('typed in');
+  });
+});
