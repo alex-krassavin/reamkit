@@ -86,6 +86,15 @@ describe('a workbook as images of its sheets', () => {
     expect(shape).toBeGreaterThan(cellWords);
   });
 
+  it("flags a noted cell with the window's red corner", async () => {
+    const noted = await svgOf(
+      buildXlsx({ rows: [['noted']], comments: [{ ref: 'A1', author: 'Ada', text: 'look' }] }),
+    );
+    const plain = await svgOf(buildXlsx({ rows: [['noted']] }));
+    expect(noted).toContain('fill="#FF0000"');
+    expect(plain).not.toContain('fill="#FF0000"');
+  });
+
   it("rules the window's gridlines, and none where the sheet hides them", async () => {
     const shown = await svgOf(buildXlsx({ rows: [['x', 'y']] }));
     const hidden = await svgOf(

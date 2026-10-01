@@ -314,3 +314,82 @@ describe('cell comments — end to end (E-SHEET W7)', () => {
     expect(pdf.length).toBeGreaterThan(1000);
   });
 });
+
+describe('noted cells on a screen (E-SHEET W7)', () => {
+  // The flag a window puts in a noted cell's corner, by the cell's text.
+  const flagOf = (body: ReadonlyArray<BodyElement>, text: string): unknown => {
+    for (const el of body) {
+      if (el.kind !== 'table') continue;
+      for (const row of el.table.rows) {
+        for (const cell of row.cells) {
+          const words = cell.content
+            .map((b) =>
+              b.kind === 'paragraph' ? b.paragraph.runs.map((r) => r.text).join('') : '',
+            )
+            .join('');
+          if (words === text) return cell.properties.noteFlag;
+        }
+      }
+    }
+    throw new Error(`no cell "${text}"`);
+  };
+
+  it('flags every noted cell, the hidden notes too, and none on paper', () => {
+    const doc = readXlsxToSheetDoc(
+      buildXlsx({
+        rows: [
+          ['a', 'b'],
+          ['c', 'd'],
+        ],
+        comments: [
+          { ref: 'B2', author: 'Ada', text: 'shown', shownAnchor: '2, 15, 0, 10, 4, 15, 4, 16' },
+          { ref: 'A1', author: 'Bo', text: 'hidden' },
+        ],
+      }),
+    );
+    const screen = projectSheetDoc(doc, { screen: true }).body;
+    expect(flagOf(screen, 'a')).toEqual({ kind: 'note', text: 'Bo: hidden' });
+    expect(flagOf(screen, 'd')).toEqual({ kind: 'note', text: 'Ada: shown' });
+    expect(flagOf(screen, 'b')).toBeUndefined();
+    expect(flagOf(projectSheetDoc(doc).body, 'a')).toBeUndefined();
+  });
+
+  it('flags a threaded comment as one, and reads as its conversation', () => {
+    // Excel writes a legacy placeholder note beside every thread; it is no
+    // part of what anyone wrote.
+    const doc = readXlsxToSheetDoc(
+      buildXlsx({
+        rows: [['asked']],
+        comments: [
+          { ref: 'A1', author: 'tc=1', text: '[Threaded comment] Your version of Excel…' },
+        ],
+        threadedComments: [
+          { ref: 'A1', personId: 'p1', text: 'question?' },
+          { ref: 'A1', personId: 'p2', text: 'answer.' },
+        ],
+        persons: [
+          { id: 'p1', name: 'Ada' },
+          { id: 'p2', name: 'Bo' },
+        ],
+      }),
+    );
+    expect(flagOf(projectSheetDoc(doc, { screen: true }).body, 'asked')).toEqual({
+      kind: 'thread',
+      text: 'Ada: question?\nBo: answer.',
+    });
+  });
+
+  it('puts the flag in the left corner on a sheet that reads from the right', () => {
+    const doc = readXlsxToSheetDoc(
+      buildXlsx({
+        sheets: [{ name: 'R', rows: [['noted']], rightToLeft: true }],
+        comments: [{ ref: 'A1', author: 'Ada', text: 'here' }],
+      }),
+    );
+    expect(flagOf(projectSheetDoc(doc, { screen: true }).body, 'noted')).toEqual({
+      kind: 'note',
+      text: 'Ada: here',
+      atLeft: true,
+    });
+  });
+});

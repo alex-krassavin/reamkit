@@ -7,6 +7,7 @@
 
 import type {
   BodyElement,
+  CellNoteFlag,
   FloatAnchor,
   HeaderFooterReference,
   Run,
@@ -33,6 +34,7 @@ import { EMPTY_STYLE_SHEET, resolveBodyStyles } from '@/core/style-cascade';
 import { buildHeaderFooterContent } from '@/excel/header-footer';
 import {
   cellPaintsVisibly,
+  noteKey,
   printableHeightPt,
   printableWidthPt,
   resolvePrintArea,
@@ -41,6 +43,7 @@ import {
   slicerTable,
   worksheetToBody,
 } from '@/excel/print-model';
+import { parseCellRef } from '@/excel/cell-reference';
 
 // Synthetic relationship ids keying each sheet's header/footer band content in
 // FlowDoc.headersFooters (E-SHEET W4). The sheet's index is appended — the map
@@ -261,6 +264,9 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
         ? { defaultFontPt: sheet.styles.fonts[0].sizePt }
         : {}),
       ...(options.losses ? { losses: options.losses } : {}),
+      ...(screen && ws.comments && ws.comments.length > 0
+        ? { noteFlags: noteFlagsOf(ws.comments) }
+        : {}),
       scaleSink,
       bandSink,
       headingSink,
@@ -565,6 +571,42 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
     // A sheet's drawings float over its cells and hide what they cover.
     floatsOverText: true,
   };
+}
+
+/**
+ * E-SHEET W7 — what a window flags: each cell that carries a note or a
+ * comment, with what hovering over it shows. A cell with a threaded comment is
+ * flagged as one, and reads as its conversation — Excel writes a legacy
+ * placeholder note beside every thread ("[Threaded comment] Your version of
+ * Excel allows you to read…"), which is no part of what anyone wrote.
+ *
+ * @param comments The sheet's legacy notes and threaded comments.
+ * @returns The flags by absolute cell (print-model `noteKey`).
+ */
+function noteFlagsOf(comments: ReadonlyArray<SheetComment>): Map<string, CellNoteFlag> {
+  const byCell = new Map<string, { notes: Array<string>; thread: Array<string> }>();
+  for (const c of comments) {
+    let cell: { row: number; column: number };
+    try {
+      cell = parseCellRef(c.ref);
+    } catch {
+      continue;
+    }
+    const k = noteKey(cell.row, cell.column);
+    const entry = byCell.get(k) ?? { notes: [], thread: [] };
+    (c.threaded ? entry.thread : entry.notes).push(c.author ? `${c.author}: ${c.text}` : c.text);
+    byCell.set(k, entry);
+  }
+  const out = new Map<string, CellNoteFlag>();
+  for (const [k, { notes, thread }] of byCell) {
+    out.set(
+      k,
+      thread.length > 0
+        ? { kind: 'thread', text: thread.join('\n') }
+        : { kind: 'note', text: notes.join('\n') },
+    );
+  }
+  return out;
 }
 
 // Excel's note box: the text stands this far in from the outline, and the

@@ -17,6 +17,7 @@ import type {
   CellBorders,
   CellDataBar,
   CellIcon,
+  CellNoteFlag,
   CellProperties,
   CellShading,
   CellSparkline,
@@ -829,6 +830,9 @@ interface PrintModelOptions {
   // drawings anchored to the grid can move with it. Zero when the sheet does
   // not print its headings.
   readonly headingSink?: { dxPt: number; dyPt: number };
+  // E-SHEET W7 — the cells a window flags as carrying a note, by absolute
+  // (row, column) — see CellProperties.noteFlag. Absent on paper.
+  readonly noteFlags?: ReadonlyMap<string, CellNoteFlag>;
   // How far the sheet's drawings reach from its origin, in points. A drawing
   // anchored past the last cell still has to be printed, so fit-to-page has to
   // fit IT too — measuring only the range the cells occupy left a sheet whose
@@ -1821,6 +1825,8 @@ function gridBody(
         }
       }
 
+      // A cell carrying a note, as a window flags it (E-SHEET W7).
+      const noteFlag = print.noteFlags?.get(noteKey(absR, absC));
       // A data-validation `list` cell (E-SHEET SV1). The HTML writer paints an
       // affordance for it; the paginated layout deliberately does not — see
       // CellProperties.dropdown.
@@ -1863,6 +1869,7 @@ function gridBody(
           ? { borders: { ...borders, ...(overflowRightRule ? { right: overflowRightRule } : {}) } }
           : {}),
         ...(dropdown ? { dropdown: true } : {}),
+        ...(noteFlag ? { noteFlag } : {}),
         // §18.8.1: without wrapText a cell's text is one line, cut at its box.
         // Rotated and shrink-to-fit cells have their own handling; a merged one
         // does not — its box is simply bigger, and letting it wrap stacked
@@ -2611,6 +2618,11 @@ function key(row: number, col: number): string {
   return `${row},${col}`;
 }
 
+/** The key {@link PrintModelOptions.noteFlags} is looked up by: absolute row and column. */
+export function noteKey(row: number, col: number): string {
+  return key(row, col);
+}
+
 // §18.3.1.33 — the ranges of `list` data validations that should show an in-cell
 // dropdown. ECMA's showDropDown is INVERTED ("1" HIDES the dropdown), so a list
 // validation contributes its ranges unless the flag is set (E-SHEET SV1).
@@ -3253,13 +3265,15 @@ function mirrorCell(cell: TableCell): TableCell {
   // An overflow span paints only the column its text came from, which is now
   // the span's last one.
   const paintAtEnd = p.paintColumns !== undefined && p.paintColumns < span;
-  if (!p.borders && !p.dataBar && !paintAtEnd) return cell;
+  if (!p.borders && !p.dataBar && !p.noteFlag && !paintAtEnd) return cell;
   return {
     ...cell,
     properties: {
       ...p,
       ...(p.borders ? { borders: mirrorBorders(p.borders) } : {}),
       ...(p.dataBar ? { dataBar: mirrorDataBar(p.dataBar) } : {}),
+      // A note's flag sits in the corner the cell ENDS at — its left one here.
+      ...(p.noteFlag ? { noteFlag: { ...p.noteFlag, atLeft: !p.noteFlag.atLeft } } : {}),
       ...(paintAtEnd ? { paintAtEnd: true } : {}),
     },
   };

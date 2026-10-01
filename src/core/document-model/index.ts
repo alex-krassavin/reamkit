@@ -20,6 +20,7 @@ export type {
   CellShading,
   CellDataBar,
   CellIcon,
+  CellNoteFlag,
   CellIconShape,
   CellSparkline,
   Chart,

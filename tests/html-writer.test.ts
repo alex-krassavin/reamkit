@@ -148,6 +148,17 @@ describe('html writer (FlowDoc adapter)', () => {
     expect(sheet('Clean')).not.toContain('D4D4D4');
   });
 
+  it('flags a noted cell in its corner, and shows the note on hover', async () => {
+    const xlsx = buildXlsx({
+      rows: [['noted', 'plain']],
+      comments: [{ ref: 'A1', author: 'Ada', text: 'look here' }],
+    });
+    const html = decode(await Ream.parse(xlsx).convert('html'));
+    expect(html).toMatch(/<td title="Ada: look here" style="[^"]*position:relative/u);
+    expect(html).toContain('border-top:4.5pt solid #FF0000');
+    expect(html.match(/<td title=/gu)).toHaveLength(1);
+  });
+
   it('leaves an edge to the neighbour that rules it', async () => {
     // A gridline and a thin rule come out the same pixel wide, and collapsed
     // borders then go to the cell above or to the left: a cell ruled all

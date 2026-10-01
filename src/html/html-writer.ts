@@ -21,6 +21,7 @@ import type {
   BodyElement,
   Border,
   CellIcon,
+  CellNoteFlag,
   CellSparkline,
   Chart,
   ChartBlock,
@@ -176,6 +177,9 @@ const BASE_CSS = [
   '.sheet{margin:0 0 24pt}',
   '.sheet-name{font:600 11pt/1.4 sans-serif;margin:0 0 6pt;color:#333}',
   '.surface{position:relative}',
+  // …and over the grid, positioned cells included: a cell flagging its note
+  // is one, and it stood over the note's own box.
+  '.drawing{z-index:1}',
   '.notes{margin-top:18pt;font-size:smaller}',
   '.notes hr{margin:0 0 6pt;border:none;border-top:0.75pt solid #000;width:144pt;margin-left:0}',
   // Comment-range highlight (CM2c) + nested reply indentation (CM4).
@@ -955,7 +959,9 @@ function emitTable(out: Array<string>, table: Table, ctx: EmitCtx): void {
       const claimed = cellGrid
         ? claimedEdges(cellGrid, ri, cs, cs + (cell.properties.colSpan ?? 1) - 1, rowSpan)
         : undefined;
+      const flagInsetPt = noteFlagInset(cell, cs, table.grid);
       emitCell(out, cell, table, ctx, {
+        ...(flagInsetPt > 0 ? { flagInsetPt } : {}),
         ...(claimed && claimed.size > 0 ? { claimed } : {}),
         isHeader: row.properties.isHeader === true,
         firstRow: ri === 0,
@@ -970,6 +976,21 @@ function emitTable(out: Array<string>, table: Table, ctx: EmitCtx): void {
     out.push('</tr>');
   }
   out.push('</table>');
+}
+
+/**
+ * How far a note's flag stands in from the cell's side: the width of the
+ * columns its text only borrowed (CellProperties.paintColumns) — after its own
+ * column, or before it where the span runs leftwards (paintAtEnd).
+ */
+function noteFlagInset(cell: TableCell, colStart: number, grid: ReadonlyArray<number>): number {
+  const p = cell.properties;
+  const span = p.colSpan ?? 1;
+  if (!p.noteFlag || p.paintColumns === undefined || p.paintColumns >= span) return 0;
+  const borrowed = p.paintAtEnd
+    ? grid.slice(colStart, colStart + span - p.paintColumns)
+    : grid.slice(colStart + p.paintColumns, colStart + span);
+  return borrowed.reduce((sum, w) => sum + w, 0);
 }
 
 /** The cell at each row × grid column (a spanning cell at every column it covers). */
@@ -1057,6 +1078,11 @@ interface CellPos {
   readonly stickyLeft?: number;
   /** The sides whose edge a neighbour claims — see {@link claimedEdges}. */
   readonly claimed?: ReadonlySet<'top' | 'bottom' | 'left' | 'right'>;
+  /**
+   * How far in from its side a note's flag stands: a cell whose text ran on
+   * over its neighbours spans them, and the flag belongs at its OWN edge.
+   */
+  readonly flagInsetPt?: number;
 }
 
 function emitCell(
@@ -1142,8 +1168,17 @@ function emitCell(
     css.push(`z-index:${z}`);
     if (!cell.properties.shading) css.push('background-color:#fff');
   }
+  // A cell carrying a note (E-SHEET W7): the window's corner flag, and the
+  // note itself on hover, as Excel shows it. The flag is positioned in the
+  // cell, which a sticky cell already is.
+  const note = cell.properties.noteFlag;
+  if (note) {
+    attrs.push(`title="${escapeAttr(note.text)}"`);
+    if (pos.stickyTop === undefined && pos.stickyLeft === undefined) css.push('position:relative');
+  }
 
   out.push(`<${tag}${attrs.length > 0 ? ` ${attrs.join(' ')}` : ''} style="${css.join(';')}">`);
+  if (note) out.push(cellNoteFlag(note, pos.flagInsetPt ?? 0));
   // Data-validation dropdown (E-SHEET SV1): a ▾ button floated to the right edge.
   if (cell.properties.dropdown) out.push(cellDropdownSvg());
   // Conditional-format icon (E-SHEET SC1c): a glyph at the cell's left edge, on
@@ -1154,6 +1189,17 @@ function emitCell(
   if (cell.properties.sparkline) out.push(cellSparklineSvg(cell.properties.sparkline));
   for (const child of cell.content) emitBlock(out, child, ctx);
   out.push(`</${tag}>`);
+}
+
+// The corner flag of a cell carrying a note: a small triangle, red for a note
+// and purple for a threaded comment, in the top corner the cell ends at.
+function cellNoteFlag(note: CellNoteFlag, insetPt: number): string {
+  const side = note.atLeft ? 'left' : 'right';
+  return (
+    `<span aria-hidden="true" style="position:absolute;top:0;${side}:${fmt(insetPt)}pt;width:0;height:0;` +
+    `border-top:4.5pt solid #${note.kind === 'thread' ? '7030A0' : 'FF0000'};` +
+    `border-${note.atLeft ? 'right' : 'left'}:4.5pt solid transparent"></span>`
+  );
 }
 
 // A mini inline-SVG sparkline, reusing the same geometry the PDF layout draws.

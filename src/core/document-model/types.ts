@@ -879,6 +879,18 @@ export interface CellDataBar {
 }
 
 /**
+ * How a window flags a cell that carries a note: red for a legacy note, purple
+ * for a threaded comment, in the top corner on the side the cell ends — the
+ * right, or the left on a sheet that reads from the right.
+ */
+export interface CellNoteFlag {
+  readonly kind: 'note' | 'thread';
+  /** The note as one reads it on hover: author and text, a conversation line by line. */
+  readonly text: string;
+  readonly atLeft?: boolean;
+}
+
+/**
  * A conditional-format icon: a small glyph at the cell's left, chosen by the
  * value's bucket (E-SHEET SC1c). Format-neutral — the xlsx layer maps Excel's
  * named icon families (3TrafficLights, 3Arrows, …) onto these shapes + colours.
@@ -976,6 +988,12 @@ export interface CellProperties {
    * dropdown affordance at the cell's right edge (a small button + ▾ glyph).
    */
   readonly dropdown?: boolean;
+  /**
+   * A note or comment on the cell, as a WINDOW flags it (E-SHEET W7): a small
+   * triangle in the cell's top corner, the note's text shown on hover where
+   * the medium can. Set by screen projections only — paper never shows it.
+   */
+  readonly noteFlag?: CellNoteFlag;
   /**
    * The cell's text is not allowed to wrap: it renders on one line and whatever
    * does not fit the cell box is cut, as a spreadsheet cell without `wrapText`

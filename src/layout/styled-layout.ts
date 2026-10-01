@@ -24,6 +24,7 @@ import type {
   CellBorders,
   CellDataBar,
   CellIcon,
+  CellNoteFlag,
   CellSparkline,
   Chart,
   ChartBlock,
@@ -781,6 +782,8 @@ interface CellLayout {
   readonly sparkline?: CellSparkline;
   // A data-validation `list` cell paints a dropdown button at the right edge.
   readonly dropdown?: boolean;
+  /** A note's flag in the cell's top corner (CellProperties.noteFlag). */
+  readonly noteFlag?: CellNoteFlag;
   /**
    * §17.4.71/§21.1.3.17 — the cell's text is turned a quarter, so its lines run
    * along the HEIGHT and stack across the width. The height it asks for is then
@@ -3565,6 +3568,12 @@ const CF_ICON_SIZE_PT = 9;
 const CF_ICON_GUTTER_PT = 12;
 // The unfilled portion of a meter glyph (ratings bars / quarter pie).
 const CF_ICON_EMPTY_HEX = 'BFBFBF';
+
+// The flag a window puts in the corner of a cell carrying a note: Excel's six
+// pixels, red for a note and purple for a threaded comment.
+const NOTE_FLAG_PT = 4.5;
+const NOTE_FLAG_HEX = 'FF0000';
+const NOTE_THREAD_HEX = '7030A0';
 
 // A data-validation `list` cell paints a dropdown button at its right edge
 // (E-SHEET SV1): a light-grey square (thin border) with a dark ▾. Sized to the
@@ -8081,6 +8090,7 @@ function layoutTableCell(
     ...(cell.properties.dataBar ? { dataBar: cell.properties.dataBar } : {}),
     ...(cell.properties.icon ? { icon: cell.properties.icon } : {}),
     ...(cell.properties.sparkline ? { sparkline: cell.properties.sparkline } : {}),
+    ...(cell.properties.noteFlag ? { noteFlag: cell.properties.noteFlag } : {}),
     lines,
     ...(lineGaps.size > 0 ? { lineGaps } : {}),
     ...(nestedTables.length > 0 ? { nestedTables } : {}),
@@ -10267,6 +10277,32 @@ function emitRowChunk(
           });
         }
       }
+    }
+    // A cell carrying a note (E-SHEET W7): a window flags it with a small
+    // triangle in the top corner of the side the cell ends at — red for a
+    // note, purple for a threaded comment.
+    if (cell.noteFlag && cell.mergeRole !== 'middle' && cell.mergeRole !== 'end') {
+      const left = cell.paintOffsetPt ?? 0;
+      const right = left + (cell.paintWidthPt ?? cell.widthPt);
+      const side = Math.min(NOTE_FLAG_PT, row.heightPt, right - left);
+      const top = row.heightPt;
+      const corner = cell.noteFlag.atLeft
+        ? new PathBuilder()
+            .moveTo(left, top)
+            .lineTo(left + side, top)
+            .lineTo(left, top - side)
+        : new PathBuilder()
+            .moveTo(right - side, top)
+            .lineTo(right, top)
+            .lineTo(right, top - side);
+      out.push({
+        type: 'shape',
+        shape: {
+          paths: [corner.close().build()],
+          fillColorHex: cell.noteFlag.kind === 'thread' ? NOTE_THREAD_HEX : NOTE_FLAG_HEX,
+          transform: flipTransform([1, 0, 0, 1, cellX, rowBottom], pageHeight),
+        },
+      });
     }
     // Sparkline (E-SHEET SC2): a mini chart filling the cell's content box,
     // painted in the shapes pass. Its local y-up frame is flipped onto the cell.
