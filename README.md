@@ -27,10 +27,12 @@ Runtime dependencies are minimal: `fflate` (ZIP/Deflate) and `fast-xml-parser`.
 ## Usage
 
 Parse once into the format-neutral interlayer, convert to any target. The
-format (docx/xlsx) is sniffed from the bytes; no fonts to wire up — an open
+format is sniffed from the bytes; no fonts to wire up — an open
 metric-compatible substitute font (Arimo for sans, Tinos for serif, Cousine for
 monospace, plus Carlito/Caladea for Calibri/Cambria — the same families LibreOffice
-substitutes) is fetched automatically based on the document's referenced fonts:
+substitutes) is fetched automatically based on the document's referenced fonts,
+with a Noto face for the Japanese, Korean, Chinese, Arabic, Hebrew or Thai text
+the document holds:
 
 ```ts
 import { Ream } from 'reamkit';
@@ -38,7 +40,7 @@ import { Ream } from 'reamkit';
 // e.g. from an <input type="file"> or a fetch() — anything that yields bytes.
 const bytes = new Uint8Array(await file.arrayBuffer());
 
-const doc = Ream.parse(bytes);            // docx, xlsx, pptx or pdf — sniffed
+const doc = Ream.parse(bytes);            // docx, xlsx, pptx, pdf, doc, xls or ppt — sniffed
 const pdf = await doc.convert('pdf');     // async — fetches a font if needed
 const svg = await doc.convert('svg');     // same parse, different target
 const html = await doc.convert('html');   // flowed HTML — needs no fonts at all
@@ -56,6 +58,13 @@ and `doc.convertWithReport(...)` returns `{ bytes, losses }` (pass
 `strict: true` to throw on the first conversion loss instead). Input/output
 are plain `Uint8Array`s, so wiring this to files, the network, or disk is up
 to you.
+
+An encrypted source opens with its password — a PDF's user password, or an
+Office package's (MS-OFFCRYPTO, Agile and Standard):
+
+```ts
+const doc = Ream.parse(bytes, { password: 'secret' });
+```
 
 ### Bring your own fonts (no network)
 
@@ -139,7 +148,7 @@ rendering — inspect or analyze it without converting:
 
 ```ts
 const doc = Ream.parse(bytes);
-doc.format;     // 'docx' | 'xlsx' | 'pptx' | 'pdf'
+doc.format;     // 'docx' | 'xlsx' | 'pptx' | 'pdf' | 'doc' | 'xls' | 'ppt'
 doc.flow.body;  // paragraphs / tables / images / charts …
 doc.losses;     // read-time losses
 ```
@@ -157,7 +166,9 @@ const pdf = await doc.convert('pdf', { fonts, hyphenator });
 `convert` accepts (beyond the above): `info` (PDF `/Info` metadata — also read
 automatically from the document's `docProps/core.xml`), `attachments`
 (PDF/A-3 associated files), `tagged` (logical structure without full PDF/A),
-`pageWidth`/`pageHeight`/margins overrides.
+`encrypt` (AES-256 with a user and an owner password and the permissions a
+reader keeps: printing, copying, modifying, …), `pageWidth`/`pageHeight`/margins
+overrides.
 
 ### Lower-level APIs
 
@@ -166,6 +177,9 @@ automatically from the document's `docProps/core.xml`), `attachments`
   keeping unused formats out of your bundle); `layoutStyledDocument` produces the
   frozen page model (`PageItem` pages in a top-left `Pt` frame) the page-based
   writers consume (`docxWriter` works from the flow model, before layout).
+- `createConverter({ readers })` — a converter over a reader registry of your
+  own: `detect` names the reader that recognises the bytes, and `convert` reads
+  and converts them in one call, returning `{ bytes, losses }`.
 - `renderStyledPdf` drives the layout engine directly; the typed document
   model is on the `reamkit/document-model` subpath.
 
@@ -187,27 +201,49 @@ encryption, digital signatures (PKCS#7/ECDSA/PAdES/RFC 3161), SVG page
 preview, flowed HTML export, and **docx + xlsx output** (write WordprocessingML
 / SpreadsheetML back out, incl. round-trips). Reads OOXML Transitional and Strict.
 
+A Word document is laid out by Word's own rules, each measured in Word: a line
+as tall as Word sets its faces, two paragraphs standing the larger of their
+spacings apart rather than the sum, widow and orphan control, a heading kept with
+what it heads, table borders that take the room they are wide, a Word 2010
+table placed by its first cell's text, and sections whose lines run down the
+sheet.
+
 **Reads PDF, too.** `Ream.parse` accepts a PDF and reconstructs a `FlowDoc` — a
 tagged PDF from its structure tree (headings, tables, lists, reading order), an
-untagged one heuristically from glyph positions (lines, paragraphs, headings,
-and a clean two-column split). It lifts back the text (via each font's
-`/ToUnicode`, or the embedded program's own `cmap` where there is none, or the
-glyph names its `/Encoding` states — which is all a PDF from TeX gives), the
-font programs themselves, raster images (JPEG verbatim; PNG/Flate/LZW/CCITT-fax
-and **JBIG2** decoded and re-encoded), `/Link` hyperlinks, form-XObject content,
-annotation appearances (drawing one itself where the file supplies none),
-colour set through a named space — device, CIE (`CalGray`, `Lab`) or a
-`Separation`/`DeviceN` run through its own tint transform — and the page's
-artwork: filled / stroked / gradient shapes, clipping paths, tiling patterns,
-stencil image masks, constant alpha, and the Type 3 glyphs that are drawings
-rather than letters. It honours the layers a file turns off (§8.11 optional
-content) and the box it says to show (`/CropBox`), and it decides for itself
-whether a file is a document to re-flow or a page to keep — a paper is mostly
-lines, a form is mostly marks — and there is nothing to configure: a caller
-cannot know which of the two it was handed. It reads modern compressed files (cross-reference
-+ object streams) and encrypted ones (RC4 / AES — the user password is passed to
-`Ream.parse(bytes, { password })`, defaulting to the permissions-only case); a
-filter it does not carry can be handed to it through
+untagged one from where its glyphs stand: lines and paragraphs at the page's own
+pitch, with their indents and alignment; headings and list items; columns of
+any number, breaking and balancing where the page does; tables ruled or set out
+on stops, within a column or across them; code listings; figures, a drawing and
+the labels set on it kept as one group; the hanging entries of an index; and a
+heading's bar as its shading. Running heads and feet become headers and footers,
+their numbers PAGE fields counted in the page's own numerals — a book's roman
+front matter, and a foot of its own for each side of its spreads.
+
+It lifts back the text (via each font's `/ToUnicode`, or the embedded program's
+own `cmap` where there is none, or the glyph names its `/Encoding` states — which
+is all a PDF from TeX gives, its Greek and mathematics included) and the font
+programs themselves: written to `.docx`, each face the page drew with travels
+with the document, rebuilt as TrueType with the page's own advances, kerning and
+ligatures, and embedded where its licence (OS/2 `fsType`) allows — so a line
+breaks where the page broke it, on a machine that has none of its fonts. Raster
+images come back (JPEG verbatim, a CMYK one re-coloured; PNG/Flate/LZW/CCITT-fax
+and **JBIG2** decoded and re-encoded), with `/Link` hyperlinks, form-XObject
+content, annotation and form appearances (drawing one itself where the file
+supplies none), colour set through a named space — device, CIE (`CalGray`,
+`CalRGB`, `Lab`), ICC-based, or a `Separation`/`DeviceN` run through its own
+tint transform — and the page's artwork: filled / stroked / gradient shapes,
+dashes and caps, clipping paths, tiling patterns, stencil image masks, opacity,
+and the Type 3 glyphs that are drawings rather than letters.
+
+It honours the layers a file turns off (§8.11 optional content), the box it says
+to show (`/CropBox`) and the way it turns a page (`/Rotate` — a page whose words
+run down its sheet comes back as a section set that way), and it decides for
+itself whether a file is a document to re-flow or a page to keep — a paper is
+mostly lines, a form is mostly marks — and there is nothing to configure: a
+caller cannot know which of the two it was handed. It reads modern compressed
+files (cross-reference + object streams) and encrypted ones (RC4 / AES — the
+user password is passed to `Ream.parse(bytes, { password })`, defaulting to the
+permissions-only case); a filter it does not carry can be handed to it through
 `Ream.parse(bytes, { filters })`.
 
 A form or a drawing is not a reflowable document, so the reader keeps it as a
