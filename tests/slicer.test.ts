@@ -138,14 +138,17 @@ describe('slicers — render (E-SHEET SV2)', () => {
     expect(new TextDecoder().decode(pdf.subarray(0, 5))).toBe('%PDF-');
   });
 
-  it('gives a style name with no number in it the first accent, however long', () => {
-    // The XML parser takes no tag much past a hundred thousand characters, so
-    // the name stays short enough here for `SlicerStyle[A-Za-z]*?(\d+)` to have
-    // been tolerable; the scan that replaced it reads it once all the same.
+  it('gives a style name with no number in it the first accent, in time linear in it', () => {
+    // `SlicerStyle[A-Za-z]*?(\d+)` read on through the letters from every
+    // `SlicerStyle` in them: a name of nothing but those took four seconds at
+    // 330 000 characters, a length the XML parser could not even read before
+    // fast-xml-parser 5.7.2.
     const plain = firstSlicer(regionXlsx({ styleName: 'SlicerStyle' }))?.headerHex;
-    expect(firstSlicer(regionXlsx({ styleName: 'SlicerStyle'.repeat(10_000) }))?.headerHex).toBe(
-      plain,
-    );
+    const long = regionXlsx({ styleName: 'SlicerStyle'.repeat(30_000) });
+    const start = performance.now();
+    const slicer = firstSlicer(long);
+    expect(performance.now() - start).toBeLessThan(1000);
+    expect(slicer?.headerHex).toBe(plain);
     expect(firstSlicer(regionXlsx({ styleName: 'SlicerStyleDark4' }))?.headerHex).not.toBe(plain);
   });
 });
