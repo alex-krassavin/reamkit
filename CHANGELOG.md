@@ -3,6 +3,97 @@
 All notable changes to **Ream** (`reamkit`) are documented here. The project
 follows [Semantic Versioning](https://semver.org/).
 
+## 1.32.1
+
+A patch about what a file can make Ream do, and about numbers as Excel writes
+them.
+
+CodeQL, added in 1.32.0, flagged regular expressions that a document built for
+the purpose could make quadratic. Looking for the same shape through every
+reader found over twenty more, each a place where a crafted file could stall a
+conversion, and a chart part could ask, in a few hundred bytes, for more
+memory, stack or steps than there are. Every one is now read in time linear in
+what it reads; each was run side by side with the code it replaces, over
+hundreds of thousands to millions of random inputs, and never read anything
+differently. Excel's own PDFs of probe workbooks then settled how
+a number is shown: General in a cell, a format that asks for many places, and a
+value axis's step and labels.
+
+### Fixed
+
+- **A crafted file no longer stalls a conversion.** Each of these took the
+  seconds shown on input built to stall it, and now takes milliseconds:
+  - an agile-encrypted package's descriptor, read before any password is
+    checked (16 s and 5 s);
+  - a number format's code, read again in every cell that names it (15, 41, 3
+    and 24 s), and a part repeating `<!DOCTYPE ` (12 s);
+  - wildcard criteria in COUNTIF, SUMIF, MATCH and the lookups, which a
+    conditional format evaluates as the sheet is drawn — `*a*a*a*a*a*b` over a
+    hundred letters took seconds, and each star more multiplied it; a slicer's
+    style number and a VML length (8.9 s);
+  - the Word scans beside the parser — the embedded fonts in fontTable.xml
+    (9.6 s), the fonts to download (4.9 s), the document's language (18.9 s), a
+    MACROBUTTON's text (8.3 s), a picture bullet's size (8.8 s);
+  - in a PDF, a FreeText note (17 s), a /DA colour (6.3 s), a face name split
+    at its capitals (6.5 s), a text field's stale appearance (2.4 s) and the
+    blanks a line ends in (12.8 s);
+  - in Markdown, the blanks trimmed off a line, a span and a list item (24 s and
+    30 s), and a list item's number read off its marker (33 s).
+
+- **A chart part no longer runs out of memory, stack or time.** A `c:ptCount` of
+  two billion ran the process out of memory, a fatal error no caller can catch;
+  a `c:majorUnit` of 0.001 drew 30 003 labels and 0.00001 overflowed the stack;
+  values at ±1.7E+308 sent the search for a step round forever; a series
+  of 200 000 points overflowed `Math.min`. A chart now keeps at most 1 048 576
+  points, as many as a sheet has rows, shared among its series; a point's own
+  colour and label are looked up rather than searched for.
+
+- **A tag of any length is read.** fast-xml-parser 5.7.3: 5.7.0 overflowed the
+  stack on a tag past about 125 000 characters, and Word writes such tags
+  itself — the `o:gfxdata` copy it keeps of every VML shape. Every XML part of
+  the corpus, 46 021 of them, reads the same under both.
+
+- **A value axis cut and labelled as Excel does it**, measured on 44 axes of its
+  PDFs: no step cuts the axis into more than 500 intervals; the automatic ends
+  round out to the author's step; the far end takes 5% of its reach from the
+  near end (70…96 runs 0…120 by 20, where we drew 0…100 by 10); two fixed ends
+  divide their own span; a label is General in nine characters, the sign among
+  them. A scientific label's E and + are in the font subset — they drew blank.
+
+- **A number shown to as many places as its format asks.** A code asking for
+  101 places threw out of the whole conversion, and past seventeen significant
+  digits we printed the binary expansion — 0.1 to twenty places came out
+  0.10000000000000000555. As Excel shows it: a double's first 15 significant
+  digits, rounded half away from zero where the format cuts it, then zeros. The
+  same rule writes out a number from 1E+21 up, rounds a scientific mantissa on
+  the decimal (1234.5 under `0.000E+00` is 1.235E+03), and rounds a value under
+  a millionth that lands on a half (2.5E-08 to eight places is 0.00000003). All
+  103 probe cells read as Excel's; 52 had not.
+
+- **General in a cell as Excel writes it**, read off 248 cells of its PDFs: the
+  number as it is, to 15 significant digits, where it fits; else the finest of
+  it rounded or in scientific notation, without the zeros a mantissa ends in;
+  rounded on the decimal. A column's room leaves out the cell's padding, which
+  had kept one digit more than Excel shows; a merged cell has the whole merge;
+  and a number too wide for every way of writing it fills its cell with #
+  rather than being clipped to another number. 20 of the corpus's 642 workbooks
+  change, 653 cells in all.
+
+### Internals
+
+- CI runs its actions at their current majors (checkout, setup-node and
+  upload-artifact v7, upload-pages-artifact v5, deploy-pages v5) and builds on
+  Node 24: GitHub had warned that the release job's actions were written for
+  Node 20, and the builds ran on 23, out of support since 2025.
+- The stand's LibreOffice lock holds when two builds ask at once, its owner's
+  pid in the lock itself. The corpus harness decodes `&quot;` and `&apos;` in
+  mutool's text, reads its font cache rather than checking it first, and writes
+  each fetched file beside its name before renaming it into place. The test CFB
+  builder writes as many FAT sectors as its streams need.
+- The documentation site runs on 1.32.0, and its guides say how a workbook
+  comes out: its PDF the printed pages, its HTML and SVG as Excel's window
+  shows it.
+
 ## 1.32.0
 
 A release about workbooks, and Excel as the judge of them.
