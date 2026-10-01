@@ -410,3 +410,54 @@ describe('a section may state a CONDITION, and then it is not the sign that pick
     expect(fmt('0.0;(0.0);"zero"', '0')).toBe('zero');
   });
 });
+
+describe('applyNumberFormat — a format code built to stall it', () => {
+  // The code is the workbook's own, read again in every cell that names it.
+  // Each of these took the expressions that read it time quadratic in the
+  // code's length: seconds at a hundred thousand characters, in each cell.
+  function timed(code: string, value: string): { out: string; ms: number } {
+    const fmt = new Map([[164, code]]);
+    const start = performance.now();
+    const out = applyNumberFormat(value, 164, fmt);
+    numberFormatColorHex(value, 164, fmt);
+    return { out, ms: performance.now() - start };
+  }
+  /** Digits with a comma before every third from the right. */
+  const grouped = (digits: string): string => {
+    const parts: Array<string> = [];
+    for (let end = digits.length; end > 0; end -= 3) {
+      parts.unshift(digits.slice(Math.max(0, end - 3), end));
+    }
+    return parts.join(',');
+  };
+
+  it('groups the zeros a format pads with', () => {
+    expect(applyNumberFormat('5', 164, new Map([[164, '000,000']]))).toBe('000,005');
+    expect(applyNumberFormat('1234567', 164, new Map([[164, '#,##0']]))).toBe('1,234,567');
+  });
+
+  it('groups a hundred thousand of them in time linear in the code', () => {
+    const { out, ms } = timed(`#,${'0'.repeat(99_999)}`, '1234.5');
+    expect(out).toBe(grouped(`${'0'.repeat(99_995)}1235`));
+    expect(ms).toBeLessThan(1000);
+  });
+
+  it('finds a fraction after a long head in time linear in it', () => {
+    const { out, ms } = timed(`${'0'.repeat(99_998)}x0 ?/?`, '1.5');
+    expect(out).toBe(`${'0'.repeat(99_998)}x1 1/2`);
+    expect(ms).toBeLessThan(1000);
+  });
+
+  it('gives up on a scientific code with a line end in time linear in it', () => {
+    const code = `0.0${'E+'.repeat(50_000)}\n`;
+    const { out, ms } = timed(code, '1234.5');
+    expect(out).toBe(code);
+    expect(ms).toBeLessThan(1000);
+  });
+
+  it('reads past brackets that never close in time linear in them', () => {
+    const { out, ms } = timed(`${'['.repeat(100_000)}0`, '1234.5');
+    expect(out).toBe(`${'['.repeat(100_000)}1235`);
+    expect(ms).toBeLessThan(1000);
+  });
+});

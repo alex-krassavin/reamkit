@@ -134,8 +134,26 @@ const FORMAT_COLORS: ReadonlyMap<string, string> = new Map([
   ['yellow', 'FFFF00'],
 ]);
 
+// The `[…]` codes of a format, sought only as far as its last `]`. None starts
+// after that, and an expression looking for a `]` that is not there runs to
+// the end of the format from every `[` — quadratic in a code of brackets that
+// never close.
+const BRACKET_CODE = /\[([^\]]*)\]/g;
+
+function bracketCodes(format: string): IterableIterator<RegExpMatchArray> {
+  return format.slice(0, format.lastIndexOf(']') + 1).matchAll(BRACKET_CODE);
+}
+
+/** The format with each `[…]` code replaced by what `fn` makes of its inside. */
+function replaceBracketCodes(format: string, fn: (body: string) => string): string {
+  const end = format.lastIndexOf(']') + 1;
+  return (
+    format.slice(0, end).replace(BRACKET_CODE, (_, body: string) => fn(body)) + format.slice(end)
+  );
+}
+
 function colorOfSection(section: string): string | undefined {
-  for (const m of section.matchAll(/\[([^\]]*)\]/g)) {
+  for (const m of bracketCodes(section)) {
     const body = m[1]!.trim().toLowerCase();
     const named = FORMAT_COLORS.get(body);
     if (named !== undefined) return named;
@@ -299,7 +317,7 @@ function isDateFormat(code: string): boolean {
   // Strip quoted literals and [] codes, then look for any date token. The
   // "m" letter alone is ambiguous (month vs minute) so it can't be a sole
   // signal, but its presence alongside d/y/h/s already implies dates.
-  const cleaned = code.replace(/"[^"]*"/g, '').replace(/\[[^\]]*\]/g, '');
+  const cleaned = replaceBracketCodes(code.replace(/"[^"]*"/g, ''), () => '');
   return /[dyhs]|m+/i.test(cleaned) && /[dyhs]/i.test(cleaned);
 }
 
@@ -692,7 +710,10 @@ function toFixedDecimal(value: number, decimals: number): string {
 }
 
 function formatScientific(value: number, cleaned: string, negativeSection: boolean): string {
-  const m = /^(.*?)([eE])([+-])(.*)$/.exec(cleaned);
+  // `.` stops at a line end, so a format holding one has no match; saying so
+  // first spares the expression from reading its tail out to that line end
+  // after every `e+` in front of it.
+  const m = hasLineEnd(cleaned) ? null : /^(.*?)([eE])([+-])(.*)$/.exec(cleaned);
   if (!m) return cleaned;
   const mantissaFmt = m[1]!;
   const eChar = m[2]!;
@@ -737,11 +758,85 @@ function formatScientific(value: number, cleaned: string, negativeSection: boole
  * conditions) is decoration here and goes.
  */
 function resolveBracketCodes(format: string): string {
-  return format.replace(/\[([^\]]*)\]/g, (_, body: string) => {
+  return replaceBracketCodes(format, (body) => {
     const currency = /^\$([^-]*)(?:-.*)?$/.exec(body);
     const symbol = currency?.[1]?.replace(/"/g, '') ?? '';
     return symbol.length > 0 ? `"${symbol}"` : '';
   });
+}
+
+const isPlaceholder = (c: string | undefined): boolean => c === '0' || c === '#' || c === '?';
+const isAsciiDigit = (c: string | undefined): boolean => c !== undefined && c >= '0' && c <= '9';
+const isSpace = (c: string | undefined): boolean => c !== undefined && /\s/.test(c);
+
+// The four line ends `.` does not match.
+const isLineEnd = (c: number): boolean => c === 0x0a || c === 0x0d || c === 0x2028 || c === 0x2029;
+
+function hasLineEnd(s: string): boolean {
+  for (let i = 0; i < s.length; i++) if (isLineEnd(s.charCodeAt(i))) return true;
+  return false;
+}
+
+/**
+ * A fraction section cut into head, numerator, denominator and tail — what
+ * `/^(.*?)([0#?]+)\s*\/\s*([0#?]+|\d+)(.*)$/` makes of it, in one pass. The
+ * expression, lazy at the front, took every position of a run of placeholders
+ * in turn as the start of the numerator and read the rest of the run from
+ * each: quadratic in a long run no slash follows. A start inside a run sees
+ * the same rest as the run's first, so only the first is tried. The head
+ * cannot cross a line end, nor the tail hold one.
+ */
+function fractionParts(
+  s: string,
+): { head: string; num: string; den: string; tail: string } | undefined {
+  let firstEnd = s.length;
+  let lastEnd = -1;
+  for (let i = 0; i < s.length; i++) {
+    if (!isLineEnd(s.charCodeAt(i))) continue;
+    firstEnd = Math.min(firstEnd, i);
+    lastEnd = i;
+  }
+  for (let start = 0; start < firstEnd; ) {
+    if (!isPlaceholder(s[start])) {
+      start++;
+      continue;
+    }
+    let numEnd = start;
+    while (isPlaceholder(s[numEnd])) numEnd++;
+    let slash = numEnd;
+    while (isSpace(s[slash])) slash++;
+    if (s[slash] === '/') {
+      let den = slash + 1;
+      while (isSpace(s[den])) den++;
+      let denEnd = den;
+      const inDen = isPlaceholder(s[den]) ? isPlaceholder : isAsciiDigit;
+      while (inDen(s[denEnd])) denEnd++;
+      if (denEnd > den && lastEnd < denEnd) {
+        return {
+          head: s.slice(0, start),
+          num: s.slice(start, numEnd),
+          den: s.slice(den, denEnd),
+          tail: s.slice(denEnd),
+        };
+      }
+    }
+    start = numEnd;
+  }
+  return undefined;
+}
+
+/**
+ * The last run of placeholders in the head and what follows it — what
+ * `/([0#?]+)([^0#?]*)$/` matches, read back from the end: that expression
+ * retried every placeholder of an earlier run, and is quadratic in a long one.
+ */
+function lastPlaceholderRun(head: string): { at: number; after: string } | undefined {
+  let end = head.length;
+  while (end > 0 && !isPlaceholder(head[end - 1])) end--;
+  if (end === 0) return undefined;
+  let at = end - 1;
+  while (at > 0 && isPlaceholder(head[at - 1])) at--;
+  return { at, after: head.slice(end) };
 }
 
 /**
@@ -758,11 +853,9 @@ function formatFraction(
   cleaned: string,
   negativeSection: boolean,
 ): string | undefined {
-  const m = /^(.*?)([0#?]+)\s*\/\s*([0#?]+|\d+)(.*)$/.exec(cleaned);
+  const m = fractionParts(cleaned);
   if (!m) return undefined;
-  const head = m[1]!;
-  const denFmt = m[3]!;
-  const tail = m[4]!;
+  const { head, den: denFmt, tail } = m;
 
   // The integer part, if any, is the LAST placeholder run in the head — whatever
   // separates it from the fraction is a literal, and need not be a bare space:
@@ -770,10 +863,10 @@ function formatFraction(
   // the head, the run went unfound there, so 1.2 came out as the improper
   // `#  6/5` — the `#` printed as itself and the whole number folded into the
   // numerator — where every reader shows `1  1/5`.
-  const intMatch = /([0#?]+)([^0#?]*)$/.exec(head);
-  const hasInteger = intMatch !== null;
-  const literalPrefix = unquoteLiteral(head.substring(0, intMatch ? intMatch.index : head.length));
-  const separator = intMatch ? unquoteLiteral(intMatch[2]!) : ' ';
+  const intMatch = lastPlaceholderRun(head);
+  const hasInteger = intMatch !== undefined;
+  const literalPrefix = unquoteLiteral(head.substring(0, intMatch ? intMatch.at : head.length));
+  const separator = intMatch ? unquoteLiteral(intMatch.after) : ' ';
 
   const magnitude = Math.abs(value);
   const whole = hasInteger ? Math.floor(magnitude) : 0;
@@ -887,8 +980,7 @@ function applyNumericSection(value: number, format: string, negativeSection: boo
     else if (intPlaceholders[i] === '?') spaces += ' ';
   }
   const intDigits = zeros + significant;
-  let numberPart =
-    spaces + (useThousands ? intDigits.replace(/\B(?=(\d{3})+(?!\d))/g, ',') : intDigits);
+  let numberPart = spaces + (useThousands ? groupThousands(intDigits) : intDigits);
   if (decimals > 0) {
     let dec = decRaw ?? ''.padEnd(decimals, '0');
     if (dec.length < decimals) dec = dec.padEnd(decimals, '0');
@@ -913,6 +1005,37 @@ function applyNumericSection(value: number, format: string, negativeSection: boo
   if (value < 0 && !negativeSection) signPrefix = '-';
 
   return `${literalPrefix}${signPrefix}${numberPart}${isPercent ? '%' : ''}${literalSuffix}`;
+}
+
+/**
+ * The digits with a comma before every third from the right of each run — what
+ * `/\B(?=(\d{3})+(?!\d))/g` puts one at — in one pass. That expression read
+ * ahead over the rest of the run from every position, and the run is as long
+ * as the format has zeros, applied in every cell the format shows. A comma
+ * goes where the rest of the run is a whole number of threes and the character
+ * before is a word character, as `\B` asks: a digit inside the run, a letter
+ * at its start.
+ */
+function groupThousands(s: string): string {
+  const isWord = (i: number): boolean => i >= 0 && /\w/.test(s[i]!);
+  let out = '';
+  let from = 0;
+  for (let start = 0; start < s.length; ) {
+    if (!isAsciiDigit(s[start])) {
+      start++;
+      continue;
+    }
+    let end = start;
+    while (isAsciiDigit(s[end])) end++;
+    for (let at = start; at < end; at++) {
+      if ((end - at) % 3 === 0 && isWord(at - 1)) {
+        out += `${s.slice(from, at)},`;
+        from = at;
+      }
+    }
+    start = end;
+  }
+  return out + s.slice(from);
 }
 
 interface SplitNumberFormat {
