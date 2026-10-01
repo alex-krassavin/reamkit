@@ -1531,8 +1531,9 @@ function gridBody(
   // text colour. Empty when the sheet has no table parts. Applied below the
   // cell's own fill and below conditional formatting.
   const tableFormatByCell = buildTableFormatLookup(worksheet);
-  // The Normal style's text colour: a cell still in it takes a table's.
-  const normalColorHex = styles.fonts[0]?.colorHex;
+  // How the Normal style names its text colour: a cell naming its own the
+  // same way takes a table's.
+  const normalColorRef = styles.fonts[0]?.colorRef;
 
   // §18.3.1.33 data-validation `list` cells (E-SHEET SV1): the ranges whose cells
   // should paint an in-cell dropdown affordance. Empty (the dropdown block is
@@ -1688,6 +1689,10 @@ function gridBody(
         ? styles.cellXfs[ws.styleIndex ?? 0]
         : defaultStyleAt(absR, absC, styles.cellXfs);
       let runProps = cellRunProps(xf);
+      // Whether the text keeps the colour its font names as Normal names it —
+      // the one a table style may replace.
+      let normalColored =
+        (xf ? styles.fonts[xf.fontId] : styles.fonts[0])?.colorRef === normalColorRef;
       // §18.8.31: the section that applied may name a colour — `[Red]-#,##0.00`
       // is how every accounting format marks a negative. It belongs to the
       // format, not to the font, and conditional formatting still overrides it.
@@ -1695,6 +1700,7 @@ function gridBody(
         const fmtColor = numberFormatColorHex(ws.rawValue, xf.numFmtId, styles.numFmts);
         if (fmtColor !== undefined && fmtColor !== runProps.colorHex) {
           runProps = { ...runProps, colorHex: fmtColor };
+          normalColored = false;
         }
       }
       const alignment = alignmentFromXf(xf, ws?.type, text);
@@ -1706,13 +1712,12 @@ function gridBody(
       // formatting (E-SHEET SC3).
       const tableFmt = tableFormatByCell.get(key(absR, absC));
       if (!shading && tableFmt?.shading) shading = tableFmt.shading;
-      // The style's colour sits under the cell's own: a cell in the Normal
-      // style's colour takes the table's (white on a dark header), one the
-      // author coloured keeps it.
-      if (
-        tableFmt?.fontColorHex &&
-        (runProps.colorHex === undefined || runProps.colorHex === normalColorHex)
-      ) {
+      // The style's colour sits under the cell's own: a cell whose font names
+      // its colour as Normal does takes the table's — white on a dark header —
+      // and any other keeps it. Excel's own PDF tells the two blacks apart: a
+      // header in `theme="1"` turns white, one in `rgb="FF000000"`, or in a
+      // font with no colour at all, stays black.
+      if (tableFmt?.fontColorHex && normalColored) {
         runProps = { ...runProps, colorHex: tableFmt.fontColorHex };
       }
       if (tableFmt?.bold && !runProps.bold) runProps = { ...runProps, bold: true };

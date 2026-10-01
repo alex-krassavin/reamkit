@@ -338,8 +338,11 @@ function parseFonts(root: Record<string, unknown>, colors: WorkbookColors): Arra
     // (its text, its status, its priority and its date) and we drew all four
     // plain.
     if (hasChild(obj, 'strike')) font.strike = childToggle(obj, 'strike');
-    const colorRgb = colorOf(asObject(obj['color']), colors);
+    const colorNode = asObject(obj['color']);
+    const colorRgb = colorOf(colorNode, colors);
     if (colorRgb) font.colorHex = colorRgb;
+    const colorRef = colorNode ? colorRefOf(colorNode) : undefined;
+    if (colorRef !== undefined) font.colorRef = colorRef;
     const nameVal = childValAttr(obj, 'name');
     if (nameVal) font.name = nameVal;
     out.push(font);
@@ -546,6 +549,18 @@ function colorOf(
   // colour is named: Excel lightens `rgb="FF4472C4" tint="0.8"` to D9E1F2 as
   // it does the theme slot of that colour. We tinted theme colours only.
   return base === undefined ? undefined : applyTint(base, Number(strAttr(node, 'tint') ?? '0'));
+}
+
+/** A `<color>` element's own spelling of its colour (see {@link XlsxFont.colorRef}). */
+function colorRefOf(node: Record<string, unknown>): string {
+  const theme = strAttr(node, 'theme');
+  const tint = Number(strAttr(node, 'tint') ?? '0') || 0;
+  if (theme !== undefined) return `theme:${theme}:${tint}`;
+  const rgb = strAttr(node, 'rgb');
+  if (rgb !== undefined) return `rgb:${rgb.toUpperCase()}:${tint}`;
+  const indexed = strAttr(node, 'indexed');
+  if (indexed !== undefined) return `indexed:${indexed}:${tint}`;
+  return 'auto';
 }
 
 function baseColorOf(node: Record<string, unknown>, colors: WorkbookColors): string | undefined {

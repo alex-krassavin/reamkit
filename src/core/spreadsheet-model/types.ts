@@ -415,6 +415,14 @@ export interface XlsxFont {
   /** §18.8.37 `<strike/>` — the font is struck through. */
   readonly strike?: boolean;
   readonly colorHex?: string;
+  /**
+   * §18.8.3 — how the `<color>` names the colour, not what it comes to:
+   * `theme:1:0`, `rgb:FF000000`, `indexed:8`, `auto`; undefined for a font with
+   * no `<color>`. Excel lets a table style colour a cell's text only where the
+   * cell names its colour as the Normal style does — `theme="1"` black takes
+   * the style's white, `rgb="FF000000"` black keeps its own.
+   */
+  readonly colorRef?: string;
   readonly name?: string;
 }
 

@@ -147,6 +147,45 @@ describe('Excel tables — banding projection (E-SHEET SC3)', () => {
     ]);
   });
 
+  it("whitens a header whose black is the Normal style's, not one the author set", () => {
+    // Excel's own PDF (2026-10-01): four Medium2 tables whose header fonts
+    // name their black as `theme="1"` (as Normal does), as `rgb="FF000000"`,
+    // not at all, and the Normal style itself. The first and last turn white;
+    // the rgb black and the automatic one stay black.
+    const stylesXml = `
+      <fonts count="4">
+        <font><sz val="11"/><color theme="1"/><name val="Calibri"/></font>
+        <font><sz val="11"/><color theme="1"/><name val="Calibri"/></font>
+        <font><sz val="11"/><color rgb="FF000000"/><name val="Calibri"/></font>
+        <font><sz val="11"/><name val="Calibri"/></font>
+      </fonts>
+      <fills count="1"><fill><patternFill patternType="none"/></fill></fills>
+      <borders count="1"><border/></borders>
+      <cellXfs count="4">
+        <xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>
+        <xf numFmtId="0" fontId="1" fillId="0" borderId="0" applyFont="1"/>
+        <xf numFmtId="0" fontId="2" fillId="0" borderId="0" applyFont="1"/>
+        <xf numFmtId="0" fontId="3" fillId="0" borderId="0" applyFont="1"/>
+      </cellXfs>`;
+    const headerColour = (styleIndex: number): string | undefined => {
+      const flow = Ream.parse(
+        buildXlsx({
+          rows: [[{ value: 'Head', styleIndex }], [1], [2]],
+          stylesXml,
+          tables: [{ ref: 'A1:A3', styleName: 'TableStyleMedium2' }],
+        }),
+      ).flow;
+      const table = flow.body.find((el) => el.kind === 'table');
+      if (table?.kind !== 'table') throw new Error('expected a table');
+      const block = table.table.rows[0]!.cells[0]!.content[0];
+      return block?.kind === 'paragraph' ? block.paragraph.runs[0]?.properties.colorHex : undefined;
+    };
+    expect(headerColour(1)).toBe('FFFFFF');
+    expect(headerColour(0)).toBe('FFFFFF');
+    expect(headerColour(2)).toBe('000000');
+    expect(headerColour(3)).not.toBe('FFFFFF');
+  });
+
   it('does not band when showRowStripes is off (header only)', () => {
     const flow = Ream.parse(
       buildXlsx({
