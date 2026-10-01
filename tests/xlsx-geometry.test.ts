@@ -1354,3 +1354,49 @@ describe('the cell cut reaches every writer', () => {
     expect(html).toContain('overflow:hidden');
   });
 });
+
+describe('drawings on a printed sheet', () => {
+  const shapeOf = (doc: ReturnType<typeof readXlsxToSheetDoc>) => {
+    const el = projectSheetDoc(doc).body.find((b) => b.kind === 'shape');
+    if (el?.kind !== 'shape') throw new Error('no shape');
+    return el.shape;
+  };
+  const rowsOf = (doc: ReturnType<typeof readXlsxToSheetDoc>): number => {
+    const el = projectSheetDoc(doc).body.find((b) => b.kind === 'table');
+    if (el?.kind !== 'table') throw new Error('no table');
+    return el.table.rows.length;
+  };
+
+  it('move with the grid when the headings print: past the row numbers, below the letters', () => {
+    // §18.3.1.70 — the row-number column (460 twips) stands in front of the
+    // grid and the letters row (a row of the sheet's own height) over it.
+    const book = (headings: boolean) =>
+      readXlsxToSheetDoc(
+        buildXlsx({
+          rows: [['a']],
+          printOptions: { headings },
+          sheetShape: { anchor: { from: [1, 1], to: [3, 4] } },
+        }),
+      );
+    const plain = shapeOf(book(false));
+    const headed = shapeOf(book(true));
+    expect(headed.float!.posH!.offsetPt! - plain.float!.posH!.offsetPt!).toBeCloseTo(23);
+    expect(headed.float!.posV!.offsetPt! - plain.float!.posV!.offsetPt!).toBeCloseTo(15);
+  });
+
+  it('print the rows they reach when the rows show, and add none that would print blank', () => {
+    // Excel's print range runs down to a drawing under the last value; with
+    // its gridlines on, those rows are on the page. Without them they hold
+    // nothing we draw — the drawing is drawn whole on its first page.
+    const book = (gridLines: boolean) =>
+      readXlsxToSheetDoc(
+        buildXlsx({
+          rows: [['a']],
+          printOptions: { gridLines },
+          sheetShape: { anchor: { from: [1, 5], to: [3, 9] } },
+        }),
+      );
+    expect(rowsOf(book(true))).toBeGreaterThanOrEqual(9);
+    expect(rowsOf(book(false))).toBe(1);
+  });
+});

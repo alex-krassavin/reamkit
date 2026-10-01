@@ -233,6 +233,7 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
     const charts: Array<SheetChartRef> = [];
     const images: Array<SheetImageRef> = [];
     let shapes: Array<ShapeBlock> | undefined;
+    const screenOnlyShapes = new Set<ShapeBlock>();
     if (worksheet.drawingRelId) {
       const wsRels = pkg.getPartRelationships(resolved.path);
       const drawingRel = wsRels.find((r) => r.id === worksheet.drawingRelId);
@@ -260,6 +261,7 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
             heightPt: ref.heightPt,
             xPt: ref.xPt,
             yPt: ref.yPt,
+            ...(ref.screenOnly ? { screenOnly: true as const } : {}),
           });
         }
         for (const pic of pictures) {
@@ -275,6 +277,7 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
             heightPt: pic.heightPt,
             xPt: pic.xPt,
             yPt: pic.yPt,
+            ...(pic.screenOnly ? { screenOnly: true as const } : {}),
           });
         }
         // §20.5.2.30 xdr:sp shapes (W2). The shared DrawingML readers need the
@@ -289,6 +292,7 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
             themeLineWidths,
             themeFillStyles,
             themeEffectStyles,
+            screenOnlyShapes,
           );
           if (parsed.length > 0) shapes = parsed;
         }
@@ -542,6 +546,13 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
       ...(charts.length > 0 ? { charts } : {}),
       ...(images.length > 0 ? { images } : {}),
       ...(shapes ? { shapes } : {}),
+      ...(shapes && screenOnlyShapes.size > 0
+        ? {
+            screenOnlyShapes: new Set(
+              shapes.flatMap((shape, i) => (screenOnlyShapes.has(shape) ? [i] : [])),
+            ),
+          }
+        : {}),
       ...(hyperlinks ? { hyperlinks } : {}),
       ...(comments ? { comments } : {}),
       ...(formControls ? { formControls } : {}),

@@ -14,10 +14,10 @@ import type {
 } from '@/core/document-model';
 
 import type { Pt } from '@/core/ir';
-import { twipsToPt } from '@/core/ir';
+import { pt, twipsToPt } from '@/core/ir';
 
 /** §18.3.1.70 — the width of the row-number column, in twips. */
-const HEADING_COL_TWIPS = 460;
+export const HEADING_COL_TWIPS = 460;
 
 /** The A1-style letters of an absolute column index (0 → A, 26 → AA). */
 function columnLetters(index: number): string {
@@ -40,6 +40,8 @@ function columnLetters(index: number): string {
  * @param widths     The band's column widths in twips.
  * @param colStart   The absolute index of the band's first column.
  * @param rowNumbers The absolute 1-based row number of each row.
+ * @param lettersPt  How tall the letters row stands — exactly, so a drawing
+ *   anchored to the grid can be moved down by just as much.
  * @returns The rows and widths with the heading band added.
  */
 export function withHeadingBand(
@@ -47,6 +49,7 @@ export function withHeadingBand(
   widths: ReadonlyArray<number>,
   colStart: number,
   rowNumbers: ReadonlyArray<number>,
+  lettersPt?: number,
 ): { rows: Array<TableRow>; widths: Array<number> } {
   const border = { style: 'single' as const, width: 0.5 as Pt, colorHex: '808080' };
   const borders = { top: border, bottom: border, left: border, right: border };
@@ -66,7 +69,15 @@ export function withHeadingBand(
   for (let i = 0; i < widths.length; i++) letters.push(head(columnLetters(colStart + i)));
   // The letters repeat at the top of every page, the way both references print
   // them — which is what a table's leading header row already does.
-  const out: Array<TableRow> = [{ properties: { isHeader: true }, cells: letters }];
+  const out: Array<TableRow> = [
+    {
+      properties: {
+        isHeader: true,
+        ...(lettersPt !== undefined ? { height: pt(lettersPt), heightRule: 'exact' as const } : {}),
+      },
+      cells: letters,
+    },
+  ];
   rows.forEach((row, i) => {
     out.push({
       properties: row.properties,
@@ -148,7 +159,11 @@ export function bandedTables(
   properties: TableProperties,
   titleRowIndex = -1,
   drawingReachTwips = 0,
-  headings?: { readonly colStart: number; readonly rowNumbers: ReadonlyArray<number> },
+  headings?: {
+    readonly colStart: number;
+    readonly rowNumbers: ReadonlyArray<number>;
+    readonly lettersPt?: number;
+  },
 ): Array<BodyElement> {
   return bands.flatMap((band, bandIndex) => {
     const bandLeft = columnWidths.slice(0, band.start).reduce((sum, w) => sum + w, 0);
@@ -201,7 +216,13 @@ export function bandedTables(
       : [{ rows: bandRows, numbers: bandRowNumbers }];
     return parts.map((part) => {
       const headed = headings
-        ? withHeadingBand(part.rows, bandTwips, headings.colStart + band.start, part.numbers)
+        ? withHeadingBand(
+            part.rows,
+            bandTwips,
+            headings.colStart + band.start,
+            part.numbers,
+            headings.lettersPt,
+          )
         : undefined;
       return {
         kind: 'table' as const,

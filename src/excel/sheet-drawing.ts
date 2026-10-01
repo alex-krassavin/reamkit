@@ -38,6 +38,11 @@ export interface SheetChartRef {
   readonly yPt: number;
   /** Anchor top row (0-based) — used only to order charts on the sheet. */
   readonly anchorRow: number;
+  /**
+   * §20.5.2.3 `<xdr:clientData fPrintsWithSheet="0">` — on the sheet, not on
+   * its paper: the window shows it, a print leaves it out.
+   */
+  readonly screenOnly?: true;
 }
 
 /**
@@ -54,6 +59,11 @@ export interface SheetPicture {
   readonly yPt: number;
   /** Anchor top row (0-based) — used only to order pictures on the sheet. */
   readonly anchorRow: number;
+  /**
+   * §20.5.2.3 `<xdr:clientData fPrintsWithSheet="0">` — on the sheet, not on
+   * its paper: the window shows it, a print leaves it out.
+   */
+  readonly screenOnly?: true;
 }
 
 /** Both kinds of anchored frame the drawing yields, anchor-ordered. */
@@ -156,19 +166,55 @@ export function parseSheetDrawing(
           ? spanPt(0, 0, from.row, from.rowOffPt, rowHeightPt)
           : 0;
       if (!onTheSheet(xPt, yPt)) continue;
+      const screenOnly = !printsWithSheet(a['clientData']) ? { screenOnly: true as const } : {};
 
       if (chartRelId) {
         const path = partPathOf(chartRelId);
-        if (path) charts.push({ chartPartPath: path, widthPt, heightPt, xPt, yPt, anchorRow });
+        if (path) {
+          charts.push({
+            chartPartPath: path,
+            widthPt,
+            heightPt,
+            xPt,
+            yPt,
+            anchorRow,
+            ...screenOnly,
+          });
+        }
       } else if (picRelId) {
         const path = partPathOf(picRelId);
-        if (path) pictures.push({ imagePartPath: path, widthPt, heightPt, xPt, yPt, anchorRow });
+        if (path) {
+          pictures.push({
+            imagePartPath: path,
+            widthPt,
+            heightPt,
+            xPt,
+            yPt,
+            anchorRow,
+            ...screenOnly,
+          });
+        }
       }
     }
   }
   charts.sort((x, y) => x.anchorRow - y.anchorRow);
   pictures.sort((x, y) => x.anchorRow - y.anchorRow);
   return { charts, pictures };
+}
+
+/**
+ * §20.5.2.3 `<xdr:clientData fPrintsWithSheet>` — whether the drawing prints
+ * with the sheet, which it does unless this says otherwise. A template's tip
+ * for whoever fills it in says otherwise: simple-monthly-budget.xlsx keeps a
+ * "Need to add more entries?" box under its table for the window only, and
+ * printed it ran past the bottom margin of a page LibreOffice prints without.
+ *
+ * @param clientData The anchor's parsed `<xdr:clientData>`, if any.
+ */
+export function printsWithSheet(clientData: unknown): boolean {
+  if (!clientData || typeof clientData !== 'object') return true;
+  const flag = (clientData as Record<string, unknown>)['@_fPrintsWithSheet'];
+  return flag !== '0' && flag !== 'false';
 }
 
 // §20.1.2.2.8 `<xdr:cNvPr hidden="1"/>` — "Specifies whether this DrawingML

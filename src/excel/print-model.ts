@@ -63,7 +63,12 @@ import {
   parseAreaRef,
   parseTitleRowRange,
 } from '@/excel';
-import { bandedTables, computeColumnBands, withHeadingBand } from '@/excel/column-bands';
+import {
+  HEADING_COL_TWIPS,
+  bandedTables,
+  computeColumnBands,
+  withHeadingBand,
+} from '@/excel/column-bands';
 import { buildConditionalFormatter } from '@/excel/conditional-format';
 
 /**
@@ -819,6 +824,11 @@ interface PrintModelOptions {
   // the macro button beside it that way. One entry per band table emitted; a
   // sheet that does not band reports a single 0.
   readonly bandSink?: { lefts: Array<number> };
+  // §18.3.1.70 — how far the printed headings push the grid right (the
+  // row-number column) and down (the letters row), reported back so the
+  // drawings anchored to the grid can move with it. Zero when the sheet does
+  // not print its headings.
+  readonly headingSink?: { dxPt: number; dyPt: number };
   // How far the sheet's drawings reach from its origin, in points. A drawing
   // anchored past the last cell still has to be printed, so fit-to-page has to
   // fit IT too — measuring only the range the cells occupy left a sheet whose
@@ -982,6 +992,33 @@ function gridBody(
     for (let col = 0; col < 16384 && acc < wantTwips; col++) {
       acc += widthAt(col);
       if (col > usedCol) usedCol = col;
+    }
+    // …and DOWN as well as across. Excel's print range reaches the bottom of a
+    // drawing anchored under the last value: the probe's arrow under row 18
+    // printed rows 19 to 24 round it, their gridlines and row numbers with
+    // them, where our grid stopped at 18. Bounded like the paint reach below,
+    // so a drawing parked thousands of rows down cannot materialise them all.
+    //
+    // Only where those rows SHOW, though: on a screen, and on paper that prints
+    // gridlines or headings. Excel cuts a drawing at a page break and prints
+    // the rest on the next page; we draw it whole on the page it starts on, so
+    // rows that hold nothing but its tail are a blank page — the chart of
+    // simple-monthly-budget.xlsx reaches 6pt into its 24th row, which made one.
+    const rowsShow =
+      print.screen === true || print.gridLines || worksheet.printOptions?.headings === true;
+    const wantRowTwips = Math.round(print.drawingExtentPt.heightPt * TWIPS_PER_POINT);
+    const defRowTwips = Math.round(
+      (worksheet.defaultRowHeightPt ?? defaultRowHeightPtFor(print.defaultFontPt)) *
+        TWIPS_PER_POINT,
+    );
+    const heightAt = new Map(
+      worksheet.rowHeights.map((h) => [h.row, Math.round(h.heightPt * TWIPS_PER_POINT)]),
+    );
+    const rowReach = usedRow + PAINT_REACH_ROWS;
+    let down = 0;
+    for (let row = 0; rowsShow && row <= rowReach && down < wantRowTwips; row++) {
+      down += heightAt.get(row) ?? defRowTwips;
+      if (row > usedRow) usedRow = row;
     }
   }
   // A cell that PAINTS something is on the page with nothing in it. Column H of
@@ -2054,6 +2091,24 @@ function gridBody(
   // means "fit into N pages across" (SE-T): scale the columns, then band the
   // SCALED widths across those N (or fewer) pages.
   const contentWidthTwips = sheetContentWidthTwips(worksheet);
+  // §18.3.1.70 — the printed row and column headings, when the sheet asks for
+  // them: a row-number column in front of the grid and a letters row over it,
+  // as tall as the sheet's own rows at the print scale. Where they go in, the
+  // drawings anchored to the grid have to move with it (headingSink).
+  const headings =
+    !print.screen && worksheet.printOptions?.headings
+      ? {
+          dxPt: twipsToPt(HEADING_COL_TWIPS),
+          dyPt:
+            (worksheet.defaultRowHeightPt ?? defaultRowHeightPtFor(print.defaultFontPt)) *
+            printScale,
+        }
+      : undefined;
+  const reportHeadings = (): void => {
+    if (!headings || !print.headingSink) return;
+    print.headingSink.dxPt = headings.dxPt;
+    print.headingSink.dyPt = headings.dyPt;
+  };
   const colBreaksLocal = new Set<number>();
   for (const brk of worksheet.colBreaks ?? []) {
     const local = brk - colStart;
@@ -2077,15 +2132,17 @@ function gridBody(
           twipsToPt(bandWidths.slice(0, band.start).reduce((sum, w) => sum + w, 0)),
         );
       }
-      return bandedTables(
+      const banded = bandedTables(
         rows,
         bandWidths,
         bands,
         tableProperties,
         titleRowIndex,
         Math.round((print.drawingExtentPt?.widthPt ?? 0) * TWIPS_PER_POINT * printScale),
-        worksheet.printOptions?.headings ? { colStart, rowNumbers } : undefined,
+        headings ? { colStart, rowNumbers, lettersPt: headings.dyPt } : undefined,
       );
+      reportHeadings();
+      return banded;
     }
   }
 
@@ -2117,10 +2174,10 @@ function gridBody(
   // §18.3.1.70 — the printed row and column headings, when the sheet asks for
   // them. NumberFormatTests.xlsx does, and both references print the letters
   // across the top and the numbers down the side.
-  const headed =
-    !print.screen && worksheet.printOptions?.headings
-      ? withHeadingBand(rows, bandWidths, colStart, rowNumbers)
-      : undefined;
+  const headed = headings
+    ? withHeadingBand(rows, bandWidths, colStart, rowNumbers, headings.dyPt)
+    : undefined;
+  if (headed) reportHeadings();
   const table: Table = {
     properties: frozen ? { ...tableProperties, frozen } : tableProperties,
     // The print scale shrinks the whole sheet, columns included — `bandWidths`

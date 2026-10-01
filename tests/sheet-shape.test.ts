@@ -10,6 +10,7 @@ import { describe, expect, it } from 'vitest';
 
 import { buildXlsx } from './fixtures/build-xlsx';
 import { readXlsxToSheetDoc } from '@/excel/xlsx-reader';
+import { projectSheetDoc } from '@/excel/sheet-to-flow';
 import { Ream } from '@/core/converter/ream';
 import { convertXlsxToPdfSync } from '@/core/converter';
 
@@ -170,5 +171,40 @@ describe('a drawing that says it is hidden (§20.1.2.2.8)', () => {
       }),
     ).sheets[0]!;
     expect(hidden.shapes).toBeUndefined();
+  });
+});
+
+describe('a drawing that does not print with the sheet (§20.5.2.3)', () => {
+  // A template's tip for whoever fills it in: simple-monthly-budget.xlsx keeps
+  // a "Need to add more entries?" box under its table for the window only.
+  const anchor = (clientData: string): string => `<xdr:twoCellAnchor>
+    <xdr:from><xdr:col>1</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>1</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from>
+    <xdr:to><xdr:col>3</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>4</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to>
+    <xdr:sp><xdr:nvSpPr><xdr:cNvPr id="2" name="Tip"/><xdr:cNvSpPr/></xdr:nvSpPr>
+      <xdr:spPr><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val="FFC000"/></a:solidFill></xdr:spPr>
+    </xdr:sp>
+    ${clientData}
+  </xdr:twoCellAnchor>`;
+  const shapesOf = (doc: ReturnType<typeof readXlsxToSheetDoc>, screen: boolean): number =>
+    projectSheetDoc(doc, screen ? { screen } : {}).body.filter((el) => el.kind === 'shape').length;
+
+  it('shows on a screen and stays off paper', () => {
+    const doc = readXlsxToSheetDoc(
+      buildXlsx({
+        rows: [['cell']],
+        sheetShape: { rawAnchorXml: anchor('<xdr:clientData fPrintsWithSheet="0"/>') },
+      }),
+    );
+    expect(doc.sheets[0]!.screenOnlyShapes).toEqual(new Set([0]));
+    expect(shapesOf(doc, true)).toBe(1);
+    expect(shapesOf(doc, false)).toBe(0);
+  });
+
+  it('prints when the anchor says nothing', () => {
+    const doc = readXlsxToSheetDoc(
+      buildXlsx({ rows: [['cell']], sheetShape: { rawAnchorXml: anchor('<xdr:clientData/>') } }),
+    );
+    expect(doc.sheets[0]!.screenOnlyShapes).toBeUndefined();
+    expect(shapesOf(doc, false)).toBe(1);
   });
 });

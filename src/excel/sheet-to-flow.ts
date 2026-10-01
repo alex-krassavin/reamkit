@@ -227,11 +227,12 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
     // out of the projection. Its blocks are pushed below, in their old place.
     const scaleSink = { value: 1 };
     const bandSink = { lefts: [0] };
+    const headingSink = { dxPt: 0, dyPt: 0 };
     // §18.7 — a note its VML shape SHOWS is on the sheet, over everything
     // else: a window draws it there, and so does paper when the sheet prints
     // its notes `asDisplayed`.
     const notesShown = screen || ws.grid.pageSetup?.cellComments === 'asDisplayed';
-    const drawingExtentPt = drawingReachPt(ws, notesShown);
+    const drawingExtentPt = drawingReachPt(ws, notesShown, screen);
     // A print area and the titles repeated on every page are what PRINTS; the
     // window shows the whole sheet, once.
     const printArea = screen ? undefined : resolvePrintArea(sheet.definedNames, sheetIdx);
@@ -262,6 +263,7 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
       ...(options.losses ? { losses: options.losses } : {}),
       scaleSink,
       bandSink,
+      headingSink,
       ...(drawingExtentPt ? { drawingExtentPt } : {}),
     });
 
@@ -326,8 +328,10 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
     const drawings: Array<BodyElement> = [];
 
     // §20.5: the sheet's chart frames render as blocks after its grid,
-    // anchor-ordered (resolved chart data lives in sheet.chartData).
+    // anchor-ordered (resolved chart data lives in sheet.chartData). Paper
+    // leaves out what the sheet keeps for the window (§20.5.2.3).
     for (const ref of ws.charts ?? []) {
+      if (ref.screenOnly && !screen) continue;
       drawings.push({
         kind: 'chart',
         chart: {
@@ -343,6 +347,7 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
     // W1: anchored pictures render as image blocks after the grid (anchor-ordered;
     // bytes live in sheet.resources). Like charts, placement collapses to inline.
     for (const img of ws.images ?? []) {
+      if (img.screenOnly && !screen) continue;
       drawings.push({
         kind: 'image',
         image: {
@@ -358,7 +363,8 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
     // W2: anchored shapes render as floating shape blocks over the grid, at the
     // point their `twoCellAnchor` names — scaled with the sheet, since that is
     // what the anchor's tracks were measured in.
-    for (const shape of ws.shapes ?? []) {
+    for (const [i, shape] of (ws.shapes ?? []).entries()) {
+      if (!screen && ws.screenOnlyShapes?.has(i)) continue;
       drawings.push({
         kind: 'shape',
         shape: screen
@@ -431,7 +437,13 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
       }
     }
 
-    const placed = withDrawingsByBand(drawings, gridBody, bandSink.lefts);
+    // A grid printed with its headings stands that much right and down of
+    // where the anchors were measured from, and its drawings with it.
+    const placed = withDrawingsByBand(drawings, gridBody, bandSink.lefts).map((el) =>
+      headingSink.dxPt > 0 || headingSink.dyPt > 0
+        ? nudgeFloat(el, headingSink.dxPt, headingSink.dyPt)
+        : el,
+    );
     body.push(
       ...(ws.grid.rightToLeft === true
         ? mirrorDrawings(
@@ -1069,6 +1081,26 @@ function floatWidthPt(el: BodyElement): number | undefined {
   return undefined;
 }
 
+/** The same block with its anchor moved `dx` right and `dy` down. */
+function nudgeFloat(el: BodyElement, dx: number, dy: number): BodyElement {
+  const moved = <T extends { float?: FloatAnchor }>(block: T): T => {
+    const f = block.float;
+    if (!f) return block;
+    return {
+      ...block,
+      float: {
+        ...f,
+        ...(f.posH ? { posH: { ...f.posH, offsetPt: pt((f.posH.offsetPt ?? 0) + dx) } } : {}),
+        ...(f.posV ? { posV: { ...f.posV, offsetPt: pt((f.posV.offsetPt ?? 0) + dy) } } : {}),
+      },
+    };
+  };
+  if (el.kind === 'chart') return { ...el, chart: moved(el.chart) };
+  if (el.kind === 'image') return { ...el, image: moved(el.image) };
+  if (el.kind === 'shape') return { ...el, shape: moved(el.shape) };
+  return el;
+}
+
 /** The same block with its horizontal anchor measured from `by` points later. */
 function shiftFloatLeft(el: BodyElement, by: number): BodyElement {
   if (by === 0) return el;
@@ -1337,10 +1369,13 @@ function activeXLabel(c: SheetActiveXControl): string {
 function drawingReachPt(
   ws: Sheet,
   notesShown: boolean,
+  screen: boolean,
 ): { widthPt: number; heightPt: number } | undefined {
   let widthPt = 0;
   let heightPt = 0;
-  for (const shape of ws.shapes ?? []) {
+  // What does not print reaches nothing on paper (§20.5.2.3).
+  for (const [i, shape] of (ws.shapes ?? []).entries()) {
+    if (!screen && ws.screenOnlyShapes?.has(i)) continue;
     widthPt = Math.max(widthPt, (shape.float?.posH?.offsetPt ?? 0) + shape.width);
     heightPt = Math.max(heightPt, (shape.float?.posV?.offsetPt ?? 0) + shape.height);
   }
@@ -1349,10 +1384,12 @@ function drawingReachPt(
   // 57362.xlsx's chart hung 350pt off the right edge of a page the grid alone
   // said needed no splitting.
   for (const c of ws.charts ?? []) {
+    if (c.screenOnly && !screen) continue;
     widthPt = Math.max(widthPt, (c.xPt ?? 0) + c.widthPt);
     heightPt = Math.max(heightPt, (c.yPt ?? 0) + c.heightPt);
   }
   for (const p of ws.images ?? []) {
+    if (p.screenOnly && !screen) continue;
     widthPt = Math.max(widthPt, (p.xPt ?? 0) + p.widthPt);
     heightPt = Math.max(heightPt, (p.yPt ?? 0) + p.heightPt);
   }

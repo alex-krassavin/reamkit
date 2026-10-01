@@ -31,6 +31,11 @@ export interface SheetChartRef {
   /** Where the anchor puts it, in points from the grid's top-left. */
   readonly xPt?: number;
   readonly yPt?: number;
+  /**
+   * §20.5.2.3 `fPrintsWithSheet="0"` — on the sheet, not on its paper: a
+   * window shows it, a print leaves it out.
+   */
+  readonly screenOnly?: true;
 }
 
 /**
@@ -45,6 +50,11 @@ export interface SheetImageRef {
   /** Where the anchor puts it, in points from the grid's top-left. */
   readonly xPt?: number;
   readonly yPt?: number;
+  /**
+   * §20.5.2.3 `fPrintsWithSheet="0"` — on the sheet, not on its paper: a
+   * window shows it, a print leaves it out.
+   */
+  readonly screenOnly?: true;
 }
 
 /** One item (label + selection state) in a {@link SheetSlicer}. */
@@ -206,6 +216,11 @@ export interface Sheet {
   readonly images?: ReadonlyArray<SheetImageRef>;
   /** Drawing shapes on this sheet (E-SHEET W2), fully resolved + anchor-ordered. */
   readonly shapes?: ReadonlyArray<ShapeBlock>;
+  /**
+   * The indexes into {@link shapes} of those that do not print with the sheet
+   * (§20.5.2.3 `fPrintsWithSheet="0"`): a window shows them, paper does not.
+   */
+  readonly screenOnlyShapes?: ReadonlySet<number>;
   /**
    * Cell hyperlinks resolved to external URLs (E-SHEET W3); the projection sets
    * `run.href` on covered cells. In-workbook (location-only) links are not carried.
