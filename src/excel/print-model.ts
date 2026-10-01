@@ -251,6 +251,43 @@ const DIGIT_EM: ReadonlyArray<readonly [RegExp, number]> = [
 ];
 
 /**
+ * The space advance, as a fraction of the em, of the faces a spreadsheet names
+ * for its normal style — §18.8.1 measures a cell's indent in them. Read off
+ * each face's `hmtx` for U+0020, the metric twins beside their originals; a
+ * face not listed takes a quarter em, which is where most spaces sit.
+ */
+const SPACE_EM: ReadonlyArray<readonly [RegExp, number]> = [
+  [/^(calibri|carlito)$/i, 463 / 2048],
+  [/^(arial|helvetica|liberation sans|arimo|arial unicode ms)$/i, 569 / 2048],
+  [/^(times new roman|liberation serif|tinos)$/i, 512 / 2048],
+  [/^(cambria|caladea)$/i, 220 / 1000],
+  [/^(tahoma)$/i, 640 / 2048],
+  [/^(verdana|dejavu sans)$/i, 720 / 2048],
+];
+
+/**
+ * One level of §18.8.1's `indent`, in twips: "an increment of 1 represents 3
+ * spaces … of the normal style font". It was counted in DIGITS, three of them,
+ * which is twice as far — simple-monthly-budget.xlsx indents its "Amount"
+ * headings two levels and we set them 31.5pt in where LibreOffice sets them
+ * 15pt (it measures 7.49pt a level in Calibri 11, 8.39pt in Arial 10: three
+ * spaces of each).
+ *
+ * @param styles The workbook's styles; the first font is the normal style's.
+ * @returns The width of one indent level, in twips.
+ */
+function indentLevelTwips(styles: XlsxStyles): number {
+  const font = styles.fonts[0];
+  const size =
+    font?.sizePt !== undefined && Number.isFinite(font.sizePt) && font.sizePt > 0
+      ? font.sizePt
+      : DEFAULT_FONT_PT;
+  const name = font?.name?.trim() ?? '';
+  const em = SPACE_EM.find(([re]) => re.test(name))?.[1] ?? 0.25;
+  return Math.round(3 * em * size * TWIPS_PER_POINT);
+}
+
+/**
  * §18.3.1.13 — the Maximum Digit Width, in twips, of the normal style's font.
  *
  * "The number of characters of the maximum digit width of the numbers 0, 1,
@@ -833,6 +870,8 @@ export function worksheetToBody(
   // the honest answer: tdf122336.xlsx declares `<font/>`, LibreOffice laid its
   // columns out in Caladea, and its 40-character column takes a page to itself
   // where ours took half of one.
+  // §18.8.1 — what one level of a cell's indent is, in the normal style's font.
+  const indentTwips = indentLevelTwips(styles);
   const charTwipsUnit =
     styles.fonts[0]?.name === undefined
       ? digitTwips(print.digitWidthPt)
@@ -1788,13 +1827,20 @@ export function worksheetToBody(
         verticalAlign: verticalAlignOf(xf),
       };
 
-      // §18.8.1 indent (E-SHEET W6): a left indent of N levels ≈ N×3 characters,
-      // applied as the paragraph's left indent on top of the cell padding.
+      // §18.8.1 indent (E-SHEET W6): N levels of three spaces each (see
+      // indentLevelTwips), on top of the cell padding and from the side the
+      // text is aligned to — a right-aligned cell is indented from its right
+      // edge, and we pushed it right instead, out past its own column. A
+      // centred cell takes none: Excel offers no indent for one.
       const indentLevels = xf?.alignment?.indent ?? 0;
       const baseParaProps = cellParaProps(alignment);
+      const indentPt = twipsToPt(indentLevels * indentTwips);
       const paragraphProps =
-        indentLevels > 0
-          ? { ...baseParaProps, indentLeft: twipsToPt(indentLevels * 3 * TWIPS_PER_EXCEL_CHAR) }
+        indentLevels > 0 && alignment !== 'center'
+          ? {
+              ...baseParaProps,
+              ...(alignment === 'right' ? { indentRight: indentPt } : { indentLeft: indentPt }),
+            }
           : baseParaProps;
       // A shared-string cell whose index carries rich runs (E-SHEET W6) emits one
       // document-model run per <r>, each layering its <rPr> over the cell font;

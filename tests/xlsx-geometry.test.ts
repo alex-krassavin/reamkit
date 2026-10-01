@@ -814,7 +814,9 @@ describe('cell indent (§18.8.1)', () => {
         stylesXml,
       }),
     );
-    expect(at(items, 'indented').x).toBeGreaterThan(at(items, 'flush').x + 8);
+    // One level is three spaces of the normal style's font (§18.8.1): 7.46pt
+    // in Calibri 11, where LibreOffice measures 7.49.
+    expect(at(items, 'indented').x - at(items, 'flush').x).toBeCloseTo(3 * (463 / 2048) * 11, 0);
   });
 });
 
