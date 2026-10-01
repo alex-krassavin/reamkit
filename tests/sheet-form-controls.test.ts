@@ -10,6 +10,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import { buildXlsx } from './fixtures/build-xlsx';
+import { sheetDrawings } from './fixtures/sheet-drawings';
 import type { BodyElement } from '@/core/document-model';
 import { parseFormControlProps } from '@/excel/form-control-parser';
 import { parseVmlDrawing } from '@/excel/vml-drawing';
@@ -68,6 +69,57 @@ describe('legacy VML "Print object" (E-SHEET W8)', () => {
     const drawing = parseVmlDrawing(vml('<x:PrintObject>False</x:PrintObject>'));
     expect(drawing.controls).toHaveLength(0);
     expect(drawing.nonPrinting.has('1025')).toBe(true);
+  });
+});
+
+describe('a VML group (E-SHEET W8)', () => {
+  // 45540_form_Footer.xlsx's shape: a group in points, its children in the
+  // group's own units — 494 across 416.25pt, 183 down 137.25pt.
+  const grouped = enc(
+    `<xml xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office"
+          xmlns:x="urn:schemas-microsoft-com:office:excel">
+       <v:group id="_x0000_s2138" style='position:absolute;margin-left:7.5pt;margin-top:729pt;width:416.25pt;height:137.25pt'
+          coordorigin="9,1206" coordsize="494,183">
+         <v:shape id="CheckBox44" o:spid="_x0000_s2101" style='position:absolute;left:9;top:1206;width:22;height:23'>
+           <x:ClientData ObjectType="Pict"/></v:shape>
+         <v:shape id="CheckBox54" o:spid="_x0000_s2111" style='position:absolute;left:271;top:1226;width:22;height:23'>
+           <x:ClientData ObjectType="Pict"/></v:shape>
+       </v:group>
+     </xml>`,
+  );
+
+  it("places the shapes it holds in the group's own space", () => {
+    const boxes = parseVmlDrawing(grouped).boxes;
+    const first = boxes.get('2101')!;
+    expect(first.xPt).toBeCloseTo(7.5, 5);
+    expect(first.yPt).toBeCloseTo(729, 5);
+    expect(first.widthPt).toBeCloseTo((22 * 416.25) / 494, 5);
+    expect(first.heightPt).toBeCloseTo(17.25, 5);
+    const second = boxes.get('2111')!;
+    expect(second.xPt).toBeCloseTo(7.5 + (262 * 416.25) / 494, 5);
+    expect(second.yPt).toBeCloseTo(744, 5);
+  });
+
+  it('stands a box placed by points on the rows Excel counted it by', () => {
+    // Twenty rows of 20.1pt, which Excel draws 26px tall: a control it put 3px
+    // into the eleventh row it wrote at 263px, 197.25pt. Our rows keep their
+    // fraction, so that row starts at 201pt, and the control 3px below it.
+    const flow = Ream.parse(
+      buildXlsx({
+        rows: Array.from({ length: 20 }, (_, i) => [`row ${i + 1}`]),
+        rowHeights: Array.from({ length: 20 }, (_, i) => ({ row: i, heightPt: 20.1 })),
+        legacyVmlXml:
+          `<v:group style='position:absolute;margin-left:0;margin-top:197.25pt;width:150pt;height:30pt' coordorigin="0,0" coordsize="200,40">` +
+          `<v:shape id="_x0000_s1025" style='position:absolute;left:10;top:0;width:100;height:23'>` +
+          '<v:textbox><div><font>Pick me</font></div></v:textbox>' +
+          '<x:ClientData ObjectType="Checkbox"/></v:shape></v:group>',
+      }),
+    ).flow;
+    const caption = sheetDrawings(flow.body).flatMap((e) =>
+      e.kind === 'shape' && e.shape.text ? [e.shape] : [],
+    );
+    expect(caption).toHaveLength(1);
+    expect(caption[0]!.float?.posV?.offsetPt).toBeCloseTo(10 * 20.1 + 2.25, 2);
   });
 });
 

@@ -200,6 +200,12 @@ export interface XlsxBuilderOptions {
      */
     readonly shownAnchor?: string;
   }>;
+  /**
+   * Raw legacy VML shapes (the inside of `<xml>`, `v:`/`o:`/`x:` prefixes) for
+   * the FIRST sheet's `vmlDrawing1.vml` — form controls, groups. Not combined
+   * with shown `comments`, which write that part themselves.
+   */
+  readonly legacyVmlXml?: string;
   /** Threaded comments on the FIRST sheet + the workbook person directory (W7). */
   readonly threadedComments?: ReadonlyArray<{
     readonly ref: string;
@@ -915,6 +921,22 @@ ${rels.join('\n')}
         '  <Relationship Id="rIdVml" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/vmlDrawing" Target="../drawings/vmlDrawing1.vml"/>',
       );
     }
+  }
+  if (options.legacyVmlXml !== undefined && sheetParts.length > 0) {
+    const first = sheetParts[0]!;
+    entries['xl/drawings/vmlDrawing1.vml'] = encoder.encode(
+      '<xml xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office" ' +
+        `xmlns:x="urn:schemas-microsoft-com:office:excel">${options.legacyVmlXml}</xml>`,
+    );
+    first.xml = first.xml.replace(
+      '</worksheet>',
+      '<legacyDrawing xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:id="rIdVml"/></worksheet>',
+    );
+    mergeWorksheetRel(
+      entries,
+      first.fileName,
+      '  <Relationship Id="rIdVml" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/vmlDrawing" Target="../drawings/vmlDrawing1.vml"/>',
+    );
   }
   // W7: threaded comments — the part + a worksheet rel; persons → workbook rel.
   if (options.threadedComments && options.threadedComments.length > 0 && sheetParts.length > 0) {

@@ -841,10 +841,24 @@ function readLegacyVml(
     const box = anchoredBox(anchor, colWidthPt, rowHeightPt);
     if (box) anchoredBoxes.set(id, box);
   }
+  // …and one placed by its box alone, on the cells that box covers in the
+  // producer's own pixel grid (pixelAnchor). The tracks are walked once each.
+  const colOnce = memoTrack(colWidthPt);
+  const rowOnce = memoTrack(rowHeightPt);
+  const onGrid = (box: VmlShapeBox): VmlShapeBox | undefined =>
+    anchoredBox(pixelAnchor(box, colOnce, rowOnce), colOnce, rowOnce);
+  for (const [id, box] of drawing.boxes) {
+    if (anchoredBoxes.has(id)) continue;
+    const placed = onGrid(box);
+    if (placed) anchoredBoxes.set(id, placed);
+  }
   const out: Array<SheetFormControl> = [];
   for (const shape of drawing.controls) {
     if (shape.shapeId !== undefined && activeXShapeIds.has(shape.shapeId)) continue;
-    const box = (shape.anchor && anchoredBox(shape.anchor, colWidthPt, rowHeightPt)) ?? shape.box;
+    const box =
+      (shape.anchor && anchoredBox(shape.anchor, colWidthPt, rowHeightPt)) ??
+      (shape.box && onGrid(shape.box)) ??
+      shape.box;
     out.push({
       objectType: shape.objectType,
       ...(shape.caption ? { name: shape.caption, caption: shape.caption } : {}),
@@ -883,6 +897,58 @@ function anchoredBox(
   const y1 = trackPt(anchor[6], anchor[7], rowHeightPt);
   return x1 > x0 && y1 > y0 ? { xPt: x0, yPt: y0, widthPt: x1 - x0, heightPt: y1 - y0 } : undefined;
 }
+
+/**
+ * The cells a box placed by points alone stands on, as a `<x:Anchor>` would
+ * name them — counted the way Excel counts its own sheet when it writes such a
+ * box: columns in whole pixels, which ours are, and rows in whole pixels too,
+ * a row's points truncated (20.1pt is 26px). 45540_form_Footer.xlsx says so
+ * itself: a check box anchored at row 7 + 9px stands at `margin-top:184.5pt`,
+ * and its seven rows above come to the 237px that leaves only truncated.
+ * Taken as points on our grid, whose rows keep their fractions, a box placed
+ * that way stood the more rows above its cells the further down it was.
+ *
+ * @param box         The box, in the producer's points.
+ * @param colWidthPt  The sheet's column widths.
+ * @param rowHeightPt The sheet's row heights.
+ * @returns The anchor: cells, 0-based, and pixels into them.
+ */
+function pixelAnchor(
+  box: VmlShapeBox,
+  colWidthPt: (col: number) => number,
+  rowHeightPt: (row: number) => number,
+): VmlAnchor {
+  const colPx = (i: number): number => Math.round(colWidthPt(i) / PT_PER_PX);
+  const rowPx = (i: number): number => Math.trunc(rowHeightPt(i) / PT_PER_PX + 1e-6);
+  const locate = (pt: number, track: (i: number) => number, limit: number): [number, number] => {
+    let i = 0;
+    let rest = pt / PT_PER_PX;
+    while (i < limit && rest >= track(i)) {
+      rest -= track(i);
+      i++;
+    }
+    return [i, rest];
+  };
+  const [c0, dx0] = locate(box.xPt, colPx, MAX_COLUMNS);
+  const [r0, dy0] = locate(box.yPt, rowPx, MAX_ROWS);
+  const [c1, dx1] = locate(box.xPt + box.widthPt, colPx, MAX_COLUMNS);
+  const [r1, dy1] = locate(box.yPt + box.heightPt, rowPx, MAX_ROWS);
+  return [c0, dx0, r0, dy0, c1, dx1, r1, dy1];
+}
+
+/** A track accessor that answers each index once. */
+function memoTrack(track: (i: number) => number): (i: number) => number {
+  const seen = new Map<number, number>();
+  return (i) => {
+    let v = seen.get(i);
+    if (v === undefined) seen.set(i, (v = track(i)));
+    return v;
+  };
+}
+
+/** SpreadsheetML's grid: 16 384 columns, 1 048 576 rows. */
+const MAX_COLUMNS = 16_384;
+const MAX_ROWS = 1_048_576;
 
 /** Where `offsetPx` pixels into track `index` stands, in points from the first track. */
 function trackPt(index: number, offsetPx: number, track: (i: number) => number): number {

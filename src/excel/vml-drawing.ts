@@ -180,9 +180,7 @@ export function parseVmlDrawing(data: Uint8Array): VmlDrawing {
   const boxes = new Map<string, VmlShapeBox>();
   const anchors = new Map<string, VmlAnchor>();
   const nonPrinting = new Set<string>();
-  for (const raw of asArray(root['shape'])) {
-    const shape = asObject(raw);
-    if (!shape) continue;
+  for (const { shape, box } of shapesOf(root)) {
     // The shape id is `o:spid` when the producer writes one and the plain `id`
     // otherwise — button-form-control.xlsx spells it only the second way, and
     // reading just `o:spid` left its shape anonymous, so nothing could pair it
@@ -192,7 +190,6 @@ export function parseVmlDrawing(data: Uint8Array): VmlDrawing {
       strAttr(shape, 'spid') ??
       (idAttr !== undefined && SPID_PREFIX.test(idAttr) ? idAttr : undefined);
     const shapeId = spid?.replace(SPID_PREFIX, '');
-    const box = shapeBox(strAttr(shape, 'style'));
     if (shapeId && box) boxes.set(shapeId, box);
     const client = asObject(shape['ClientData']);
     if (!client) continue;
@@ -330,24 +327,109 @@ function cssLengthPt(value: string | undefined): number | undefined {
   return factor === undefined ? undefined : n * factor;
 }
 
-/** The shape's rectangle from its `style` declaration; undefined if incomplete. */
-function shapeBox(style: string | undefined): VmlShapeBox | undefined {
-  if (style === undefined) return undefined;
+/** A `style` attribute's declarations, by lower-cased name. */
+function styleProps(style: string | undefined): Map<string, string> {
   const props = new Map<string, string>();
-  for (const decl of style.split(';')) {
+  for (const decl of (style ?? '').split(';')) {
     const i = decl.indexOf(':');
     if (i < 0) continue;
     props.set(decl.slice(0, i).trim().toLowerCase(), decl.slice(i + 1).trim());
   }
+  return props;
+}
+
+/** The shape's rectangle from its `style` declaration; undefined if incomplete. */
+function shapeBox(style: string | undefined): VmlShapeBox | undefined {
+  if (style === undefined) return undefined;
+  const props = styleProps(style);
   const widthPt = cssLengthPt(props.get('width'));
   const heightPt = cssLengthPt(props.get('height'));
   if (widthPt === undefined || heightPt === undefined) return undefined;
   return {
-    xPt: cssLengthPt(props.get('margin-left')) ?? 0,
-    yPt: cssLengthPt(props.get('margin-top')) ?? 0,
+    xPt: (cssLengthPt(props.get('margin-left')) ?? 0) + (cssLengthPt(props.get('left')) ?? 0),
+    yPt: (cssLengthPt(props.get('margin-top')) ?? 0) + (cssLengthPt(props.get('top')) ?? 0),
     widthPt,
     heightPt,
   };
+}
+
+/**
+ * VML `coordorigin`/`coordsize` — the space a group lays its children out in,
+ * mapped onto the group's own box: child units to points on the sheet.
+ */
+interface GroupSpace {
+  readonly x: (u: number) => number;
+  readonly y: (u: number) => number;
+  /** Points per unit across and down. */
+  readonly sx: number;
+  readonly sy: number;
+}
+
+function groupSpace(group: Record<string, unknown>, box: VmlShapeBox): GroupSpace {
+  const pair = (value: string | undefined, fallback: number): [number, number] => {
+    const [a, b] = (value ?? '').split(',').map((n) => Number.parseFloat(n));
+    return [Number.isFinite(a) ? a! : fallback, Number.isFinite(b) ? b! : fallback];
+  };
+  const [ox, oy] = pair(strAttr(group, 'coordorigin'), 0);
+  // VML's default space is a thousand units square.
+  const [cw, ch] = pair(strAttr(group, 'coordsize'), 1000);
+  const sx = cw !== 0 ? box.widthPt / cw : 0;
+  const sy = ch !== 0 ? box.heightPt / ch : 0;
+  return {
+    x: (u) => box.xPt + (u - ox) * sx,
+    y: (u) => box.yPt + (u - oy) * sy,
+    sx,
+    sy,
+  };
+}
+
+/** A child's box in its group's space: bare numbers, the group's units. */
+function boxInGroup(style: string | undefined, space: GroupSpace): VmlShapeBox | undefined {
+  const props = styleProps(style);
+  const units = (name: string): number | undefined => {
+    const n = Number.parseFloat(props.get(name) ?? '');
+    return Number.isFinite(n) ? n : undefined;
+  };
+  const width = units('width');
+  const height = units('height');
+  if (width === undefined || height === undefined) return undefined;
+  const left = (units('margin-left') ?? 0) + (units('left') ?? 0);
+  const top = (units('margin-top') ?? 0) + (units('top') ?? 0);
+  return {
+    xPt: space.x(left),
+    yPt: space.y(top),
+    widthPt: width * space.sx,
+    heightPt: height * space.sy,
+  };
+}
+
+/**
+ * Every shape in the drawing with its box on the sheet — those at the top and
+ * those inside a `<v:group>`, whose `left`/`top` count in the group's own
+ * space. Reading only the top level lost every control a group held:
+ * 45540_form_Footer.xlsx groups the 27 check boxes of its "What industry are
+ * you in?" block, and they ended up in a list after the form.
+ */
+function shapesOf(
+  root: Record<string, unknown>,
+): Array<{ shape: Record<string, unknown>; box: VmlShapeBox | undefined }> {
+  const out: Array<{ shape: Record<string, unknown>; box: VmlShapeBox | undefined }> = [];
+  const visit = (node: Record<string, unknown>, space: GroupSpace | undefined, depth: number) => {
+    const boxOf = (style: string | undefined): VmlShapeBox | undefined =>
+      space ? boxInGroup(style, space) : shapeBox(style);
+    for (const raw of asArray(node['shape'])) {
+      const shape = asObject(raw);
+      if (shape) out.push({ shape, box: boxOf(strAttr(shape, 'style')) });
+    }
+    if (depth >= 8) return;
+    for (const raw of asArray(node['group'])) {
+      const group = asObject(raw);
+      const box = group ? boxOf(strAttr(group, 'style')) : undefined;
+      if (group && box) visit(group, groupSpace(group, box), depth + 1);
+    }
+  };
+  visit(root, undefined, 0);
+  return out;
 }
 
 /** `<v:textbox>`'s `<font size>` — twentieths of a point (160 ⇒ 8pt). */
