@@ -13,7 +13,7 @@ import type {
   ShapeDash,
 } from '@/core/document-model';
 
-import { applyNumberFormat } from '@/core/number-format';
+import { applyNumberFormat, decimalOf, placeDigits } from '@/core/number-format';
 
 /**
  * An axis-aligned rectangle in the scene's local y-up frame: bars, scatter
@@ -147,22 +147,25 @@ export interface Scale {
 
 /**
  * The scale Excel gives a value axis it is left to choose, measured against
- * Excel's own PDF of eight column charts (2026-10-01):
+ * Excel's own PDF of its column charts (2026-10-01 and -02):
  *
  *  - the ends: values all of one sign put the axis's near end at zero —
  *    unless their spread is under a sixth of the largest of them, when it
  *    stops half a spread short of the nearest (93…97 runs from 91) — and the
- *    far end, like both ends of a range across zero, takes 5% of the spread
- *    beyond the data before it is rounded out to the step;
+ *    far end takes 5% of its reach from that near end before it is rounded
+ *    out to the step. 70…96 reaches 100.8 and runs 0…120 by 20, where 5% of
+ *    the data's own spread stopped at 97.3 and ran it 0…100 by 10. Both ends
+ *    of a range across zero take 5% of the spread;
  *  - the step: the smallest 1, 2 or 5 × 10ⁿ that leaves at most ten intervals
  *    (`maxIntervals`), whatever the chart's height — 3 750 runs 0…4 000 by 500
  *    on a 150pt chart as on a 400pt one. Only an axis too short to hold the
  *    labels asks for fewer, and the caller says so.
  *
- * Every case of the probe lands where Excel puts it: −1…1.2 on −1.5…1.5 by
+ * Every case of the probes lands where Excel puts it: −1…1.2 on −1.5…1.5 by
  * 0.5, 0.3…4.7 on 0…5 by 0.5, 120…950 on 0…1 000 by 100, 0.012…0.047 on
- * 0…0.05 by 0.005. Heckbert's nice numbers with a budget of ticks by height
- * stepped the budget chart by 1 000 and started 93…97 at zero.
+ * 0…0.05 by 0.005, 1E-150…3E-150 on 0…3.5E-150. Heckbert's nice numbers with
+ * a budget of ticks by height stepped the budget chart by 1 000 and started
+ * 93…97 at zero.
  *
  * @param dataMin      The smallest value to cover.
  * @param dataMax      The largest value to cover.
@@ -170,6 +173,17 @@ export interface Scale {
  * @returns The rounded min/max and tick step.
  */
 export function niceScale(dataMin: number, dataMax: number, maxIntervals = 10): Scale {
+  const end = paddedEnds(dataMin, dataMax);
+  const step = stepFor(end.lo, end.hi, maxIntervals);
+  return { min: below(end.lo, step), max: above(end.hi, step), step };
+}
+
+/**
+ * The ends {@link niceScale} rounds out to its step: the data's, padded as
+ * Excel pads them. Never past the largest double, which the padding of values
+ * out at ±1.7E+308 would run them to.
+ */
+function paddedEnds(dataMin: number, dataMax: number): { lo: number; hi: number } {
   let lo = Math.min(dataMin, dataMax);
   let hi = Math.max(dataMin, dataMax);
   // One value is a spread from zero to it.
@@ -179,64 +193,189 @@ export function niceScale(dataMin: number, dataMax: number, maxIntervals = 10): 
     else hi = 1;
   }
   const spread = hi - lo;
-  const end = { lo: lo - spread * 0.05, hi: hi + spread * 0.05 };
-  if (lo >= 0) end.lo = spread < hi / 6 ? lo - spread / 2 : 0;
-  else if (hi <= 0) end.hi = spread < -lo / 6 ? hi + spread / 2 : 0;
-  const step = stepFor(end.hi - end.lo, maxIntervals);
-  return {
-    min: Math.floor(end.lo / step + 1e-9) * step,
-    max: Math.ceil(end.hi / step - 1e-9) * step,
-    step,
-  };
+  if (lo >= 0) {
+    const from = spread < hi / 6 ? lo - spread / 2 : 0;
+    return { lo: from, hi: finite(hi + (hi - from) * 0.05) };
+  }
+  if (hi <= 0) {
+    const to = spread < -lo / 6 ? hi + spread / 2 : 0;
+    return { lo: finite(lo - (to - lo) * 0.05), hi: to };
+  }
+  return { lo: finite(lo - spread * 0.05), hi: finite(hi + spread * 0.05) };
 }
 
-/** The smallest 1, 2 or 5 × 10ⁿ that cuts `span` into at most `maxIntervals` steps. */
-function stepFor(span: number, maxIntervals: number): number {
+/** `v`, or the largest double of its sign where it ran past it. */
+const finite = (v: number): number => Math.min(Number.MAX_VALUE, Math.max(-Number.MAX_VALUE, v));
+
+/** `v` rounded down to a multiple of `step`, short of the largest double. */
+const below = (v: number, step: number): number => finite(Math.floor(v / step + 1e-9) * step);
+
+/** `v` rounded up to a multiple of `step`, short of the largest double. */
+const above = (v: number, step: number): number => finite(Math.ceil(v / step - 1e-9) * step);
+
+/**
+ * The smallest 1, 2 or 5 × 10ⁿ that cuts `lo`…`hi` into at most
+ * `maxIntervals` steps. The share of the span each interval takes is reckoned
+ * so that a span past the largest double has one: −1.7E+308…1.7E+308 spans
+ * Infinity, and the search for its step never ended.
+ */
+function stepFor(lo: number, hi: number, maxIntervals: number): number {
   const most = Math.max(1, maxIntervals);
-  let base = 10 ** Math.floor(Math.log10(span / most));
+  const span = hi - lo;
+  const share = Math.abs(Number.isFinite(span) ? span / most : hi / most - lo / most);
+  // Nothing to divide: an axis whose ends the author made one.
+  if (!(share > 0 && share < Infinity)) return 1;
+  // The power of ten at or under the share — and over zero, as 1E-324 is not.
+  let base = Math.max(Number.MIN_VALUE, 10 ** Math.floor(Math.log10(share)));
   for (;;) {
     for (const m of [1, 2, 5]) {
-      if (span / (m * base) <= most + 1e-9) return m * base;
+      if (share <= m * base * (1 + 1e-9)) return Math.min(m * base, Number.MAX_VALUE);
     }
     base *= 10;
   }
 }
 
-/**
- * Format an axis tick value, choosing decimal places from the tick `step` so
- * `0.25`-spaced ticks read `0.25` while integer steps drop the fraction.
- *
- * @param v    The tick value.
- * @param step The tick spacing (from {@link niceScale}).
- * @returns The label text.
- */
-export function formatTick(v: number, step: number): string {
-  if (Number.isInteger(step) && Number.isInteger(v)) return String(v);
-  const decimals = Math.max(0, -Math.floor(Math.log10(step)));
-  const fixed = v.toFixed(decimals);
-  // General shows no trailing zero: 0.05 on an axis stepped by 0.005, not
-  // 0.050 — and 1, not 1.0.
-  return fixed.includes('.') ? fixed.replace(/0+$/, '').replace(/\.$/, '') : fixed;
+/** How many steps lie between a scale's ends — in halves where the span overflows. */
+function intervalsOf(s: Scale): number {
+  const span = s.max - s.min;
+  return Number.isFinite(span) ? span / s.step : (s.max / 2 - s.min / 2) / (s.step / 2);
 }
 
+/**
+ * How far along `s` the value `v` stands: 0 at its min, 1 at its max —
+ * reckoned in halves where a difference overflows, as it does between ends
+ * out at ±1.7E+308.
+ */
+function fractionOf(v: number, s: Scale): number {
+  const span = s.max - s.min;
+  const from = v - s.min;
+  return Number.isFinite(span) && Number.isFinite(from)
+    ? from / span
+    : (v / 2 - s.min / 2) / (s.max / 2 - s.min / 2);
+}
+
+/**
+ * The most intervals Excel cuts a value axis into. A finer step than that is
+ * widened to a 500th of the axis: its own PDF ran 0…26.25 by 0.0525 for steps
+ * of 0.05, 0.01 and 0.001 alike, and kept 0.0525 itself (2026-10-02).
+ */
+const MOST_INTERVALS = 500;
+
+/** The most characters Excel gives a value-axis label under General, its sign among them. */
+const AXIS_LABEL_CHARS = 9;
+
+/**
+ * A value-axis tick as Excel labels it under General. An axis is not a cell:
+ * its General gives every label nine characters, the sign among them, on an
+ * axis 150pt or 500pt long, upright or lying alike — Excel's own PDF of 44
+ * axes (2026-10-01 and -02):
+ *
+ *  - the number as it is, its first 15 significant digits, where that fits:
+ *    0.25 (we wrote 0.3 on an axis stepped by 0.25), 500000000, −50000000,
+ *    0.0000003;
+ *  - else rounded to the places that fit, while the whole part fits and the
+ *    number is no smaller than 0.0001: 0.1234568, −0.123457, 11.111111,
+ *    0.0001235, 123456771;
+ *  - else in scientific notation, the mantissa rounded to what fits beside
+ *    an exponent of at least two digits: 1E+09, 1.235E+09, −1.23E+09,
+ *    1.235E-05, 3.5E-07, 1.23E+300, 5E-151.
+ *
+ * The digits are rounded on the decimal, half away from zero, as a cell's
+ * are. Places counted from the step and written by `toFixed` threw past a
+ * hundred of them, which a step of 1E-150 asked for.
+ *
+ * @param v The tick value.
+ * @returns The label text.
+ */
+export function formatTick(v: number): string {
+  if (v === 0 || !Number.isFinite(v)) return v === 0 ? '0' : String(v);
+  const sign = v < 0 ? '-' : '';
+  const room = AXIS_LABEL_CHARS - sign.length;
+  const { digits, exponent } = decimalOf(v);
+  let shown = digits.length;
+  while (shown > 1 && digits[shown - 1] === '0') shown--;
+  const exact = placeDigits(digits, exponent, Math.max(0, shown - 1 - exponent));
+  if (exact.length <= room) return sign + exact;
+  if (exponent >= -4 && exponent < room) {
+    const places = Math.max(0, room - Math.max(exponent, 0) - 2);
+    const rounded = withoutTrailingZeros(placeDigits(digits, exponent, places));
+    // Rounding up can still carry the whole part past the room: 999999999.7.
+    if (rounded.length <= room) return sign + rounded;
+  }
+  return sign + scientificLabel(digits, exponent, room);
+}
+
+/**
+ * `digits`, the first standing at 10^`exponent`, in scientific notation: the
+ * mantissa rounded to the places that fit `room` beside an exponent of at
+ * least two digits — the rounded number's exponent, where the mantissa
+ * carries into it (9.9996E+09 is 1E+10).
+ */
+function scientificLabel(digits: string, exponent: number, room: number): string {
+  const tail = (e: number): string =>
+    `E${e < 0 ? '-' : '+'}${String(Math.abs(e)).padStart(2, '0')}`;
+  const places = (e: number): number => Math.max(0, room - tail(e).length - 2);
+  let e = exponent;
+  let mantissa = placeDigits(digits, 0, places(e));
+  if (mantissa.length > 1 && mantissa[1] !== '.') {
+    e += 1;
+    mantissa = placeDigits('1', 0, places(e));
+  }
+  return withoutTrailingZeros(mantissa) + tail(e);
+}
+
+/** A decimal without the zeros that end its fraction, nor a point left bare. */
+function withoutTrailingZeros(fixed: string): string {
+  if (!fixed.includes('.')) return fixed;
+  let end = fixed.length;
+  while (fixed[end - 1] === '0') end--;
+  return fixed.slice(0, fixed[end - 1] === '.' ? end - 1 : end);
+}
+
+/**
+ * The values a scale labels: its min and every step up to its max. Counted,
+ * not summed: the sum drifted, and its tolerance was absolute, so a scale of
+ * 1E-150 ran on until it passed 1E-9 and asked for more ticks than an array
+ * holds. Never more than Excel's most intervals and one past them — rounding
+ * the ends out to a widened step can add that one.
+ */
 const ticks = (s: Scale): Array<number> => {
+  const count = Math.min(Math.floor(intervalsOf(s) + 1e-9), MOST_INTERVALS + 1);
   const out: Array<number> = [];
-  // +1e-9 guards floating accumulation at the top tick.
-  for (let v = s.min; v <= s.max + 1e-9; v += s.step) out.push(Math.abs(v) < 1e-9 ? 0 : v);
+  for (let i = 0; i <= count; i++) {
+    const sum = s.min + i * s.step;
+    // In halves where the product runs past the largest double — on an axis
+    // out at ±1.7E+308 the fifth tick read Infinity.
+    const v = Number.isFinite(sum) ? sum : 2 * (s.min / 2 + i * (s.step / 2));
+    // A tick a rounding error off zero is zero, or General writes 1.776E-15.
+    out.push(Math.abs(v) < s.step * 1e-9 ? 0 : v);
+  }
   return out;
 };
 
 /**
  * The value axis's {@link Scale}: the ends the author fixed where they fixed
- * them (§21.2.2.157 `c:scaling/c:min|c:max`), the data's own range where they
- * did not. A fixed end is exact — nice-rounding it would move a number the
- * author chose — so only the tick step comes from the rounding pass.
+ * them (§21.2.2.157 `c:scaling/c:min|c:max`), the data's, padded as
+ * {@link niceScale} pads them, where they did not. A fixed end is exact —
+ * nice-rounding it would move a number the author chose.
  *
- * @param chart   The chart (for its fixed ends).
- * @param dataMin The smallest value to cover.
- * @param dataMax The largest value to cover.
- * @param hPt     The chart's height — how many ticks fit is a question about
- *                the plot, not about the numbers.
+ * The step is the author's (§21.2.2.98 `c:majorUnit`), else the 1-2-5 step
+ * of the span between the ends — with both fixed, of the span they fix:
+ * −1E+300…1E+300 runs by 2E+299 in Excel, where padding the ends first
+ * stepped it by 5E+299. The automatic ends round out to an author's step
+ * from where the padding left them, not from where a step of our own would
+ * have: 10…25 by 0.1 runs 0…26.3, as in Excel, not 0…30. And no step cuts
+ * the axis finer than {@link MOST_INTERVALS}: Excel widens one that would to
+ * a 500th of the span and rounds the automatic ends out to the widened step
+ * (−10…25 by 0.01 runs −11.781…26.796 by 0.077). A step of 0.00001 asked for
+ * three million labels and ran out of stack.
+ *
+ * @param chart      The chart (for its fixed ends and step).
+ * @param dataMin    The smallest value to cover.
+ * @param dataMax    The largest value to cover.
+ * @param extentPt   The axis's length — how many ticks fit is a question
+ *                   about the plot, not about the numbers.
+ * @param horizontal Whether the axis lies along the foot.
  * @returns The axis min/max and tick step.
  */
 function axisScale(
@@ -246,21 +385,26 @@ function axisScale(
   extentPt: number,
   horizontal = false,
 ): Scale {
-  const min = chart.valAxisMin ?? dataMin;
-  const max = chart.valAxisMax ?? dataMax;
-  const rounded = niceScale(min, max, intervalsThatFit(extentPt, horizontal));
-  // §21.2.2.98 — a step the author fixed is the step, and the automatic ends
-  // round out to it.
-  const step = chart.valAxisMajorUnit ?? rounded.step;
-  return {
-    min:
-      chart.valAxisMin ??
-      (step === rounded.step ? rounded.min : Math.floor(rounded.min / step) * step),
-    max:
-      chart.valAxisMax ??
-      (step === rounded.step ? rounded.max : Math.ceil(rounded.max / step) * step),
+  const fixedMin = chart.valAxisMin;
+  const fixedMax = chart.valAxisMax;
+  const padded = paddedEnds(fixedMin ?? dataMin, fixedMax ?? dataMax);
+  const lo = fixedMin ?? padded.lo;
+  const hi = fixedMax ?? padded.hi;
+  const rounded = (step: number): Scale => ({
+    min: fixedMin ?? below(lo, step),
+    max: fixedMax ?? above(hi, step),
     step,
-  };
+  });
+  const scale = rounded(
+    chart.valAxisMajorUnit ?? stepFor(lo, hi, intervalsThatFit(extentPt, horizontal)),
+  );
+  if (intervalsOf(scale) <= MOST_INTERVALS) return scale;
+  // A 500th of the span between the ends as they stood before rounding: a
+  // step of 1E-320 rounds them out past the largest double.
+  const span = hi - lo;
+  return rounded(
+    Number.isFinite(span) ? span / MOST_INTERVALS : hi / MOST_INTERVALS - lo / MOST_INTERVALS,
+  );
 }
 
 // ─── shared cartesian frame (scale, plot area, axes, gridlines, labels) ──────
@@ -515,7 +659,7 @@ function buildFrame(
   const gridlines: Array<ChartPolyline> = [];
   const labels: Array<ChartLabel> = [];
 
-  const nCats = Math.max(chart.categories.length, ...chart.series.map((s) => s.values.length), 1);
+  const nCats = catCount(chart);
   // §21.2.2.9 — a series on the secondary axis is measured against ITS axis, so
   // it is no part of the primary's range and the primary is no part of its.
   const onSecondary = chart.series.filter((s) => s.secondaryAxis);
@@ -524,8 +668,7 @@ function buildFrame(
   const allVals = primary.flatMap((s) => s.values.slice(0, nCats));
   // The data's own extent: whether the axis reaches down to zero is the
   // scale's decision (niceScale), not the data's.
-  const [dataMin, dataMax] =
-    opts.dataRange ?? (allVals.length > 0 ? [Math.min(...allVals), Math.max(...allVals)] : [0, 1]);
+  const [dataMin, dataMax] = opts.dataRange ?? extentOf(allVals) ?? [0, 1];
   const scale = opts.exactRange
     ? {
         min: dataMin,
@@ -534,15 +677,13 @@ function buildFrame(
           .step,
       }
     : axisScale(chart, dataMin, dataMax, horizontal ? wPt : hPt, horizontal);
-  const fmtVal = opts.formatValue ?? ((v: number): string => formatTick(v, scale.step));
+  const fmtVal = opts.formatValue ?? formatTick;
   const tickVals = ticks(scale);
   const vals2 = onSecondary.flatMap((s) => s.values.slice(0, nCats));
   // The author's own min/max pin the PRIMARY axis (§21.2.2.157 reads one axis);
   // the secondary takes the nice range of its own data.
-  const scale2 =
-    vals2.length > 0
-      ? niceScale(Math.min(...vals2), Math.max(...vals2), intervalsThatFit(hPt, false))
-      : undefined;
+  const range2 = extentOf(vals2);
+  const scale2 = range2 ? niceScale(range2[0], range2[1], intervalsThatFit(hPt, false)) : undefined;
   const tickVals2 = scale2 ? ticks(scale2) : [];
 
   // §21.2.2.33/§21.2.2.207 — where the category axis crosses the value axis
@@ -575,10 +716,9 @@ function buildFrame(
   // Excel and Calc both label the axis with — an unlabelled category axis
   // leaves the bars standing on nothing.
   const catText = (c: number): string => chart.categories[c] ?? String(c + 1);
-  const widestCat = Math.max(
-    0,
-    ...Array.from({ length: nCats }, (_, c) => measure(catText(c), CHART_LABEL_PT)),
-  );
+  let widestCat = 0;
+  for (let c = 0; c < nCats; c++)
+    widestCat = Math.max(widestCat, measure(catText(c), CHART_LABEL_PT));
   const catBand = CHART_LABEL_PT * 1.6;
   // §21.2.2.115 — the outer levels of a category axis labelled on several,
   // each a row of its own under the categories' labels (a column chart's).
@@ -602,7 +742,7 @@ function buildFrame(
   const legend = buildLegendBlock(chart, wPt, hPt, measure);
   const tick2W =
     scale2 && !horizontal
-      ? Math.max(0, ...tickVals2.map((v) => measure(formatTick(v, scale2.step), CHART_LABEL_PT))) +
+      ? Math.max(0, ...tickVals2.map((v) => measure(formatTick(v), CHART_LABEL_PT))) +
         4 +
         (chart.secondaryValAxisTitle ? CHART_LABEL_PT * 1.5 : 0)
       : 0;
@@ -652,8 +792,7 @@ function buildFrame(
   const plotW = Math.max(1, plotRight - x0);
   const plotH = Math.max(1, hPt - top - y0);
 
-  const valueOffset = (v: number): number =>
-    ((v - scale.min) / (scale.max - scale.min)) * (horizontal ? plotW : plotH);
+  const valueOffset = (v: number): number => fractionOf(v, scale) * (horizontal ? plotW : plotH);
   // Bars grow from where the category axis crosses: zero, or the end of the
   // axis nearest it — bars over 93…97 grow up from 91, the bottom of their axis.
   const zeroOffset = valueOffset(crossValue);
@@ -737,13 +876,11 @@ function buildFrame(
   }
 
   const valueOffset2 =
-    scale2 && !horizontal
-      ? (v: number): number => ((v - scale2.min) / (scale2.max - scale2.min)) * plotH
-      : undefined;
+    scale2 && !horizontal ? (v: number): number => fractionOf(v, scale2) * plotH : undefined;
   if (scale2 && valueOffset2) {
     for (const v of tickVals2) {
       labels.push({
-        text: formatTick(v, scale2.step),
+        text: formatTick(v),
         x: x0 + plotW + 3,
         y: y0 + valueOffset2(v) - CHART_LABEL_PT / 3,
         sizePt: CHART_LABEL_PT,
@@ -893,8 +1030,30 @@ const fmtDataLabel = (chart: Chart, v: number): string =>
   chartValueFormatter(chart)?.(v) ??
   (Number.isInteger(v) ? String(v) : String(Math.round(v * 100) / 100));
 
+/**
+ * How many category slots a chart has: its labels, or its longest series —
+ * counted in a loop, as spreading a file's series into one call overflows
+ * the stack.
+ */
 function catCount(chart: Chart): number {
-  return Math.max(chart.categories.length, ...chart.series.map((s) => s.values.length), 1);
+  let n = Math.max(chart.categories.length, 1);
+  for (const s of chart.series) n = Math.max(n, s.values.length);
+  return n;
+}
+
+/**
+ * The least and the greatest of `values`, or undefined where none is a
+ * number. Read in a loop: `Math.min(...values)` throws on a series of 200 000
+ * points, as a call takes no more arguments than the stack holds.
+ */
+function extentOf(values: Iterable<number>): readonly [number, number] | undefined {
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const v of values) {
+    if (v < lo) lo = v;
+    if (v > hi) hi = v;
+  }
+  return lo <= hi ? [lo, hi] : undefined;
 }
 
 // Per-category stacked extents: max of summed positives, min of summed negatives.
@@ -1273,29 +1432,30 @@ export function buildScatterScene(
   // both references start its axis at 0 where we started it at 0.4. How many
   // ticks fit is a question about the plot, exactly as it is for the frame
   // charts: the x labels sit side by side, so they need more room than the y.
-  const xScale = niceScale(Math.min(...xs), Math.max(...xs), intervalsThatFit(wPt, true));
-  const yScale = niceScale(Math.min(...ys), Math.max(...ys), intervalsThatFit(hPt, false));
+  const [xLo, xHi] = extentOf(xs) ?? [0, 1];
+  const [yLo, yHi] = extentOf(ys) ?? [0, 1];
+  const xScale = niceScale(xLo, xHi, intervalsThatFit(wPt, true));
+  const yScale = niceScale(yLo, yHi, intervalsThatFit(hPt, false));
   const xTicks = ticks(xScale);
   const yTicks = ticks(yScale);
 
   const title = titleLines(chart, wPt, measure);
   const top = 4 + titleHeight(title);
   const legend = buildLegendBlock(chart, wPt, hPt, measure);
-  const tickLabelW =
-    Math.max(0, ...yTicks.map((v) => measure(formatTick(v, yScale.step), CHART_LABEL_PT))) + 4;
+  const tickLabelW = Math.max(0, ...yTicks.map((v) => measure(formatTick(v), CHART_LABEL_PT))) + 4;
   const x0 = 4 + tickLabelW;
   const y0 = 4 + legend.bottomHeight + CHART_LABEL_PT * 1.6;
   const plotW = Math.max(1, wPt - 4 - legend.rightWidth - x0);
   const plotH = Math.max(1, hPt - top - y0);
-  const xAt = (v: number): number => x0 + ((v - xScale.min) / (xScale.max - xScale.min)) * plotW;
-  const yAt = (v: number): number => y0 + ((v - yScale.min) / (yScale.max - yScale.min)) * plotH;
+  const xAt = (v: number): number => x0 + fractionOf(v, xScale) * plotW;
+  const yAt = (v: number): number => y0 + fractionOf(v, yScale) * plotH;
 
   pushChartTitle(labels, title, wPt, hPt);
   pushGridTicks(
     gridlines,
     labels,
     yTicks,
-    (v) => formatTick(v, yScale.step),
+    formatTick,
     'y',
     yAt,
     x0,
@@ -1308,7 +1468,7 @@ export function buildScatterScene(
     gridlines,
     labels,
     xTicks,
-    (v) => formatTick(v, xScale.step),
+    formatTick,
     'x',
     xAt,
     x0,
@@ -1418,9 +1578,7 @@ export function buildLineScene(
   // scale's to decide, by Excel's rule (niceScale) — chartex.docx's 1.8…5
   // line chart runs 0…6, as both references draw it, and 93…97 from 91.
   const allVals = chart.series.flatMap((s) => s.values);
-  const lo = allVals.length > 0 ? Math.min(...allVals) : 0;
-  const hi = allVals.length > 0 ? Math.max(...allVals) : 1;
-  const range: readonly [number, number] = [lo, hi];
+  const range = extentOf(allVals) ?? [0, 1];
   // …and the axis's own number format applies here exactly as it does to a bar
   // chart's: 123233_charts.xlsx labels every one of its four charts in currency
   // and only the line chart came out in bare digits.
@@ -1621,7 +1779,7 @@ function layoutLegend(
   const entryW = (e: LegendEntry): number => keyW + 3 + measure(e.name, CHART_LABEL_PT) + gap * 2;
 
   if (pos === 'r' || pos === 'l') {
-    const colW = Math.max(...entries.map(entryW));
+    const colW = entries.reduce((w, e) => Math.max(w, entryW(e)), 0);
     return {
       rightWidth: pos === 'r' ? colW : 0,
       bottomHeight: 0,
@@ -1700,7 +1858,7 @@ export function buildChartScene(
  *          in reverse.
  */
 function withReversedCategories(chart: Chart): Chart {
-  const n = Math.max(chart.categories.length, ...chart.series.map((s) => s.values.length), 1);
+  const n = catCount(chart);
   const flip = (i: number): number => n - 1 - i;
   return {
     ...chart,

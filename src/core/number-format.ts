@@ -684,11 +684,6 @@ function countDigitPlaceholders(s: string): number {
   return n;
 }
 
-// §18.8.31 scientific notation: `0.00E+00`, `##0.0E+0` (engineering), `0.0e-0`.
-// The mantissa is normalised so its integer part holds `intDigits` significant
-// figures (1 for `0.00E+00`, 3 for `##0.0E+0` → exponent snaps to a multiple of
-// 3); the exponent is zero-padded to the placeholder count and carries a sign
-// (always for `E+`, only when negative for `E-`). The `E`/`e` case is preserved.
 /**
  * The decimal a spreadsheet takes a double for: its first 15 significant
  * digits, and the power of ten the first of them stands at.
@@ -698,7 +693,7 @@ function countDigitPlaceholders(s: string): number {
  * zeros, 1/3 is fifteen threes and zeros, 1E+21 under `0.00` is a 1, twenty-one
  * zeros and `.00` — its own PDF of each (2026-10-01).
  */
-function decimalOf(value: number): { digits: string; exponent: number } {
+export function decimalOf(value: number): { digits: string; exponent: number } {
   const [mantissa, exponent] = Math.abs(value).toExponential(14).split('e');
   return { digits: mantissa!.replace('.', ''), exponent: Number(exponent) };
 }
@@ -707,7 +702,7 @@ function decimalOf(value: number): { digits: string; exponent: number } {
  * Those digits at `decimals` places — the first standing at `exponent` —
  * rounded half away from zero, as plain digits with a point and no sign.
  */
-function placeDigits(digits: string, exponent: number, decimals: number): string {
+export function placeDigits(digits: string, exponent: number, decimals: number): string {
   // How many of the digits fall before the cut; the rest decide the rounding.
   const kept = exponent + 1 + decimals;
   let units: string;
@@ -749,6 +744,11 @@ function toFixedDecimal(value: number, decimals: number): string {
   return value < 0 && /[1-9]/.test(placed) ? `-${placed}` : placed;
 }
 
+// §18.8.31 scientific notation: `0.00E+00`, `##0.0E+0` (engineering), `0.0e-0`.
+// The mantissa is normalised so its integer part holds `intDigits` significant
+// figures (1 for `0.00E+00`, 3 for `##0.0E+0` → exponent snaps to a multiple of
+// 3); the exponent is zero-padded to the placeholder count and carries a sign
+// (always for `E+`, only when negative for `E-`). The `E`/`e` case is preserved.
 function formatScientific(value: number, cleaned: string, negativeSection: boolean): string {
   // `.` stops at a line end, so a format holding one has no match; saying so
   // first spares the expression from reading its tail out to that line end

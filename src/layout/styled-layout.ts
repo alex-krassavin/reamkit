@@ -5491,7 +5491,10 @@ function collectFontResources(
           if (chart.valAxisTitle) add(chart.valAxisTitle);
           // §21.2.2.49 — a label the author typed is arbitrary text, not digits.
           for (const sr of chart.series) for (const label of sr.pointLabels ?? []) add(label.text);
-          add('0123456789.,-%() '); // value-axis tick labels
+          // The value axis's tick labels — General writes the large and the
+          // small in scientific notation, 1E+09 and 3.5E-07, and the E and the
+          // + left out of the subset drew blank between the digits.
+          add('0123456789.,-+E%() ');
           // …and whatever the axis's number format puts around them. A currency
           // code draws a `$` that appears nowhere else on the page, and left out
           // of the subset it drew blank: 123233_charts.xlsx labelled its axis
