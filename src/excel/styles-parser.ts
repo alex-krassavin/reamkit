@@ -16,6 +16,7 @@ import { XMLParser } from 'fast-xml-parser';
 
 import type {
   Dxf,
+  TableStyleElementType,
   XlsxBorder,
   XlsxBorderEdge,
   XlsxBorderStyleName,
@@ -25,13 +26,14 @@ import type {
   XlsxFont,
   XlsxHorizontalAlign,
   XlsxStyles,
+  XlsxTableStyle,
   XlsxVerticalAlign,
 } from '@/core/spreadsheet-model';
-import { applyColorMods } from '@/core/drawingml/colors';
 import { resolveAlternateContent } from '@/core/opc/alternate-content';
 import { resolveInternalEntities } from '@/core/opc/xml-entities';
 
 import { INDEXED_COLORS } from '@/core/indexed-colors';
+import { applyTint } from '@/excel/tint';
 
 export { INDEXED_COLORS };
 
@@ -104,6 +106,7 @@ export function parseXlsxStyles(data: Uint8Array, theme?: ThemePalette): XlsxSty
     indexed: parseIndexedColors(root),
   };
   const dxfs = parseDxfs(root, colors);
+  const tableStyles = parseTableStyles(root);
   return {
     numFmts: parseNumFmts(root),
     fonts: parseFonts(root, colors),
@@ -111,7 +114,53 @@ export function parseXlsxStyles(data: Uint8Array, theme?: ThemePalette): XlsxSty
     borders: parseBorders(root, colors),
     cellXfs: parseCellXfs(root),
     ...(dxfs.length > 0 ? { dxfs } : {}),
+    ...(tableStyles.size > 0 ? { tableStyles } : {}),
   };
+}
+
+const TABLE_STYLE_TYPES: ReadonlySet<string> = new Set<TableStyleElementType>([
+  'wholeTable',
+  'firstColumnStripe',
+  'secondColumnStripe',
+  'firstRowStripe',
+  'secondRowStripe',
+  'lastColumn',
+  'firstColumn',
+  'headerRow',
+  'totalRow',
+  'firstHeaderCell',
+  'lastHeaderCell',
+  'firstTotalCell',
+  'lastTotalCell',
+]);
+
+// §18.8.42 <tableStyles> — the table styles the workbook defines itself: each
+// region names a dxf (zero-based) in the workbook's <dxfs>. A PivotTable
+// style's regions that a table has no use for are left out.
+function parseTableStyles(root: Record<string, unknown>): Map<string, XlsxTableStyle> {
+  const out = new Map<string, XlsxTableStyle>();
+  for (const raw of asArray(asObject(root['tableStyles'])?.['tableStyle'])) {
+    const style = asObject(raw);
+    const name = style ? strAttr(style, 'name') : undefined;
+    if (!style || name === undefined) continue;
+    const elements: Array<XlsxTableStyle['elements'][number]> = [];
+    for (const el of asArray(style['tableStyleElement'])) {
+      const node = asObject(el);
+      const type = node ? strAttr(node, 'type') : undefined;
+      const dxfId = node ? numAttr(node, 'dxfId') : undefined;
+      if (!node || type === undefined || !TABLE_STYLE_TYPES.has(type) || dxfId === undefined) {
+        continue;
+      }
+      const size = numAttr(node, 'size');
+      elements.push({
+        type: type as TableStyleElementType,
+        dxfId,
+        ...(size !== undefined && size > 1 ? { size } : {}),
+      });
+    }
+    out.set(name, { elements });
+  }
+  return out;
 }
 
 // §18.8.10 <dxfs> — differential formats a conditional-format rule applies on
@@ -172,7 +221,8 @@ export function parseDxf(item: unknown, colors: WorkbookColors): Dxf {
     const borderObj = asObject(obj['border']);
     if (borderObj) {
       const border: Mutable<XlsxBorder> = {};
-      for (const side of ['top', 'right', 'bottom', 'left'] as const) {
+      // …and the lines between the cells it covers, which a table style uses.
+      for (const side of ['top', 'right', 'bottom', 'left', 'vertical', 'horizontal'] as const) {
         const edge = parseBorderEdge(asObject(borderObj[side]), colors);
         if (edge) border[side] = edge;
       }
@@ -288,8 +338,11 @@ function parseFonts(root: Record<string, unknown>, colors: WorkbookColors): Arra
     // (its text, its status, its priority and its date) and we drew all four
     // plain.
     if (hasChild(obj, 'strike')) font.strike = childToggle(obj, 'strike');
-    const colorRgb = colorOf(asObject(obj['color']), colors);
+    const colorNode = asObject(obj['color']);
+    const colorRgb = colorOf(colorNode, colors);
     if (colorRgb) font.colorHex = colorRgb;
+    const colorRef = colorNode ? colorRefOf(colorNode) : undefined;
+    if (colorRef !== undefined) font.colorRef = colorRef;
     const nameVal = childValAttr(obj, 'name');
     if (nameVal) font.name = nameVal;
     out.push(font);
@@ -372,6 +425,9 @@ function parseCellXfs(root: Record<string, unknown>): Array<XlsxCellXf> {
       if (rotation !== undefined && rotation !== 0) a.textRotation = rotation;
       const shrink = boolAttr(align, 'shrinkToFit');
       if (shrink) a.shrinkToFit = true;
+      const order = numAttr(align, 'readingOrder');
+      if (order === 1) a.readingOrder = 'ltr';
+      else if (order === 2) a.readingOrder = 'rtl';
       if (Object.keys(a).length > 0) xf.alignment = a;
     }
     out.push(xf);
@@ -471,11 +527,43 @@ function averageGradientColor(
   return `${h(r)}${h(g)}${h(b)}`;
 }
 
+/**
+ * A `<color>` of this workbook as 6-hex: its `rgb`, its `indexed` entry or its
+ * `theme` slot, with the `tint` applied (§18.8.3).
+ *
+ * @param node   The `<color>` element, parsed.
+ * @param colors What the workbook's colours point at.
+ * @returns The colour, or undefined for one that names nothing reachable.
+ */
+export function workbookColorHex(node: unknown, colors: WorkbookColors): string | undefined {
+  return colorOf(asObject(node), colors);
+}
+
 function colorOf(
   node: Record<string, unknown> | undefined,
   colors: WorkbookColors,
 ): string | undefined {
   if (!node) return undefined;
+  const base = baseColorOf(node, colors);
+  // §18.8.19 — the tint is "applied to the RGB value of the color", however the
+  // colour is named: Excel lightens `rgb="FF4472C4" tint="0.8"` to D9E1F2 as
+  // it does the theme slot of that colour. We tinted theme colours only.
+  return base === undefined ? undefined : applyTint(base, Number(strAttr(node, 'tint') ?? '0'));
+}
+
+/** A `<color>` element's own spelling of its colour (see {@link XlsxFont.colorRef}). */
+function colorRefOf(node: Record<string, unknown>): string {
+  const theme = strAttr(node, 'theme');
+  const tint = Number(strAttr(node, 'tint') ?? '0') || 0;
+  if (theme !== undefined) return `theme:${theme}:${tint}`;
+  const rgb = strAttr(node, 'rgb');
+  if (rgb !== undefined) return `rgb:${rgb.toUpperCase()}:${tint}`;
+  const indexed = strAttr(node, 'indexed');
+  if (indexed !== undefined) return `indexed:${indexed}:${tint}`;
+  return 'auto';
+}
+
+function baseColorOf(node: Record<string, unknown>, colors: WorkbookColors): string | undefined {
   const rgb = strAttr(node, 'rgb');
   if (rgb) {
     // Excel stores ARGB; strip leading alpha if 8 hex digits
@@ -490,8 +578,7 @@ function colorOf(
   const themeIdx = strAttr(node, 'theme');
   if (themeIdx !== undefined && colors.theme) {
     const slot = THEME_SLOTS[Number(themeIdx)];
-    const base = slot ? colors.theme.get(slot) : undefined;
-    if (base) return applyTint(base, Number(strAttr(node, 'tint') ?? '0'));
+    return slot ? colors.theme.get(slot) : undefined;
   }
   return undefined;
 }
@@ -546,20 +633,3 @@ const THEME_SLOTS: ReadonlyArray<string> = [
   'hlink',
   'folHlink',
 ];
-
-/**
- * §18.8.19 `tint` — lighten (positive) or darken (negative) a theme colour by
- * scaling its HSL luminance. Excel writes it on nearly every theme colour it
- * uses, so ignoring it is not much better than ignoring the colour: a `theme="2"
- * tint="-0.5"` band is half as light as its slot.
- */
-function applyTint(hex: string, tint: number): string {
-  if (!Number.isFinite(tint) || tint === 0) return hex;
-  // The same luminance arithmetic DrawingML spells as lumMod/lumOff.
-  return tint < 0
-    ? applyColorMods(hex, [{ kind: 'lumMod', val: 1 + tint }])
-    : applyColorMods(hex, [
-        { kind: 'lumMod', val: 1 - tint },
-        { kind: 'lumOff', val: tint },
-      ]);
-}

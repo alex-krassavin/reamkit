@@ -320,6 +320,21 @@ export interface PageItemBase {
    */
   readonly behind?: boolean;
   /**
+   * The item stands IN FRONT of the page's text and covers it — a drawing
+   * floating over a spreadsheet's cells. A page paints its text after its
+   * shapes, so such items are painted as a second layer, every pass again,
+   * once the first layer's text is down.
+   */
+  readonly over?: boolean;
+  /**
+   * The part of the page the item may paint, when it is cut off — a
+   * spreadsheet's drawing printed in pieces, each piece seen only over the
+   * rows and columns of its own page (TableOverlay). Top-left frame, like the
+   * item itself. Items sharing a window paint together, in their own order,
+   * after the rest of their layer.
+   */
+  readonly window?: PageWindow;
+  /**
    * The picture this item belongs to, when it is part of one. A metafile is a
    * list of drawing orders, and text among them is BOTH over what came before
    * and under what comes after: an embedded diagram writes a label, lays a
@@ -335,6 +350,14 @@ export interface PageItemBase {
    * not-yet-tagged body content so it is typed `/Artifact /Pagination`, never a P.
    */
   readonly artifact?: 'pagination';
+}
+
+/** A rectangle of the page, top-left frame: what a {@link PageItemBase.window} lets through. */
+export interface PageWindow {
+  readonly x: Pt;
+  readonly y: Pt;
+  readonly width: Pt;
+  readonly height: Pt;
 }
 
 /** A laid-out line of text (tokens carry their fonts/sizes/positions). */
@@ -577,6 +600,142 @@ export function paintPlan(commands: ReadonlyArray<PageItem>): PagePaintPlan {
       .sort((a, b) => (orderOf.get(a[0]) ?? 0) - (orderOf.get(b[0]) ?? 0))
       .map(([, run]) => run),
   };
+}
+
+/**
+ * A page's items in the layers they paint in: first the page's own, then each
+ * group seen through a window of its own, then the same again for the items
+ * that stand in front of the page's text (PageItemBase.over). Each layer is
+ * painted pass by pass on its own, so a writer can cut a windowed one off with
+ * a single clip. A page with neither comes back as one layer, its items as
+ * they were.
+ *
+ * @param commands The page's items, in the order the layout placed them.
+ * @returns The layers, in paint order; empty ones left out.
+ */
+export function pageLayers(
+  commands: ReadonlyArray<PageItem>,
+): Array<{ readonly items: Array<PageItem>; readonly window?: PageWindow }> {
+  if (!commands.some((c) => c.over === true || c.window !== undefined)) {
+    return [{ items: [...commands] }];
+  }
+  const out: Array<{ items: Array<PageItem>; window?: PageWindow }> = [];
+  for (const over of [false, true]) {
+    const layer = commands.filter((c) => (c.over === true) === over);
+    const plain = layer.filter((c) => c.window === undefined);
+    if (plain.length > 0 || !over) out.push({ items: plain });
+    const windows = new Map<string, { items: Array<PageItem>; window: PageWindow }>();
+    for (const c of layer) {
+      const w = c.window;
+      if (!w) continue;
+      const key = `${w.x} ${w.y} ${w.width} ${w.height}`;
+      const group = windows.get(key);
+      if (group) group.items.push(c);
+      else windows.set(key, { items: [c], window: w });
+    }
+    out.push(...windows.values());
+  }
+  return out;
+}
+
+/**
+ * The part of the page an item can paint, top-left frame — generous where it
+ * cannot be exact (a turned line, a turned picture), so that what falls
+ * outside it surely paints nothing there.
+ *
+ * @param item The item.
+ * @returns Its box: left, top, right and bottom edges.
+ */
+export function pageItemBounds(item: PageItem): {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+} {
+  switch (item.type) {
+    case 'fill':
+      return { x0: item.x, y0: item.y, x1: item.x + item.width, y1: item.y + item.height };
+    case 'border': {
+      const half = item.borderSizePt / 2;
+      return {
+        x0: item.x - half,
+        y0: item.y - half,
+        x1: item.x + item.width + half,
+        y1: item.y + item.height + half,
+      };
+    }
+    case 'image': {
+      if (!item.rotationDeg) {
+        return { x0: item.x, y0: item.y, x1: item.x + item.width, y1: item.y + item.height };
+      }
+      const r = Math.hypot(item.width, item.height) / 2;
+      const cx = item.x + item.width / 2;
+      const cy = item.y + item.height / 2;
+      return { x0: cx - r, y0: cy - r, x1: cx + r, y1: cy + r };
+    }
+    case 'line': {
+      if (item.clip) {
+        return {
+          x0: item.clip.x,
+          y0: item.clip.y,
+          x1: item.clip.x + item.clip.width,
+          y1: item.clip.y + item.clip.height,
+        };
+      }
+      const size = item.line.maxFontSizePt;
+      const width = item.line.contentWidthPt;
+      if (item.rotationDeg || item.warp) {
+        const r = width + size;
+        return {
+          x0: item.originX - r,
+          y0: item.baselineY - r,
+          x1: item.originX + r,
+          y1: item.baselineY + r,
+        };
+      }
+      return {
+        x0: item.originX,
+        y0: item.baselineY - size,
+        x1: item.originX + width,
+        y1: item.baselineY + (item.line.metricDescentPt ?? size * 0.25),
+      };
+    }
+    case 'shape': {
+      const [a, b, c, d, e, f] = item.shape.transform;
+      let x0 = Infinity;
+      let y0 = Infinity;
+      let x1 = -Infinity;
+      let y1 = -Infinity;
+      const take = (x: number, y: number): void => {
+        const px = a * x + c * y + e;
+        const py = b * x + d * y + f;
+        x0 = Math.min(x0, px);
+        y0 = Math.min(y0, py);
+        x1 = Math.max(x1, px);
+        y1 = Math.max(y1, py);
+      };
+      for (const path of item.shape.paths) {
+        for (const seg of path.segments) {
+          if (seg.op === 'close') continue;
+          if (seg.op === 'cubic') {
+            take(seg.x1, seg.y1);
+            take(seg.x2, seg.y2);
+          }
+          take(seg.x, seg.y);
+        }
+      }
+      if (x0 > x1) return { x0: 0, y0: 0, x1: 0, y1: 0 };
+      // The line is drawn astride the path, and a shadow beside it.
+      const pad = (item.shape.stroke?.widthPt ?? 0) / 2 + 1;
+      const sh = item.shape.shadow;
+      return {
+        x0: x0 - pad + Math.min(0, sh?.dxPt ?? 0) - (sh?.blurPt ?? 0),
+        y0: y0 - pad + Math.min(0, sh?.dyPt ?? 0) - (sh?.blurPt ?? 0),
+        x1: x1 + pad + Math.max(0, sh?.dxPt ?? 0) + (sh?.blurPt ?? 0),
+        y1: y1 + pad + Math.max(0, sh?.dyPt ?? 0) + (sh?.blurPt ?? 0),
+      };
+    }
+  }
 }
 
 function assertNeverPageItem(item: never): never {

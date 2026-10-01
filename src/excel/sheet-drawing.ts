@@ -10,11 +10,10 @@ import type { ParsedWorksheet } from '@/core/spreadsheet-model';
 
 import { emuToPt } from '@/core/ir';
 import {
-  COL_PADDING_TWIPS,
-  DEFAULT_COL_TWIPS,
   DEFAULT_ROW_TWIPS,
   TWIPS_PER_EXCEL_CHAR,
   columnTwips,
+  defaultColumnTwips,
 } from '@/excel/print-model';
 
 const CHART_URI = 'http://schemas.openxmlformats.org/drawingml/2006/chart';
@@ -38,6 +37,11 @@ export interface SheetChartRef {
   readonly yPt: number;
   /** Anchor top row (0-based) — used only to order charts on the sheet. */
   readonly anchorRow: number;
+  /**
+   * §20.5.2.3 `<xdr:clientData fPrintsWithSheet="0">` — on the sheet, not on
+   * its paper: the window shows it, a print leaves it out.
+   */
+  readonly screenOnly?: true;
 }
 
 /**
@@ -54,6 +58,11 @@ export interface SheetPicture {
   readonly yPt: number;
   /** Anchor top row (0-based) — used only to order pictures on the sheet. */
   readonly anchorRow: number;
+  /**
+   * §20.5.2.3 `<xdr:clientData fPrintsWithSheet="0">` — on the sheet, not on
+   * its paper: the window shows it, a print leaves it out.
+   */
+  readonly screenOnly?: true;
 }
 
 /** Both kinds of anchored frame the drawing yields, anchor-ordered. */
@@ -89,18 +98,20 @@ const TWIPS_PER_PT = 20;
  * @param drawingPartPath The drawing part path, for resolving its relationships.
  * @param pkg             The OPC package, used to resolve relId → part path.
  * @param worksheet       The host worksheet, for the column/row track geometry.
+ * @param colUnitTwips    The unit its columns are measured in (columnUnitTwips).
  */
 export function parseSheetDrawing(
   drawingXml: Uint8Array,
   drawingPartPath: string,
   pkg: OpcPackage,
   worksheet: ParsedWorksheet,
+  colUnitTwips?: number,
 ): SheetDrawing {
   const tree = parser.parse(new TextDecoder().decode(drawingXml)) as Record<string, unknown>;
   const root = tree['wsDr'];
   if (!root || typeof root !== 'object') return { charts: [], pictures: [] };
   const rootObj = root as Record<string, unknown>;
-  const colWidthPt = makeColWidthPt(worksheet);
+  const colWidthPt = makeColWidthPt(worksheet, colUnitTwips);
   const rowHeightPt = makeRowHeightPt(worksheet);
   const rels = pkg.getPartRelationships(drawingPartPath);
   const partPathOf = (relId: string): string | undefined => {
@@ -155,19 +166,56 @@ export function parseSheetDrawing(
         : from
           ? spanPt(0, 0, from.row, from.rowOffPt, rowHeightPt)
           : 0;
+      if (!onTheSheet(xPt, yPt)) continue;
+      const screenOnly = !printsWithSheet(a['clientData']) ? { screenOnly: true as const } : {};
 
       if (chartRelId) {
         const path = partPathOf(chartRelId);
-        if (path) charts.push({ chartPartPath: path, widthPt, heightPt, xPt, yPt, anchorRow });
+        if (path) {
+          charts.push({
+            chartPartPath: path,
+            widthPt,
+            heightPt,
+            xPt,
+            yPt,
+            anchorRow,
+            ...screenOnly,
+          });
+        }
       } else if (picRelId) {
         const path = partPathOf(picRelId);
-        if (path) pictures.push({ imagePartPath: path, widthPt, heightPt, xPt, yPt, anchorRow });
+        if (path) {
+          pictures.push({
+            imagePartPath: path,
+            widthPt,
+            heightPt,
+            xPt,
+            yPt,
+            anchorRow,
+            ...screenOnly,
+          });
+        }
       }
     }
   }
   charts.sort((x, y) => x.anchorRow - y.anchorRow);
   pictures.sort((x, y) => x.anchorRow - y.anchorRow);
   return { charts, pictures };
+}
+
+/**
+ * §20.5.2.3 `<xdr:clientData fPrintsWithSheet>` — whether the drawing prints
+ * with the sheet, which it does unless this says otherwise. A template's tip
+ * for whoever fills it in says otherwise: simple-monthly-budget.xlsx keeps a
+ * "Need to add more entries?" box under its table for the window only, and
+ * printed it ran past the bottom margin of a page LibreOffice prints without.
+ *
+ * @param clientData The anchor's parsed `<xdr:clientData>`, if any.
+ */
+export function printsWithSheet(clientData: unknown): boolean {
+  if (!clientData || typeof clientData !== 'object') return true;
+  const flag = (clientData as Record<string, unknown>)['@_fPrintsWithSheet'];
+  return flag !== '0' && flag !== 'false';
 }
 
 // §20.1.2.2.8 `<xdr:cNvPr hidden="1"/>` — "Specifies whether this DrawingML
@@ -251,47 +299,58 @@ function spanPt(
 }
 
 /**
+ * Whether a drawing anchored here starts ON the sheet. A cell offset cannot be
+ * negative in anything Excel writes, and a drawing that begins before the
+ * sheet's own corner is one LibreOffice does not import at all (its drawing
+ * fragment keeps only an anchor rectangle at X ≥ 0, Y ≥ 0). tdf66668.xlsx is
+ * LibreOffice's own export of a sheet that reads from the right: each of its
+ * 24 notes left behind a white box the size of the whole sheet at a negative
+ * offset, and drawn they buried every value under them.
+ */
+export function onTheSheet(xPt: number, yPt: number): boolean {
+  return xPt >= 0 && yPt >= 0;
+}
+
+/**
  * Build a `col → width-in-points` accessor: a `<col>` override (Excel "chars")
  * where present, else the default — the same conversions the print model uses.
  * Exported so the sheet-shape parser (E-SHEET W2) sizes shape anchors with the same
  * track geometry.
+ *
+ * @param ws        The sheet.
+ * @param unitTwips The unit its columns are measured in — the grid's own
+ *                  (columnUnitTwips), or Excel's 7px digit.
+ * @returns The accessor.
  */
-export function makeColWidthPt(ws: ParsedWorksheet): (col: number) => number {
+export function makeColWidthPt(
+  ws: ParsedWorksheet,
+  unitTwips: number = TWIPS_PER_EXCEL_CHAR,
+): (col: number) => number {
   // §18.3.1.13: a rendered column is `chars × MDW + 5px`, and the 5px is not
   // optional — the grid has always added it. Here it was dropped, so an anchor
   // drifted 3.75pt left for every explicitly-sized column before it, and the
   // drawing and the cell it is anchored to disagreed about where that column
   // starts. shape-macro-ext-ref.xlsx put its macro button 3pt short of the
   // column band its own anchor names.
-  const widthPt = (chars: number): number =>
-    columnTwips(chars, TWIPS_PER_EXCEL_CHAR) / TWIPS_PER_PT;
+  const widthPt = (chars: number): number => columnTwips(chars, unitTwips) / TWIPS_PER_PT;
   return (col: number): number => {
     for (const c of ws.columns) {
       if (col >= c.min - 1 && col <= c.max - 1) {
-        return widthPt(c.widthChars);
+        // §18.3.1.13 `hidden` — a hidden column takes no room, so what is
+        // anchored past it moves up to the column after, and what spans it
+        // closes over it: Excel's probe draws a shape from B to E as wide as
+        // B and D with C hidden between them. Counted at its width, every
+        // drawing beyond stood a column's width right of its cells.
+        return c.hidden ? 0 : widthPt(c.widthChars);
       }
     }
-    // §18.3.1.81 `<sheetFormatPr defaultColWidth>` governs every column no
-    // `<col>` covers — the same fallback the grid uses. Hardcoding Excel's
-    // 8.43 characters contradicted the file's own declaration and sized every
-    // shape anchor against a track the sheet does not have.
-    // §18.3.1.81 — `defaultColWidth` already includes the margin and gridline
-    // padding; `baseColWidth` explicitly does not, so a default derived from it
-    // takes the padding TWICE: once to become a `defaultColWidth`, once to
-    // render it. The anchor tracks have to agree with the grid's columns or a
-    // drawing lands beside the cell it is anchored to — and the grid has
-    // counted both since `defaultColumnTwips` was written. Counting one here
-    // sized 47668.xlsx's picture at 723pt where the file caches Excel's own
-    // answer beside it: `<a:ext cx="9753600">` is 768.
-    if (ws.defaultColWidthChars !== undefined) return widthPt(ws.defaultColWidthChars);
-    if (ws.baseColWidthChars !== undefined) {
-      return (
-        (columnTwips(ws.baseColWidthChars, TWIPS_PER_EXCEL_CHAR) + 2 * COL_PADDING_TWIPS) /
-        TWIPS_PER_PT
-      );
-    }
-    // DEFAULT_COL_TWIPS is 960 — Excel's 8.43 characters WITH the padding.
-    return DEFAULT_COL_TWIPS / TWIPS_PER_PT;
+    // §18.3.1.81 — every column no `<col>` covers is the sheet's default, the
+    // same one the grid draws: the anchor tracks have to agree with the grid's
+    // columns or a drawing lands beside the cell it is anchored to. Hardcoding
+    // Excel's 8.43 characters contradicted the file's own declaration, and
+    // 47668.xlsx's picture came out 723pt wide where the file caches Excel's
+    // own answer beside it: `<a:ext cx="9753600">` is 768.
+    return defaultColumnTwips(ws, unitTwips) / TWIPS_PER_PT;
   };
 }
 
@@ -302,7 +361,8 @@ export function makeColWidthPt(ws: ParsedWorksheet): (col: number) => number {
 export function makeRowHeightPt(ws: ParsedWorksheet): (row: number) => number {
   return (row: number): number => {
     for (const r of ws.rowHeights) {
-      if (r.row === row) return r.heightPt;
+      // …and a hidden row likewise, whatever height it keeps for when it shows.
+      if (r.row === row) return r.hidden === true ? 0 : r.heightPt;
     }
     // §18.3.1.81 `defaultRowHeight` likewise: bnc762542.xlsx declares 12.75pt
     // and we measured its anchored box against 15, which alone made the shape

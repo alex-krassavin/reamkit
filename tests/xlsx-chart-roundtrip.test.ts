@@ -5,6 +5,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { buildXlsx } from './fixtures/build-xlsx';
+import { sheetDrawings } from './fixtures/sheet-drawings';
 import { Ream } from '@/core/converter/ream';
 
 const C_NS =
@@ -49,6 +50,6 @@ describe('xlsx embedded chart write-back (WT1)', () => {
     expect(chart?.series[0]?.values).toEqual([4, 9]);
     expect(chart?.series[0]?.colorHex).toBe('C0504D');
     expect(chart?.hasLegend).toBe(true);
-    expect(flow.body.some((el) => el.kind === 'chart')).toBe(true);
+    expect(sheetDrawings(flow.body).some((el) => el.kind === 'chart')).toBe(true);
   });
 });

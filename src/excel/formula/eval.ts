@@ -6,7 +6,7 @@
 // → 0), `&` to text, comparisons order number < text < logical with
 // case-insensitive text and #DIV/0!/#VALUE!/#NUM! where Excel raises them.
 
-import type { Ast, BinOp, CellRef } from '@/excel/formula/parser';
+import type { Ast, BinOp, CellRef, StructuredRef, TableArea } from '@/excel/formula/parser';
 import type { EvalContext } from '@/excel/formula/context';
 import type { FErr, FValue, Scalar } from '@/excel/formula/value';
 
@@ -85,6 +85,8 @@ export function evaluate(ast: Ast, ctx: EvalContext, shift: Shift): FValue {
       // A defined name resolves against the workbook (a reference or a literal);
       // an unknown name — or no workbook wired in — is #NAME?.
       return ctx.resolveName?.(ast.name) ?? err('#NAME?');
+    case 'sref':
+      return structuredRef(ast.ref, ctx, shift);
     case 'array':
       // An inline array constant → its scalar elements (each reduced now).
       return {
@@ -102,6 +104,63 @@ export function evaluate(ast: Ast, ctx: EvalContext, shift: Shift): FValue {
     case 'call':
       return callFn(ast.name, ast.args, (a) => evaluate(a, ctx, shift), ctx, shift);
   }
+}
+
+/**
+ * §18.17.6.4 — the cells a structured reference names: the parts of the table
+ * it asks for (its data rows when it names none), across the columns it names
+ * (all of them when it names none). `#This Row` is the current cell's row.
+ *
+ * @param ref   The reference.
+ * @param ctx   The evaluation context, which knows the tables.
+ * @param shift The current cell, for `#This Row` and for a reference naming no table.
+ * @returns The range, or `#REF!` for a table, column or part that is not there.
+ */
+function structuredRef(ref: StructuredRef, ctx: EvalContext, shift: Shift): FValue {
+  const table =
+    ref.table.length > 0
+      ? ctx.table?.(ref.table)
+      : shift.curRow !== undefined && shift.curCol !== undefined
+        ? ctx.tableAt?.(shift.curRow, shift.curCol)
+        : undefined;
+  if (!table) return err('#REF!');
+  const { r0, c0, r1, c1 } = table.ref;
+  const headerEnd = r0 + table.headerRowCount - 1;
+  const totalsStart = r1 - table.totalsRowCount + 1;
+  const rows = (area: TableArea): [number, number] | undefined => {
+    switch (area) {
+      case '#All':
+        return [r0, r1];
+      case '#Data':
+        return [headerEnd + 1, totalsStart - 1];
+      case '#Headers':
+        return table.headerRowCount > 0 ? [r0, headerEnd] : undefined;
+      case '#Totals':
+        return table.totalsRowCount > 0 ? [totalsStart, r1] : undefined;
+      case '#This Row':
+        return shift.curRow !== undefined ? [shift.curRow, shift.curRow] : undefined;
+    }
+  };
+  const spans = (ref.areas.length > 0 ? ref.areas : (['#Data'] as const)).map(rows);
+  if (spans.some((s) => s === undefined || s[1] < s[0])) return err('#REF!');
+  const top = Math.min(...spans.map((s) => s![0]));
+  const bottom = Math.max(...spans.map((s) => s![1]));
+  let left = c0;
+  let right = c1;
+  if (ref.columns) {
+    const at = (name: string): number =>
+      table.columns.findIndex((c) => c.toLowerCase() === name.toLowerCase());
+    const a = at(ref.columns[0]);
+    const b = at(ref.columns[1]);
+    if (a < 0 || b < 0) return err('#REF!');
+    left = c0 + Math.min(a, b);
+    right = c0 + Math.max(a, b);
+  }
+  return {
+    t: 'ref',
+    rect: { r0: top, c0: left, r1: bottom, c1: right },
+    ...(table.sheet !== undefined ? { sheet: table.sheet } : {}),
+  };
 }
 
 // Resolve a reference axis with the shift: an anchored ($) axis stays put, an

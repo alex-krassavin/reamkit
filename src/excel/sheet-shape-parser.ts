@@ -39,11 +39,17 @@ import {
   parseXfrm,
   shadowFromOuterShdw,
 } from '@/word/drawing-parser';
-import { makeColWidthPt, makeRowHeightPt } from '@/excel/sheet-drawing';
+import {
+  makeColWidthPt,
+  makeRowHeightPt,
+  onTheSheet,
+  printsWithSheet,
+} from '@/excel/sheet-drawing';
 
 interface SheetShape {
   readonly shape: ShapeBlock;
   readonly anchorRow: number;
+  readonly screenOnly: boolean;
 }
 
 /**
@@ -186,6 +192,9 @@ function buildShape(
  *                   `<a:fillRef idx>` indexes for a gallery-styled fill.
  * @param themeEffectStyles The theme's `a:effectStyleLst` nodes, which an
  *                   `<a:effectRef idx>` indexes for a gallery-styled shadow.
+ * @param screenOnly Collects the shapes whose anchor does not print with the
+ *                   sheet (§20.5.2.3 `fPrintsWithSheet="0"`).
+ * @param colUnitTwips The unit the sheet's columns are measured in (columnUnitTwips).
  */
 export function parseSheetShapes(
   drawingXml: Uint8Array,
@@ -194,11 +203,13 @@ export function parseSheetShapes(
   themeLineWidths: ReadonlyArray<number> = [],
   themeFillStyles: ReadonlyArray<PoNode> = [],
   themeEffectStyles: ReadonlyArray<PoNode> = [],
+  screenOnly?: Set<ShapeBlock>,
+  colUnitTwips?: number,
 ): Array<ShapeBlock> {
   const tree = parseXml(drawingXml);
   const wsDr = tree.find((n) => poIs(n, 'xdr:wsDr'));
   if (!wsDr) return [];
-  const colWidthPt = makeColWidthPt(worksheet);
+  const colWidthPt = makeColWidthPt(worksheet, colUnitTwips);
   const rowHeightPt = makeRowHeightPt(worksheet);
 
   const shapes: Array<SheetShape> = [];
@@ -206,6 +217,10 @@ export function parseSheetShapes(
     if (!ANCHOR_KINDS.some((k) => poIs(anchor, k))) continue;
     const anchored = anchorBox(anchor, colWidthPt, rowHeightPt);
     if (!anchored) continue;
+    const clientData = poChildren(anchor).find((c) => poIs(c, 'xdr:clientData'));
+    const printing = printsWithSheet(
+      clientData ? { '@_fPrintsWithSheet': poAttr(clientData, 'fPrintsWithSheet') } : undefined,
+    );
     // §20.5.2.17 — an anchor may frame a GROUP rather than a shape, and the
     // walk looked for a direct `xdr:sp` only: groupShape.xlsx nests two groups
     // over three rectangles and we drew none of them.
@@ -228,10 +243,11 @@ export function parseSheetShapes(
         themeEffectStyles,
       );
       if (!shape) continue;
-      shapes.push({ shape, anchorRow: box.anchorRow });
+      shapes.push({ shape, anchorRow: box.anchorRow, screenOnly: !printing });
     }
   }
   shapes.sort((a, b) => a.anchorRow - b.anchorRow);
+  for (const s of shapes) if (s.screenOnly) screenOnly?.add(s.shape);
   return shapes.map((s) => s.shape);
 }
 
@@ -245,16 +261,18 @@ export function parseSheetShapes(
  *
  * @param drawingXml The drawing part bytes.
  * @param worksheet  The host worksheet, for the column/row track geometry.
+ * @param colUnitTwips The unit its columns are measured in (columnUnitTwips).
  * @returns One box per diagram frame, in the order the drawing writes them.
  */
 export function parseDiagramFrames(
   drawingXml: Uint8Array,
   worksheet: ParsedWorksheet,
+  colUnitTwips?: number,
 ): Array<AnchorBox> {
   const tree = parseXml(drawingXml);
   const wsDr = tree.find((n) => poIs(n, 'xdr:wsDr'));
   if (!wsDr) return [];
-  const colWidthPt = makeColWidthPt(worksheet);
+  const colWidthPt = makeColWidthPt(worksheet, colUnitTwips);
   const rowHeightPt = makeRowHeightPt(worksheet);
   const out: Array<AnchorBox> = [];
   for (const anchor of poChildren(wsDr)) {
@@ -620,6 +638,15 @@ export interface AnchorBox {
 // The shape's size from its anchor: full tracks in [from..to) plus the offset
 // difference (twoCellAnchor), or the explicit ext (one-cell / absolute anchor).
 function anchorBox(
+  anchor: PoNode,
+  colWidthPt: (col: number) => number,
+  rowHeightPt: (row: number) => number,
+): AnchorBox | undefined {
+  const box = anchorBoxAnywhere(anchor, colWidthPt, rowHeightPt);
+  return box && onTheSheet(box.xPt, box.yPt) ? box : undefined;
+}
+
+function anchorBoxAnywhere(
   anchor: PoNode,
   colWidthPt: (col: number) => number,
   rowHeightPt: (row: number) => number,

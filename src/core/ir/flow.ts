@@ -183,4 +183,10 @@ export interface FlowDoc {
    * room.
    */
   readonly typesetBy?: 'word';
+  /**
+   * The document's front floats cover the text under them, as a spreadsheet's
+   * drawings cover its cells: a note's box hides the value beside its cell,
+   * and a chart the figures it sits on. Absent, the text is painted over them.
+   */
+  readonly floatsOverText?: true;
 }

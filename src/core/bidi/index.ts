@@ -5,6 +5,7 @@
 
 import type { Direction } from '@/core/bidi/algorithm';
 import { computeBidi, reorderVisual } from '@/core/bidi/algorithm';
+import { bidiClass } from '@/core/bidi/char-types';
 
 export type { Direction, BidiResult } from '@/core/bidi/algorithm';
 export type { BidiClass } from '@/core/bidi/char-types';
@@ -63,6 +64,24 @@ export function hasBidiCharacters(text: string): boolean {
     }
   }
   return false;
+}
+
+/**
+ * The direction of a string's first strong character (UAX #9 P2): `rtl` for
+ * an `R` or `AL` one, `ltr` for an `L` one, undefined when it has none — a
+ * number, punctuation, a blank. This is what an application means by a
+ * "context" reading order.
+ *
+ * @param text The string to scan.
+ * @returns The direction its first strong character sets, if any.
+ */
+export function firstStrongDirection(text: string): 'ltr' | 'rtl' | undefined {
+  for (const ch of text) {
+    const cls = bidiClass(ch.codePointAt(0)!);
+    if (cls === 'L') return 'ltr';
+    if (cls === 'R' || cls === 'AL') return 'rtl';
+  }
+  return undefined;
 }
 
 /**

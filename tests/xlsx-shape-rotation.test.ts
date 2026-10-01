@@ -5,6 +5,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { buildXlsx } from './fixtures/build-xlsx';
+import { sheetDrawings } from './fixtures/sheet-drawings';
 import type { ShapeBlock } from '@/core/document-model';
 import { presetPaths } from '@/core/drawingml/preset-geometry';
 import { Ream } from '@/core/converter/ream';
@@ -24,7 +25,7 @@ function shapeWith(xfrm: string): ShapeBlock | undefined {
       },
     }),
   );
-  const el = flow.body.find((b) => b.kind === 'shape');
+  const el = sheetDrawings(flow.body).find((b) => b.kind === 'shape');
   return el?.kind === 'shape' ? el.shape : undefined;
 }
 

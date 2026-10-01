@@ -876,6 +876,20 @@ export interface CellDataBar {
    * axis, and which way that is depends on the sign.
    */
   readonly negative?: boolean;
+  /** The bar is one solid colour, not faded from the axis (`<x14:dataBar gradient="0">`). */
+  readonly solid?: boolean;
+}
+
+/**
+ * How a window flags a cell that carries a note: red for a legacy note, purple
+ * for a threaded comment, in the top corner on the side the cell ends — the
+ * right, or the left on a sheet that reads from the right.
+ */
+export interface CellNoteFlag {
+  readonly kind: 'note' | 'thread';
+  /** The note as one reads it on hover: author and text, a conversation line by line. */
+  readonly text: string;
+  readonly atLeft?: boolean;
 }
 
 /**
@@ -961,6 +975,12 @@ export interface CellProperties {
    * what a merge wants.
    */
   readonly paintColumns?: number;
+  /**
+   * The paint covers the LAST {@link paintColumns} of the span rather than the
+   * first. A sheet that reads from the right runs a cell's text over the
+   * neighbours on its left, so the cell the paint belongs to ends the span.
+   */
+  readonly paintAtEnd?: boolean;
   readonly shading?: CellShading;
   readonly dataBar?: CellDataBar;
   readonly icon?: CellIcon;
@@ -970,6 +990,12 @@ export interface CellProperties {
    * dropdown affordance at the cell's right edge (a small button + ▾ glyph).
    */
   readonly dropdown?: boolean;
+  /**
+   * A note or comment on the cell, as a WINDOW flags it (E-SHEET W7): a small
+   * triangle in the cell's top corner, the note's text shown on hover where
+   * the medium can. Set by screen projections only — paper never shows it.
+   */
+  readonly noteFlag?: CellNoteFlag;
   /**
    * The cell's text is not allowed to wrap: it renders on one line and whatever
    * does not fit the cell box is cut, as a spreadsheet cell without `wrapText`
@@ -1028,6 +1054,13 @@ export interface RowProperties {
    * header row `w:firstRow="1"` so it is painted like the first.
    */
   readonly conditional?: RowConditionalFormat;
+  /**
+   * Where a spreadsheet row's top stands on its sheet, measured down from the
+   * sheet's first row in the frame its table's drawings are placed in (see
+   * {@link TableOverlay}). A row the sheet does not have — the printed column
+   * letters — carries none.
+   */
+  readonly sheetTopPt?: Pt;
 }
 
 /** §17.4.7 — the row-level conditional-format flags a `w:cnfStyle` declares. */
@@ -1064,6 +1097,14 @@ export interface TableProperties {
   readonly layout?: 'auto' | 'fixed';
   readonly defaultCellMargins?: CellMargins;
   readonly borders?: CellBorders;
+  /**
+   * A worksheet's gridlines as its WINDOW draws them (§18.3.1.87), where the
+   * sheet was projected for a screen: the line a cell's edge takes when no
+   * border claims it — but not around a filled cell, whose fill covers them.
+   * A screen-only hint: the paginated layout draws a grid only where the
+   * sheet PRINTS one, and that comes as `borders`.
+   */
+  readonly gridlines?: Border;
   /**
    * ECMA-376 §17.4.27 (`w:jc`) / xlsx `<printOptions horizontalCentered>`.
    * Centers or right-aligns a table narrower than the content width; absent ⇒ left.
@@ -1110,6 +1151,33 @@ export interface Table {
   readonly properties: TableProperties;
   readonly grid: ReadonlyArray<Pt>;
   readonly rows: ReadonlyArray<TableRow>;
+  /** The drawings that lie over a spreadsheet grid and print with it. */
+  readonly overlay?: TableOverlay;
+}
+
+/**
+ * §20.5 — a spreadsheet's drawings over the part of the sheet one table
+ * prints. A drawing is anchored to cells, not to paper: each page the table
+ * spans shows the part of every drawing that lies over the rows and columns it
+ * prints, and cuts it off where they end — a chart across a page break is
+ * printed in two pieces, a drawing in the repeated title rows on every page,
+ * and what runs out of the print area not at all. Excel prints a sheet so.
+ */
+export interface TableOverlay {
+  /** Where the sheet's columns this table prints begin, in the drawings' frame. */
+  readonly sheetLeftPt: Pt;
+  /** How wide those columns run. */
+  readonly widthPt: Pt;
+  /** Where they stand in the table, from its left edge (past a printed row-number column). */
+  readonly leftPt: Pt;
+  /** §18.3.1.87 — the sheet reads from the right: its first column stands at the right. */
+  readonly mirrored?: boolean;
+  /**
+   * The drawings, out-of-flow floats placed in the sheet's own frame: `posH`
+   * from the sheet's left edge, `posV` from its top, the frame of
+   * {@link RowProperties.sheetTopPt}.
+   */
+  readonly drawings: ReadonlyArray<BodyElement>;
 }
 
 /**
@@ -1615,6 +1683,15 @@ export interface Chart {
   readonly categories: ReadonlyArray<string>; // c:cat (shared across series)
   /** §21.2.2.24 `c:cat/…/c:f` — where the categories live, when uncached. */
   readonly categoriesRef?: string;
+  /**
+   * §21.2.2.115 `c:multiLvlStrCache` — the outer levels of a category axis
+   * labelled on more than one: each level's groups, innermost level first,
+   * each group from the category it starts at to the next group's start.
+   * {@link Chart.categories} is the innermost level, one label per category.
+   */
+  readonly categoryGroups?: ReadonlyArray<
+    ReadonlyArray<{ readonly start: number; readonly label: string }>
+  >;
   readonly series: ReadonlyArray<ChartSeries>;
   readonly hasLegend: boolean;
   readonly legendPos?: 'r' | 'l' | 't' | 'b';
@@ -1635,6 +1712,27 @@ export interface Chart {
    * and we printed the ranking upside down).
    */
   readonly catAxisReversed?: boolean;
+  /**
+   * §21.2.2.33/§21.2.2.34 `c:catAx/c:crosses`, `c:crossesAt` — where along the
+   * value axis the category axis lies, and so where bars grow from: at the
+   * axis's minimum or maximum, or at a stated value. Absent ⇒ `autoZero`, at
+   * zero (or the end of the value axis nearest it).
+   */
+  readonly catAxisCrosses?: 'min' | 'max' | number;
+  /**
+   * §21.2.2.207 `c:catAx/c:tickLblPos` — where the category labels stand: at
+   * the low or high end of the value axis, or nowhere. Absent ⇒ `nextTo`,
+   * beside the category axis wherever it crosses — on the zero line of a chart
+   * with values below zero.
+   */
+  readonly catTickLabelPos?: 'low' | 'high' | 'none';
+  /**
+   * §21.2.2.33 `c:valAx/c:crosses` — where along the category axis the value
+   * axis lies: at the last category (`max`) or the first (absent, `autoZero`).
+   * The first is at the far end when the categories run backwards
+   * ({@link Chart.catAxisReversed}): a ranked bar chart has its values on top.
+   */
+  readonly valAxisCrosses?: 'min' | 'max' | number;
   readonly valAxisTitle?: string; // c:valAx/c:title
   /** §21.2.2.168 — the title of the secondary value axis, when one is drawn. */
   readonly secondaryValAxisTitle?: string;
@@ -1665,6 +1763,11 @@ export interface Chart {
    */
   readonly valAxisMin?: number;
   readonly valAxisMax?: number;
+  /**
+   * §21.2.2.98 `c:valAx/c:majorUnit` — the step between the value axis's
+   * labels, when the author fixed it. Absent ⇒ the application's own choice.
+   */
+  readonly valAxisMajorUnit?: number;
   /**
    * §21.2.2.198 `c:chartSpace/c:spPr` — the frame around the whole chart: its
    * background fill and its outline. Excel writes both on every chart it
@@ -1923,6 +2026,14 @@ export interface SectionColumns {
 export interface Section {
   readonly properties: SectionProperties;
   readonly endIndex: number;
+  /**
+   * The worksheet this section IS, where a workbook was projected for a screen
+   * rather than for paper (`ProjectSheetOptions.screen`): its tab's name. Such
+   * a section is one surface with no pages — the grid as Excel shows it — and
+   * a float in it is placed from the surface's top-left corner, which is the
+   * corner of the first cell.
+   */
+  readonly sheet?: { readonly name: string };
 }
 
 /** The parsed WordprocessingML document: body, stylesheet, numbering and section setup. */

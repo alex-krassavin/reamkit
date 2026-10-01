@@ -144,7 +144,7 @@ const LOCK = resolve(tmpdir(), 'ream-stand-lo.lock');
  * keeps ONE profile (a fresh one costs seconds to set up on every call) and
  * takes turns on it instead.
  */
-function soffice(args: ReadonlyArray<string>): void {
+export function soffice(args: ReadonlyArray<string>): void {
   const held = lock();
   try {
     execFileSync(SOFFICE, [`-env:UserInstallation=${PROFILE}`, '--headless', ...args], {
@@ -218,9 +218,8 @@ function renderDocx(docx: string, work: string): string {
 
 // ---- pictures ----
 
-/** Every page of a PDF, drawn by poppler, as PPM files in page order. */
 /** How many pages a PDF has, by poppler's count. */
-function pageCount(pdf: string): number {
+export function pageCount(pdf: string): number {
   try {
     const info = execFileSync('pdfinfo', [pdf], { encoding: 'utf8', timeout: 60_000 });
     return Number(/^Pages:\s+(\d+)/mu.exec(info)?.[1] ?? 0);
@@ -229,10 +228,33 @@ function pageCount(pdf: string): number {
   }
 }
 
-function rasterize(pdf: string, prefix: string): Array<string> {
+/** How a PDF is drawn into pictures: the resolution, how many pages, and how much of each. */
+export interface Drawing {
+  readonly dpi?: number;
+  readonly maxPages?: number;
+  /** The most of a page drawn, in pixels from its top left; a page past it is cut. */
+  readonly maxPx?: { readonly width: number; readonly height: number };
+}
+
+/** Every page of a PDF, drawn by poppler, as PPM files in page order. */
+function rasterize(pdf: string, prefix: string, how: Drawing): Array<string> {
+  const cut = how.maxPx
+    ? ['-x', '0', '-y', '0', '-W', String(how.maxPx.width), '-H', String(how.maxPx.height)]
+    : [];
   execFileSync(
     'pdftoppm',
-    ['-cropbox', '-r', String(DPI), '-f', '1', '-l', String(MAX_PAGES), pdf, prefix],
+    [
+      '-cropbox',
+      '-r',
+      String(how.dpi ?? DPI),
+      ...cut,
+      '-f',
+      '1',
+      '-l',
+      String(how.maxPages ?? MAX_PAGES),
+      pdf,
+      prefix,
+    ],
     { stdio: 'ignore', timeout: 120_000 },
   );
   const dir = dirname(prefix);
@@ -245,7 +267,7 @@ function rasterize(pdf: string, prefix: string): Array<string> {
 }
 
 /** Draw a PDF into `<tag>-N.png` pages in `dir`, keeping the PPMs for the diff. */
-function pages(pdf: string, dir: string, tag: string): Array<Ppm> {
+export function pages(pdf: string, dir: string, tag: string, how: Drawing = {}): Array<Ppm> {
   const raw = resolve(dir, '.raw');
   rmSync(raw, { recursive: true, force: true });
   mkdirSync(raw, { recursive: true });
@@ -253,7 +275,7 @@ function pages(pdf: string, dir: string, tag: string): Array<Ppm> {
     if (new RegExp(`^${tag}-\\d+\\.png$`, 'u').test(f)) unlinkSync(resolve(dir, f));
   }
   const out: Array<Ppm> = [];
-  rasterize(pdf, resolve(raw, tag)).forEach((file, i) => {
+  rasterize(pdf, resolve(raw, tag), how).forEach((file, i) => {
     const ppm = parsePpm(new Uint8Array(readFileSync(file)));
     out.push(ppm);
     writeFileSync(
@@ -268,20 +290,23 @@ function pages(pdf: string, dir: string, tag: string): Array<Ppm> {
 }
 
 /** The kept pages of one side, read back from the PNGs `pages` wrote. */
-async function keptPages(dir: string, tag: string): Promise<Array<Ppm>> {
+export async function keptPages(dir: string, tag: string): Promise<Array<Ppm>> {
   const number = (f: string): number => Number(/-(\d+)\.png$/u.exec(f)?.[1] ?? 0);
   const files = readdirSync(dir)
     .filter((f) => new RegExp(`^${tag}-\\d+\\.png$`, 'u').test(f))
     .sort((a, b) => number(a) - number(b));
   const out: Array<Ppm> = [];
-  for (const f of files) {
-    const { data, info } = await sharp(resolve(dir, f))
-      .removeAlpha()
-      .raw()
-      .toBuffer({ resolveWithObject: true });
-    out.push({ width: info.width, height: info.height, rgb: new Uint8Array(data) });
-  }
+  for (const f of files) out.push(await readPicture(resolve(dir, f)));
   return out;
+}
+
+/** A PNG read back as raw pixels, its alpha dropped. */
+export async function readPicture(file: string): Promise<Ppm> {
+  const { data, info } = await sharp(file)
+    .removeAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  return { width: info.width, height: info.height, rgb: new Uint8Array(data) };
 }
 
 const luma = (p: Ppm, i: number): number =>
@@ -308,7 +333,8 @@ function matchNear(p: Ppm, x: number, y: number, other: Ppm, oi: number): boolea
   return false;
 }
 
-const BLANK: Ppm = { width: 0, height: 0, rgb: new Uint8Array(0) };
+/** No page at all: what a side that has fewer pages is diffed as. */
+export const BLANK: Ppm = { width: 0, height: 0, rgb: new Uint8Array(0) };
 
 /** `p` on white paper of the given size — a missing page is a blank one. */
 function onPaper(p: Ppm, width: number, height: number): Ppm {
@@ -326,7 +352,11 @@ function onPaper(p: Ppm, width: number, height: number): Ppm {
  * faded, RED is gold ink ours does not have there, BLUE is ours where the gold
  * has none. A line set a few points off shows as a red and a blue copy of it.
  */
-function diff(oursPage: Ppm, goldPage: Ppm, page: number): { png: Uint8Array; score: PageScore } {
+export function diff(
+  oursPage: Ppm,
+  goldPage: Ppm,
+  page: number,
+): { png: Uint8Array; score: PageScore } {
   const width = Math.max(oursPage.width, goldPage.width);
   const height = Math.max(oursPage.height, goldPage.height);
   const ours = onPaper(oursPage, width, height);

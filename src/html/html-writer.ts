@@ -21,6 +21,7 @@ import type {
   BodyElement,
   Border,
   CellIcon,
+  CellNoteFlag,
   CellSparkline,
   Chart,
   ChartBlock,
@@ -43,6 +44,7 @@ import type {
 import type { StrokeStyle } from '@/core/vector';
 import type { ResolvedParagraphProperties, ResolvedRunProperties } from '@/core/style-cascade';
 import type { DocumentWriter, WriteResult } from '@/core/ir/adapters';
+import type { FamilyKey } from '@/core/fonts/remote-fonts';
 import type { FlowDoc } from '@/core/ir/flow';
 import type { Loss, ResourceId, ResourceStore } from '@/core/ir';
 import { buildSparkline } from '@/core/drawingml/sparkline-geometry';
@@ -57,12 +59,14 @@ import {
   buildShapeTransform,
   buildStroke,
   gradientSvgDef,
+  lineEndPaths,
 } from '@/core/drawingml/shape-render';
 import { PathBuilder, flipTransform, svgPathData } from '@/core/vector';
 import { detectImageFormat } from '@/core/images';
 import { sanitizeHref } from '@/core/links';
 import { FEATURES } from '@/core/ir';
 import { headingLevelOf } from '@/core/outline';
+import { resolveFamilyStyle } from '@/core/fonts/remote-fonts';
 import {
   EMPTY_STYLE_SHEET,
   resolveParagraphProperties,
@@ -108,8 +112,10 @@ export function writeHtml(flow: FlowDoc): WriteResult {
   out.push('<body>');
   // A document-shaped column: the first section's content width, like the
   // page the source was authored for (A4 + 1" margins when unspecified —
-  // the same fallback the layout engine uses).
-  out.push(`<article style="max-width: ${fmt(contentWidthPt(flow))}pt">`);
+  // the same fallback the layout engine uses). A workbook laid out for the
+  // screen has no page: a sheet is as wide as its columns.
+  const sheets = flow.sections.some((s) => s.sheet !== undefined);
+  out.push(sheets ? '<article>' : `<article style="max-width: ${fmt(contentWidthPt(flow))}pt">`);
 
   if (flow.headersFooters && flow.headersFooters.size > 0) {
     losses.push({
@@ -119,7 +125,8 @@ export function writeHtml(flow: FlowDoc): WriteResult {
     });
   }
 
-  for (const el of flow.body) emitBlock(out, el, ctx);
+  if (sheets) emitSheets(out, flow, ctx);
+  else for (const el of flow.body) emitBlock(out, el, ctx);
 
   emitNotesSection(out, flow.footnotes, ctx.notes.footnotes, 'fn', ctx);
   emitNotesSection(out, flow.endnotes, ctx.notes.endnotes, 'en', ctx);
@@ -165,6 +172,14 @@ const BASE_CSS = [
   'th{text-align:inherit}',
   '.tab{display:inline-block;min-width:18pt}',
   'img{vertical-align:baseline}',
+  // A worksheet laid out for the screen: its tab's name over a surface that
+  // its drawings are placed on.
+  '.sheet{margin:0 0 24pt}',
+  '.sheet-name{font:600 11pt/1.4 sans-serif;margin:0 0 6pt;color:#333}',
+  '.surface{position:relative}',
+  // …and over the grid, positioned cells included: a cell flagging its note
+  // is one, and it stood over the note's own box.
+  '.drawing{z-index:1}',
   '.notes{margin-top:18pt;font-size:smaller}',
   '.notes hr{margin:0 0 6pt;border:none;border-top:0.75pt solid #000;width:144pt;margin-left:0}',
   // Comment-range highlight (CM2c) + nested reply indentation (CM4).
@@ -186,6 +201,63 @@ interface EmitCtx {
     endnotes: ReadonlyMap<string, number>;
     comments: ReadonlyMap<string, number>;
   };
+  // Inside a worksheet's surface (Section.sheet): a float is placed where it
+  // is anchored, from the surface's top-left corner, instead of in line.
+  readonly surface?: boolean;
+}
+
+/**
+ * A workbook laid out for the screen: each sheet a section of its own, headed
+ * by its tab's name, its grid and drawings on one surface. The surface is the
+ * positioned box the drawings are placed in, and it is made as large as the
+ * furthest of them — a chart below the last row is outside the grid, and a box
+ * only as tall as the grid let the next sheet run under it.
+ */
+function emitSheets(out: Array<string>, flow: FlowDoc, ctx: EmitCtx): void {
+  let start = 0;
+  for (const section of flow.sections) {
+    const els = flow.body.slice(start, section.endIndex);
+    start = section.endIndex;
+    if (!section.sheet) {
+      for (const el of els) emitBlock(out, el, ctx);
+      continue;
+    }
+    const name = section.sheet.name;
+    out.push(`<section class="sheet" data-sheet="${escapeAttr(name)}">`);
+    out.push(`<h2 class="sheet-name">${escapeText(name)}</h2>`);
+    let right = 0;
+    let bottom = 0;
+    for (const el of els) {
+      const at = surfaceBox(el);
+      if (!at) continue;
+      right = Math.max(right, at.x + at.width);
+      bottom = Math.max(bottom, at.y + at.height);
+    }
+    const reach =
+      right > 0 || bottom > 0 ? `min-width:${fmt(right)}pt;min-height:${fmt(bottom)}pt` : '';
+    out.push(`<div class="surface"${reach ? ` style="${reach}"` : ''}>`);
+    const onSurface: EmitCtx = { ...ctx, surface: true };
+    for (const el of els) emitBlock(out, el, onSurface);
+    out.push('</div>');
+    out.push('</section>');
+  }
+  for (const el of flow.body.slice(start)) emitBlock(out, el, ctx);
+}
+
+/**
+ * Where a floating drawing sits on a worksheet's surface, in points from its
+ * top-left corner — or `undefined` for a block that is not a float placed by
+ * offsets (a paragraph, a table, an inline picture).
+ */
+function surfaceBox(
+  el: BodyElement,
+): { x: number; y: number; width: number; height: number } | undefined {
+  if (el.kind === 'paragraph' || el.kind === 'table') return undefined;
+  const block = el.kind === 'image' ? el.image : el.kind === 'chart' ? el.chart : el.shape;
+  const x = block.float?.posH?.offsetPt;
+  const y = block.float?.posV?.offsetPt;
+  if (x === undefined || y === undefined) return undefined;
+  return { x, y, width: block.width, height: block.height };
 }
 
 // Anchor targets referenced by some internal link anywhere in the body.
@@ -322,6 +394,19 @@ function emitCommentsSection(
 }
 
 function emitBlock(out: Array<string>, el: BodyElement, ctx: EmitCtx): void {
+  // On a worksheet's surface a drawing is where its anchor puts it, over the
+  // grid — in line it was stacked above the grid, a chart beside the figures
+  // it plots moved up and away from them.
+  const at = ctx.surface ? surfaceBox(el) : undefined;
+  if (at) {
+    out.push(
+      `<div class="drawing" style="position:absolute;left:${fmt(at.x)}pt;top:${fmt(at.y)}pt;` +
+        `width:${fmt(at.width)}pt;height:${fmt(at.height)}pt">`,
+    );
+    emitBlock(out, el, { ...ctx, surface: false });
+    out.push('</div>');
+    return;
+  }
   if (el.kind === 'paragraph') {
     emitParagraph(out, el.paragraph, ctx);
   } else if (el.kind === 'table') {
@@ -358,10 +443,26 @@ const blockFigureCss = (pp: ParagraphProperties): string => {
   return css.length > 0 ? ` style="${css.join(';')}"` : '';
 };
 
-const svgOpen = (w: number, h: number, label: string | undefined): string =>
-  `<svg viewBox="0 0 ${fmt(w)} ${fmt(h)}" width="${fmt(w)}pt" height="${fmt(h)}pt" ` +
-  `style="max-width:100%;height:auto" overflow="visible" xmlns="http://www.w3.org/2000/svg" ` +
-  `role="img"${label ? ` aria-label="${escapeAttr(label)}"` : ''}>`;
+// A straight line has no height, or no width — and a viewport with an empty
+// side paints nothing at all, overflow or not: a horizontal rule, or a note's
+// line to its cell, drew nothing. Such a side is widened by this much each
+// way, and the element moved back by as much, so the line lands where it was.
+const LINE_PAD_PT = 0.5;
+
+const svgOpen = (w: number, h: number, label: string | undefined): string => {
+  const padX = w < 2 * LINE_PAD_PT ? LINE_PAD_PT : 0;
+  const padY = h < 2 * LINE_PAD_PT ? LINE_PAD_PT : 0;
+  const style =
+    padX > 0 || padY > 0
+      ? `margin:${fmt(-padY)}pt 0 0 ${fmt(-padX)}pt;vertical-align:top`
+      : 'max-width:100%;height:auto';
+  return (
+    `<svg viewBox="${fmt(-padX)} ${fmt(-padY)} ${fmt(w + 2 * padX)} ${fmt(h + 2 * padY)}" ` +
+    `width="${fmt(w + 2 * padX)}pt" height="${fmt(h + 2 * padY)}pt" ` +
+    `style="${style}" overflow="visible" xmlns="http://www.w3.org/2000/svg" ` +
+    `role="img"${label ? ` aria-label="${escapeAttr(label)}"` : ''}>`
+  );
+};
 
 const strokeAttrs = (stroke: StrokeStyle | undefined): string => {
   if (!stroke) return '';
@@ -502,7 +603,8 @@ function emitOneShape(out: Array<string>, shape: ShapeBlock, ctx: EmitCtx): void
     : shape.fill.kind === 'solid' && shape.fill.colorHex
       ? `#${shape.fill.colorHex}`
       : 'none';
-  const stroke = strokeAttrs(buildStroke(shape.line));
+  const strokeStyle = buildStroke(shape.line);
+  const stroke = strokeAttrs(strokeStyle);
   const t = shape.transform;
   // Paths are y-up; the same local→page matrix the PDF layout builds (rotation
   // about the center, flips), flipped into the y-down viewport.
@@ -514,19 +616,34 @@ function emitOneShape(out: Array<string>, shape: ShapeBlock, ctx: EmitCtx): void
   const svg: Array<string> = [svgOpen(w, h, shape.altText)];
   if (gradDef) svg.push(`<defs>${gradDef}</defs>`);
   // §20.1.8.40 — the drop shadow under the shape. The inline SVG is clipped to
-  // the shape's own box, so the shadow is drawn as a `drop-shadow` filter on
-  // the path rather than a second path outside it, which keeps the blur the
-  // source asked for without needing room the viewport does not have.
+  // the shape's own box, so the shadow is drawn as a `drop-shadow` filter
+  // rather than a second path outside it, which keeps the blur the source
+  // asked for without needing room the viewport does not have. On a group
+  // AROUND the paths: on a path the offset is taken in its own frame, which
+  // the y-up matrix turns over, and a note's shadow fell up and to the right.
   const shadow = shape.shadow;
-  const shadowFilter = shadow
-    ? ` filter="drop-shadow(${fmt(shadow.dxPt)}px ${fmt(shadow.dyPt)}px ` +
-      `${fmt(shadow.blurPt / 2)}px rgba(${hexToRgbCss(shadow.colorHex)},${fmt(shadow.alpha)}))"`
-    : '';
+  if (shadow) {
+    svg.push(
+      `<g filter="drop-shadow(${fmt(shadow.dxPt)}px ${fmt(shadow.dyPt)}px ` +
+        `${fmt(shadow.blurPt / 2)}px rgba(${hexToRgbCss(shadow.colorHex)},${fmt(shadow.alpha)}))">`,
+    );
+  }
   for (const path of paths) {
     const rule = path.fillRule === 'evenodd' ? ' fill-rule="evenodd"' : '';
     svg.push(
-      `<path d="${svgPathData(path.segments, fmt)}" fill="${fill}"${rule}${stroke}${transform}${shadowFilter}/>`,
+      `<path d="${svgPathData(path.segments, fmt)}" fill="${fill}"${rule}${stroke}${transform}/>`,
     );
+  }
+  if (shadow) svg.push('</g>');
+  // §20.1.8.24 / §20.1.8.42 — the arrowheads the line ends in, solid in its
+  // colour, as the paginated layout draws them. A note's line points at its
+  // cell with one, and here it pointed at nothing.
+  if (strokeStyle) {
+    for (const end of lineEndPaths(paths, shape.line, strokeStyle.widthPt)) {
+      svg.push(
+        `<path d="${svgPathData(end.segments, fmt)}" fill="#${strokeStyle.colorHex}"${transform}/>`,
+      );
+    }
   }
   svg.push('</svg>');
 
@@ -586,12 +703,27 @@ function emitParagraph(out: Array<string>, p: Paragraph, ctx: EmitCtx): void {
 
 function paragraphCss(r: ResolvedParagraphProperties): string {
   const css: Array<string> = [];
-  if (r.alignment === 'center' || r.alignment === 'right') css.push(`text-align:${r.alignment}`);
-  else if (r.alignment === 'both' || r.alignment === 'distribute') css.push('text-align:justify');
+  // §17.3.1.13 / §17.3.1.12 — in a `w:bidi` paragraph "left" and "right" are
+  // the START and END of the line, so the alignment and the indents cross over
+  // into sides, exactly as the paginated layout crosses them. CSS's own sides
+  // are physical whatever `dir` says, and `text-align:right` on a bidi "right"
+  // paragraph put it at the right where Word puts it at the left.
+  const bidi = r.bidi === true;
+  const align =
+    bidi && r.alignment === 'left'
+      ? 'right'
+      : bidi && r.alignment === 'right'
+        ? 'left'
+        : r.alignment;
+  if (align === 'center' || align === 'right' || (bidi && align === 'left')) {
+    css.push(`text-align:${align}`);
+  } else if (align === 'both' || align === 'distribute') css.push('text-align:justify');
   if (r.spacingBefore > 0) css.push(`margin-top:${fmt(r.spacingBefore)}pt`);
   if (r.spacingAfter > 0) css.push(`margin-bottom:${fmt(r.spacingAfter)}pt`);
-  if (r.indentLeft !== 0) css.push(`margin-left:${fmt(r.indentLeft)}pt`);
-  if (r.indentRight !== 0) css.push(`margin-right:${fmt(r.indentRight)}pt`);
+  const indentLeft = bidi ? r.indentRight : r.indentLeft;
+  const indentRight = bidi ? r.indentLeft : r.indentRight;
+  if (indentLeft !== 0) css.push(`margin-left:${fmt(indentLeft)}pt`);
+  if (indentRight !== 0) css.push(`margin-right:${fmt(indentRight)}pt`);
   if (r.indentFirstLine !== 0) css.push(`text-indent:${fmt(r.indentFirstLine)}pt`);
   if (r.spacingLine > 0) {
     // §17.3.1.33 w:spacing — rule 'auto' means a multiple of single spacing
@@ -647,7 +779,7 @@ function runHtml(run: Run, p: Paragraph, ctx: EmitCtx): string {
   const resolved = resolveRunProperties(run.properties, p.properties, EMPTY_STYLE_SHEET);
   const style = runCss(resolved);
   const dir = resolved.rtl ? ' dir="rtl"' : '';
-  let html = `<span${dir}${style ? ` style="${style}"` : ''}>${textHtml(run.text)}</span>`;
+  let html = `<span${dir}${style ? ` style="${escapeAttr(style)}"` : ''}>${textHtml(run.text)}</span>`;
   if (resolved.verticalAlign === 'superscript') html = `<sup>${html}</sup>`;
   else if (resolved.verticalAlign === 'subscript') html = `<sub>${html}</sub>`;
   // §17.13.4 comment range: highlight the commented span (CM2c).
@@ -678,7 +810,7 @@ function runHtml(run: Run, p: Paragraph, ctx: EmitCtx): string {
 function runCss(r: ResolvedRunProperties): string {
   const css: Array<string> = [];
   const family = r.fontFamily.ascii;
-  if (family) css.push(`font-family:${JSON.stringify(family)}`);
+  if (family) css.push(`font-family:${fontStack(family)}`);
   css.push(`font-size:${fmt(r.fontSizePt)}pt`);
   if (r.bold) css.push('font-weight:700');
   if (r.italic) css.push('font-style:italic');
@@ -694,6 +826,31 @@ function runCss(r: ResolvedRunProperties): string {
   if (r.colorHex !== '000000') css.push(`color:#${r.colorHex}`);
   return css.join(';');
 }
+
+/**
+ * A family as CSS asks for it: the document's own, then — where the page is
+ * read without that font, which for Calibri is anywhere Office is not — its
+ * open metric twin, then the class of face it is. Without the class a browser
+ * that lacks the font falls to its default, a serif: a Calibri sheet came out
+ * in Times.
+ *
+ * The name is a CSS string in SINGLE quotes. The declaration goes into a
+ * double-quoted `style` attribute, where a double quote ended the attribute
+ * and took the size, weight and colour after the family with it.
+ */
+function fontStack(family: string): string {
+  const name = family.replace(/\s+/gu, ' ').replaceAll('\\', '\\\\').replaceAll("'", "\\'");
+  return [`'${name}'`, ...FALLBACKS[resolveFamilyStyle(family).key]].join(',');
+}
+
+/** What follows a family in its stack, by the open substitute it maps to. */
+const FALLBACKS: Readonly<Record<FamilyKey, ReadonlyArray<string>>> = {
+  carlito: ['Carlito', 'sans-serif'],
+  caladea: ['Caladea', 'serif'],
+  arimo: ['sans-serif'],
+  tinos: ['serif'],
+  cousine: ['monospace'],
+};
 
 function decorationStyle(u: ResolvedRunProperties['underline'] & string): string | undefined {
   switch (u) {
@@ -724,10 +881,18 @@ function textHtml(text: string): string {
 
 function emitTable(out: Array<string>, table: Table, ctx: EmitCtx): void {
   const css: Array<string> = [];
+  const fixed = table.properties.layout === 'fixed';
   if (table.properties.widthPt !== undefined) css.push(`width:${fmt(table.properties.widthPt)}pt`);
   else if (table.properties.widthFraction !== undefined) {
     css.push(`width:${fmt(table.properties.widthFraction * 100)}%`);
+  } else if (fixed && table.grid.length > 0) {
+    // A fixed table is as wide as its grid. CSS lays a table out by its
+    // columns only when the table has a width of its own (CSS 2.1 §17.5.2.1):
+    // left `auto`, `table-layout:fixed` is ignored and the browser sizes the
+    // columns to their content — a sheet's column widths are the author's.
+    css.push(`width:${fmt(table.grid.reduce((sum, w) => sum + w, 0))}pt`);
   }
+  if (fixed) css.push('table-layout:fixed');
   if (table.properties.alignment === 'center') css.push('margin-left:auto;margin-right:auto');
   else if (table.properties.alignment === 'right') css.push('margin-left:auto');
   out.push(`<table${css.length > 0 ? ` style="${css.join(';')}"` : ''}>`);
@@ -748,6 +913,10 @@ function emitTable(out: Array<string>, table: Table, ctx: EmitCtx): void {
       return start;
     });
   });
+
+  // Which cell stands at each grid position — wanted only where the window's
+  // gridlines are drawn, to know whose edge each one is (claimedEdges).
+  const cellGrid = table.properties.gridlines ? gridOfCells(table, colStarts) : undefined;
 
   // Sticky-pane offsets for a frozen worksheet view (E-SHEET SE3). Left offsets
   // are exact (cumulative grid column widths); top offsets sum each row's height,
@@ -770,7 +939,16 @@ function emitTable(out: Array<string>, table: Table, ctx: EmitCtx): void {
 
   for (let ri = 0; ri < table.rows.length; ri++) {
     const row = table.rows[ri]!;
-    out.push('<tr>');
+    // §17.4.81 — a row as tall as it says, or taller where its content needs
+    // it: a browser grows a row past its `height` as `atLeast` does. A
+    // spreadsheet row is always given one, and its default is not a browser's
+    // line — Calibri 11's row is 15pt where the text needs about 13.
+    const { height, heightRule } = row.properties;
+    out.push(
+      height !== undefined && heightRule !== 'auto'
+        ? `<tr style="height:${fmt(height)}pt">`
+        : '<tr>',
+    );
     for (let ci = 0; ci < row.cells.length; ci++) {
       const cell = row.cells[ci]!;
       const merge = cell.properties.merge;
@@ -778,7 +956,13 @@ function emitTable(out: Array<string>, table: Table, ctx: EmitCtx): void {
       if (merge === 'middle' || merge === 'end') continue;
       const cs = colStarts[ri]![ci]!;
       const rowSpan = merge === 'start' ? mergeRowSpan(table, colStarts, ri, cs) : 1;
+      const claimed = cellGrid
+        ? claimedEdges(cellGrid, ri, cs, cs + (cell.properties.colSpan ?? 1) - 1, rowSpan)
+        : undefined;
+      const flagInsetPt = noteFlagInset(cell, cs, table.grid);
       emitCell(out, cell, table, ctx, {
+        ...(flagInsetPt > 0 ? { flagInsetPt } : {}),
+        ...(claimed && claimed.size > 0 ? { claimed } : {}),
         isHeader: row.properties.isHeader === true,
         firstRow: ri === 0,
         lastRow: ri === table.rows.length - 1,
@@ -792,6 +976,74 @@ function emitTable(out: Array<string>, table: Table, ctx: EmitCtx): void {
     out.push('</tr>');
   }
   out.push('</table>');
+}
+
+/**
+ * How far a note's flag stands in from the cell's side: the width of the
+ * columns its text only borrowed (CellProperties.paintColumns) — after its own
+ * column, or before it where the span runs leftwards (paintAtEnd).
+ */
+function noteFlagInset(cell: TableCell, colStart: number, grid: ReadonlyArray<number>): number {
+  const p = cell.properties;
+  const span = p.colSpan ?? 1;
+  if (!p.noteFlag || p.paintColumns === undefined || p.paintColumns >= span) return 0;
+  const borrowed = p.paintAtEnd
+    ? grid.slice(colStart, colStart + span - p.paintColumns)
+    : grid.slice(colStart + p.paintColumns, colStart + span);
+  return borrowed.reduce((sum, w) => sum + w, 0);
+}
+
+/** The cell at each row × grid column (a spanning cell at every column it covers). */
+function gridOfCells(
+  table: Table,
+  colStarts: ReadonlyArray<ReadonlyArray<number>>,
+): Array<Array<TableCell | undefined>> {
+  return table.rows.map((row, ri) => {
+    const line = new Array<TableCell | undefined>(table.grid.length).fill(undefined);
+    row.cells.forEach((cell, ci) => {
+      const start = colStarts[ri]![ci]!;
+      for (let k = 0; k < (cell.properties.colSpan ?? 1); k++) line[start + k] = cell;
+    });
+    return line;
+  });
+}
+
+/**
+ * The edges of a cell (rows `ri`…`ri + rowSpan − 1`, columns `c0`…`c1`) that a
+ * neighbour across them CLAIMS: one that rules its facing side, or is filled.
+ * A window's gridline gives way there. Collapsed borders are settled edge by
+ * edge, wider first and then by position, and a gridline is as wide as a
+ * thin rule once the browser rounds both to a pixel — so the cell above or to
+ * the left won, and a merged range ruled all round showed only two of its four
+ * sides. Excel draws no gridline along a filled cell either. Where only some of
+ * the neighbours claim the edge, the others draw their own gridline on it.
+ */
+function claimedEdges(
+  grid: ReadonlyArray<ReadonlyArray<TableCell | undefined>>,
+  ri: number,
+  c0: number,
+  c1: number,
+  rowSpan: number,
+): Set<'top' | 'bottom' | 'left' | 'right'> {
+  const claims = (
+    cell: TableCell | undefined,
+    facing: 'top' | 'bottom' | 'left' | 'right',
+  ): boolean => {
+    if (!cell) return false;
+    if (cell.properties.shading) return true;
+    const b = cell.properties.borders?.[facing];
+    return b !== undefined && b.style !== 'none';
+  };
+  const out = new Set<'top' | 'bottom' | 'left' | 'right'>();
+  for (let c = c0; c <= c1; c++) {
+    if (claims(grid[ri - 1]?.[c], 'bottom')) out.add('top');
+    if (claims(grid[ri + rowSpan]?.[c], 'top')) out.add('bottom');
+  }
+  for (let r = ri; r < ri + rowSpan; r++) {
+    if (claims(grid[r]?.[c0 - 1], 'right')) out.add('left');
+    if (claims(grid[r]?.[c1 + 1], 'left')) out.add('right');
+  }
+  return out;
 }
 
 function mergeRowSpan(
@@ -824,6 +1076,13 @@ interface CellPos {
   // this cell sits in a frozen top row / left column. undefined ⇒ scrolls.
   readonly stickyTop?: number;
   readonly stickyLeft?: number;
+  /** The sides whose edge a neighbour claims — see {@link claimedEdges}. */
+  readonly claimed?: ReadonlySet<'top' | 'bottom' | 'left' | 'right'>;
+  /**
+   * How far in from its side a note's flag stands: a cell whose text ran on
+   * over its neighbours spans them, and the flag belongs at its OWN edge.
+   */
+  readonly flagInsetPt?: number;
 }
 
 function emitCell(
@@ -846,11 +1105,25 @@ function emitCell(
   // border-collapse the browser performs its own conflict resolution.
   const t = table.properties.borders;
   const c = cell.properties.borders;
-  pushBorder(css, 'top', c?.top ?? (pos.firstRow ? t?.top : t?.insideH));
-  pushBorder(css, 'bottom', c?.bottom ?? (pos.lastRow ? t?.bottom : t?.insideH));
-  pushBorder(css, 'left', c?.left ?? (pos.firstCol ? t?.left : t?.insideV));
-  pushBorder(css, 'right', c?.right ?? (pos.lastCol ? t?.right : t?.insideV));
+  // A worksheet's grid on a screen: whatever edge the cell's own borders and
+  // the table's leave bare — unless the cell is filled, which covers it, or
+  // the neighbour across the edge claims it.
+  const g = cell.properties.shading ? undefined : table.properties.gridlines;
+  const gridOn = (side: 'top' | 'bottom' | 'left' | 'right'): Border | undefined =>
+    pos.claimed?.has(side) ? undefined : g;
+  pushBorder(css, 'top', c?.top ?? (pos.firstRow ? t?.top : t?.insideH) ?? gridOn('top'));
+  pushBorder(
+    css,
+    'bottom',
+    c?.bottom ?? (pos.lastRow ? t?.bottom : t?.insideH) ?? gridOn('bottom'),
+  );
+  pushBorder(css, 'left', c?.left ?? (pos.firstCol ? t?.left : t?.insideV) ?? gridOn('left'));
+  pushBorder(css, 'right', c?.right ?? (pos.lastCol ? t?.right : t?.insideV) ?? gridOn('right'));
   if (cell.properties.shading) css.push(`background-color:#${cell.properties.shading.colorHex}`);
+  // Where the content sits in a box taller than itself: the top unless the
+  // cell says — and a spreadsheet cell says the bottom by default (§18.8.1).
+  if (cell.properties.verticalAlign === 'center') css.push('vertical-align:middle');
+  else if (cell.properties.verticalAlign === 'bottom') css.push('vertical-align:bottom');
   // §18.8.1 — a cell that does not wrap shows ONE line, cut at its own box.
   // The paginated writers cut it themselves (the PDF and SVG emitters clip the
   // line to the cell); HTML renders the document model rather than a laid-out
@@ -865,8 +1138,14 @@ function emitCell(
     const start = (clamp(db.startFraction ?? 0) * 100).toFixed(2);
     const end = (clamp((db.startFraction ?? 0) + db.fraction) * 100).toFixed(2);
     const c = db.colorHex;
+    // Faded from the axis the bar grows out of, unless it is solid; and kept
+    // 2px inside the cell on every side, as Excel keeps it.
+    const [from, to] = db.solid ? [c, c] : db.negative ? ['FFFFFF', c] : [c, 'FFFFFF'];
     css.push(
-      `background-image:linear-gradient(to right,transparent ${start}%,#${c} ${start}%,#${c} ${end}%,transparent ${end}%)`,
+      `background-image:linear-gradient(to right,transparent ${start}%,#${from} ${start}%,#${to} ${end}%,transparent ${end}%)`,
+      'background-repeat:no-repeat',
+      'background-size:calc(100% - 3pt) calc(100% - 3pt)',
+      'background-position:1.5pt 1.5pt',
     );
   }
   const margins = cell.properties.margins ?? table.properties.defaultCellMargins;
@@ -895,16 +1174,38 @@ function emitCell(
     css.push(`z-index:${z}`);
     if (!cell.properties.shading) css.push('background-color:#fff');
   }
+  // A cell carrying a note (E-SHEET W7): the window's corner flag, and the
+  // note itself on hover, as Excel shows it. The flag is positioned in the
+  // cell, which a sticky cell already is.
+  const note = cell.properties.noteFlag;
+  if (note) {
+    attrs.push(`title="${escapeAttr(note.text)}"`);
+    if (pos.stickyTop === undefined && pos.stickyLeft === undefined) css.push('position:relative');
+  }
 
   out.push(`<${tag}${attrs.length > 0 ? ` ${attrs.join(' ')}` : ''} style="${css.join(';')}">`);
+  if (note) out.push(cellNoteFlag(note, pos.flagInsetPt ?? 0));
   // Data-validation dropdown (E-SHEET SV1): a ▾ button floated to the right edge.
   if (cell.properties.dropdown) out.push(cellDropdownSvg());
-  // Conditional-format icon (E-SHEET SC1c): an inline glyph before the value.
+  // Conditional-format icon (E-SHEET SC1c): a glyph at the cell's left edge, on
+  // the value's line. Floated — set in line ahead of the value's paragraph it
+  // made a line of its own, and every row with an icon twice as tall.
   if (cell.properties.icon) out.push(cellIconSvg(cell.properties.icon));
   // Sparkline (E-SHEET SC2): a mini inline-SVG chart in the cell.
   if (cell.properties.sparkline) out.push(cellSparklineSvg(cell.properties.sparkline));
   for (const child of cell.content) emitBlock(out, child, ctx);
   out.push(`</${tag}>`);
+}
+
+// The corner flag of a cell carrying a note: a small triangle, red for a note
+// and purple for a threaded comment, in the top corner the cell ends at.
+function cellNoteFlag(note: CellNoteFlag, insetPt: number): string {
+  const side = note.atLeft ? 'left' : 'right';
+  return (
+    `<span aria-hidden="true" style="position:absolute;top:0;${side}:${fmt(insetPt)}pt;width:0;height:0;` +
+    `border-top:4.5pt solid #${note.kind === 'thread' ? '7030A0' : 'FF0000'};` +
+    `border-${note.atLeft ? 'right' : 'left'}:4.5pt solid transparent"></span>`
+  );
 }
 
 // A mini inline-SVG sparkline, reusing the same geometry the PDF layout draws.
@@ -987,7 +1288,7 @@ function cellIconSvg(icon: CellIcon): string {
   }
   return (
     `<svg width="10" height="10" viewBox="0 0 10 10" ` +
-    `style="vertical-align:middle;margin-right:3px">${body}</svg>`
+    `style="float:left;margin:2px 3px 0 0">${body}</svg>`
   );
 }
 

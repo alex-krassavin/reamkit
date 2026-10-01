@@ -33,11 +33,19 @@ import type { VectorShape } from '@/core/vector';
 import type { BuildOptions, PdfDocument } from '@/pdf/writer';
 import type { PdfEncryptOptions } from '@/pdf/encryption';
 import { preparePdfEncryption } from '@/pdf/encryption';
-import { paintPlan } from '@/layout/page-doc';
-import { A4_HEIGHT, A4_WIDTH, GLUE_SHRINK_RATIO } from '@/layout/styled-layout';
+import { pageLayers, paintPlan } from '@/layout/page-doc';
+import { A4_HEIGHT, A4_WIDTH } from '@/layout/styled-layout';
+import {
+  BORDER_DASHES,
+  FAUX_ITALIC_SHEAR,
+  computeJustifyExtra,
+  lineVisualOrder,
+  settableInOneMatrix,
+  washVeil,
+} from '@/layout/line-paint';
 import { emitClipPath, emitVectorShape, shadowBlurLayers } from '@/pdf/vector-graphics';
 import { buildGradientAlphaMask, buildGradientPattern, shapeBbox } from '@/pdf/shading';
-import { reorderVisual, reverseByCodePoint } from '@/core/bidi';
+import { reverseByCodePoint } from '@/core/bidi';
 import { warpGlyphMatrix } from '@/core/drawingml/text-warp';
 import { sanitizeHref } from '@/core/links';
 import { embedTtfFont } from '@/pdf/cid-font';
@@ -49,22 +57,6 @@ import { addSignaturePlaceholder } from '@/pdf/signature';
 import { buildXmpPacket } from '@/pdf/xmp';
 
 const encoder = new TextEncoder();
-
-// §14.1.2.10 — the wash a picture is drawn through, as the flat veil it is.
-// `gain`/`blacklevel` are contrast and brightness about mid grey, so a source
-// value `in` prints as `(in - 0.5) * gain + 0.5 + black` — and painting a
-// colour `c` at opacity `a` gives `in * (1 - a) + c * a`, the same line with
-// `a = 1 - gain`. Exact for every wash a document can state, and it needs no
-// decoder: a JPEG goes in verbatim, so its pixels are not ours to rewrite.
-function washVeil(
-  wash: { readonly gain: number; readonly black: number } | undefined,
-): { alpha: number; grey: number } | undefined {
-  if (!wash) return undefined;
-  const alpha = 1 - wash.gain;
-  if (!(alpha > 0.004)) return undefined;
-  const offset = 0.5 * (1 - wash.gain) + wash.black;
-  return { alpha: Math.min(1, alpha), grey: Math.max(0, Math.min(1, offset / alpha)) };
-}
 
 /**
  * The veil operators for a washed picture, to follow its own `/Im Do`: the
@@ -357,7 +349,7 @@ function assembleStyledPdf(
         tagFor: (structId) => builder.node(structId).type,
       };
     }
-    const { content: contentBytes, links } = emitPageContent(
+    const { content: contentBytes, links } = emitPageLayers(
       page,
       pageTagging,
       gradientNames,
@@ -822,26 +814,55 @@ interface LinkRegion {
  * 24. Scaling them by the width instead drew page-borders-export-case-2.docx's
  * half-point frame as a row of specks a quarter the length it should be.
  */
-const BORDER_DASHES: ReadonlyMap<BorderStyle, ReadonlyArray<number>> = new Map([
-  ['dashed', [8, 2.5]],
-  // The SMALL-gap dash is a pattern of its own — Word spells it
-  // `dashSmallGap`, Excel calls the same thing a thin `dashed` rule.
-  ['dashSmallGap', [3, 1]],
-  ['dotted', [0.5, 1]],
-  // …and a dash-dot alternates the two, which is the whole difference
-  // between it and a dash on the page (cell-borders.xlsx names five of them).
-  ['dashDot', [8, 2.5, 2.5, 2.5]],
-  ['dashDotDot', [8, 2.5, 2.5, 2.5, 2.5, 2.5]],
-]);
-
-// The slant of a faked italic — tan(12°), the angle a text italic leans at.
-const FAUX_ITALIC_SHEAR = 0.2126;
-
 /** The PDF dash array for a border style; an empty string means a solid rule. */
 function dashPatternFor(style: BorderStyle | undefined): string {
   const pattern = style !== undefined ? BORDER_DASHES.get(style) : undefined;
   return pattern ? `[${pattern.map(formatNumber).join(' ')}]` : '';
 }
+
+/**
+ * A page's content stream in its layers (pageLayers): its own items, then —
+ * when some of them stand IN FRONT of its text (PageItemBase.over) — those,
+ * painted again pass by pass over what the first layer left, their own text
+ * last; and each group seen through a window of its own (PageItemBase.window)
+ * inside a clip to it. Each layer is a balanced stream of its own, so they
+ * simply follow one another.
+ */
+function emitPageLayers(
+  page: LaidOutPage,
+  ...rest: DropFirst<Parameters<typeof emitPageContent>>
+): { content: Uint8Array; links: Array<LinkRegion> } {
+  const layers = pageLayers(page.commands);
+  if (layers.length === 1 && !layers[0]!.window) return emitPageContent(page, ...rest);
+  const parts: Array<Uint8Array> = [];
+  const links: Array<LinkRegion> = [];
+  for (const layer of layers) {
+    const emitted = emitPageContent({ ...page, commands: layer.items }, ...rest);
+    links.push(...emitted.links);
+    const w = layer.window;
+    if (!w) {
+      parts.push(emitted.content);
+      continue;
+    }
+    if (emitted.content.length === 0) continue;
+    const rect = [w.x, page.height - w.y - w.height, w.width, w.height].map(formatNumber);
+    parts.push(encoder.encode(`q ${rect.join(' ')} re W n`), emitted.content, encoder.encode('Q'));
+  }
+  const content = new Uint8Array(
+    parts.reduce((sum, p) => sum + p.length, 0) + Math.max(0, parts.length - 1),
+  );
+  let at = 0;
+  parts.forEach((p, i) => {
+    if (i > 0) content[at++] = 0x0a;
+    content.set(p, at);
+    at += p.length;
+  });
+  return { content, links };
+}
+
+type DropFirst<T extends ReadonlyArray<unknown>> = T extends readonly [unknown, ...infer R]
+  ? R
+  : never;
 
 function emitPageContent(
   page: LaidOutPage,
@@ -1930,16 +1951,6 @@ function emitPageContent(
   return { content: encoder.encode(out.join('\n')), links };
 }
 
-// UAX #9 rule L2 over a line's tokens: returns token indices in visual order.
-// Each token carries a single embedding level (the tokenizer split runs at
-// level boundaries), so reordering tokens is equivalent to reordering their
-// constituent characters.
-function lineVisualOrder(line: Line): Array<number> {
-  return reorderVisual(line.tokens.map((t) => t.bidiLevel));
-}
-
-// Extra width per space token when justifying. 0 for non-justify lines or
-// the last line of a paragraph (last line stays left-aligned by convention).
 /**
  * The operators that put an image XObject in a box — ISO 32000-1 §8.9.5.1: the
  * unit square scaled to the box and moved to `(x, y)`, its bottom-left corner.
@@ -2004,69 +2015,6 @@ function rotateAboutCm(cx: number, cy: number, deg: number): string {
     `${formatNumber(c)} ${formatNumber(s)} ${formatNumber(-s)} ${formatNumber(c)} ` +
     `${formatNumber(cx - cx * c + cy * s)} ${formatNumber(cy - cx * s - cy * c)} cm`
   );
-}
-
-/**
- * Whether a line is ONE text matrix and a run of glyphs: nothing in it placed
- * on its own — a tab, a stretched space, a picture, a formula, a right-to-left
- * run, a rise, a faked italic — and nothing drawn beside its glyphs, a run's
- * shading, a highlight or a rule. Only such a line can be turned by its matrix
- * alone; any other is placed token by token in page space.
- *
- * @param line The laid-out line.
- * @returns True when a single `Tm` sets the whole of it.
- */
-function settableInOneMatrix(line: Line): boolean {
-  return (
-    computeJustifyExtra(line) === 0 &&
-    line.tokens.every(
-      (t) =>
-        t.kind === 'text' &&
-        t.tab !== true &&
-        t.bidiLevel % 2 === 0 &&
-        t.risePt === undefined &&
-        t.synthetic?.italic !== true &&
-        t.highlight !== true &&
-        t.resolvedRun.shadingColorHex === undefined &&
-        t.resolvedRun.underline === 'none' &&
-        !t.resolvedRun.strike,
-    )
-  );
-}
-
-function computeJustifyExtra(line: Line): number {
-  const alignment = line.resolved.alignment;
-  if (alignment !== 'both' && alignment !== 'distribute') return 0;
-  // §17.3.1.13 — `distribute` justifies EVERY line, the last one included;
-  // `both` leaves the last alone. para-adjust-distribute.docx sets one of each
-  // and we wrote both flush left.
-  if (line.noJustify === true) return 0;
-  if (line.isLastInParagraph && alignment !== 'distribute') return 0;
-  // A space at the END of a line justifies nothing: there is no glyph after it
-  // to push, and counted in it left the line short of the measure by its own
-  // width. Word and LibreOffice both hang it past the margin instead.
-  let last = line.tokens.length - 1;
-  while (last >= 0 && line.tokens[last]!.kind === 'text' && line.tokens[last]!.isSpace) last--;
-  let spaces = 0;
-  let narrowest = Infinity;
-  let contentWidthPt = 0;
-  for (let i = 0; i <= last; i++) {
-    const tok = line.tokens[i]!;
-    contentWidthPt += tok.widthPt;
-    if (!tok.isSpace) continue;
-    spaces++;
-    if (tok.widthPt < narrowest) narrowest = tok.widthPt;
-  }
-  if (spaces === 0) return 0;
-  // Both ways. A line's spaces stretch to fill it out, and they SHRINK to pull
-  // it in — the breaker weighs a line knowing it may squeeze each space by up
-  // to {@link GLUE_SHRINK_RATIO}, so a line it packed that tight is one whose
-  // natural width is over the measure. Drawn at that natural width it ran past
-  // the right margin: IllustrativeCases.docx put three of its four opening
-  // lines 1 to 10pt into the margin while the fourth sat short of it, which
-  // reads as no justification at all.
-  const extra = (line.availableWidthPt - contentWidthPt) / spaces;
-  return extra < 0 ? Math.max(extra, -narrowest * GLUE_SHRINK_RATIO) : extra;
 }
 
 function hexToRgb01(hex: string): readonly [number, number, number] {

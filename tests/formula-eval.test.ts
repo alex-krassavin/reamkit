@@ -511,3 +511,42 @@ describe('formula engine — Wave 4 (array constants)', () => {
     expect(ev('IF({1,0},"y","n")="y"')).toBe(true); // condition uses the top-left
   });
 });
+
+describe('formula engine — structured references (§18.17.6.4)', () => {
+  // tblIncome stands at B4:C8: a header row, three data rows, a totals row.
+  const table = {
+    ref: { r0: 3, c0: 1, r1: 7, c1: 2 },
+    headerRowCount: 1,
+    totalsRowCount: 1,
+    columns: ['Item', 'Amount'],
+  };
+  const ctx: EvalContext = {
+    ...makeCtx({ B4: 'Item', C4: 'Amount', C5: 2500, C6: 1000, C7: 250, C8: 3750 }),
+    table: (name) => (name.toLowerCase() === 'tblincome' ? table : undefined),
+    tableAt: (row, col) => (row >= 3 && row <= 7 && col >= 1 && col <= 2 ? table : undefined),
+  };
+
+  it('reads a column of the data rows, totals and headers left out', () => {
+    expect(ev('SUM(tblIncome[Amount])=3750', ctx)).toBe(true);
+    expect(ev('COUNT(tblIncome[Amount])=3', ctx)).toBe(true);
+  });
+
+  it('reads the parts a reference names, a column range among them', () => {
+    expect(ev('SUM(tblIncome[[#Totals],[Amount]])=3750', ctx)).toBe(true);
+    expect(ev('SUM(tblIncome[[#All],[Amount]])=7500', ctx)).toBe(true);
+    expect(ev('COUNTA(tblIncome[#Headers])=2', ctx)).toBe(true);
+    expect(ev('COUNTA(tblIncome[[Item]:[Amount]])=3', ctx)).toBe(true);
+    expect(ev('SUM(TBLINCOME[amount])=3750', ctx)).toBe(true);
+  });
+
+  it('reads this row of the table a cell stands in', () => {
+    const row6: Shift = { dRow: 0, dCol: 0, curRow: 5, curCol: 2 };
+    expect(ev('[@Amount]=1000', ctx, row6)).toBe(true);
+    expect(ev('tblIncome[@Amount]>999', ctx, row6)).toBe(true);
+  });
+
+  it('is #REF! for a table or a column that is not there', () => {
+    expect(ev('ISERROR(tblNone[Amount])', ctx)).toBe(true);
+    expect(ev('ISERROR(tblIncome[Cost])', ctx)).toBe(true);
+  });
+});

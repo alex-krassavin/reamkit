@@ -28,6 +28,7 @@ import type { StreamFilters } from '@/pdf-reader/document';
 import type { SignatureOptions, StyledRenderOptions } from '@/pdf';
 import { DEFAULT_READERS, resolveFontsViaChain, toFlowDoc } from '@/core/converter/facade';
 import { flowRenderOptions } from '@/core/converter/project';
+import { layoutSheetImages } from '@/core/converter/sheet-images';
 import { FontRegistry, createFontMeasure } from '@/core/font';
 import { fetchFontSet, fetchScriptFont, resolveFamilyKey } from '@/core/fonts';
 import { scriptsInFlow } from '@/core/fonts/scripts';
@@ -286,7 +287,20 @@ export class Ream {
 
     if (to === 'html') {
       // Flow medium: no layout, no fonts to embed — zero I/O.
-      const html = writeHtml(flow);
+      //
+      // A workbook re-projects for the screen: a web page shows the sheet as
+      // Excel's window does — every column at once, the drawings over the
+      // grid, the tabs by name — and the printed page it is parsed into is cut
+      // into column bands and shrunk to fit paper that is not there.
+      const html = writeHtml(
+        this.sheet
+          ? projectSheetDoc(this.sheet, {
+              ...(options.now ? { now: options.now } : {}),
+              ...(options.fileName ? { fileName: options.fileName } : {}),
+              screen: true,
+            })
+          : flow,
+      );
       losses.push(...html.losses);
       this.enforceStrict(options, losses);
       return { bytes: html.bytes, losses };
@@ -346,27 +360,14 @@ export class Ream {
     // re-projects the grid against the face it is about to render with;
     // otherwise every column is laid out to one font's digit and filled with
     // another's, and the text that does not fit is clipped away.
-    const paginated = this.sheet
-      ? projectSheetDoc(this.sheet, {
-          ...(options.now ? { now: options.now } : {}),
-          ...(options.fileName ? { fileName: options.fileName } : {}),
-          digitWidthPt: createFontMeasure(registry.resolveByStyle(false, false).parsed).textWidthPt(
-            '0',
-            DEFAULT_WORKBOOK_FONT_PT,
-          ),
-        })
-      : flow;
-
-    if (to === 'svg') {
-      const laid = layoutStyledDocument(paginated.body, {
-        registry,
-        ...flowRenderOptions(paginated),
-      });
-      const svg = writeSvg(laid);
-      losses.push(...svg.losses);
-      this.enforceStrict(options, losses);
-      return { bytes: svg.bytes, losses };
-    }
+    const sheetOptions = {
+      ...(options.now ? { now: options.now } : {}),
+      ...(options.fileName ? { fileName: options.fileName } : {}),
+      digitWidthPt: createFontMeasure(registry.resolveByStyle(false, false).parsed).textWidthPt(
+        '0',
+        DEFAULT_WORKBOOK_FONT_PT,
+      ),
+    };
 
     const {
       fonts: _a,
@@ -387,6 +388,28 @@ export class Ream {
     void _d;
     void _e;
     void _f;
+
+    if (to === 'svg') {
+      // A workbook is drawn as images of its sheets — each whole on a page of
+      // its own, as its window shows it — not as the pages it prints on. Laid
+      // out in the faces the PDF would be, each family in its own, and with
+      // the caller's layout options: given only the one registry, every run
+      // of every family was measured in the same face.
+      const faces = { registry, ...(registriesByFamily ? { registriesByFamily } : {}) };
+      const laid = this.sheet
+        ? layoutSheetImages(this.sheet, faces, sheetOptions, renderOptions)
+        : layoutStyledDocument(flow.body, {
+            ...faces,
+            ...flowRenderOptions(flow),
+            ...renderOptions,
+          });
+      const svg = writeSvg(laid);
+      losses.push(...svg.losses);
+      this.enforceStrict(options, losses);
+      return { bytes: svg.bytes, losses };
+    }
+
+    const paginated = this.sheet ? projectSheetDoc(this.sheet, sheetOptions) : flow;
 
     // Caller overrides spread over the document's own metadata.
     const info = paginated.info || callerInfo ? { ...paginated.info, ...callerInfo } : undefined;

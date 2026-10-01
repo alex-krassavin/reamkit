@@ -77,11 +77,23 @@ export function parseTablePartFull(data: Uint8Array): ParsedTablePart | undefine
   const name = strAttr(t, 'name');
   const styleName = si ? strAttr(si, 'name') : undefined;
   const af = asObj(t['autoFilter']);
+  const totalsRowCount = numAttr(t, 'totalsRowCount');
+  // One name a column of the range, as Excel keeps them: one missing is named
+  // the way Excel would name it.
+  const named = asArray(asObj(t['tableColumns'])?.['tableColumn']).map((c) =>
+    asObj(c) ? strAttr(asObj(c)!, 'name') : undefined,
+  );
+  const columns = Array.from(
+    { length: ref.endColumn - ref.startColumn + 1 },
+    (_, i) => named[i] ?? `Column${i + 1}`,
+  );
   const table: ExcelTable = {
     ref,
     ...(name ? { name } : {}),
     ...(styleName ? { styleName } : {}),
     headerRowCount: numAttr(t, 'headerRowCount') ?? 1,
+    ...(totalsRowCount !== undefined && totalsRowCount > 0 ? { totalsRowCount } : {}),
+    ...(columns.length > 0 ? { columns } : {}),
     showRowStripes: si ? boolAttr(si, 'showRowStripes') : false,
     showColumnStripes: si ? boolAttr(si, 'showColumnStripes') : false,
     showFirstColumn: si ? boolAttr(si, 'showFirstColumn') : false,

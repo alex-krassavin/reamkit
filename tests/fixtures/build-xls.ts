@@ -925,10 +925,11 @@ export function rowRec(opts: {
 }
 
 // Window2 (0x023E): the sheet window option flags — bit 0x08 (fFrozen) tells the
-// reader the Pane split holds frozen-row / frozen-column counts.
-export function window2Rec(frozen: boolean): Uint8Array {
+// reader the Pane split holds frozen-row / frozen-column counts, and bit 0x02
+// (fDspGrid), set as Excel sets it, that the window draws the gridlines.
+export function window2Rec(frozen: boolean, showGrid = true): Uint8Array {
   const d = new Uint8Array(18);
-  new DataView(d.buffer).setUint16(0, frozen ? 0x08 : 0x00, true);
+  new DataView(d.buffer).setUint16(0, (frozen ? 0x08 : 0x00) | (showGrid ? 0x02 : 0x00), true);
   return rec(0x023e, d);
 }
 

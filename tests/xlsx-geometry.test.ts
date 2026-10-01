@@ -16,6 +16,7 @@ import { describe, expect, it } from 'vitest';
 
 import { buildTinyPng } from './fixtures/build-png';
 import { buildXlsx } from './fixtures/build-xlsx';
+import { sheetDrawings } from './fixtures/sheet-drawings';
 import { FontRegistry } from '@/core/font';
 import { Ream } from '@/core/converter/ream';
 import { flowRenderOptions } from '@/core/converter/project';
@@ -480,15 +481,14 @@ describe('grid geometry', () => {
     // defaultColWidth is absent. Ignoring a sheet that asks for 10 left every
     // unlisted column at 8.43 and the whole grid narrow.
     //
-    // §18.3.1.81 pads it TWICE: `defaultColWidth` "includes margin padding and
-    // extra padding for gridlines" and `baseColWidth` explicitly does not, so
-    // deriving one from the other adds the 5px once, and rendering it adds the
-    // 5px again. 47668.xlsx declares baseColWidth="10" and caches its picture
-    // at 768pt over 12 columns plus 48pt — 60pt a column, not 56.25.
+    // §18.3.1.81: its digits and their 5px of padding, rounded UP to Excel's
+    // step of eight pixels. 47668.xlsx declares baseColWidth="10" and caches
+    // its picture at 768pt over 12 columns plus 48pt — 60pt a column, 80px,
+    // where 10 × 7 + 5 is 75; 20 digits are 145px and come out 152.
     const wide = placed(buildXlsx({ rows: [['A', 'B']], baseColWidthChars: 20 }));
     const narrow = placed(buildXlsx({ rows: [['A', 'B']] }));
     const pitch = (items: Array<PlacedText>): number => at(items, 'B').x - at(items, 'A').x;
-    expect(pitch(wide)).toBeCloseTo(20 * 5.25 + 3.75 * 2, 1);
+    expect(pitch(wide)).toBeCloseTo(152 * 0.75, 1);
     // baseColWidth 10 → 60pt, the number this file's own cached extent implies.
     expect(pitch(placed(buildXlsx({ rows: [['A', 'B']], baseColWidthChars: 10 })))).toBeCloseTo(
       60,
@@ -513,10 +513,44 @@ describe('grid geometry', () => {
         },
       }),
     );
-    const image = doc.flow.body.find((el) => el.kind === 'image');
+    const image = sheetDrawings(doc.flow.body).find((el) => el.kind === 'image');
     // Two columns of the sheet's own default: 2 × 60pt, the same 60 the grid
     // above puts between the two cells.
     expect(image?.image.width).toBeCloseTo(120, 1);
+  });
+
+  it("counts an anchor's columns in the unit the grid measures them in", () => {
+    // §18.3.1.13 — a column is measured in the digit of the workbook's Normal
+    // font: Arial 11's is 8px, Calibri 11's Excel's 7. Counted in 7px while
+    // the grid counts 8, a drawing stood short of the cells it is anchored to
+    // by a seventh of every column before it.
+    const doc = Ream.parse(
+      buildXlsx({
+        rows: [['A', 'B', 'C']],
+        stylesXml:
+          '<fonts count="1"><font><sz val="11"/><name val="Arial"/></font></fonts>' +
+          '<fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>' +
+          '<borders count="1"><border/></borders>' +
+          '<cellXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellXfs>',
+        sheetImage: {
+          pngBytes: buildTinyPng(4, 4, [0, 0, 255, 255]),
+          anchor: { from: [2, 0], to: [3, 1] },
+        },
+      }),
+    );
+    const table = doc.flow.body.find((el) => el.kind === 'table');
+    if (table?.kind !== 'table') throw new Error('no table');
+    const image = sheetDrawings(doc.flow.body).find((el) => el.kind === 'image');
+    if (image?.kind !== 'image') throw new Error('no image');
+    // Column C starts where the grid's first two columns end, and is one wide.
+    expect(image.image.float?.posH?.offsetPt).toBeCloseTo(
+      table.table.grid[0]! + table.table.grid[1]!,
+      1,
+    );
+    expect(image.image.width).toBeCloseTo(table.table.grid[2]!, 1);
+    // 8 × 8 + 5 = 69px, up to 72: the default column at an 8px digit, as
+    // Japanese Excel's is in ＭＳ Ｐゴシック 11.
+    expect(table.table.grid[0]).toBeCloseTo(54, 1);
   });
 
   it('gives each sheet its own page geometry', () => {
@@ -793,6 +827,29 @@ describe('column width unit (§18.3.1.13)', () => {
   });
 });
 
+describe('a row pinned to its height', () => {
+  it('keeps a wrapped line whose baseline the row still holds', () => {
+    // formats.xlsx sets "Hello, / Calc!" in a 23.85pt row: two lines of 10pt
+    // text there, the second a fifth of a point taller than the room left. It
+    // is cut at the cell's edge, its descenders and no more, and not dropped.
+    const stylesXml =
+      `<fonts count="1"><font><sz val="10"/><name val="Arial"/></font></fonts>` +
+      `<fills count="1"><fill><patternFill patternType="none"/></fill></fills>` +
+      `<borders count="1"><border/></borders>` +
+      `<cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>` +
+      `<xf numFmtId="0" fontId="0" fillId="0" borderId="0" applyAlignment="1">` +
+      `<alignment wrapText="1"/></xf></cellXfs>`;
+    const items = placed(
+      buildXlsx({
+        rows: [[{ value: 'Hello,\nCalc!', styleIndex: 1 }]],
+        rowHeights: [{ row: 0, heightPt: 23.85, customHeight: true }],
+        stylesXml,
+      }),
+    );
+    expect(at(items, 'Calc!').y).toBeGreaterThan(at(items, 'Hello,').y);
+  });
+});
+
 describe('cell indent (§18.8.1)', () => {
   it('offsets the text inside the cell, not just the model', () => {
     // The projection has always put `indent` on the paragraph; the table path
@@ -814,7 +871,9 @@ describe('cell indent (§18.8.1)', () => {
         stylesXml,
       }),
     );
-    expect(at(items, 'indented').x).toBeGreaterThan(at(items, 'flush').x + 8);
+    // One level is three spaces of the normal style's font (§18.8.1): 7.46pt
+    // in Calibri 11, where LibreOffice measures 7.49.
+    expect(at(items, 'indented').x - at(items, 'flush').x).toBeCloseTo(3 * (463 / 2048) * 11, 0);
   });
 });
 
@@ -1244,12 +1303,13 @@ describe('the column-width unit is the normal style font’s digit (§18.3.1.13)
     expect(pitchWith('Arial', 11)).toBeCloseTo(10 * 6.0, 1); // 80px
   });
 
-  it('is half the em for a CJK face, whose digits are half-width', () => {
-    // 12843-1.xls is twelve-point PMingLiU: 0.5 em is 8px where the fallback's
-    // 7px made its columns 14% narrow and its workbook forty-nine pages long
-    // against the reference's seventy-eight.
-    expect(pitchWith('新細明體', 12)).toBeCloseTo(10 * 6.0, 1); // 80px
-    expect(pitchWith('MS PGothic', 11)).toBeCloseTo(10 * 5.25, 1); // 7.33px → 7
+  it('is a pixel over half the em for a CJK face, whose digits are half-width', () => {
+    // 12843-1.xls is twelve-point PMingLiU: half its em is 8px, and Excel
+    // counts 9 — 45540_form_Footer.xlsx's 宋体 12 check box stands at the
+    // 238px Excel wrote beside its anchor only at 9. ＭＳ Ｐゴシック 11 is
+    // 7.33px, and 8, which is the 72px default column Japanese Excel draws.
+    expect(pitchWith('新細明體', 12)).toBeCloseTo(90 * 0.75, 1); // 10 × 9 + 5 → 90px
+    expect(pitchWith('MS PGothic', 11)).toBeCloseTo(80 * 0.75, 1); // 10 × 8 + 5 → 80px
   });
 
   it('keeps 7px for a face it cannot measure', () => {
@@ -1327,5 +1387,55 @@ describe('the cell cut reaches every writer', () => {
     const html = new TextDecoder().decode(await Ream.parse(overrun).convert('html'));
     expect(html).toContain('white-space:nowrap');
     expect(html).toContain('overflow:hidden');
+  });
+});
+
+describe('drawings on a printed sheet', () => {
+  /** The first drawn shape item over the page's text: its left and its bottom, y-down. */
+  const shapeAt = (xlsx: Uint8Array): { x: number; bottom: number } => {
+    const flow = Ream.parse(xlsx).flow;
+    const laid = layoutStyledDocument(flow.body, {
+      registry: FontRegistry.fromBytes(FONTS),
+      ...flowRenderOptions(flow),
+    });
+    const item = laid.pages[0]!.commands.find((c) => c.type === 'shape' && c.over === true);
+    if (item?.type !== 'shape') throw new Error('no shape drawn');
+    return { x: item.shape.transform[4], bottom: item.shape.transform[5] };
+  };
+  const rowsOf = (doc: ReturnType<typeof readXlsxToSheetDoc>): number => {
+    const el = projectSheetDoc(doc).body.find((b) => b.kind === 'table');
+    if (el?.kind !== 'table') throw new Error('no table');
+    return el.table.rows.length;
+  };
+
+  it('move with the grid when the headings print: past the row numbers, below the letters', () => {
+    // §18.3.1.70 — the row-number column (460 twips) stands in front of the
+    // grid and the letters row (a row of the sheet's own height) over it.
+    const book = (headings: boolean): Uint8Array =>
+      buildXlsx({
+        rows: [['a']],
+        printOptions: { headings },
+        sheetShape: { anchor: { from: [1, 1], to: [3, 4] } },
+      });
+    const plain = shapeAt(book(false));
+    const headed = shapeAt(book(true));
+    expect(headed.x - plain.x).toBeCloseTo(23);
+    expect(headed.bottom - plain.bottom).toBeCloseTo(15);
+  });
+
+  it('print the rows they reach, whether those rows show or not', () => {
+    // Excel's print range runs down to a drawing under the last value, and a
+    // drawing is cut off where the printed rows end (TableOverlay): without
+    // the rows under it, the part of it below the last value would be lost.
+    const book = (gridLines: boolean) =>
+      readXlsxToSheetDoc(
+        buildXlsx({
+          rows: [['a']],
+          printOptions: { gridLines },
+          sheetShape: { anchor: { from: [1, 5], to: [3, 8] } },
+        }),
+      );
+    expect(rowsOf(book(true))).toBe(9);
+    expect(rowsOf(book(false))).toBe(9);
   });
 });

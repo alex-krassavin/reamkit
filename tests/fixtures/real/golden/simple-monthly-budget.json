@@ -10,22 +10,17 @@
       }
     ],
     "chars": 633,
-    "firstLines": [
-      "SIMPLE MONTHLY BUDGET",
-      "Need to add more entries? Start typing below"
-    ]
+    "firstLines": ["SIMPLE MONTHLY BUDGET", "Need to add more entries? Start typing below"]
   },
   "ream": {
-    "pages": 1,
+    "pages": 2,
     "pageSizes": [
       {
         "widthPt": 792,
         "heightPt": 612
       }
     ],
-    "chars": 614,
-    "firstLines": [
-      "SIMPLE MONTHLY BUDGET"
-    ]
+    "chars": 516,
+    "firstLines": ["SIMPLE MONTHLY BUDGET", ""]
   }
 }

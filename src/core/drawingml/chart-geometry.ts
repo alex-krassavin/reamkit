@@ -138,16 +138,6 @@ export const seriesColor = (s: ChartSeries, i: number, cycle?: ReadonlyArray<str
   s.colorHex ??
   (cycle && cycle.length > 0 ? cycle[i % cycle.length]! : SERIES_COLORS[i % SERIES_COLORS.length]!);
 
-// ─── value-axis "nice numbers" (Heckbert) ──────────────────────────────────
-function niceNum(range: number, round: boolean): number {
-  const exp = Math.floor(Math.log10(range));
-  const f = range / 10 ** exp;
-  let nf: number;
-  if (round) nf = f < 1.5 ? 1 : f < 3 ? 2 : f < 7 ? 5 : 10;
-  else nf = f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10;
-  return nf * 10 ** exp;
-}
-
 /** A value-axis scale: the rounded `min`/`max` extent and the tick `step`. */
 export interface Scale {
   readonly min: number;
@@ -156,34 +146,60 @@ export interface Scale {
 }
 
 /**
- * Compute a human-friendly axis {@link Scale} for the data range using
- * Heckbert's "nice numbers" algorithm: rounded endpoints and a 1/2/5·10ⁿ step
- * that yields about `maxTicks` ticks. A degenerate range (`dataMin === dataMax`)
- * is widened by 1 so the axis is non-empty.
+ * The scale Excel gives a value axis it is left to choose, measured against
+ * Excel's own PDF of eight column charts (2026-10-01):
  *
- * @param dataMin  The smallest data value to cover.
- * @param dataMax  The largest data value to cover.
- * @param maxTicks Target upper bound on tick count (default 6).
+ *  - the ends: values all of one sign put the axis's near end at zero —
+ *    unless their spread is under a sixth of the largest of them, when it
+ *    stops half a spread short of the nearest (93…97 runs from 91) — and the
+ *    far end, like both ends of a range across zero, takes 5% of the spread
+ *    beyond the data before it is rounded out to the step;
+ *  - the step: the smallest 1, 2 or 5 × 10ⁿ that leaves at most ten intervals
+ *    (`maxIntervals`), whatever the chart's height — 3 750 runs 0…4 000 by 500
+ *    on a 150pt chart as on a 400pt one. Only an axis too short to hold the
+ *    labels asks for fewer, and the caller says so.
+ *
+ * Every case of the probe lands where Excel puts it: −1…1.2 on −1.5…1.5 by
+ * 0.5, 0.3…4.7 on 0…5 by 0.5, 120…950 on 0…1 000 by 100, 0.012…0.047 on
+ * 0…0.05 by 0.005. Heckbert's nice numbers with a budget of ticks by height
+ * stepped the budget chart by 1 000 and started 93…97 at zero.
+ *
+ * @param dataMin      The smallest value to cover.
+ * @param dataMax      The largest value to cover.
+ * @param maxIntervals At most this many steps between the ends (default 10).
  * @returns The rounded min/max and tick step.
  */
-export function niceScale(dataMin: number, dataMax: number, maxTicks = 6): Scale {
-  const lo = Math.min(dataMin, dataMax);
+export function niceScale(dataMin: number, dataMax: number, maxIntervals = 10): Scale {
+  let lo = Math.min(dataMin, dataMax);
   let hi = Math.max(dataMin, dataMax);
+  // One value is a spread from zero to it.
   if (lo === hi) {
-    hi = lo + 1;
+    if (hi > 0) lo = 0;
+    else if (lo < 0) hi = 0;
+    else hi = 1;
   }
-  // The step comes from the range the data actually spans. Heckbert rounds that
-  // range UP first (300 becomes 500), which then asks for a step to match: with
-  // a generous tick budget the two errors cancelled, and without one they did
-  // not — a 0…5 chart drew half-steps where Excel and LibreOffice both label
-  // 0/1/…/6 (chart-texture-bg.pptx).
-  const step = niceNum((hi - lo) / Math.max(1, maxTicks - 1), true);
-  // Excel leaves the top datum room to breathe: it adds about 5% before
-  // rounding up to the major unit, so a max that lands exactly on a step still
-  // clears the ceiling. Without it 57362.xlsx's 12-value bar touched the plot
-  // frame where both references leave a gap and label the axis to 14.
-  const headroom = hi > 0 ? hi * 1.05 : hi;
-  return { min: Math.floor(lo / step) * step, max: Math.ceil(headroom / step) * step, step };
+  const spread = hi - lo;
+  const end = { lo: lo - spread * 0.05, hi: hi + spread * 0.05 };
+  if (lo >= 0) end.lo = spread < hi / 6 ? lo - spread / 2 : 0;
+  else if (hi <= 0) end.hi = spread < -lo / 6 ? hi + spread / 2 : 0;
+  const step = stepFor(end.hi - end.lo, maxIntervals);
+  return {
+    min: Math.floor(end.lo / step + 1e-9) * step,
+    max: Math.ceil(end.hi / step - 1e-9) * step,
+    step,
+  };
+}
+
+/** The smallest 1, 2 or 5 × 10ⁿ that cuts `span` into at most `maxIntervals` steps. */
+function stepFor(span: number, maxIntervals: number): number {
+  const most = Math.max(1, maxIntervals);
+  let base = 10 ** Math.floor(Math.log10(span / most));
+  for (;;) {
+    for (const m of [1, 2, 5]) {
+      if (span / (m * base) <= most + 1e-9) return m * base;
+    }
+    base *= 10;
+  }
 }
 
 /**
@@ -197,7 +213,10 @@ export function niceScale(dataMin: number, dataMax: number, maxTicks = 6): Scale
 export function formatTick(v: number, step: number): string {
   if (Number.isInteger(step) && Number.isInteger(v)) return String(v);
   const decimals = Math.max(0, -Math.floor(Math.log10(step)));
-  return v.toFixed(decimals).replace(/\.?0+$/, (m) => (m.includes('.') ? '' : m));
+  const fixed = v.toFixed(decimals);
+  // General shows no trailing zero: 0.05 on an axis stepped by 0.005, not
+  // 0.050 — and 1, not 1.0.
+  return fixed.includes('.') ? fixed.replace(/0+$/, '').replace(/\.$/, '') : fixed;
 }
 
 const ticks = (s: Scale): Array<number> => {
@@ -220,17 +239,27 @@ const ticks = (s: Scale): Array<number> => {
  *                the plot, not about the numbers.
  * @returns The axis min/max and tick step.
  */
-function axisScale(chart: Chart, dataMin: number, dataMax: number, hPt: number): Scale {
+function axisScale(
+  chart: Chart,
+  dataMin: number,
+  dataMax: number,
+  extentPt: number,
+  horizontal = false,
+): Scale {
   const min = chart.valAxisMin ?? dataMin;
   const max = chart.valAxisMax ?? dataMax;
-  // How many ticks fit is a question about the PLOT, not about the numbers: a
-  // tall axis carries more of them. A fixed six drew 0/100/200/300 down a plot
-  // where both references fit 0/50/…/300.
-  const rounded = niceScale(min, max, tickBudget(hPt));
+  const rounded = niceScale(min, max, intervalsThatFit(extentPt, horizontal));
+  // §21.2.2.98 — a step the author fixed is the step, and the automatic ends
+  // round out to it.
+  const step = chart.valAxisMajorUnit ?? rounded.step;
   return {
-    min: chart.valAxisMin ?? rounded.min,
-    max: chart.valAxisMax ?? rounded.max,
-    step: rounded.step,
+    min:
+      chart.valAxisMin ??
+      (step === rounded.step ? rounded.min : Math.floor(rounded.min / step) * step),
+    max:
+      chart.valAxisMax ??
+      (step === rounded.step ? rounded.max : Math.ceil(rounded.max / step) * step),
+    step,
   };
 }
 
@@ -263,6 +292,8 @@ interface CartesianFrame {
 // charts); line/column keep it along y.
 interface FrameOpts {
   readonly dataRange?: readonly [number, number]; // override value-axis extent (stacked totals)
+  // The range IS the axis — no room added, nothing rounded out (a 100% stack).
+  readonly exactRange?: boolean;
   readonly formatValue?: (v: number) => string; // override tick label text (percent axis)
 }
 
@@ -272,15 +303,55 @@ interface FrameOpts {
 // each builder is the z-order of the emitted PDF operators, so callers invoke
 // them at exactly the points the inlined code used to occupy.
 
-function pushChartTitle(labels: Array<ChartLabel>, chart: Chart, wPt: number, hPt: number): void {
-  if (!chart.title) return;
-  labels.push({
-    text: chart.title,
-    x: wPt / 2,
-    y: hPt - 4 - CHART_TITLE_PT,
-    sizePt: CHART_TITLE_PT,
-    colorHex: TITLE_COLOR,
-    align: 'center',
+/**
+ * The chart title's lines. A title longer than the chart is wide wraps at its
+ * spaces, as Excel's and Calc's do, rather than running out past both sides
+ * of the frame: dataValidationTableRange.xlsx's "Ranking of Washington
+ * Counties on Days per Patient (ALOS) in 2015" crossed the cells beside its
+ * chart. A line holds at most four fifths of the chart's width.
+ *
+ * @param chart   The chart.
+ * @param wPt     The chart's width.
+ * @param measure The text measurer.
+ * @returns The lines, top first; none for a chart without a title.
+ */
+function titleLines(chart: Chart, wPt: number, measure: MeasureText): Array<string> {
+  if (!chart.title) return [];
+  const room = wPt * 0.8;
+  const lines: Array<string> = [];
+  let line = '';
+  for (const word of chart.title.split(/\s+/).filter((w) => w.length > 0)) {
+    const longer = line ? `${line} ${word}` : word;
+    if (line && measure(longer, CHART_TITLE_PT) > room) {
+      lines.push(line);
+      line = word;
+    } else {
+      line = longer;
+    }
+  }
+  if (line) lines.push(line);
+  return lines;
+}
+
+/** The band a title of `lines` takes at the top of the chart. */
+const titleHeight = (lines: ReadonlyArray<string>): number =>
+  lines.length === 0 ? 0 : CHART_TITLE_PT * (1.6 + 1.2 * (lines.length - 1));
+
+function pushChartTitle(
+  labels: Array<ChartLabel>,
+  lines: ReadonlyArray<string>,
+  wPt: number,
+  hPt: number,
+): void {
+  lines.forEach((text, i) => {
+    labels.push({
+      text,
+      x: wPt / 2,
+      y: hPt - 4 - CHART_TITLE_PT * (1 + 1.2 * i),
+      sizePt: CHART_TITLE_PT,
+      colorHex: TITLE_COLOR,
+      align: 'center',
+    });
   });
 }
 
@@ -336,6 +407,7 @@ function pushGridTicks(
   plotW: number,
   plotH: number,
   grid: ChartLineStyle | undefined,
+  atEnd = false,
 ): void {
   for (const v of tickVals) {
     if (axis === 'x') {
@@ -351,7 +423,7 @@ function pushGridTicks(
       labels.push({
         text: fmt(v),
         x: gx,
-        y: y0 - CHART_LABEL_PT,
+        y: atEnd ? y0 + plotH + CHART_LABEL_PT * 0.4 : y0 - CHART_LABEL_PT,
         sizePt: CHART_LABEL_PT,
         colorHex: LABEL_COLOR,
         align: 'center',
@@ -368,11 +440,11 @@ function pushGridTicks(
       });
       labels.push({
         text: fmt(v),
-        x: x0 - 3,
+        x: atEnd ? x0 + plotW + 3 : x0 - 3,
         y: gy - CHART_LABEL_PT / 3,
         sizePt: CHART_LABEL_PT,
         colorHex: LABEL_COLOR,
-        align: 'right',
+        align: atEnd ? 'left' : 'right',
       });
     }
   }
@@ -389,6 +461,12 @@ function axisStroke(style: ChartLineStyle | undefined): { hex: string; widthPt: 
   return { hex: style?.colorHex ?? AXIS_COLOR, widthPt: style?.widthPt ?? 1 };
 }
 
+/**
+ * The two axis lines: the upright one (in the left axis's style) and the one
+ * lying along (in the bottom axis's). The category axis lies where it crosses
+ * the value axis — `cross.y` up a column chart, `cross.x` along a bar chart —
+ * and the other stands at the plot's edge.
+ */
 function pushAxisLines(
   polylines: Array<ChartPolyline>,
   x0: number,
@@ -396,13 +474,16 @@ function pushAxisLines(
   plotW: number,
   plotH: number,
   chart: Chart,
+  cross: { readonly x?: number; readonly y?: number } = {},
 ): void {
   const val = axisStroke(chart.valAxisLine);
+  const x = x0 + (cross.x ?? 0);
+  const y = y0 + (cross.y ?? 0);
   if (val) {
     polylines.push({
       points: [
-        [x0, y0],
-        [x0, y0 + plotH],
+        [x, y0],
+        [x, y0 + plotH],
       ],
       strokeHex: val.hex,
       widthPt: val.widthPt,
@@ -412,8 +493,8 @@ function pushAxisLines(
   if (cat) {
     polylines.push({
       points: [
-        [x0, y0],
-        [x0 + plotW, y0],
+        [x0, y],
+        [x0 + plotW, y],
       ],
       strokeHex: cat.hex,
       widthPt: cat.widthPt,
@@ -441,8 +522,18 @@ function buildFrame(
   const primary =
     onSecondary.length > 0 ? chart.series.filter((s) => !s.secondaryAxis) : chart.series;
   const allVals = primary.flatMap((s) => s.values.slice(0, nCats));
-  const [dataMin, dataMax] = opts.dataRange ?? [Math.min(0, ...allVals), Math.max(0, ...allVals)];
-  const scale = axisScale(chart, dataMin, dataMax, hPt);
+  // The data's own extent: whether the axis reaches down to zero is the
+  // scale's decision (niceScale), not the data's.
+  const [dataMin, dataMax] =
+    opts.dataRange ?? (allVals.length > 0 ? [Math.min(...allVals), Math.max(...allVals)] : [0, 1]);
+  const scale = opts.exactRange
+    ? {
+        min: dataMin,
+        max: dataMax,
+        step: niceScale(dataMin, dataMax, intervalsThatFit(horizontal ? wPt : hPt, horizontal))
+          .step,
+      }
+    : axisScale(chart, dataMin, dataMax, horizontal ? wPt : hPt, horizontal);
   const fmtVal = opts.formatValue ?? ((v: number): string => formatTick(v, scale.step));
   const tickVals = ticks(scale);
   const vals2 = onSecondary.flatMap((s) => s.values.slice(0, nCats));
@@ -450,12 +541,64 @@ function buildFrame(
   // the secondary takes the nice range of its own data.
   const scale2 =
     vals2.length > 0
-      ? niceScale(Math.min(0, ...vals2), Math.max(0, ...vals2), tickBudget(hPt))
+      ? niceScale(Math.min(...vals2), Math.max(...vals2), intervalsThatFit(hPt, false))
       : undefined;
   const tickVals2 = scale2 ? ticks(scale2) : [];
 
-  let top = 4;
-  if (chart.title) top += CHART_TITLE_PT * 1.6;
+  // §21.2.2.33/§21.2.2.207 — where the category axis crosses the value axis
+  // (at zero, unless the file says its minimum, its maximum or a value), and
+  // so where its labels stand: beside it there (`nextTo`), or at the low or
+  // high end of the value axis. A chart with values below zero has them on
+  // its zero line, as Excel and Calc draw it — 47813.xlsx labels its sine and
+  // cosine along the middle, where we put them under the plot.
+  const crosses = chart.catAxisCrosses;
+  const crossValue = Math.min(
+    Math.max(
+      crosses === 'min' ? scale.min : crosses === 'max' ? scale.max : (crosses ?? 0),
+      scale.min,
+    ),
+    scale.max,
+  );
+  const labelsAt: 'start' | 'cross' | 'end' | 'none' =
+    chart.catTickLabelPos === 'none'
+      ? 'none'
+      : chart.catTickLabelPos === 'low'
+        ? 'start'
+        : chart.catTickLabelPos === 'high'
+          ? 'end'
+          : crossValue <= scale.min
+            ? 'start'
+            : crossValue >= scale.max
+              ? 'end'
+              : 'cross';
+  // No <c:cat> means the categories are the point indices, which is what
+  // Excel and Calc both label the axis with — an unlabelled category axis
+  // leaves the bars standing on nothing.
+  const catText = (c: number): string => chart.categories[c] ?? String(c + 1);
+  const widestCat = Math.max(
+    0,
+    ...Array.from({ length: nCats }, (_, c) => measure(catText(c), CHART_LABEL_PT)),
+  );
+  const catBand = CHART_LABEL_PT * 1.6;
+  // §21.2.2.115 — the outer levels of a category axis labelled on several,
+  // each a row of its own under the categories' labels (a column chart's).
+  const groupLevels = horizontal ? [] : (chart.categoryGroups ?? []);
+
+  // §21.2.2.33 — the value axis lies where it crosses the category axis: at
+  // the first category, unless the file says the last — and the first is at
+  // the far end of an axis that runs backwards. dataValidationTableRange.xlsx
+  // ranks its counties top down and reads their values along the top, as
+  // Excel and Calc draw it; we drew them along the foot.
+  const valAtEnd =
+    chart.catAxisReversed === true
+      ? chart.valAxisCrosses !== 'max'
+      : chart.valAxisCrosses === 'max';
+  const title = titleLines(chart, wPt, measure);
+  const top =
+    4 +
+    titleHeight(title) +
+    (!horizontal && labelsAt === 'end' ? catBand : 0) +
+    (horizontal && valAtEnd ? catBand : 0);
   const legend = buildLegendBlock(chart, wPt, hPt, measure);
   const tick2W =
     scale2 && !horizontal
@@ -463,21 +606,57 @@ function buildFrame(
         4 +
         (chart.secondaryValAxisTitle ? CHART_LABEL_PT * 1.5 : 0)
       : 0;
-  const plotRight = wPt - 4 - legend.rightWidth - tick2W;
-
+  // A bar chart's value labels stand centred under their ticks along the
+  // foot, so the last one reaches half its width past the plot's end: room is
+  // kept for it inside the frame, or "80" is cut in two by the frame's edge.
+  const tickHalf = (v: number | undefined): number =>
+    horizontal && v !== undefined ? measure(fmtVal(v), CHART_LABEL_PT) / 2 : 0;
+  const lastTickHalf = tickHalf(tickVals[tickVals.length - 1]);
+  const catLabelW = Math.min(wPt * 0.4, widestCat + 6);
   const tickLabelW = Math.max(0, ...tickVals.map((v) => measure(fmtVal(v), CHART_LABEL_PT))) + 4;
-  const catLabelH = CHART_LABEL_PT * 1.6;
-  const catTitleH = chart.catAxisTitle ? CHART_LABEL_PT * 1.5 : 0;
+  const plotRight =
+    wPt -
+    4 -
+    legend.rightWidth -
+    tick2W -
+    (horizontal && labelsAt === 'end' ? catLabelW : lastTickHalf) -
+    (!horizontal && valAtEnd ? tickLabelW : 0);
 
-  const valTitleW = chart.valAxisTitle ? CHART_LABEL_PT * 1.5 : 0;
-  const x0 = 4 + valTitleW + tickLabelW;
-  const y0 = 4 + legend.bottomHeight + catTitleH + catLabelH;
+  // The left of the plot holds the axis that stands upright, the foot of it
+  // the one that lies along — the value axis in a column chart, the category
+  // axis in a bar chart, each with its labels and its title. Sizing the left
+  // by the value ticks whatever the direction ran a bar chart's category names
+  // out past the frame (dataValidationTableRange.xlsx's "Grays Harbor" beside
+  // ticks no wider than "80"). A name is given at most two fifths of the width.
+  // The category labels take room only where they stand at the plot's edge;
+  // on the zero line they stand inside it.
+  const axisTitleBand = CHART_LABEL_PT * 1.5;
+  const leftTitle = horizontal ? chart.catAxisTitle : chart.valAxisTitle;
+  const footTitle = horizontal ? chart.valAxisTitle : chart.catAxisTitle;
+  const x0 =
+    4 +
+    (leftTitle ? axisTitleBand : 0) +
+    (horizontal
+      ? labelsAt === 'start'
+        ? catLabelW
+        : tickHalf(tickVals[0])
+      : valAtEnd
+        ? 0
+        : tickLabelW);
+  const y0 =
+    4 +
+    legend.bottomHeight +
+    (footTitle ? axisTitleBand : 0) +
+    ((horizontal ? !valAtEnd : labelsAt === 'start') ? catBand : 0) +
+    (!horizontal && labelsAt === 'start' ? groupLevels.length * catBand : 0);
   const plotW = Math.max(1, plotRight - x0);
   const plotH = Math.max(1, hPt - top - y0);
 
   const valueOffset = (v: number): number =>
     ((v - scale.min) / (scale.max - scale.min)) * (horizontal ? plotW : plotH);
-  const zeroOffset = valueOffset(0);
+  // Bars grow from where the category axis crosses: zero, or the end of the
+  // axis nearest it — bars over 93…97 grow up from 91, the bottom of their axis.
+  const zeroOffset = valueOffset(crossValue);
 
   // §21.2.2.145 — the plot rectangle's own fill and rule, drawn UNDER the
   // gridlines and the data. Chart_Plot_BorderLine_Style.docx rules its plot in
@@ -500,13 +679,12 @@ function buildFrame(
         }
       : undefined;
 
-  pushChartTitle(labels, chart, wPt, hPt);
-  // Axis titles. A value-axis title reads bottom-to-top, in the gutter outside
-  // its own tick labels; the category-axis title sits centred below the
-  // category labels.
-  if (chart.valAxisTitle) {
+  pushChartTitle(labels, title, wPt, hPt);
+  // Axis titles. The upright axis's title reads bottom-to-top, in the gutter
+  // outside its own labels; the lying one's sits centred below its labels.
+  if (leftTitle) {
     labels.push({
-      text: chart.valAxisTitle,
+      text: leftTitle,
       x: 4 + CHART_LABEL_PT * 0.9,
       y: y0 + plotH / 2,
       sizePt: CHART_LABEL_PT,
@@ -515,9 +693,9 @@ function buildFrame(
       rotationDeg: 90,
     });
   }
-  if (chart.catAxisTitle) {
+  if (footTitle) {
     labels.push({
-      text: chart.catAxisTitle,
+      text: footTitle,
       x: x0 + plotW / 2,
       y: legend.bottomHeight + 2,
       sizePt: CHART_LABEL_PT,
@@ -539,6 +717,7 @@ function buildFrame(
       plotW,
       plotH,
       chart.gridLine,
+      valAtEnd,
     );
   } else {
     pushGridTicks(
@@ -553,6 +732,7 @@ function buildFrame(
       plotW,
       plotH,
       chart.gridLine,
+      valAtEnd,
     );
   }
 
@@ -600,39 +780,87 @@ function buildFrame(
   // Excel and Calc both thin a crowded axis; drawing all of them turned
   // 47813.xlsx's 1700 points into a solid black bar under the plot. The step is
   // measured, not guessed: the widest label plus a gap, over the slot.
-  const need = horizontal
-    ? CHART_LABEL_PT * 1.4
-    : Math.max(0, ...chart.categories.map((t) => measure(t, CHART_LABEL_PT))) + 4;
+  // The labels measured are the labels drawn: a chart with no <c:cat> is
+  // labelled with its point indices, and measuring the categories it does not
+  // have stepped 47813.xlsx's 716 points by five, its numbers run together.
+  const need = horizontal ? CHART_LABEL_PT * 1.4 : widestCat + 4;
   const step = Math.max(1, Math.ceil(need / Math.max(slot, 0.01)));
-  for (let c = 0; c < nCats; c += step) {
-    // No <c:cat> means the categories are the point indices, which is what
-    // Excel and Calc both label the axis with — an unlabelled category axis
-    // leaves the bars standing on nothing.
-    const cat = chart.categories[c] ?? String(c + 1);
+  // Where the labels stand across the axis: beside the plot's start, on the
+  // crossing, or beside its end.
+  const across =
+    labelsAt === 'start' ? 0 : labelsAt === 'end' ? (horizontal ? plotW : plotH) : zeroOffset;
+  // Every Nth from where the axis starts — its far end when it runs
+  // backwards, so the first category is labelled whichever way it reads.
+  const labelled: Array<number> = [];
+  if (labelsAt !== 'none') {
+    if (chart.catAxisReversed === true) for (let c = nCats - 1; c >= 0; c -= step) labelled.push(c);
+    else for (let c = 0; c < nCats; c += step) labelled.push(c);
+  }
+  for (const c of labelled) {
+    const cat = catText(c);
     if (!cat) continue;
     const center = (horizontal ? y0 : x0) + c * slot + slot / 2;
     if (horizontal) {
       labels.push({
         text: cat,
-        x: x0 - 3,
+        x: labelsAt === 'end' ? x0 + across + 3 : x0 + across - 3,
         y: center - CHART_LABEL_PT / 3,
         sizePt: CHART_LABEL_PT,
         colorHex: LABEL_COLOR,
-        align: 'right',
+        align: labelsAt === 'end' ? 'left' : 'right',
       });
     } else {
       labels.push({
         text: cat,
         x: center,
-        y: y0 - CHART_LABEL_PT,
+        y: labelsAt === 'end' ? y0 + across + CHART_LABEL_PT * 0.4 : y0 + across - CHART_LABEL_PT,
         sizePt: CHART_LABEL_PT,
         colorHex: LABEL_COLOR,
         align: 'center',
       });
     }
   }
+  // Each outer level's groups, centred under the categories they span, a
+  // rule between one group and the next running down through the rows.
+  if (labelsAt !== 'none' && labelsAt !== 'end') {
+    groupLevels.forEach((groups, level) => {
+      const rowY = y0 + across - CHART_LABEL_PT - (level + 1) * catBand;
+      groups.forEach((group, i) => {
+        const end = Math.min(nCats, groups[i + 1]?.start ?? nCats);
+        if (end <= group.start) return;
+        labels.push({
+          text: group.label,
+          x: x0 + ((group.start + end) / 2) * slot,
+          y: rowY,
+          sizePt: CHART_LABEL_PT,
+          colorHex: LABEL_COLOR,
+          align: 'center',
+        });
+        if (i > 0) {
+          polylines.push({
+            points: [
+              [x0 + group.start * slot, y0 + across],
+              [x0 + group.start * slot, rowY - CHART_LABEL_PT * 0.4],
+            ],
+            strokeHex: GRID_COLOR,
+            widthPt: 0.75,
+          });
+        }
+      });
+    });
+  }
 
-  pushAxisLines(polylines, x0, y0, plotW, plotH, chart);
+  pushAxisLines(
+    polylines,
+    x0,
+    y0,
+    plotW,
+    plotH,
+    chart,
+    horizontal
+      ? { x: zeroOffset, ...(valAtEnd ? { y: plotH } : {}) }
+      : { y: zeroOffset, ...(valAtEnd ? { x: plotW } : {}) },
+  );
   legend.emit(rects, labels);
 
   return {
@@ -692,7 +920,7 @@ function stackedTotals(chart: Chart, nCats: number): { min: number; max: number 
 // frame derive it from individual values.
 function groupingFrameOpts(chart: Chart, nCats: number): FrameOpts {
   const g = chart.grouping ?? 'clustered';
-  if (g === 'percentStacked') return { dataRange: [0, 1], formatValue: pctLabel };
+  if (g === 'percentStacked') return { dataRange: [0, 1], exactRange: true, formatValue: pctLabel };
   const format = chartValueFormatter(chart);
   if (g === 'stacked') {
     const t = stackedTotals(chart, nCats);
@@ -1045,13 +1273,13 @@ export function buildScatterScene(
   // both references start its axis at 0 where we started it at 0.4. How many
   // ticks fit is a question about the plot, exactly as it is for the frame
   // charts: the x labels sit side by side, so they need more room than the y.
-  const xScale = niceScale(...autoRange(xs), tickBudget(wPt / 2));
-  const yScale = niceScale(...autoRange(ys), tickBudget(hPt));
+  const xScale = niceScale(Math.min(...xs), Math.max(...xs), intervalsThatFit(wPt, true));
+  const yScale = niceScale(Math.min(...ys), Math.max(...ys), intervalsThatFit(hPt, false));
   const xTicks = ticks(xScale);
   const yTicks = ticks(yScale);
 
-  let top = 4;
-  if (chart.title) top += CHART_TITLE_PT * 1.6;
+  const title = titleLines(chart, wPt, measure);
+  const top = 4 + titleHeight(title);
   const legend = buildLegendBlock(chart, wPt, hPt, measure);
   const tickLabelW =
     Math.max(0, ...yTicks.map((v) => measure(formatTick(v, yScale.step), CHART_LABEL_PT))) + 4;
@@ -1062,7 +1290,7 @@ export function buildScatterScene(
   const xAt = (v: number): number => x0 + ((v - xScale.min) / (xScale.max - xScale.min)) * plotW;
   const yAt = (v: number): number => y0 + ((v - yScale.min) / (yScale.max - yScale.min)) * plotH;
 
-  pushChartTitle(labels, chart, wPt, hPt);
+  pushChartTitle(labels, title, wPt, hPt);
   pushGridTicks(
     gridlines,
     labels,
@@ -1123,29 +1351,17 @@ export function buildScatterScene(
 }
 
 /**
- * The data range an automatic axis covers: its own extent, except that data
- * starting within 5/6 of the top reads as data that belongs against a zero
- * baseline — Excel's own rule for when an automatic minimum stays at 0.
+ * How many intervals an axis `extentPt` long has room to label: ten, Excel's
+ * own most, unless its labels would run into each other first — one label
+ * line apiece stacked up a vertical axis, a few digits' width apiece along a
+ * horizontal one. Excel crams nine labels up a 150pt column chart rather than
+ * step it more coarsely, so the room is all that limits it.
  */
-function autoRange(vals: ReadonlyArray<number>): [number, number] {
-  const lo = Math.min(...vals);
-  const hi = Math.max(...vals);
-  return [lo > 0 && lo < (5 / 6) * hi ? 0 : lo, hi];
-}
-
-/**
- * How many ticks an axis `extentPt` long carries (mirrors {@link axisScale}).
- *
- * A tall axis takes more of them — a fixed six drew 0/100/200/300 down a plot
- * where both references fit 0/50/…/300 — but the appetite is milder than it
- * looks: asked for one every 32pt, a 427pt chart wanted ten, and Excel labels
- * that chart's 0…5 data 0/1/…/6 where we drew half-steps (chart-texture-bg
- * .pptx). One per ~48pt and never more than eight satisfies both, now that
- * {@link niceScale} measures its step against the range the data spans rather
- * than against Heckbert's rounded-up one.
- */
-const tickBudget = (extentPt: number): number =>
-  Math.min(8, Math.max(4, Math.round(extentPt / 48)));
+const intervalsThatFit = (extentPt: number, horizontal: boolean): number =>
+  Math.min(
+    10,
+    Math.max(2, Math.floor((extentPt * 0.75) / (CHART_LABEL_PT * (horizontal ? 3.5 : 1.4)))),
+  );
 
 /** Side (points) of the square stamped for a series that names no symbol. */
 const DEFAULT_MARKER_PT = 4;
@@ -1198,17 +1414,13 @@ export function buildLineScene(
   hPt: number,
   measure: MeasureText,
 ): ChartScene {
-  // Line charts auto-min: the value axis need not include 0 when the data sits
-  // far from it (unlike bars/areas, which need a meaningful baseline at 0).
-  // "Far" is the rule both references apply — the smallest value more than
-  // five sixths of the largest. Cutting the axis off whenever the data merely
-  // starts above zero drew chartex.docx's 1.8…5 line chart on a 1.5…5.5 axis
-  // where both references draw 0…6.
+  // The data's own extent: whether the axis reaches down to zero is the
+  // scale's to decide, by Excel's rule (niceScale) — chartex.docx's 1.8…5
+  // line chart runs 0…6, as both references draw it, and 93…97 from 91.
   const allVals = chart.series.flatMap((s) => s.values);
   const lo = allVals.length > 0 ? Math.min(...allVals) : 0;
   const hi = allVals.length > 0 ? Math.max(...allVals) : 1;
-  const range: readonly [number, number] =
-    lo > 0 && lo > (5 / 6) * hi ? [lo, hi] : [Math.min(0, lo), Math.max(0, hi)];
+  const range: readonly [number, number] = [lo, hi];
   // …and the axis's own number format applies here exactly as it does to a bar
   // chart's: 123233_charts.xlsx labels every one of its four charts in currency
   // and only the line chart came out in bare digits.
@@ -1284,8 +1496,8 @@ export function buildPieScene(
   const total = values.reduce((a, b) => a + b, 0);
   if (!series || total <= 0) return { rects, polylines: [], wedges, labels };
 
-  let top = 4;
-  if (chart.title) top += CHART_TITLE_PT * 1.6;
+  const title = titleLines(chart, wPt, measure);
+  const top = 4 + titleHeight(title);
   // Pie legend lists categories (each in its slice colour). A pie written
   // without `<c:cat>` has none, and its legend came out empty — the same case
   // the category axis already answers with the point indices, which is what
@@ -1356,16 +1568,7 @@ export function buildPieScene(
     wedges.push({ cx, cy, r: holeR, startRad: 0, sweepRad: -2 * Math.PI, fillHex: 'FFFFFF' });
   }
 
-  if (chart.title) {
-    labels.push({
-      text: chart.title,
-      x: wPt / 2,
-      y: hPt - 4 - CHART_TITLE_PT,
-      sizePt: CHART_TITLE_PT,
-      colorHex: TITLE_COLOR,
-      align: 'center',
-    });
-  }
+  pushChartTitle(labels, title, wPt, hPt);
   legend.emit(rects, labels);
   return { rects, polylines: [], wedges, labels };
 }
@@ -1502,11 +1705,11 @@ function withReversedCategories(chart: Chart): Chart {
   return {
     ...chart,
     // An empty category list is not a list of empty labels: the builders label
-    // an unlabelled axis with the point index, and padding it would silence it.
-    categories:
-      chart.categories.length > 0
-        ? Array.from({ length: n }, (_, i) => chart.categories[flip(i)] ?? '')
-        : chart.categories,
+    // an unlabelled axis with the point index — which, run backwards, counts
+    // down.
+    categories: Array.from({ length: n }, (_, i) =>
+      chart.categories.length > 0 ? (chart.categories[flip(i)] ?? '') : String(flip(i) + 1),
+    ),
     series: chart.series.map((s) => ({
       ...s,
       values: Array.from({ length: n }, (_, i) => s.values[flip(i)] ?? 0),

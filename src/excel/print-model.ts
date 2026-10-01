@@ -17,6 +17,7 @@ import type {
   CellBorders,
   CellDataBar,
   CellIcon,
+  CellNoteFlag,
   CellProperties,
   CellShading,
   CellSparkline,
@@ -28,6 +29,7 @@ import type {
   SectionProperties,
   Table,
   TableCell,
+  TableOverlay,
   TableProperties,
   TableRow,
 } from '@/core/document-model';
@@ -50,11 +52,14 @@ import type {
   XlsxPageSetup,
   XlsxStyles,
 } from '@/excel';
+import type { ExcelTable, TableStyleElementType } from '@/core/spreadsheet-model';
 import type { CellConditionalFormatter, CfOverride } from '@/excel/conditional-format';
 import type { SheetHyperlink, SheetSlicer } from '@/core/ir/sheet';
 import type { Loss } from '@/core/ir/loss';
+import type { DrawingBox } from '@/excel/column-bands';
 import { FEATURES } from '@/core/ir/features';
 import { eighthPtToPt, halfPtToPt, pt, twipsToPt } from '@/core/ir';
+import { firstStrongDirection } from '@/core/bidi';
 import {
   applyNumberFormat,
   generalToWidth,
@@ -62,7 +67,12 @@ import {
   parseAreaRef,
   parseTitleRowRange,
 } from '@/excel';
-import { bandedTables, computeColumnBands, withHeadingBand } from '@/excel/column-bands';
+import {
+  HEADING_COL_TWIPS,
+  bandedTables,
+  computeColumnBands,
+  withHeadingBand,
+} from '@/excel/column-bands';
 import { buildConditionalFormatter } from '@/excel/conditional-format';
 
 /**
@@ -119,43 +129,91 @@ export function columnTwips(chars: number, charTwips: number): number {
 }
 
 /**
- * §18.3.1.81 — the DEFAULT column, in twips, from whichever of the two the
- * sheet declares.
+ * How far the first `count` rows (or columns) of a sheet reach, in twips: each
+ * the default unless the sheet gives it a size of its own.
  *
- * The two are not the same number. `defaultColWidth` "includes margin padding
- * and extra padding for gridlines"; `baseColWidth` is the bare character count
- * and explicitly excludes them, so deriving a default from it adds the padding
- * once to reach a defaultColWidth and once more to render it. 47668.xlsx says
- * `baseColWidth="10"` and caches its picture's extent at 9753600 EMU = 768pt
- * over 12 columns plus 48pt — 60pt, or 80px, a column. Padding it once gives
- * 75px and squeezed that picture by 6%. LibreOffice measures ~79px here, so
- * both references agree against us.
+ * @param count        How many tracks, from the first.
+ * @param defaultTwips The size of a track the sheet says nothing about.
+ * @param sized        The tracks it does size, by 0-based index.
+ * @returns Their total.
+ */
+/**
+ * §20.5 — the part of the sheet a printed table shows, for the drawings over
+ * it (TableOverlay); empty until the drawings are put in. Nothing on a screen,
+ * which draws them over the whole sheet as it is.
  *
- * @param worksheet     The sheet.
- * @param charTwips     The Maximum Digit Width, in twips.
- * @param fallbackChars The width to use when the sheet declares neither.
+ * @param sheetLeftPt Where the table's first column stands on the sheet.
+ * @param columns     The widths of the sheet's columns it prints.
+ * @param leftPt      Where those begin in the table — past a row-number column.
+ * @returns The frame to spread into the table, or nothing.
+ */
+function sheetFrame(
+  sheetLeftPt: number | undefined,
+  columns: ReadonlyArray<number>,
+  leftPt: number,
+): { overlay?: TableOverlay } {
+  if (sheetLeftPt === undefined) return {};
+  return {
+    overlay: {
+      sheetLeftPt: pt(sheetLeftPt),
+      widthPt: pt(columns.reduce((sum, w) => sum + w, 0)),
+      leftPt: pt(leftPt),
+      drawings: [],
+    },
+  };
+}
+
+/** The drawings' boxes at the print scale. */
+function scaledBoxes(
+  boxes: ReadonlyArray<DrawingBox> | undefined,
+  scale: number,
+): Array<DrawingBox> {
+  return (boxes ?? []).map((b) => ({
+    xPt: b.xPt * scale,
+    yPt: b.yPt * scale,
+    widthPt: b.widthPt * scale,
+    heightPt: b.heightPt * scale,
+  }));
+}
+
+function tracksBeforeTwips(
+  count: number,
+  defaultTwips: number,
+  sized: ReadonlyArray<{ readonly index: number; readonly twips: number }>,
+): number {
+  let total = count * defaultTwips;
+  const seen = new Set<number>();
+  for (const t of sized) {
+    if (t.index >= count || seen.has(t.index)) continue;
+    seen.add(t.index);
+    total += t.twips - defaultTwips;
+  }
+  return total;
+}
+
+/**
+ * §18.3.1.81 — the DEFAULT column, in twips: the sheet's `defaultColWidth`
+ * where it declares one — a stored width, padding included — and otherwise
+ * `baseColWidth` digits and their padding, rounded up to Excel's step of eight
+ * pixels. Padding a `baseColWidth` twice once stood in for that rounding: it
+ * gives 47668.xlsx's 80px as well, and nothing else.
+ *
+ * @param worksheet The sheet.
+ * @param charTwips The Maximum Digit Width, in twips.
  * @returns The default column width in twips.
  */
-function defaultColumnTwips(
-  worksheet: ParsedWorksheet,
-  charTwips: number,
-  fallbackChars: number,
-): number {
+export function defaultColumnTwips(worksheet: ParsedWorksheet, charTwips: number): number {
   if (worksheet.defaultColWidthChars !== undefined) {
     return columnTwipsOf(worksheet.defaultColWidthChars, charTwips);
   }
-  if (worksheet.baseColWidthChars !== undefined) {
-    // TWICE, and the two are not the same padding. `columnTwipsOf` no longer
-    // adds one of its own — §18.3.1.13's stored width already carries it — so
-    // both are explicit here: one to turn a bare character count into a
-    // `defaultColWidth`, one to render it. The spec's prose would stop at one,
-    // but 47668.xlsx contradicts that from inside: Calibri 11, so a 7px digit,
-    // `baseColWidth="10"`, and a picture anchored across 12 columns plus 48pt
-    // whose cached `a:ext` is 9753600 EMU — 768pt, which is 60pt a column, not
-    // 56.25. Excel wrote that extent; the arithmetic is its own.
-    return columnTwipsOf(worksheet.baseColWidthChars, charTwips) + 2 * COL_PADDING_TWIPS;
-  }
-  return columnTwipsOf(fallbackChars, charTwips);
+  // `baseColWidth` digits (8 unless the sheet says otherwise) and the 5px of
+  // padding — rounded UP to a multiple of eight pixels, which is the step
+  // Excel's default column moves in. Calibri's 8 × 7 + 5 = 61px is the
+  // famous 64; 47668.xlsx's `baseColWidth="10"` is 75px and Excel's own
+  // cached extent beside it says 80; 55745.xlsx's 宋体 11 columns are 72px.
+  const base = worksheet.baseColWidthChars ?? DEFAULT_BASE_COL_CHARS;
+  const px = (base * charTwips + COL_PADDING_TWIPS) / TWIPS_PER_PIXEL;
+  return Math.ceil(px / 8) * 8 * TWIPS_PER_PIXEL;
 }
 
 function columnTwipsOf(chars: number, charTwips: number): number {
@@ -187,14 +245,8 @@ const EXCEL_CELL_INSET_PT = 1.5;
  */
 export const DEFAULT_COL_TWIPS = 960;
 
-/**
- * The width behind {@link DEFAULT_COL_TWIPS}, for a non-Calibri unit.
- *
- * In the STORED unit, which is what {@link columnTwips} reads: Excel's default
- * column is "8.43 characters" in its own interface and `width="9.140625"` in
- * every file that writes it out, because the stored form carries the padding.
- */
-const DEFAULT_COL_CHARS = 9.140625;
+/** §18.3.1.81 `baseColWidth` — the digits a default column holds when the sheet does not say. */
+const DEFAULT_BASE_COL_CHARS = 8;
 
 /**
  * The column-width unit in twips: the Maximum Digit Width of the font the
@@ -209,14 +261,10 @@ const DEFAULT_COL_CHARS = 9.140625;
  * are listed beside their originals because a file naming one is measured in
  * the other's unit by every reader that has to substitute.
  *
- * Every entry here is measured. The CJK defaults are deliberately absent: the
- * evidence says ＭＳ Ｐゴシック 11 is 8px — Japanese Excel's default column is
- * 72px, and §18.3.1.13's forward formula turns that into exactly the
- * `width="9"` 54524.xlsx writes for its default band — but I have no copy of
- * the face to measure, and fitting 0.55 to it moved 50299.xlsx from 16 pages
- * to 22 against LibreOffice's 17. A face we cannot measure keeps the old 7px.
+ * Every Latin entry here is measured. A third number, where there is one, is
+ * what Excel adds in whole pixels to the digit it measures (see the CJK entry).
  */
-const DIGIT_EM: ReadonlyArray<readonly [RegExp, number]> = [
+const DIGIT_EM: ReadonlyArray<readonly [RegExp, number, number?]> = [
   [/^(calibri|carlito)$/i, 1063 / 2048],
   [/^(arial|helvetica|liberation sans|arimo|arial unicode ms)$/i, 1139 / 2048],
   [/^(times new roman|liberation serif|tinos)$/i, 1024 / 2048],
@@ -226,15 +274,15 @@ const DIGIT_EM: ReadonlyArray<readonly [RegExp, number]> = [
   // face's is a little over a half. Unknown, they fell back to Excel's 7px and
   // 12843-1's twelve-point PMingLiU columns came out 14 % narrow.
   //
-  // What is LEFT of that file's gap is NOT ours, and measuring it settles a
-  // question worth not re-opening: 12843-1 prints on 55 pages here and 78 in
-  // LibreOffice, and LO's every column is 1.105–1.117× ours. Solving both
-  // sides' `px = chars × MDW + padding` off two columns gives LO an MDW of
-  // 8.92px where ours is 8 — 0.5575 em at 12pt, which is Arial's digit
-  // (1139/2048), and LO's own PDF says why: it embeds ArialUnicodeMS for
-  // 新細明體, a face it does not have. Excel measures the real PMingLiU's
-  // half-width digit. Ours is Excel's number; do not widen it to chase the
-  // reference.
+  // And Excel takes a pixel MORE than that half em, as three of its own files
+  // say. 45540_form_Footer.xlsx (宋体 12, a half em of 8px) keeps a check box
+  // anchored at column F + 3px with `margin-left:180.75pt` beside it — Excel's
+  // absolute answer — and columns A…E come to that 238px only at a digit of
+  // 9px; F…G confirm it. 55745.xlsx (宋体 11, 7.33px) puts six default columns
+  // at 432px: 72 apiece, 8 × 8 + 5 rounded up to eight pixels — a digit of 8.
+  // Japanese Excel's default column is 72px in ＭＳ Ｐゴシック 11 alike
+  // (54524.xlsx's `width="9"`). Truncated and one more: 8, 9 and 8. LibreOffice
+  // measures 12843-1's twelve-point PMingLiU at 8.92px, the same 9.
   [
     new RegExp(
       '^(' +
@@ -247,8 +295,46 @@ const DIGIT_EM: ReadonlyArray<readonly [RegExp, number]> = [
       'iu',
     ),
     1024 / 2048,
+    1,
   ],
 ];
+
+/**
+ * The space advance, as a fraction of the em, of the faces a spreadsheet names
+ * for its normal style — §18.8.1 measures a cell's indent in them. Read off
+ * each face's `hmtx` for U+0020, the metric twins beside their originals; a
+ * face not listed takes a quarter em, which is where most spaces sit.
+ */
+const SPACE_EM: ReadonlyArray<readonly [RegExp, number]> = [
+  [/^(calibri|carlito)$/i, 463 / 2048],
+  [/^(arial|helvetica|liberation sans|arimo|arial unicode ms)$/i, 569 / 2048],
+  [/^(times new roman|liberation serif|tinos)$/i, 512 / 2048],
+  [/^(cambria|caladea)$/i, 220 / 1000],
+  [/^(tahoma)$/i, 640 / 2048],
+  [/^(verdana|dejavu sans)$/i, 720 / 2048],
+];
+
+/**
+ * One level of §18.8.1's `indent`, in twips: "an increment of 1 represents 3
+ * spaces … of the normal style font". It was counted in DIGITS, three of them,
+ * which is twice as far — simple-monthly-budget.xlsx indents its "Amount"
+ * headings two levels and we set them 31.5pt in where LibreOffice sets them
+ * 15pt (it measures 7.49pt a level in Calibri 11, 8.39pt in Arial 10: three
+ * spaces of each).
+ *
+ * @param styles The workbook's styles; the first font is the normal style's.
+ * @returns The width of one indent level, in twips.
+ */
+function indentLevelTwips(styles: XlsxStyles): number {
+  const font = styles.fonts[0];
+  const size =
+    font?.sizePt !== undefined && Number.isFinite(font.sizePt) && font.sizePt > 0
+      ? font.sizePt
+      : DEFAULT_FONT_PT;
+  const name = font?.name?.trim() ?? '';
+  const em = SPACE_EM.find(([re]) => re.test(name))?.[1] ?? 0.25;
+  return Math.round(3 * em * size * TWIPS_PER_POINT);
+}
 
 /**
  * §18.3.1.13 — the Maximum Digit Width, in twips, of the normal style's font.
@@ -269,12 +355,33 @@ const DIGIT_EM: ReadonlyArray<readonly [RegExp, number]> = [
  */
 function maximumDigitTwips(name: string, sizePt: number | undefined): number {
   const size = sizePt !== undefined && Number.isFinite(sizePt) && sizePt > 0 ? sizePt : 11;
-  const em = DIGIT_EM.find(([re]) => re.test(name.trim()))?.[1];
-  if (em === undefined) return TWIPS_PER_EXCEL_CHAR;
+  const face = DIGIT_EM.find(([re]) => re.test(name.trim()));
+  if (face === undefined) return TWIPS_PER_EXCEL_CHAR;
+  const [, em, extraPx = 0] = face;
   // Points to 96-DPI pixels, then down to whole pixels the way Excel's own
   // width formulas do — Calibri 11 is 7.61px and Excel's unit is 7.
-  const px = Math.trunc(em * size * (96 / 72));
+  const px = Math.trunc(em * size * (96 / 72)) + extraPx;
   return px > 0 ? px * TWIPS_PER_PIXEL : TWIPS_PER_EXCEL_CHAR;
+}
+
+/**
+ * §18.3.1.13 — the unit a sheet's columns are measured in: the Maximum Digit
+ * Width of the workbook's Normal font, in twips — the font's own where the
+ * workbook names it, the face we render with where it names none. A drawing's
+ * anchor counts columns in the same unit, or it lands beside the cells it is
+ * anchored to: 45540_form_Footer.xlsx sets its form in 宋体 12, whose digit
+ * is 8px, and anchored at Excel's 7px its check boxes stood a column off
+ * their labels.
+ *
+ * @param styles       The workbook's styles (its first font is the Normal style's).
+ * @param digitWidthPt The render font's digit width, for a workbook that names no font.
+ * @returns The unit, in twips.
+ */
+export function columnUnitTwips(styles: XlsxStyles, digitWidthPt?: number): number {
+  const font = styles.fonts[0];
+  return font?.name === undefined
+    ? digitTwips(digitWidthPt)
+    : maximumDigitTwips(font.name, font.sizePt);
 }
 
 function digitTwips(digitWidthPt: number | undefined): number {
@@ -709,6 +816,11 @@ function scaleRunFont(props: RunProperties, scale: number): RunProperties {
 // declared cell border still reads as the heavier line on the page.
 const PRINT_GRIDLINE_HEX = 'C0C0C0';
 
+// …and on a screen, the lighter grey of a spreadsheet window's grid, at the
+// thinnest line there is: a border the sheet declares must win the edge they
+// share, and in a collapsed table the wider line wins.
+const SCREEN_GRIDLINE: Border = { style: 'single', width: pt(0.5), colorHex: 'D4D4D4' };
+
 // A synthetic id for a conditional format's own number format, which arrives as
 // a code rather than through the workbook's <numFmts> table.
 const CF_NUMBER_FORMAT_ID = 1_000_001;
@@ -717,6 +829,16 @@ const CF_NUMBER_FORMAT_ID = 1_000_001;
 const MAX_SHEET_TEXT_CHARS = 1_000_000;
 
 interface PrintModelOptions {
+  // The sheet as a SCREEN shows it rather than as it prints: one table at full
+  // size — no print scale, no column bands, no manual page breaks, no printed
+  // headings and no centring on the paper. The caller leaves the print area
+  // and the repeated titles out as well. See ProjectSheetOptions.screen.
+  readonly screen?: boolean;
+  // With `screen`: the sheet as an IMAGE of its used range rather than a
+  // window onto it — text overflowing the last used column is cut at that
+  // column's edge instead of given columns to run on into, as LibreOffice's
+  // whole-sheet export cuts it. A window scrolls; a picture has an edge.
+  readonly image?: boolean;
   // ECMA-376 §18.2.5 — _xlnm.Print_Area: render only this range (clipped to the
   // used range). Absent ⇒ the whole used range.
   readonly printArea?: CellRange;
@@ -766,6 +888,14 @@ interface PrintModelOptions {
   // the macro button beside it that way. One entry per band table emitted; a
   // sheet that does not band reports a single 0.
   readonly bandSink?: { lefts: Array<number> };
+  // §18.3.1.70 — how far the printed headings push the grid right (the
+  // row-number column) and down (the letters row), reported back so the
+  // drawings anchored to the grid can move with it. Zero when the sheet does
+  // not print its headings.
+  readonly headingSink?: { dxPt: number; dyPt: number };
+  // E-SHEET W7 — the cells a window flags as carrying a note, by absolute
+  // (row, column) — see CellProperties.noteFlag. Absent on paper.
+  readonly noteFlags?: ReadonlyMap<string, CellNoteFlag>;
   // How far the sheet's drawings reach from its origin, in points. A drawing
   // anchored past the last cell still has to be printed, so fit-to-page has to
   // fit IT too — measuring only the range the cells occupy left a sheet whose
@@ -773,6 +903,10 @@ interface PrintModelOptions {
   // nothing to shrink (bnc762542.xlsx), where the reference shrinks to about
   // four fifths.
   readonly drawingExtentPt?: { readonly widthPt: number; readonly heightPt: number };
+  // Where each of the sheet's printed drawings lies, unscaled, in the sheet's
+  // own frame: a band keeps the rows a drawing in it covers, whatever its
+  // cells hold, or the drawing would be cut off with them (TableOverlay).
+  readonly drawingBoxesPt?: ReadonlyArray<DrawingBox>;
   // Sink for projection losses. The defence-in-depth caps below are correct —
   // a pathological sheet must not exhaust memory — but a cap that fires without
   // saying so is precisely the silent wrongness LossReport exists to prevent.
@@ -804,7 +938,25 @@ export function worksheetToBody(
   date1904: boolean,
   print: PrintModelOptions,
 ): Array<BodyElement> {
+  const body = gridBody(worksheet, sharedStrings, styles, date1904, print);
+  if (worksheet.rightToLeft !== true) return body;
+  return body.map((el) =>
+    el.kind === 'table' ? { ...el, table: mirrorTable(el.table, print.screen === true) } : el,
+  );
+}
+
+// The grid in the file's own column order, A first — a sheet that reads from
+// the right is turned round afterwards (mirrorTable), and only the overflow
+// inside has to know (flowAlignment).
+function gridBody(
+  worksheet: ParsedWorksheet,
+  sharedStrings: ReadonlyArray<string>,
+  styles: XlsxStyles,
+  date1904: boolean,
+  print: PrintModelOptions,
+): Array<BodyElement> {
   if (worksheet.maxRow < 0 || worksheet.maxColumn < 0) return [];
+  const rtl = worksheet.rightToLeft === true;
 
   // A worksheet can declare cells far beyond its real data — e.g. a style
   // applied to whole rows produces tens of thousands of EMPTY styled cells out
@@ -823,10 +975,9 @@ export function worksheetToBody(
   // the honest answer: tdf122336.xlsx declares `<font/>`, LibreOffice laid its
   // columns out in Caladea, and its 40-character column takes a page to itself
   // where ours took half of one.
-  const charTwipsUnit =
-    styles.fonts[0]?.name === undefined
-      ? digitTwips(print.digitWidthPt)
-      : maximumDigitTwips(styles.fonts[0].name, styles.fonts[0].sizePt);
+  // §18.8.1 — what one level of a cell's indent is, in the normal style's font.
+  const indentTwips = indentLevelTwips(styles);
+  const charTwipsUnit = columnUnitTwips(styles, print.digitWidthPt);
   // …but only the COLUMNS are measured in it. `charWidthUnits` already returns
   // each character's real width expressed in Excel's own 7px unit, so measuring
   // text with the render font's digit as well applies the same ratio twice —
@@ -897,7 +1048,7 @@ export function worksheetToBody(
   // cannot create a used range any more than a merge or a fill can.
   if (usedRow >= 0 && usedCol >= 0 && print.drawingExtentPt) {
     const wantTwips = Math.round(print.drawingExtentPt.widthPt * TWIPS_PER_POINT);
-    const defTwips = defaultColumnTwips(worksheet, charTwipsUnit, DEFAULT_COL_CHARS);
+    const defTwips = defaultColumnTwips(worksheet, charTwipsUnit);
     const widthAt = (abs: number): number => {
       for (const col of worksheet.columns) {
         if (abs < col.min - 1 || abs > col.max - 1) continue;
@@ -909,6 +1060,33 @@ export function worksheetToBody(
     for (let col = 0; col < 16384 && acc < wantTwips; col++) {
       acc += widthAt(col);
       if (col > usedCol) usedCol = col;
+    }
+    // …and DOWN as well as across. Excel's print range reaches the bottom of a
+    // drawing anchored under the last value: the probe's arrow under row 18
+    // printed rows 19 to 24 round it, their gridlines and row numbers with
+    // them, where our grid stopped at 18. Bounded like the paint reach below,
+    // so a drawing parked thousands of rows down cannot materialise them all.
+    // On paper a drawing is cut off where the printed rows end (TableOverlay),
+    // so the rows under it are what prints it at all — down to the row its
+    // bottom edge stands on, even when it ends exactly on that row's top: Excel
+    // prints a page for a chart that runs 6pt past a page break, and one for
+    // the half of its frame's line that falls past it when it ends on the break.
+    const wantRowTwips = Math.round(print.drawingExtentPt.heightPt * TWIPS_PER_POINT);
+    const defRowTwips = Math.round(
+      (worksheet.defaultRowHeightPt ?? defaultRowHeightPtFor(print.defaultFontPt)) *
+        TWIPS_PER_POINT,
+    );
+    const heightAt = new Map(
+      worksheet.rowHeights.map((h) => [
+        h.row,
+        h.hidden ? 0 : Math.round(h.heightPt * TWIPS_PER_POINT),
+      ]),
+    );
+    const rowReach = usedRow + PAINT_REACH_ROWS;
+    let down = 0;
+    for (let row = 0; row <= rowReach && down <= wantRowTwips; row++) {
+      down += heightAt.get(row) ?? defRowTwips;
+      if (row > usedRow) usedRow = row;
     }
   }
   // A cell that PAINTS something is on the page with nothing in it. Column H of
@@ -951,7 +1129,7 @@ export function worksheetToBody(
     // and paginating them the ordinary way made three pages of colour where
     // LibreOffice prints one.
     const pageTwips = sheetContentWidthTwips(worksheet);
-    const defTwips = defaultColumnTwips(worksheet, charTwipsUnit, DEFAULT_COL_CHARS);
+    const defTwips = defaultColumnTwips(worksheet, charTwipsUnit);
     let acc = 0;
     let colLimit = 0;
     while (colLimit < PAINT_REACH_COLUMNS && acc < pageTwips) {
@@ -999,6 +1177,8 @@ export function worksheetToBody(
     styles,
     date1904,
     charTwipsUnit,
+    print.screen === true,
+    print.image === true,
   );
 
   // Print area (when defined) overrides the rendered window: Excel prints only
@@ -1168,7 +1348,7 @@ export function worksheetToBody(
   // defaultRowHeight, and ignored for the same reason.
   // defaultColWidth wins; failing that Excel derives the default column from
   // baseColWidth by the same characters + 5px formula; failing both, 8.43.
-  const defaultColTwips = defaultColumnTwips(worksheet, charTwipsUnit, DEFAULT_COL_CHARS);
+  const defaultColTwips = defaultColumnTwips(worksheet, charTwipsUnit);
   const columnWidths = new Array<number>(colCount).fill(defaultColTwips);
   // §18.3.1.13/§18.3.1.73 `hidden` — Excel and LibreOffice print neither a
   // hidden column nor a hidden row. Rendering them put a hidden currency column
@@ -1227,26 +1407,60 @@ export function worksheetToBody(
   // The extent that has to fit is the grid's OR the drawings', whichever
   // reaches further — see PrintContext.drawingExtentPt.
   const drawing = print.drawingExtentPt;
-  const printScale = computePrintScale(
-    worksheet,
-    Math.max(totalGridTwips, Math.round((drawing?.widthPt ?? 0) * TWIPS_PER_POINT)),
-    sheetContentWidthTwips(worksheet),
-    Math.max(totalGridHeightTwips, Math.round((drawing?.heightPt ?? 0) * TWIPS_PER_POINT)),
-    sheetContentHeightTwips(worksheet),
-    {
-      rowTwips: fitRowTwips,
-      rowBreaks: fitRowBreaks,
-      titleTwips: fitTitleTwips,
-      colTwips: visibleWidths,
-      colBreaks: fitColBreaks,
-    },
-  );
+  const printScale = print.screen
+    ? 1
+    : computePrintScale(
+        worksheet,
+        Math.max(totalGridTwips, Math.round((drawing?.widthPt ?? 0) * TWIPS_PER_POINT)),
+        sheetContentWidthTwips(worksheet),
+        Math.max(totalGridHeightTwips, Math.round((drawing?.heightPt ?? 0) * TWIPS_PER_POINT)),
+        sheetContentHeightTwips(worksheet),
+        {
+          rowTwips: fitRowTwips,
+          rowBreaks: fitRowBreaks,
+          titleTwips: fitTitleTwips,
+          colTwips: visibleWidths,
+          colBreaks: fitColBreaks,
+        },
+      );
   const scaled = printScale < 0.999;
   if (print.scaleSink) print.scaleSink.value = printScale;
+  // §20.5 — where the grid stands on its sheet, for the drawings over it
+  // (TableOverlay): every row and column before the window counted, a hidden
+  // one at nothing, at the print scale. Paper only — a window draws its
+  // drawings over the whole sheet as it is.
+  let sheetTopTwips = print.screen
+    ? undefined
+    : tracksBeforeTwips(
+        rowStart,
+        defaultRowTwips,
+        worksheet.rowHeights.map((h) => ({
+          index: h.row,
+          twips: h.hidden ? 0 : Math.round(h.heightPt * TWIPS_PER_POINT),
+        })),
+      ) * printScale;
+  const sheetLeftPt = print.screen
+    ? undefined
+    : twipsToPt(
+        Math.round(
+          tracksBeforeTwips(
+            colStart,
+            defaultColTwips,
+            worksheet.columns.flatMap((col) => {
+              const twips = col.hidden ? 0 : columnTwips(col.widthChars, charTwipsUnit);
+              const out: Array<{ index: number; twips: number }> = [];
+              for (let abs = col.min - 1; abs <= Math.min(col.max - 1, colStart - 1); abs++) {
+                out.push({ index: abs, twips });
+              }
+              return out;
+            }),
+          ) * printScale,
+        ),
+      );
 
   // Manual <rowBreaks>: each brk id is the 0-based row that starts a new page →
   // force a page break before that (absolute) row.
-  const breakRows = new Set(honouredBreaks(worksheet, 'rows'));
+  const breakRows = new Set(print.screen ? [] : honouredBreaks(worksheet, 'rows'));
 
   // DoS guard: bound the total rendered text per sheet. A crafted file can
   // reference a multi-MB string from thousands of cells (poc-shared-strings:
@@ -1273,12 +1487,21 @@ export function worksheetToBody(
     }
     return props;
   };
-  const paraPropsByAlignment = new Map<Alignment | undefined, ParagraphProperties>();
-  const cellParaProps = (alignment: Alignment | undefined): ParagraphProperties => {
-    let props = paraPropsByAlignment.get(alignment);
+  // A cell whose text reads from the right is a `bidi` paragraph: that is the
+  // base direction its words are ordered in. In such a paragraph "left" and
+  // "right" name the line's start and end (§17.3.1.13), which every target
+  // turns back into sides — so the side the cell SHOWS is stored crossed over.
+  const paraPropsByAlignment = new Map<string, ParagraphProperties>();
+  const cellParaProps = (
+    alignment: Alignment | undefined,
+    rtlText: boolean,
+  ): ParagraphProperties => {
+    const memoKey = `${alignment ?? ''}|${rtlText ? 'rtl' : ''}`;
+    let props = paraPropsByAlignment.get(memoKey);
     if (props === undefined) {
-      props = alignment ? { alignment } : {};
-      paraPropsByAlignment.set(alignment, props);
+      const stored = rtlText ? crossedOver(alignment) : alignment;
+      props = { ...(stored ? { alignment: stored } : {}), ...(rtlText ? { bidi: true } : {}) };
+      paraPropsByAlignment.set(memoKey, props);
     }
     return props;
   };
@@ -1308,6 +1531,9 @@ export function worksheetToBody(
   // text colour. Empty when the sheet has no table parts. Applied below the
   // cell's own fill and below conditional formatting.
   const tableFormatByCell = buildTableFormatLookup(worksheet);
+  // How the Normal style names its text colour: a cell naming its own the
+  // same way takes a table's.
+  const normalColorRef = styles.fonts[0]?.colorRef;
 
   // §18.3.1.33 data-validation `list` cells (E-SHEET SV1): the ranges whose cells
   // should paint an in-cell dropdown affordance. Empty (the dropdown block is
@@ -1331,7 +1557,13 @@ export function worksheetToBody(
     }
     const wide = worksheet.fitToPage ? (worksheet.pageSetup?.fitToWidth ?? 1) : 1;
     const width = sheetContentWidthTwips(worksheet);
-    if (colCount > 1 && bandsAcross(worksheet, wide) && (total > width || breaks.size > 0)) {
+    // A screen has no bands, and text runs on across the whole row.
+    if (
+      !print.screen &&
+      colCount > 1 &&
+      bandsAcross(worksheet, wide) &&
+      (total > width || breaks.size > 0)
+    ) {
       for (const band of computeColumnBands(widthsForBands, width, breaks)) {
         for (let i = band.start; i <= band.end; i++) {
           bandEndOfCol.set(visibleCols[i] ?? i, visibleCols[band.end] ?? band.end);
@@ -1457,6 +1689,10 @@ export function worksheetToBody(
         ? styles.cellXfs[ws.styleIndex ?? 0]
         : defaultStyleAt(absR, absC, styles.cellXfs);
       let runProps = cellRunProps(xf);
+      // Whether the text keeps the colour its font names as Normal names it —
+      // the one a table style may replace.
+      let normalColored =
+        (xf ? styles.fonts[xf.fontId] : styles.fonts[0])?.colorRef === normalColorRef;
       // §18.8.31: the section that applied may name a colour — `[Red]-#,##0.00`
       // is how every accounting format marks a negative. It belongs to the
       // format, not to the font, and conditional formatting still overrides it.
@@ -1464,20 +1700,35 @@ export function worksheetToBody(
         const fmtColor = numberFormatColorHex(ws.rawValue, xf.numFmtId, styles.numFmts);
         if (fmtColor !== undefined && fmtColor !== runProps.colorHex) {
           runProps = { ...runProps, colorHex: fmtColor };
+          normalColored = false;
         }
       }
-      const alignment = alignmentFromXf(xf, ws?.type);
+      const alignment = alignmentFromXf(xf, ws?.type, text);
+      // Which way the text runs ON, in the file's column order (flowAlignment).
+      const flow = flowAlignment(alignment, rtl);
       let shading = xf ? shadingFromXf(xf, styles) : undefined;
       // A table's banded/header fill + header text colour sit below the cell's
       // own fill (used only when the cell declares none) and below conditional
       // formatting (E-SHEET SC3).
       const tableFmt = tableFormatByCell.get(key(absR, absC));
       if (!shading && tableFmt?.shading) shading = tableFmt.shading;
-      if (tableFmt?.fontColorHex) runProps = { ...runProps, colorHex: tableFmt.fontColorHex };
+      // The style's colour sits under the cell's own: a cell whose font names
+      // its colour as Normal does takes the table's — white on a dark header —
+      // and any other keeps it. Excel's own PDF tells the two blacks apart: a
+      // header in `theme="1"` turns white, one in `rgb="FF000000"`, or in a
+      // font with no colour at all, stays black.
+      if (tableFmt?.fontColorHex && normalColored) {
+        runProps = { ...runProps, colorHex: tableFmt.fontColorHex };
+      }
+      if (tableFmt?.bold && !runProps.bold) runProps = { ...runProps, bold: true };
       // §18.3.1.63's scale reduces the printed image, rules included: 56274.xlsx
       // prints at 66%, where a `thin` edge is 0.495pt and we stroked the full
       // 0.75 — half again too heavy, and doubled in device pixels.
       let borders = xf ? scaleBorders(bordersFromXf(xf, styles), printScale) : undefined;
+      // …and the table's rules under the cell's own, edge by edge.
+      if (tableFmt?.borders) {
+        borders = { ...scaleBorders(mapXlsxBorder(tableFmt.borders), printScale), ...borders };
+      }
       let dataBar: CellDataBar | undefined;
       let icon: CellIcon | undefined;
       const sparkline = sparklineByCell.get(key(absR, absC));
@@ -1555,7 +1806,7 @@ export function worksheetToBody(
         // Requiring left alignment kept tdf171828.xlsx's centred "unter
         // Berücksichtung der Sondertilgungen" inside its own 73pt column, where
         // it was cut to "unter Berücksic"; every other reader runs it across.
-        (alignment === 'left' || alignment === 'center') &&
+        (flow === 'left' || flow === 'center') &&
         // …but only a cell that OVERRUNS spills. There was no such test here at
         // all, so any left or centred string claimed every empty neighbour to
         // the end of its band — and since overflow is modelled as a colSpan,
@@ -1690,6 +1941,8 @@ export function worksheetToBody(
         }
       }
 
+      // A cell carrying a note, as a window flags it (E-SHEET W7).
+      const noteFlag = print.noteFlags?.get(noteKey(absR, absC));
       // A data-validation `list` cell (E-SHEET SV1). The HTML writer paints an
       // affordance for it; the paginated layout deliberately does not — see
       // CellProperties.dropdown.
@@ -1732,6 +1985,7 @@ export function worksheetToBody(
           ? { borders: { ...borders, ...(overflowRightRule ? { right: overflowRightRule } : {}) } }
           : {}),
         ...(dropdown ? { dropdown: true } : {}),
+        ...(noteFlag ? { noteFlag } : {}),
         // §18.8.1: without wrapText a cell's text is one line, cut at its box.
         // Rotated and shrink-to-fit cells have their own handling; a merged one
         // does not — its box is simply bigger, and letting it wrap stacked
@@ -1769,13 +2023,23 @@ export function worksheetToBody(
         verticalAlign: verticalAlignOf(xf),
       };
 
-      // §18.8.1 indent (E-SHEET W6): a left indent of N levels ≈ N×3 characters,
-      // applied as the paragraph's left indent on top of the cell padding.
+      // §18.8.1 indent (E-SHEET W6): N levels of three spaces each (see
+      // indentLevelTwips), on top of the cell padding and from the side the
+      // text is aligned to — a right-aligned cell is indented from its right
+      // edge, and we pushed it right instead, out past its own column. A
+      // centred cell takes none: Excel offers no indent for one.
       const indentLevels = xf?.alignment?.indent ?? 0;
-      const baseParaProps = cellParaProps(alignment);
+      const rtlText = textDirection(xf, text) === 'rtl';
+      const baseParaProps = cellParaProps(alignment, rtlText);
+      const indentPt = twipsToPt(indentLevels * indentTwips);
+      // …crossed over with the alignment in a right-to-left paragraph.
+      const indentAtRight = (alignment === 'right') !== rtlText;
       const paragraphProps =
-        indentLevels > 0
-          ? { ...baseParaProps, indentLeft: twipsToPt(indentLevels * 3 * TWIPS_PER_EXCEL_CHAR) }
+        indentLevels > 0 && alignment !== 'center'
+          ? {
+              ...baseParaProps,
+              ...(indentAtRight ? { indentRight: indentPt } : { indentLeft: indentPt }),
+            }
           : baseParaProps;
       // A shared-string cell whose index carries rich runs (E-SHEET W6) emits one
       // document-model run per <r>, each layering its <rPr> over the cell font;
@@ -1829,7 +2093,7 @@ export function worksheetToBody(
         !rotated &&
         !shrinkToFit &&
         c > 0 &&
-        alignment === 'right' &&
+        flow === 'right' &&
         estimateChars(text) * charTwips(xf, styles, textTwipsUnit) > columnWidths[c]!
       ) {
         leftOverflow.push({
@@ -1878,7 +2142,11 @@ export function worksheetToBody(
     };
     if (isTitleRow && titleRowIndex < 0) titleRowIndex = rows.length;
     rowNumbers.push(absR + 1);
-    rows.push({ properties: rowProps, cells });
+    if (sheetTopTwips === undefined) rows.push({ properties: rowProps, cells });
+    else {
+      rows.push({ properties: { ...rowProps, sheetTopPt: twipsToPt(sheetTopTwips) }, cells });
+      sheetTopTwips += rowHeightTwips ?? defaultRowTwips;
+    }
   }
 
   // Gridlines: Excel/Calc do NOT print cell gridlines unless <printOptions
@@ -1897,7 +2165,7 @@ export function worksheetToBody(
   };
   // <printOptions horizontalCentered="1"> centers the sheet within the print
   // margins.
-  const centered = worksheet.printOptions?.horizontalCentered === true;
+  const centered = !print.screen && worksheet.printOptions?.horizontalCentered === true;
   const tableProperties: TableProperties = {
     // A spreadsheet cell insets its text by about 2 px (1.5 pt at 96 DPI), not
     // by a word processor's 108 twips / 5.4 pt. The wider inset shifted every
@@ -1927,7 +2195,8 @@ export function worksheetToBody(
     // reference render on a four-column sheet whose columns were all declared
     // the same width.
     layout: 'fixed',
-    ...(print.gridLines
+    ...(print.gridLines && print.screen ? { gridlines: SCREEN_GRIDLINE } : {}),
+    ...(print.gridLines && !print.screen
       ? {
           borders: {
             top: thin,
@@ -1949,6 +2218,40 @@ export function worksheetToBody(
   // means "fit into N pages across" (SE-T): scale the columns, then band the
   // SCALED widths across those N (or fewer) pages.
   const contentWidthTwips = sheetContentWidthTwips(worksheet);
+  // §18.3.1.70 — the printed row and column headings, when the sheet asks for
+  // them: a row-number column in front of the grid and a letters row over it,
+  // as tall as the sheet's own rows at the print scale. Where they go in, the
+  // drawings anchored to the grid have to move with it (headingSink).
+  // The scale takes the headings down with the sheet — the numbers' column,
+  // their type and their boxes: left at full size, the numbers stood 11pt
+  // tall in rows a fit-to-width sheet had brought down to 3pt, and every row
+  // grew to hold them.
+  const headingColTwips = scaled
+    ? Math.max(1, Math.round(HEADING_COL_TWIPS * printScale))
+    : HEADING_COL_TWIPS;
+  const headings =
+    !print.screen && worksheet.printOptions?.headings
+      ? {
+          dxPt: twipsToPt(headingColTwips),
+          dyPt:
+            (worksheet.defaultRowHeightPt ?? defaultRowHeightPtFor(print.defaultFontPt)) *
+            printScale,
+          band: {
+            colTwips: headingColTwips,
+            ...(scaled
+              ? {
+                  fontPt: (print.defaultFontPt ?? DEFAULT_FONT_PT) * printScale,
+                  lineWidthPt: 0.5 * printScale,
+                }
+              : {}),
+          },
+        }
+      : undefined;
+  const reportHeadings = (): void => {
+    if (!headings || !print.headingSink) return;
+    print.headingSink.dxPt = headings.dxPt;
+    print.headingSink.dyPt = headings.dyPt;
+  };
   const colBreaksLocal = new Set<number>();
   for (const brk of worksheet.colBreaks ?? []) {
     const local = brk - colStart;
@@ -1960,6 +2263,7 @@ export function worksheetToBody(
   const bandWidths = scaledColumnWidths(visibleWidths, printScale, scaled);
   const bandTotal = bandWidths.reduce((sum, w) => sum + w, 0);
   if (
+    !print.screen &&
     colCount > 1 &&
     bandsAcross(worksheet, fitWide) &&
     (bandTotal > contentWidthTwips || colBreaksLocal.size > 0)
@@ -1971,15 +2275,26 @@ export function worksheetToBody(
           twipsToPt(bandWidths.slice(0, band.start).reduce((sum, w) => sum + w, 0)),
         );
       }
-      return bandedTables(
+      const banded = bandedTables(
         rows,
         bandWidths,
         bands,
         tableProperties,
         titleRowIndex,
         Math.round((print.drawingExtentPt?.widthPt ?? 0) * TWIPS_PER_POINT * printScale),
-        worksheet.printOptions?.headings ? { colStart, rowNumbers } : undefined,
+        headings
+          ? {
+              columns: visibleCols.map((c) => c + colStart),
+              rowNumbers,
+              band: { ...headings.band, lettersPt: headings.dyPt },
+            }
+          : undefined,
+        sheetLeftPt !== undefined
+          ? { sheetLeftPt, drawings: scaledBoxes(print.drawingBoxesPt, printScale) }
+          : undefined,
       );
+      reportHeadings();
+      return banded;
     }
   }
 
@@ -1999,21 +2314,35 @@ export function worksheetToBody(
   if (titleRowIndex > 0 && titleRowIndex < rows.length) {
     const titleStart = titleRowIndex;
     const grid = bandWidths.map((w) => twipsToPt(w));
+    const overlay = sheetFrame(sheetLeftPt, grid, 0);
     return [
       {
         kind: 'table',
-        table: { properties: tableProperties, grid, rows: rows.slice(0, titleStart) },
+        table: { properties: tableProperties, grid, rows: rows.slice(0, titleStart), ...overlay },
       },
-      { kind: 'table', table: { properties: tableProperties, grid, rows: rows.slice(titleStart) } },
+      {
+        kind: 'table',
+        table: { properties: tableProperties, grid, rows: rows.slice(titleStart), ...overlay },
+      },
     ];
   }
 
   // §18.3.1.70 — the printed row and column headings, when the sheet asks for
   // them. NumberFormatTests.xlsx does, and both references print the letters
   // across the top and the numbers down the side.
-  const headed = worksheet.printOptions?.headings
-    ? withHeadingBand(rows, bandWidths, colStart, rowNumbers)
+  const headed = headings
+    ? withHeadingBand(
+        rows,
+        bandWidths,
+        visibleCols.map((c) => c + colStart),
+        rowNumbers,
+        {
+          ...headings.band,
+          lettersPt: headings.dyPt,
+        },
+      )
     : undefined;
+  if (headed) reportHeadings();
   const table: Table = {
     properties: frozen ? { ...tableProperties, frozen } : tableProperties,
     // The print scale shrinks the whole sheet, columns included — `bandWidths`
@@ -2024,6 +2353,11 @@ export function worksheetToBody(
     // `scale="47"`, so its 1100pt of columns has to come down to ~517pt.
     grid: (headed?.widths ?? bandWidths).map((w: number) => twipsToPt(w)),
     rows: headed?.rows ?? rows,
+    ...sheetFrame(
+      sheetLeftPt,
+      bandWidths.map((w) => twipsToPt(w)),
+      headed ? twipsToPt(headingColTwips) : 0,
+    ),
   };
 
   return [{ kind: 'table', table }];
@@ -2198,13 +2532,24 @@ function applyCfOverride(base: RunProperties, o: CfOverride): RunProperties {
  * the sheets where it matters most, since a column of figures is the common
  * case.
  */
-function alignmentFromXf(xf: XlsxCellXf | undefined, type: CellType | undefined): Alignment {
+function alignmentFromXf(
+  xf: XlsxCellXf | undefined,
+  type: CellType | undefined,
+  text = '',
+): Alignment {
   const explicit = xf?.alignment ? mapAlignment(xf.alignment.horizontal) : undefined;
   if (explicit) return explicit;
-  return generalAlignment(type);
+  return generalAlignment(type, textDirection(xf, text));
 }
 
-function generalAlignment(type: CellType | undefined): Alignment {
+/**
+ * §18.8.1 General: numbers to the right, logical values centred, and text to
+ * the side it STARTS from — the left for a word that reads from the left, the
+ * right for one that reads from the right. Excel sets "שלום" against the right
+ * edge of a General cell on any sheet, and the sheet's own direction does not
+ * enter into it: the numbers on a right-to-left sheet still sit at the right.
+ */
+function generalAlignment(type: CellType | undefined, direction: 'ltr' | 'rtl'): Alignment {
   switch (type) {
     case 'n':
     case 'd':
@@ -2214,8 +2559,33 @@ function generalAlignment(type: CellType | undefined): Alignment {
       return 'center';
     default:
       // 's' | 'str' | 'inlineStr' | an empty cell.
-      return 'left';
+      return direction === 'rtl' ? 'right' : 'left';
   }
+}
+
+/**
+ * The direction a cell's text reads in: its own §18.8.1 `readingOrder`, or
+ * else "context" — that of its first strong character.
+ */
+function textDirection(xf: XlsxCellXf | undefined, text: string): 'ltr' | 'rtl' {
+  return xf?.alignment?.readingOrder ?? firstStrongDirection(text) ?? 'ltr';
+}
+
+/**
+ * The side a cell's text runs ON to, in the file's own column order. The grid
+ * is built A first whatever the sheet's direction and turned round at the end
+ * (mirrorTable), so on a sheet that reads from the right a cell set against
+ * its right edge is one whose text runs FORWARD — into B, which stands to the
+ * left of A — and the overflow has to reason about the mirror of what the
+ * cell shows.
+ */
+function flowAlignment(alignment: Alignment, rtl: boolean): Alignment {
+  return rtl ? crossedOver(alignment) : alignment;
+}
+
+/** Left for right and right for left; every other alignment is its own mirror. */
+function crossedOver<T extends Alignment | undefined>(alignment: T): T {
+  return (alignment === 'left' ? 'right' : alignment === 'right' ? 'left' : alignment) as T;
 }
 
 function mapAlignment(h: XlsxHorizontalAlign | undefined): Alignment | undefined {
@@ -2411,6 +2781,11 @@ function key(row: number, col: number): string {
   return `${row},${col}`;
 }
 
+/** The key {@link PrintModelOptions.noteFlags} is looked up by: absolute row and column. */
+export function noteKey(row: number, col: number): string {
+  return key(row, col);
+}
+
 // §18.3.1.33 — the ranges of `list` data validations that should show an in-cell
 // dropdown. ECMA's showDropDown is INVERTED ("1" HIDES the dropdown), so a list
 // validation contributes its ranges unless the flag is set (E-SHEET SV1).
@@ -2541,6 +2916,160 @@ function collectSeriesValues(
 interface TableCellFormat {
   readonly shading?: CellShading;
   readonly fontColorHex?: string;
+  /** §18.8.40 — the table style sets the cell's text bold (a header, a total). */
+  readonly bold?: boolean;
+  /** §18.8.40 — the edges the table style rules round the cell. */
+  readonly borders?: XlsxBorder;
+}
+
+/** §18.8.41 — the order a table style's regions apply in: a later one wins. */
+const TABLE_STYLE_ORDER: ReadonlyArray<TableStyleElementType> = [
+  'wholeTable',
+  'firstColumnStripe',
+  'secondColumnStripe',
+  'firstRowStripe',
+  'secondRowStripe',
+  'lastColumn',
+  'firstColumn',
+  'headerRow',
+  'totalRow',
+  'firstHeaderCell',
+  'lastHeaderCell',
+  'firstTotalCell',
+  'lastTotalCell',
+];
+
+/** A rectangle of a table a style region covers, rows and columns inclusive. */
+interface TableRegion {
+  readonly top: number;
+  readonly bottom: number;
+  readonly left: number;
+  readonly right: number;
+}
+
+/**
+ * §18.8.40 — what a table's style makes of each of its cells. Each region
+ * the style formats is laid over the table in the order §18.8.41 gives —
+ * the whole table, its column and row stripes, its last and first columns,
+ * its header and total rows, their corner cells — and a later region's fill,
+ * weight, colour and edges win over an earlier one's. A region's `left`,
+ * `right`, `top` and `bottom` rule its own outer edges, its `vertical` and
+ * `horizontal` the lines between its cells. Stripes run through the data rows
+ * only, in bands of their own size, the first band at the first data row;
+ * the first and last columns, and the stripes, only where the table turns them
+ * on.
+ *
+ * @param t   The table, its style resolved.
+ * @param out Where each cell's format goes, by absolute key.
+ */
+function styledTableFormats(t: ExcelTable, out: Map<string, TableCellFormat>): void {
+  const style = t.style;
+  if (!style) return;
+  const { startRow: r0, endRow: r1, startColumn: c0, endColumn: c1 } = t.ref;
+  const dataTop = r0 + t.headerRowCount;
+  const dataBottom = r1 - (t.totalsRowCount ?? 0);
+  const bands = (
+    from: number,
+    to: number,
+    first: number,
+    second: number,
+    which: 0 | 1,
+  ): Array<[number, number]> => {
+    const spans: Array<[number, number]> = [];
+    let at = from;
+    for (let i = 0; at <= to; i++) {
+      const size = i % 2 === 0 ? first : second;
+      if (i % 2 === which) spans.push([at, Math.min(to, at + size - 1)]);
+      at += size;
+    }
+    return spans;
+  };
+  const rowSize = [style.firstRowStripe?.size ?? 1, style.secondRowStripe?.size ?? 1] as const;
+  const colSize = [
+    style.firstColumnStripe?.size ?? 1,
+    style.secondColumnStripe?.size ?? 1,
+  ] as const;
+  const regionsOf = (type: TableStyleElementType): Array<TableRegion> => {
+    const whole = { top: r0, bottom: r1, left: c0, right: c1 };
+    switch (type) {
+      case 'wholeTable':
+        return [whole];
+      case 'firstRowStripe':
+      case 'secondRowStripe':
+        return t.showRowStripes && dataBottom >= dataTop
+          ? bands(
+              dataTop,
+              dataBottom,
+              rowSize[0],
+              rowSize[1],
+              type === 'firstRowStripe' ? 0 : 1,
+            ).map(([top, bottom]) => ({ top, bottom, left: c0, right: c1 }))
+          : [];
+      case 'firstColumnStripe':
+      case 'secondColumnStripe':
+        return t.showColumnStripes && dataBottom >= dataTop
+          ? bands(c0, c1, colSize[0], colSize[1], type === 'firstColumnStripe' ? 0 : 1).map(
+              ([left, right]) => ({ top: dataTop, bottom: dataBottom, left, right }),
+            )
+          : [];
+      case 'lastColumn':
+        return t.showLastColumn ? [{ ...whole, left: c1 }] : [];
+      case 'firstColumn':
+        return t.showFirstColumn ? [{ ...whole, right: c0 }] : [];
+      case 'headerRow':
+        return t.headerRowCount > 0 ? [{ ...whole, bottom: dataTop - 1 }] : [];
+      case 'totalRow':
+        return dataBottom < r1 ? [{ ...whole, top: dataBottom + 1 }] : [];
+      case 'firstHeaderCell':
+        return t.headerRowCount > 0 && t.showFirstColumn
+          ? [{ top: r0, bottom: dataTop - 1, left: c0, right: c0 }]
+          : [];
+      case 'lastHeaderCell':
+        return t.headerRowCount > 0 && t.showLastColumn
+          ? [{ top: r0, bottom: dataTop - 1, left: c1, right: c1 }]
+          : [];
+      case 'firstTotalCell':
+        return dataBottom < r1 && t.showFirstColumn
+          ? [{ top: dataBottom + 1, bottom: r1, left: c0, right: c0 }]
+          : [];
+      case 'lastTotalCell':
+        return dataBottom < r1 && t.showLastColumn
+          ? [{ top: dataBottom + 1, bottom: r1, left: c1, right: c1 }]
+          : [];
+    }
+  };
+  for (const type of TABLE_STYLE_ORDER) {
+    const dxf = style[type]?.dxf;
+    if (!dxf) continue;
+    // A dxf states a solid fill's colour as its background; `none` is no fill.
+    const fill =
+      dxf.fill?.patternType === 'none' ? undefined : (dxf.fill?.bgColorHex ?? dxf.fill?.fgColorHex);
+    const b = dxf.border;
+    for (const region of regionsOf(type)) {
+      for (let r = region.top; r <= region.bottom; r++) {
+        for (let c = region.left; c <= region.right; c++) {
+          const k = key(r, c);
+          const was = out.get(k);
+          const edges: { -readonly [K in keyof XlsxBorder]: XlsxBorder[K] } = { ...was?.borders };
+          const top = r === region.top ? b?.top : b?.horizontal;
+          const bottom = r === region.bottom ? b?.bottom : b?.horizontal;
+          const left = c === region.left ? b?.left : b?.vertical;
+          const right = c === region.right ? b?.right : b?.vertical;
+          if (top) edges.top = top;
+          if (bottom) edges.bottom = bottom;
+          if (left) edges.left = left;
+          if (right) edges.right = right;
+          out.set(k, {
+            ...was,
+            ...(fill !== undefined ? { shading: { colorHex: fill } } : {}),
+            ...(dxf.font?.colorHex !== undefined ? { fontColorHex: dxf.font.colorHex } : {}),
+            ...(dxf.font?.bold !== undefined ? { bold: dxf.font.bold } : {}),
+            ...(Object.keys(edges).length > 0 ? { borders: edges } : {}),
+          });
+        }
+      }
+    }
+  }
 }
 
 // A pivot rowItem @t that marks a total row — 'grand' (grand total) or any
@@ -2591,7 +3120,12 @@ function buildTableFormatLookup(worksheet: ParsedWorksheet): Map<string, TableCe
       for (let c = ref.startColumn; c <= ref.endColumn; c++) out.set(key(r, c), fmt);
     }
   };
-  for (const t of worksheet.tables ?? []) band(t.ref, t.headerRowCount, t);
+  // A table whose style is known takes it region by region; one that names a
+  // style neither Excel nor the workbook defines is left as before.
+  for (const t of worksheet.tables ?? []) {
+    if (t.style) styledTableFormats(t, out);
+    else band(t.ref, t.headerRowCount, t);
+  }
   for (const p of worksheet.pivotTables ?? [])
     band(p.ref, p.firstDataRow, p, (off) => isPivotTotal(p.rowItemTypes?.[off]));
   // Overlay grand-total / subtotal COLUMNS with the header emphasis (E-PIVOT
@@ -2710,7 +3244,9 @@ export function cellPaintsSomething(cell: WorksheetCell | undefined, styles: Xls
 
 /**
  * How many empty columns past the used range the last column's text needs to
- * run into, bounded by the printable width (Excel stops at the page edge too).
+ * run into, bounded by the printable width (Excel stops at the page edge too)
+ * — or, on a `screen`, which has no edge, only by the column cap; an `image`
+ * of the sheet gives it none, its edge being the used range's.
  *
  * Only the last used column can want them — anywhere else the grid already has
  * neighbours. Zero for the overwhelming majority of sheets, which keeps their
@@ -2723,8 +3259,11 @@ function overflowColumnsPastUsedRange(
   styles: XlsxStyles,
   date1904: boolean,
   charTwipsUnit: number,
+  screen: boolean,
+  image: boolean,
 ): number {
-  const defaultTwips = defaultColumnTwips(worksheet, charTwipsUnit, DEFAULT_COL_CHARS);
+  if (image) return 0;
+  const defaultTwips = defaultColumnTwips(worksheet, charTwipsUnit);
   // The columns past the used range are not necessarily default-width: a `<col>`
   // range routinely covers far more columns than hold anything. Sizing the
   // budget by the default instead of by what the column will actually be made
@@ -2754,10 +3293,11 @@ function overflowColumnsPastUsedRange(
     const xf = styles.cellXfs[cell.styleIndex ?? 0];
     const align = xf?.alignment;
     if (align?.wrapText || align?.shrinkToFit || align?.textRotation) continue;
-    if (alignmentFromXf(xf, cell.type) !== 'left') continue;
+    const text = resolveCellText(cell, sharedStrings, styles, date1904);
+    const side = alignmentFromXf(xf, cell.type, text);
+    if (flowAlignment(side, worksheet.rightToLeft === true) !== 'left') continue;
     let room = 0;
     for (let abs = cell.column; abs <= usedCol; abs++) room += widthOf(abs);
-    const text = resolveCellText(cell, sharedStrings, styles, date1904);
     needTwips = Math.max(
       needTwips,
       // Text is measured in Excel's own unit — see textTwipsUnit at the top of
@@ -2769,7 +3309,8 @@ function overflowColumnsPastUsedRange(
 
   let gridTwips = 0;
   for (let abs = 0; abs <= usedCol; abs++) gridTwips += widthOf(abs);
-  const limit = sheetContentWidthTwips(worksheet);
+  // A window has no right edge for the text to stop at; the cap below holds.
+  const limit = screen ? Infinity : sheetContentWidthTwips(worksheet);
 
   // Bounded independently of the width budget: a run of `<col width="0.01">`
   // would otherwise take thousands of iterations to fill one page. No page can
@@ -3010,6 +3551,87 @@ function absorbLeftwards(
     });
     cellColumns.splice(first, span, cellColumns[first]!);
   }
+}
+
+/**
+ * §18.3.1.87 `rightToLeft` — the table turned round, the way Excel draws a
+ * sheet that reads from the right: column A last in every row and so at the
+ * right edge, and each cell's left and right borders crossed over with it
+ * (its diagonals too). What a cell shows is untouched — its text keeps the
+ * side its alignment names, and its overflow already runs the right way (see
+ * flowAlignment). On paper the sheet stands against the right margin, as
+ * Excel prints it, unless it asks to be centred.
+ *
+ * @param table  The grid as built, column A first.
+ * @param screen Whether it is drawn for a window, which has no margin to meet.
+ */
+function mirrorTable(table: Table, screen: boolean): Table {
+  const { frozen, ...properties } = table.properties;
+  return {
+    ...table,
+    properties: {
+      ...properties,
+      // The pane's frozen columns are the first ones, and they are on the
+      // right now — a pinned edge the window would show on the wrong side.
+      ...(frozen && frozen.rows > 0 ? { frozen: { rows: frozen.rows, cols: 0 } } : {}),
+      ...(!screen && properties.alignment !== 'center' ? { alignment: 'right' as const } : {}),
+    },
+    grid: [...table.grid].reverse(),
+    rows: table.rows.map((row) => ({ ...row, cells: [...row.cells].reverse().map(mirrorCell) })),
+    // The sheet's columns stand the other way round, and a printed row-number
+    // column with them, at the right.
+    ...(table.overlay
+      ? {
+          overlay: {
+            ...table.overlay,
+            leftPt: pt(
+              table.grid.reduce((sum, w) => sum + w, 0) -
+                table.overlay.leftPt -
+                table.overlay.widthPt,
+            ),
+            mirrored: true,
+          },
+        }
+      : {}),
+  };
+}
+
+function mirrorCell(cell: TableCell): TableCell {
+  const p = cell.properties;
+  const span = p.colSpan ?? 1;
+  // An overflow span paints only the column its text came from, which is now
+  // the span's last one.
+  const paintAtEnd = p.paintColumns !== undefined && p.paintColumns < span;
+  if (!p.borders && !p.dataBar && !p.noteFlag && !paintAtEnd) return cell;
+  return {
+    ...cell,
+    properties: {
+      ...p,
+      ...(p.borders ? { borders: mirrorBorders(p.borders) } : {}),
+      ...(p.dataBar ? { dataBar: mirrorDataBar(p.dataBar) } : {}),
+      // A note's flag sits in the corner the cell ENDS at — its left one here.
+      ...(p.noteFlag ? { noteFlag: { ...p.noteFlag, atLeft: !p.noteFlag.atLeft } } : {}),
+      ...(paintAtEnd ? { paintAtEnd: true } : {}),
+    },
+  };
+}
+
+function mirrorBorders(b: CellBorders): CellBorders {
+  const { left, right, diagonalUp, diagonalDown, ...rest } = b;
+  return {
+    ...rest,
+    ...(right ? { left: right } : {}),
+    ...(left ? { right: left } : {}),
+    ...(diagonalUp ? { diagonalDown: diagonalUp } : {}),
+    ...(diagonalDown ? { diagonalUp: diagonalDown } : {}),
+  };
+}
+
+// A data bar grows from the cell's start, which is its right edge here — and
+// so it fades the other way.
+function mirrorDataBar(bar: CellDataBar): CellDataBar {
+  const start = bar.startFraction ?? 0;
+  return { ...bar, startFraction: Math.max(0, 1 - start - bar.fraction), negative: !bar.negative };
 }
 
 /**

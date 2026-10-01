@@ -376,7 +376,7 @@ function worksheetXml(
     `<worksheet xmlns="${MAIN_NS}" xmlns:r="${R_NS}">` +
     (grid.fitToPage ? '<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>' : '') +
     dimension +
-    sheetViewsXml(grid.pane) +
+    sheetViewsXml(grid.pane, grid.showGridLines, grid.rightToLeft) +
     colsXml +
     `<sheetData>${rowsXml}</sheetData>` +
     mergesXml +
@@ -401,9 +401,19 @@ function worksheetXml(
 
 // §18.3.1.66 <sheetViews><sheetView><pane> — re-emit a frozen pane so the freeze
 // survives a round-trip. The reader reads only xSplit/ySplit/state; topLeftCell
-// and activePane are written for Excel's benefit but ignored on re-read.
-function sheetViewsXml(pane: SheetPane | undefined): string {
-  if (!pane || (pane.frozenRows <= 0 && pane.frozenCols <= 0)) return '';
+// and activePane are written for Excel's benefit but ignored on re-read. A
+// sheet that hides its gridlines says so on the view (§18.3.1.87), and so does
+// one that reads from the right.
+function sheetViewsXml(
+  pane: SheetPane | undefined,
+  showGridLines?: boolean,
+  rightToLeft?: boolean,
+): string {
+  const grid =
+    (showGridLines === false ? ' showGridLines="0"' : '') + (rightToLeft ? ' rightToLeft="1"' : '');
+  if (!pane || (pane.frozenRows <= 0 && pane.frozenCols <= 0)) {
+    return grid ? `<sheetViews><sheetView${grid} workbookViewId="0"/></sheetViews>` : '';
+  }
   const { frozenRows, frozenCols } = pane;
   const topLeftCell = cellRef(frozenRows, frozenCols);
   const activePane =
@@ -412,11 +422,11 @@ function sheetViewsXml(pane: SheetPane | undefined): string {
     (frozenCols > 0 ? ` xSplit="${frozenCols}"` : '') +
     (frozenRows > 0 ? ` ySplit="${frozenRows}"` : '') +
     ` topLeftCell="${topLeftCell}" activePane="${activePane}" state="frozen"`;
-  return `<sheetViews><sheetView workbookViewId="0"><pane${attrs}/></sheetView></sheetViews>`;
+  return `<sheetViews><sheetView${grid} workbookViewId="0"><pane${attrs}/></sheetView></sheetViews>`;
 }
 
-// §18.5.1.2 xl/tables/tableN.xml. The reader keeps no column names, so generic
-// tableColumns are synthesized (it ignores them on re-read); the resolved
+// §18.5.1.2 xl/tables/tableN.xml. Its columns keep their names — a structured
+// reference (`tblIncome[Amount]`) finds a column by nothing else; the resolved
 // header/band colours are NOT written — the reader re-derives them from the
 // style name + theme (E-SHEET SD3b).
 function tableXml(t: ExcelTable, id: number): string {
@@ -425,7 +435,8 @@ function tableXml(t: ExcelTable, id: number): string {
   const ncols = t.ref.endColumn - t.ref.startColumn + 1;
   const columns = Array.from(
     { length: ncols },
-    (_, c) => `<tableColumn id="${c + 1}" name="Column${c + 1}"/>`,
+    (_, c) =>
+      `<tableColumn id="${c + 1}" name="${escapeAttr(t.columns?.[c] ?? `Column${c + 1}`)}"/>`,
   ).join('');
   const styleInfo = t.styleName
     ? `<tableStyleInfo name="${escapeAttr(t.styleName)}" showFirstColumn="${
@@ -438,7 +449,9 @@ function tableXml(t: ExcelTable, id: number): string {
     XML_DECL +
     `<table xmlns="${MAIN_NS}" id="${id}" name="${escapeAttr(name)}" displayName="${escapeAttr(
       name,
-    )}" ref="${ref}"${t.headerRowCount !== 1 ? ` headerRowCount="${t.headerRowCount}"` : ''} totalsRowShown="0">` +
+    )}" ref="${ref}"${t.headerRowCount !== 1 ? ` headerRowCount="${t.headerRowCount}"` : ''}${
+      t.totalsRowCount ? ` totalsRowCount="${t.totalsRowCount}"` : ' totalsRowShown="0"'
+    }>` +
     (t.autoFilter ? `<autoFilter ref="${ref}"/>` : '') +
     `<tableColumns count="${ncols}">${columns}</tableColumns>` +
     styleInfo +
@@ -776,7 +789,9 @@ function cellXfXml(xf: XlsxCellXf): string {
         a.vertical ? ` vertical="${a.vertical}"` : ''
       }${a.wrapText ? ' wrapText="1"' : ''}${a.textRotation !== undefined ? ` textRotation="${a.textRotation}"` : ''}${
         a.indent !== undefined ? ` indent="${a.indent}"` : ''
-      }${a.shrinkToFit ? ' shrinkToFit="1"' : ''}/>`
+      }${a.shrinkToFit ? ' shrinkToFit="1"' : ''}${
+        a.readingOrder ? ` readingOrder="${a.readingOrder === 'rtl' ? 2 : 1}"` : ''
+      }/>`
     : '';
   return (
     `<xf numFmtId="${xf.numFmtId}" fontId="${xf.fontId}" fillId="${xf.fillId}" borderId="${xf.borderId}"${apply}>` +

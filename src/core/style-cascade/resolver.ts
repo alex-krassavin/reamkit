@@ -452,6 +452,8 @@ export function resolveBodyStyles(
           for (const child of cell.content) visit(child);
         }
       }
+      // The drawings over a spreadsheet grid carry text of their own.
+      for (const drawing of el.table.overlay?.drawings ?? []) visit(drawing);
     } else if (el.kind === 'shape') {
       // §20.5.2.17 — a group's MEMBERS carry text of their own, and theirs
       // needs the cascade exactly as much: the caption of every grouped shape

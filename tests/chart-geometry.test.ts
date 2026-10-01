@@ -45,17 +45,23 @@ const barChart = (barDir: 'col' | 'bar'): Chart => ({
 });
 
 describe('niceScale', () => {
-  it('produces round ticks covering the data, with room above it', () => {
-    // Excel leaves the top datum room to breathe — about 5% before rounding up
-    // to the major unit — so a maximum that lands exactly on a step still
-    // clears the plot frame. 57362.xlsx's 12-value bar touched the ceiling
-    // where both references stop at 14.
-    expect(niceScale(0, 95)).toEqual({ min: 0, max: 100, step: 20 });
-    expect(niceScale(0, 8)).toEqual({ min: 0, max: 10, step: 2 });
-    // Six ticks asked for, six delivered: the step is measured against the
-    // range the data SPANS. Measured against Heckbert's rounded-up range (25
-    // becomes 50) it came out 10, which is four labels for a budget of six.
-    expect(niceScale(0, 25)).toEqual({ min: 0, max: 30, step: 5 });
+  it("scales an axis as Excel does: the ends from the data's spread, the step 1-2-5", () => {
+    // Measured against Excel's own PDF of eight column charts (2026-10-01).
+    // The near end at zero unless the spread is under a sixth of the far one,
+    // 5% of the spread beyond the data, then the smallest 1/2/5 × 10ⁿ step
+    // that leaves at most ten intervals.
+    expect(niceScale(2336, 3750)).toEqual({ min: 0, max: 4000, step: 500 });
+    expect(niceScale(-1, 1.2)).toEqual({ min: -1.5, max: 1.5, step: 0.5 });
+    expect(niceScale(0.3, 4.7)).toEqual({ min: 0, max: 5, step: 0.5 });
+    expect(niceScale(120, 950)).toEqual({ min: 0, max: 1000, step: 100 });
+    expect(niceScale(93, 97)).toEqual({ min: 91, max: 98, step: 1 });
+    expect(niceScale(0.012, 0.047)).toEqual({ min: 0, max: 0.05, step: 0.005 });
+    // 57362.xlsx's 12-value bar: room above it, the axis labelled to 14.
+    expect(niceScale(0, 12)).toEqual({ min: 0, max: 14, step: 2 });
+  });
+
+  it('steps more coarsely only where the labels would not fit', () => {
+    expect(niceScale(0, 3750, 4)).toEqual({ min: 0, max: 4000, step: 1000 });
   });
 
   it('handles a flat range', () => {
@@ -69,6 +75,10 @@ describe('formatTick', () => {
     expect(formatTick(100, 20)).toBe('100');
     expect(formatTick(0, 20)).toBe('0');
     expect(formatTick(0.5, 0.5)).toBe('0.5');
+    // General shows no trailing zero, whatever the step's decimals.
+    expect(formatTick(0.05, 0.005)).toBe('0.05');
+    expect(formatTick(0.045, 0.005)).toBe('0.045');
+    expect(formatTick(1, 0.5)).toBe('1');
   });
 });
 
@@ -190,6 +200,129 @@ describe('the chart-space frame (§21.2.2.198)', () => {
   });
 });
 
+describe('a category axis labelled on two levels (§21.2.2.115)', () => {
+  it('puts each group under the categories it spans, a row below their labels', () => {
+    const chart: Chart = {
+      ...barChart('col'),
+      title: '',
+      hasLegend: false,
+      categories: ['Cost', 'Revenue', 'Cost', 'Revenue'],
+      categoryGroups: [
+        [
+          { start: 0, label: '2005' },
+          { start: 2, label: '2006' },
+        ],
+      ],
+      series: [{ name: 'S1', values: [1, 2, 3, 4], colorHex: '4472C4' }],
+    };
+    const scene = buildBarScene(chart, W, H, measure);
+    const at = (text: string) => scene.labels.filter((l) => l.text === text);
+    const [cost1, cost2] = at('Cost').sort((a, b) => a.x - b.x);
+    const [rev1] = at('Revenue').sort((a, b) => a.x - b.x);
+    const [y2005] = at('2005');
+    const [y2006] = at('2006');
+    expect(y2005!.x).toBeCloseTo((cost1!.x + rev1!.x) / 2, 5);
+    expect(y2006!.x).toBeGreaterThan(cost2!.x);
+    expect(y2005!.y).toBeLessThan(cost1!.y);
+    expect(y2005!.y).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe('where the category axis crosses (§21.2.2.33, §21.2.2.207)', () => {
+  // Values both sides of zero: the category axis lies on the zero line.
+  const signed: Chart = {
+    ...barChart('col'),
+    title: '',
+    hasLegend: false,
+    series: [{ name: 'S1', values: [-10, 20, 15], colorHex: '4472C4' }],
+  };
+  const labelY = (scene: ChartScene, text: string): number =>
+    scene.labels.find((l) => l.text === text)!.y;
+  // The zero line: the top of the bar below it.
+  const zeroY = (scene: ChartScene): number =>
+    Math.max(...scene.rects.filter((r) => r.fillHex === '4472C4').map((r) => r.y));
+
+  it('labels the categories beside it, on the zero line', () => {
+    const scene = buildBarScene(signed, W, H, measure);
+    const zero = zeroY(scene);
+    expect(labelY(scene, 'A')).toBeLessThan(zero);
+    expect(labelY(scene, 'A')).toBeGreaterThan(zero - 2 * 9);
+    // …and draws the axis there, not along the plot's foot.
+    const flat = scene.polylines.filter(
+      (p) => p.points.length === 2 && p.points[0]![1] === p.points[1]![1],
+    );
+    expect(flat.some((p) => Math.abs(p.points[0]![1] - zero) < 0.01)).toBe(true);
+  });
+
+  it('labels them at the low end when the file says so', () => {
+    const low = buildBarScene({ ...signed, catTickLabelPos: 'low' }, W, H, measure);
+    expect(labelY(low, 'A')).toBeLessThan(zeroY(low) - 2 * 9);
+    expect(
+      buildBarScene({ ...signed, catTickLabelPos: 'none' }, W, H, measure).labels,
+    ).not.toContainEqual(expect.objectContaining({ text: 'A' }));
+  });
+
+  it('grows the bars from where it crosses', () => {
+    // Crossing at the minimum, the bars all stand on the plot's foot.
+    const scene = buildBarScene({ ...signed, catAxisCrosses: 'min' }, W, H, measure);
+    const bars = scene.rects.filter((r) => r.fillHex === '4472C4');
+    const foot = Math.min(...bars.map((r) => r.y));
+    for (const r of bars) expect(r.y).toBeCloseTo(foot, 5);
+  });
+
+  it("steps a crowded axis by the labels it draws, a point's index among them", () => {
+    // No categories: the axis is labelled 1…716, and the labels must not run
+    // into one another.
+    const many: Chart = {
+      ...signed,
+      categories: [],
+      series: [{ name: 'S1', values: Array.from({ length: 716 }, (_, i) => Math.sin(i / 50)) }],
+    };
+    const shown = buildBarScene(many, W, H, measure)
+      .labels.filter((l) => /^\d+$/.test(l.text) && l.align === 'center')
+      .sort((a, b) => a.x - b.x);
+    expect(shown.length).toBeGreaterThan(3);
+    for (let i = 1; i < shown.length; i++) {
+      const gap = shown[i]!.x - shown[i - 1]!.x;
+      expect(gap).toBeGreaterThanOrEqual(
+        (measure(shown[i]!.text, 9) + measure(shown[i - 1]!.text, 9)) / 2,
+      );
+    }
+  });
+});
+
+describe('a chart title longer than the chart is wide', () => {
+  it('wraps at its spaces, each line within four fifths of the width', () => {
+    const title = 'Ranking of Washington Counties on Days per Patient (ALOS) in 2015';
+    for (const chart of [
+      { ...barChart('bar'), title },
+      { ...barChart('col'), title },
+      { ...barChart('col'), type: 'pie' as const, title },
+    ]) {
+      const scene = buildChartScene(chart, W, H, measure)!;
+      const lines = scene.labels.filter((l) => title.includes(l.text) && l.sizePt > 10);
+      expect(lines.length).toBeGreaterThan(1);
+      expect(lines.map((l) => l.text).join(' ')).toBe(title);
+      for (const l of lines) expect(measure(l.text, l.sizePt)).toBeLessThanOrEqual(W * 0.8);
+      // Top line first, each below the one before.
+      for (let i = 1; i < lines.length; i++) expect(lines[i]!.y).toBeLessThan(lines[i - 1]!.y);
+    }
+  });
+
+  it('pushes the plot down by the lines it takes', () => {
+    const short = buildBarScene(barChart('col'), W, H, measure);
+    const long = buildBarScene(
+      { ...barChart('col'), title: 'A title far too long to stand on a single line of this chart' },
+      W,
+      H,
+      measure,
+    );
+    const top = (s: ChartScene): number =>
+      Math.max(...s.rects.filter((r) => r.fillHex === '4472C4').map((r) => r.y + r.h));
+    expect(top(long)).toBeLessThan(top(short));
+  });
+});
+
 describe('a value axis the author fixed (§21.2.2.157)', () => {
   it('draws to the declared max, not to the data', () => {
     // Every value here is 0. Left to the data the axis would run 0…1; the
@@ -239,6 +372,26 @@ describe('buildBarScene', () => {
     expect(inBounds(scene.rects)).toBe(true);
   });
 
+  it("keeps a bar chart's category names and its last value inside the frame", () => {
+    // The names stand right-aligned left of the plot, so the left of it is
+    // sized by them, not by the value ticks that run along the foot; and the
+    // last tick's label, centred under the plot's end, is given room too.
+    const named: Chart = {
+      ...barChart('bar'),
+      categories: ['Grays Harbor', 'Walla Walla', 'Pend Oreille'],
+      hasLegend: false,
+    };
+    const scene = buildBarScene(named, W, H, measure);
+    for (const name of named.categories) {
+      const label = scene.labels.find((l) => l.text === name)!;
+      expect(label.align).toBe('right');
+      expect(label.x - measure(name, label.sizePt)).toBeGreaterThanOrEqual(0);
+    }
+    const ticks = scene.labels.filter((l) => /^\d+$/.test(l.text));
+    const last = ticks.reduce((a, b) => (b.x > a.x ? b : a));
+    expect(last.x + measure(last.text, last.sizePt) / 2).toBeLessThanOrEqual(W);
+  });
+
   it('runs the categories the other way when the axis says maxMin', () => {
     // §21.2.2.134 — dataValidationTableRange.xlsx ranks 38 counties and writes
     // `maxMin` so the ranking reads top-down; plotted in file order it comes out
@@ -263,6 +416,46 @@ describe('buildBarScene', () => {
     expect(barLengths({ ...chart, catAxisReversed: true })).toEqual(
       [...barLengths(chart)].reverse(),
     );
+  });
+
+  it('reads the values along the top of a ranking that runs top down (§21.2.2.33)', () => {
+    // The value axis lies at the first category, which a reversed axis puts at
+    // the top — unless the file says it crosses at the last.
+    const chart: Chart = {
+      ...barChart('bar'),
+      series: [barChart('bar').series[0]!],
+      hasLegend: false,
+      catAxisReversed: true,
+    };
+    const valueLabels = (c: Chart) =>
+      buildChartScene(c, W, H, measure)!.labels.filter((l) => /^\d+$/.test(l.text));
+    const plotTop = (c: Chart) =>
+      Math.max(
+        ...buildChartScene(c, W, H, measure)!
+          .rects.filter((r) => r.fillHex === '4472C4')
+          .map((r) => r.y + r.h),
+      );
+    for (const l of valueLabels(chart)) expect(l.y).toBeGreaterThan(plotTop(chart));
+    const atFoot = { ...chart, valAxisCrosses: 'max' as const };
+    for (const l of valueLabels(atFoot)) expect(l.y).toBeLessThan(plotTop(atFoot));
+  });
+
+  it('labels a crowded axis from where it starts, and counts its points down when reversed', () => {
+    // No categories: the points' indices, which a reversed axis counts from the
+    // top — and the first is labelled, wherever the thinning falls.
+    const many: Chart = {
+      ...barChart('bar'),
+      categories: [],
+      hasLegend: false,
+      catAxisReversed: true,
+      series: [{ name: 'S', values: Array.from({ length: 60 }, (_, i) => i + 1) }],
+    };
+    const names = buildChartScene(many, W, H, measure)!
+      .labels.filter((l) => l.align === 'right')
+      .sort((a, b) => b.y - a.y)
+      .map((l) => l.text);
+    expect(names[0]).toBe('1');
+    expect(Number(names[1])).toBeGreaterThan(1);
   });
 
   it('fills the whole slot when the file asks for no gap', () => {

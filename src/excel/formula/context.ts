@@ -59,4 +59,23 @@ export interface EvalContext {
    * Rect, optionally on another sheet) or a literal scalar; undefined ⇒ `#NAME?`.
    */
   readonly resolveName?: (name: string) => FValue | undefined;
+  /**
+   * §18.5 — a table by its name (case-insensitive), for a structured reference
+   * (`tblIncome[Amount]`); undefined ⇒ `#REF!`.
+   */
+  readonly table?: (name: string) => FormulaTable | undefined;
+  /** The table a cell stands in, for a reference that names none (`[@Amount]`). */
+  readonly tableAt?: (row: number, col: number) => FormulaTable | undefined;
+}
+
+/** What a structured reference needs of a table (§18.5.1.2). */
+export interface FormulaTable {
+  /** The sheet it is on, when not the formula's own; undefined ⇒ the formula's sheet. */
+  readonly sheet?: number;
+  /** Its whole range — headers, data and totals. */
+  readonly ref: Rect;
+  readonly headerRowCount: number;
+  readonly totalsRowCount: number;
+  /** Its columns' names, left to right. */
+  readonly columns: ReadonlyArray<string>;
 }

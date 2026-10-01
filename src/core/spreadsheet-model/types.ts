@@ -189,6 +189,12 @@ export interface ParsedWorksheet {
   /** §18.3.1.36 `<drawing r:id>` — the sheet's drawing part (charts/shapes). */
   readonly drawingRelId?: string;
   /**
+   * §18.3.1.99 — the sheet is a `<chartsheet>`: nothing but a chart, which
+   * prints filling the page, and on a landscape one unless the sheet says
+   * otherwise.
+   */
+  readonly chartSheet?: boolean;
+  /**
    * §18.3.1.36 `<legacyDrawing r:id>` — the relationship to the sheet's VML
    * drawing part. A form control put on the sheet by Excel's Forms toolbar is
    * declared there and nowhere else.
@@ -243,6 +249,22 @@ export interface ParsedWorksheet {
    * (E-SHEET SE2/SE3).
    */
   readonly pane?: SheetPane;
+  /**
+   * ECMA-376 §18.3.1.87 `<sheetView showGridLines>` — whether the sheet's
+   * window draws the cell gridlines. A VIEW setting, like the pane: what
+   * prints is `<printOptions gridLines>`. Carried for a screen projection and
+   * the round trip; absent ⇒ shown, the default.
+   */
+  readonly showGridLines?: boolean;
+  /**
+   * ECMA-376 §18.3.1.87 `<sheetView rightToLeft>` — the sheet reads from the
+   * right: column A stands at the right edge and the columns run leftward,
+   * and each cell's left and right borders cross over with it. What a cell's
+   * text does is unchanged — it keeps the side its alignment names. Unlike
+   * the pane and the gridlines this one prints: Excel puts the sheet on the
+   * paper the way the window shows it. Absent ⇒ left to right.
+   */
+  readonly rightToLeft?: boolean;
 }
 
 /**
@@ -256,6 +278,45 @@ export interface SheetPane {
 }
 
 /**
+ * §18.18.77 ST_TableStyleType — the regions of a table a table style formats,
+ * in the order they apply (§18.8.41): a later region's format wins where both
+ * say something.
+ */
+export type TableStyleElementType =
+  | 'wholeTable'
+  | 'firstColumnStripe'
+  | 'secondColumnStripe'
+  | 'firstRowStripe'
+  | 'secondRowStripe'
+  | 'lastColumn'
+  | 'firstColumn'
+  | 'headerRow'
+  | 'totalRow'
+  | 'firstHeaderCell'
+  | 'lastHeaderCell'
+  | 'firstTotalCell'
+  | 'lastTotalCell';
+
+/** §18.8.40 — one region's format in a table style: its dxf, and a stripe's band size. */
+export interface TableStyleRegion {
+  readonly dxf: Dxf;
+  /** §18.8.41 `size` — rows (or columns) in one band of a stripe; default 1. */
+  readonly size?: number;
+}
+
+/** §18.8.40 — a table style, region by region, its colours resolved. */
+export type TableStyleFormat = Partial<Record<TableStyleElementType, TableStyleRegion>>;
+
+/** §18.8.40 `<tableStyle>` — a style a workbook defines itself: each region's dxf. */
+export interface XlsxTableStyle {
+  readonly elements: ReadonlyArray<{
+    readonly type: TableStyleElementType;
+    readonly dxfId: number;
+    readonly size?: number;
+  }>;
+}
+
+/**
  * ECMA-376 §18.5.1.2 `<table>` — a structured table over a cell range with a
  * banded style. The raw parse carries the range, header rows and style flags;
  * the reader resolves the named style to header / band fill colours against the
@@ -266,6 +327,13 @@ export interface ExcelTable {
   readonly name?: string;
   readonly styleName?: string;
   readonly headerRowCount: number;
+  /** §18.5.1.2 `totalsRowCount` — the totals rows at the foot of the table (default 0). */
+  readonly totalsRowCount?: number;
+  /**
+   * §18.5.1.3 `<tableColumn name>` — the columns' names, left to right: what a
+   * structured reference (`tblIncome[Amount]`) names a column by.
+   */
+  readonly columns?: ReadonlyArray<string>;
   readonly showRowStripes: boolean;
   readonly showColumnStripes: boolean;
   readonly showFirstColumn: boolean;
@@ -278,6 +346,12 @@ export interface ExcelTable {
   readonly headerHex?: string;
   readonly bandHex?: string;
   readonly headerTextHex?: string;
+  /**
+   * §18.8.40 — the style the table names, region by region: one Excel builds
+   * in (TableStyleMedium2) or one the workbook defines, its colours resolved
+   * against the workbook's theme.
+   */
+  readonly style?: TableStyleFormat;
 }
 
 /**
@@ -341,6 +415,14 @@ export interface XlsxFont {
   /** §18.8.37 `<strike/>` — the font is struck through. */
   readonly strike?: boolean;
   readonly colorHex?: string;
+  /**
+   * §18.8.3 — how the `<color>` names the colour, not what it comes to:
+   * `theme:1:0`, `rgb:FF000000`, `indexed:8`, `auto`; undefined for a font with
+   * no `<color>`. Excel lets a table style colour a cell's text only where the
+   * cell names its colour as the Normal style does — `theme="1"` black takes
+   * the style's white, `rgb="FF000000"` black keeps its own.
+   */
+  readonly colorRef?: string;
   readonly name?: string;
 }
 
@@ -388,6 +470,13 @@ export interface XlsxBorder {
   readonly diagonal?: XlsxBorderEdge;
   readonly diagonalUp?: boolean;
   readonly diagonalDown?: boolean;
+  /**
+   * §18.8.4 `<vertical>`/`<horizontal>` — the lines BETWEEN the cells of a range
+   * a differential format covers: a table style's rules between its columns
+   * and between its rows. A cell's own border has no use for them.
+   */
+  readonly vertical?: XlsxBorderEdge;
+  readonly horizontal?: XlsxBorderEdge;
 }
 
 /** §18.18.40 ST_HorizontalAlignment — `<alignment horizontal>`. */
@@ -417,6 +506,12 @@ export interface XlsxCellAlignment {
   readonly textRotation?: number;
   /** §18.8.1 `shrinkToFit` — scale the text down so it fits the cell on one line (W6). */
   readonly shrinkToFit?: boolean;
+  /**
+   * §18.8.1 `readingOrder` — `1` left to right, `2` right to left. Absent (or
+   * `0`) is "context": the direction of the text's first strong character,
+   * which is also what a General cell aligns its text by.
+   */
+  readonly readingOrder?: 'ltr' | 'rtl';
 }
 
 /**
@@ -452,6 +547,11 @@ export interface XlsxStyles {
    * rules (E-SHEET SC1); only the properties a dxf sets override the base.
    */
   readonly dxfs?: ReadonlyArray<Dxf>;
+  /**
+   * §18.8.42 `<tableStyles>` — the table styles the workbook defines itself,
+   * by name; their regions point into {@link XlsxStyles.dxfs}.
+   */
+  readonly tableStyles?: ReadonlyMap<string, XlsxTableStyle>;
 }
 
 /** §18.8.14 `<dxf>` — a differential (override) format a `cfRule` applies on match. */
@@ -574,6 +674,11 @@ export interface CfRuleDataBar {
    * figure does not sit on top of its own gauge.
    */
   readonly showValue?: boolean;
+  /**
+   * The 2009 extension's `<x14:dataBar gradient>` — false paints the bar in
+   * one solid colour, where Excel's default fades it from the axis.
+   */
+  readonly gradient?: boolean;
 }
 
 /**
@@ -587,6 +692,12 @@ export interface CfRuleIconSet {
   readonly iconSet: string;
   readonly cfvos: ReadonlyArray<Cfvo>;
   readonly reverse?: boolean;
+  /**
+   * §18.3.1.49 `showValue` — false means the cell shows its ICON ONLY, as a
+   * status column of ticks and crosses does: the figure is what the icon
+   * already says.
+   */
+  readonly showValue?: boolean;
 }
 
 /**
@@ -828,6 +939,8 @@ export interface SheetRichRun {
   readonly sizePt?: number;
   /** §18.4.2 `<vertAlign>` — superscript / subscript within the cell text. */
   readonly vertAlign?: 'superscript' | 'subscript';
+  /** §18.4.5 `<rFont>` — the run's typeface, where the producer names one. */
+  readonly fontName?: string;
 }
 
 /**

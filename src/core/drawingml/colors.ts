@@ -209,6 +209,26 @@ export const DEFAULT_THEME_PALETTE: ReadonlyMap<string, string> = new Map([
 ]);
 
 /**
+ * The Office 2023 theme's palette — what Excel colours a workbook that carries
+ * no theme part with. Its own PDF of theme slots 0…9 in such a workbook
+ * (2026-10-01) paints exactly these: accent1 is 156082, not 2013's 4472C4.
+ */
+export const OFFICE_2023_THEME_PALETTE: ReadonlyMap<string, string> = new Map([
+  ['dk1', '000000'],
+  ['lt1', 'FFFFFF'],
+  ['dk2', '0E2841'],
+  ['lt2', 'E8E8E8'],
+  ['accent1', '156082'],
+  ['accent2', 'E97132'],
+  ['accent3', '196B24'],
+  ['accent4', '0F9ED5'],
+  ['accent5', 'A02B93'],
+  ['accent6', '4EA72E'],
+  ['hlink', '467886'],
+  ['folHlink', '96607D'],
+]);
+
+/**
  * Which theme slot each `schemeClr` name stands for. Only the text/background
  * aliases are ever remapped; anything absent resolves under its own name.
  */
@@ -371,8 +391,14 @@ export function resolveColorNode(c: PoNode, resolveColor: ColorResolver): string
   // style asking for `lt1`, and fifteen of them came out white on pale blue.
   if (poIs(c, 'a:sysClr')) {
     const last = poAttr(c, 'lastClr');
-    if (last && /^[0-9A-Fa-f]{6}$/.test(last)) return last.toUpperCase();
-    return SYSTEM_COLORS.get(poAttr(c, 'val') ?? '');
+    const hex =
+      last && /^[0-9A-Fa-f]{6}$/.test(last)
+        ? last.toUpperCase()
+        : SYSTEM_COLORS.get(poAttr(c, 'val') ?? '');
+    // …and transformed like any other: tdf149985.pptx outlines its bars in
+    // windowText at lumMod 15% + lumOff 85%, a light grey, not black.
+    const sysMods = readColorMods(c);
+    return hex !== undefined && sysMods.length > 0 ? applyColorMods(hex, sysMods) : hex;
   }
   // §20.1.2.3.22 `a:prstClr` — a colour NAMED rather than referenced, out of
   // the preset table. Word writes the shadow under a picture as

@@ -22,6 +22,7 @@ import { FontRegistry } from '@/core/font';
 import { chainProviders } from '@/core/fonts/provider';
 import { fetchFontSet } from '@/core/fonts';
 import { flowRenderOptions } from '@/core/converter/project';
+import { layoutSheetImages } from '@/core/converter/sheet-images';
 import { writeDocx } from '@/word/docx-writer';
 import { writeXlsx } from '@/excel/xlsx-writer';
 import { writeHtml } from '@/html/html-writer';
@@ -174,12 +175,12 @@ export function createConverter(opts: CreateConverterOptions = {}): Converter {
     }
 
     if (to === 'html') {
-      // FlowDoc → html writer directly: no layout and no fonts — zero I/O.
-      const { doc: flow, losses: readLosses } = readToFlow(
-        reader,
-        bytes,
-        rest.now ? { now: rest.now } : undefined,
-      );
+      // FlowDoc → html writer directly: no layout and no fonts — zero I/O. A
+      // workbook is projected for the screen, as Ream.convert does.
+      const { doc: flow, losses: readLosses } = readToFlow(reader, bytes, {
+        ...(rest.now ? { now: rest.now } : {}),
+        screen: true,
+      });
       losses.push(...readLosses);
       const html = writeHtml(flow);
       losses.push(...html.losses);
@@ -229,11 +230,13 @@ export function createConverter(opts: CreateConverterOptions = {}): Converter {
       if (!fonts) {
         throw new Error("to: 'svg' requires options.fonts/fontBytes or fontProviders");
       }
-      const { doc: flow } = readToFlow(reader, bytes, rest.now ? { now: rest.now } : undefined);
-      const laid = layoutStyledDocument(flow.body, {
-        registry: FontRegistry.fromBytes(fonts),
-        ...flowRenderOptions(flow),
-      });
+      // A workbook is drawn as images of its sheets, as Ream.convert does.
+      const { doc } = reader.read(bytes);
+      const registry = FontRegistry.fromBytes(fonts);
+      const laid =
+        doc.kind === 'sheet'
+          ? layoutSheetImages(doc, { registry }, rest.now ? { now: rest.now } : {})
+          : layoutStyledDocument(doc.body, { registry, ...flowRenderOptions(doc) });
       const svg = writeSvg(laid);
       losses.push(...svg.losses);
       if (strict && losses.length > 0) throw new ConversionLossError(losses[0]!);

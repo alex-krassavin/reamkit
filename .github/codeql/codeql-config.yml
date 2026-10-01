@@ -1,0 +1,11 @@
+name: reamkit
+
+# What CodeQL reads: the library (src/), the corpus harness and the stand
+# (scripts/, stand/ — they run external programs), the docs site's own code.
+# Not the tests, whose fixtures build hostile documents on purpose — an alert
+# there is about the test, not the code — nor the corpus data or build output.
+paths-ignore:
+  - tests
+  - corpus
+  - dist
+  - docs/dist

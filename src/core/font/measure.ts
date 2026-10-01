@@ -34,6 +34,15 @@ export interface FontMeasure {
    * `[…] TJ` array when shaping moved a glyph off its own advance.
    */
   readonly showText: (text: string) => string;
+  /**
+   * The glyphs `text` is drawn with and the advance each one takes, in font
+   * units — exactly what {@link showText} shows, kerning and ligatures
+   * included — for a writer that places each glyph itself.
+   */
+  readonly glyphRun: (text: string) => {
+    readonly gids: ReadonlyArray<number>;
+    readonly advances: ReadonlyArray<number>;
+  };
 }
 
 const EMPTY_KERNING = new Map<string, number>();
@@ -127,6 +136,20 @@ export function createFontMeasure(parsed: ParsedTtf, kern = true): FontMeasure {
     return `[${parts.join(' ')}] TJ`;
   };
 
+  const glyphRun = (
+    text: string,
+  ): { gids: ReadonlyArray<number>; advances: ReadonlyArray<number> } => {
+    const shaped = shapeText(
+      text,
+      parsed.glyphForCodepoint,
+      parsed.advanceWidths,
+      parsed.ligatures,
+      kerning,
+      parsed.joiningForms,
+    );
+    return { gids: shaped.gids, advances: shaped.advances };
+  };
+
   // A glyph record opens with its own bounding box: numberOfContours, then
   // xMin/yMin/xMax/yMax, all int16 (ISO/IEC 14496-22 §5.3.3). An empty record
   // is a blank glyph — a space — and contributes no ink at all.
@@ -170,5 +193,5 @@ export function createFontMeasure(parsed: ParsedTtf, kern = true): FontMeasure {
     return { above: yMax * k, below: -yMin * k };
   };
 
-  return { pdfWidthForGid, textWidthPt, textInkPt, encodeTextAsCidHex, showText };
+  return { pdfWidthForGid, textWidthPt, textInkPt, encodeTextAsCidHex, showText, glyphRun };
 }

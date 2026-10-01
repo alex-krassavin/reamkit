@@ -3,6 +3,7 @@
 // node directly; the end-to-end render is covered (byte-identically) by the
 // byte gate and xlsx.test.ts.
 
+import { unzipSync, zipSync } from 'fflate';
 import { describe, expect, it } from 'vitest';
 
 import { buildXlsx } from './fixtures/build-xlsx';
@@ -65,6 +66,38 @@ describe('readXlsxToSheetDoc (E-SHEET SA1/SA2)', () => {
     expect(refs).toHaveLength(1);
     expect(refs![0]!.chartPartPath).toBe('xl/charts/chart1.xml');
     expect(refs![0]!.widthPt).toBeGreaterThan(0);
+  });
+});
+
+describe('a chart sheet on paper (§18.3.1.99)', () => {
+  // The fixture's one sheet, re-rooted as a `<chartsheet>` holding its chart.
+  const chartSheet = (pageSetup = ''): Uint8Array => {
+    const parts = unzipSync(buildXlsx({ rows: [], sheetChart: { chartXml: BAR_CHART } }));
+    const sheet = new TextDecoder().decode(parts['xl/worksheets/sheet1.xml']);
+    parts['xl/worksheets/sheet1.xml'] = new TextEncoder().encode(
+      sheet
+        .replace(/<sheetData[\s\S]*?(<\/sheetData>|\/>)/, '')
+        .replace('<drawing ', `${pageSetup}<drawing `)
+        .replace('<worksheet', '<chartsheet')
+        .replace('</worksheet>', '</chartsheet>'),
+    );
+    return zipSync(parts);
+  };
+
+  it('prints landscape, the chart filling the page between the margins', () => {
+    const flow = Ream.parse(chartSheet()).flow;
+    const page = flow.section?.pageSize;
+    expect(page?.orientation).toBe('landscape');
+    const margins = flow.section!.margins!;
+    const chart = flow.body.find((el) => el.kind === 'chart');
+    if (chart?.kind !== 'chart') throw new Error('expected the chart');
+    expect(chart.chart.width).toBeCloseTo(page!.width - margins.left - margins.right, 0);
+    expect(chart.chart.height).toBeCloseTo(page!.height - margins.top - margins.bottom, 0);
+  });
+
+  it('keeps the orientation the sheet states', () => {
+    const flow = Ream.parse(chartSheet('<pageSetup orientation="portrait"/>')).flow;
+    expect(flow.section?.pageSize?.orientation ?? 'portrait').toBe('portrait');
   });
 });
 

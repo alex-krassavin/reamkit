@@ -60,7 +60,12 @@ describe('Excel tables — parse + resolve (E-SHEET SC3)', () => {
 });
 
 describe('Excel tables — banding projection (E-SHEET SC3)', () => {
-  it('shades the header row and every second data row', () => {
+  it('shades the header row and every second data row, from the first', () => {
+    // §18.8.40 — TableStyleMedium2 as the standard defines it: the header in
+    // accent1, the first row stripe in accent1 lightened by 80%, the second
+    // stripe nothing. The first stripe is the first data row: Excel's own PDF
+    // shades it, and the row after it is white — in 156082 and C0E6F5, the
+    // Office 2023 theme's, for a workbook that carries none.
     const flow = Ream.parse(
       buildXlsx({
         rows: fourByTwo,
@@ -68,14 +73,117 @@ describe('Excel tables — banding projection (E-SHEET SC3)', () => {
       }),
     ).flow;
     const grid = shadingGrid(flow);
-    const header = grid[0]![0];
-    const band = grid[2]![0];
-    expect(header).toBeDefined(); // header row
-    expect(grid[0]![1]).toBe(header); // whole header row, same colour
-    expect(grid[1]![0]).toBeUndefined(); // 1st data row (band1) unfilled
-    expect(band).toBeDefined(); // 2nd data row (band2) filled
-    expect(band).not.toBe(header);
-    expect(grid[3]![0]).toBeUndefined(); // 3rd data row (band1) unfilled
+    expect(grid[0]![0]).toBe('156082'); // header row
+    expect(grid[0]![1]).toBe('156082'); // the whole of it
+    expect(grid[1]![0]).toBe('C0E6F5'); // 1st data row: the first stripe
+    expect(grid[2]![0]).toBeUndefined(); // 2nd: the second stripe, unfilled
+    expect(grid[3]![0]).toBe('C0E6F5'); // 3rd: the first stripe again
+  });
+
+  it('rules the rows apart and the totals off, as the style draws them', () => {
+    // TableStyleMedium2's whole table is ruled in accent1 lightened by 40%,
+    // round its edge and between its rows; its totals row is bold under a
+    // double rule in accent1 itself.
+    // A header, two data rows and the totals row.
+    const flow = Ream.parse(
+      buildXlsx({
+        rows: fourByTwo,
+        tables: [{ ref: 'A1:B4', styleName: 'TableStyleMedium2', totalsRowCount: 1 }],
+      }),
+    ).flow;
+    const table = flow.body.find((el) => el.kind === 'table');
+    if (table?.kind !== 'table') throw new Error('expected a table');
+    const cell = (r: number, c: number) => table.table.rows[r]!.cells[c]!;
+    expect(cell(1, 0).properties.borders?.bottom?.colorHex).toBe('44B3E1');
+    expect(cell(2, 1).properties.borders?.right?.colorHex).toBe('44B3E1');
+    // No rule between the columns: Medium2 draws none.
+    expect(cell(2, 0).properties.borders?.right).toBeUndefined();
+    const total = cell(3, 0);
+    expect(total.properties.borders?.top).toMatchObject({ style: 'double', colorHex: '156082' });
+    const run =
+      total.content[0]?.kind === 'paragraph' ? total.content[0].paragraph.runs[0] : undefined;
+    expect(run?.properties.bold).toBe(true);
+    // The stripes run through the data rows only: the totals row, where the
+    // first stripe would come round again, is not one.
+    expect(shadingGrid(flow).map((row) => row[0])).toEqual([
+      '156082',
+      'C0E6F5',
+      undefined,
+      undefined,
+    ]);
+  });
+
+  it('takes a style the workbook defines itself, region over region', () => {
+    // §18.8.42 — a dxf gives a solid fill's colour as its background; the
+    // first column (bold, its own fill) lies over the row stripe, the header
+    // over both.
+    const stylesXml = `
+      <fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts>
+      <fills count="1"><fill><patternFill patternType="none"/></fill></fills>
+      <borders count="1"><border/></borders>
+      <cellXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellXfs>
+      <dxfs count="3">
+        <dxf><font><b/></font><fill><patternFill><bgColor rgb="FFFFE699"/></patternFill></fill></dxf>
+        <dxf><fill><patternFill><bgColor rgb="FFDDEBF7"/></patternFill></fill></dxf>
+        <dxf><font><color rgb="FFFFFFFF"/></font><fill><patternFill><bgColor rgb="FF203764"/></patternFill></fill></dxf>
+      </dxfs>
+      <tableStyles count="1"><tableStyle name="Own" pivot="0" count="3">
+        <tableStyleElement type="headerRow" dxfId="2"/>
+        <tableStyleElement type="firstColumn" dxfId="0"/>
+        <tableStyleElement type="firstRowStripe" dxfId="1"/>
+      </tableStyle></tableStyles>`;
+    const flow = Ream.parse(
+      buildXlsx({
+        rows: fourByTwo,
+        stylesXml,
+        tables: [{ ref: 'A1:B4', styleName: 'Own', showFirstColumn: true }],
+      }),
+    ).flow;
+    expect(shadingGrid(flow)).toEqual([
+      ['203764', '203764'],
+      ['FFE699', 'DDEBF7'],
+      ['FFE699', undefined],
+      ['FFE699', 'DDEBF7'],
+    ]);
+  });
+
+  it("whitens a header whose black is the Normal style's, not one the author set", () => {
+    // Excel's own PDF (2026-10-01): four Medium2 tables whose header fonts
+    // name their black as `theme="1"` (as Normal does), as `rgb="FF000000"`,
+    // not at all, and the Normal style itself. The first and last turn white;
+    // the rgb black and the automatic one stay black.
+    const stylesXml = `
+      <fonts count="4">
+        <font><sz val="11"/><color theme="1"/><name val="Calibri"/></font>
+        <font><sz val="11"/><color theme="1"/><name val="Calibri"/></font>
+        <font><sz val="11"/><color rgb="FF000000"/><name val="Calibri"/></font>
+        <font><sz val="11"/><name val="Calibri"/></font>
+      </fonts>
+      <fills count="1"><fill><patternFill patternType="none"/></fill></fills>
+      <borders count="1"><border/></borders>
+      <cellXfs count="4">
+        <xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>
+        <xf numFmtId="0" fontId="1" fillId="0" borderId="0" applyFont="1"/>
+        <xf numFmtId="0" fontId="2" fillId="0" borderId="0" applyFont="1"/>
+        <xf numFmtId="0" fontId="3" fillId="0" borderId="0" applyFont="1"/>
+      </cellXfs>`;
+    const headerColour = (styleIndex: number): string | undefined => {
+      const flow = Ream.parse(
+        buildXlsx({
+          rows: [[{ value: 'Head', styleIndex }], [1], [2]],
+          stylesXml,
+          tables: [{ ref: 'A1:A3', styleName: 'TableStyleMedium2' }],
+        }),
+      ).flow;
+      const table = flow.body.find((el) => el.kind === 'table');
+      if (table?.kind !== 'table') throw new Error('expected a table');
+      const block = table.table.rows[0]!.cells[0]!.content[0];
+      return block?.kind === 'paragraph' ? block.paragraph.runs[0]?.properties.colorHex : undefined;
+    };
+    expect(headerColour(1)).toBe('FFFFFF');
+    expect(headerColour(0)).toBe('FFFFFF');
+    expect(headerColour(2)).toBe('000000');
+    expect(headerColour(3)).not.toBe('FFFFFF');
   });
 
   it('does not band when showRowStripes is off (header only)', () => {

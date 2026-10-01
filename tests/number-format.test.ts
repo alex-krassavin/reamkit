@@ -40,6 +40,32 @@ describe('applyNumberFormat — numbers', () => {
     expect(applyNumberFormat('-1234.5', 40, noCustom)).toBe('(1,234.50)');
     expect(applyNumberFormat('1234.5', 40, noCustom)).toBe('1,234.50 ');
   });
+
+  it('pads a short integer part to its 0 placeholders with zeros', () => {
+    const fmt = new Map<number, string>([
+      [164, '000'],
+      [165, '0,000'],
+    ]);
+    expect(applyNumberFormat('5', 164, fmt)).toBe('005');
+    expect(applyNumberFormat('1234', 164, fmt)).toBe('1234');
+    expect(applyNumberFormat('5', 165, fmt)).toBe('0,005');
+  });
+
+  it('shows a space for each insignificant zero under a ? placeholder', () => {
+    // §18.8.31 — `?` lines up decimal points: it is `0` for a digit that
+    // counts and a space for one that does not. Excel's own Accounting format
+    // writes its zero section as `"-"??`, which reads " -  ", not "-??".
+    const fmt = new Map<number, string>([
+      [164, '0.0??'],
+      [165, '??'],
+      [166, '_-* #,##0.00_-;\\-* #,##0.00_-;_-* "-"??_-;_-@_-'],
+    ]);
+    expect(applyNumberFormat('1.5', 164, fmt)).toBe('1.5  ');
+    expect(applyNumberFormat('1.234', 164, fmt)).toBe('1.234');
+    expect(applyNumberFormat('5', 165, fmt)).toBe(' 5');
+    expect(applyNumberFormat('0', 166, fmt)).toBe(' -   ');
+    expect(applyNumberFormat('1234.5', 166, fmt)).toBe(' 1,234.50 ');
+  });
 });
 
 describe('applyNumberFormat — scientific notation (§18.8.31)', () => {

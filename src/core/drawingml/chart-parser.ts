@@ -156,10 +156,13 @@ export function parseChart(
   // Categories are shared; take them from the first series that carries them.
   let categories: Array<string> = [];
   let categoriesRef: string | undefined;
+  let categoryGroups: Chart['categoryGroups'];
   for (const s of serNodes) {
     const cat = poChildren(s).find((c) => poIs(c, 'c:cat'));
     if (cat) {
-      categories = denseStrings(cat);
+      const levels = multiLevelCategories(cat);
+      categories = levels ? levels.categories : denseStrings(cat);
+      categoryGroups = levels?.groups;
       categoriesRef ??= refFormula(cat);
       break;
     }
@@ -209,9 +212,19 @@ export function parseChart(
   );
   const valAxisMin = axisScaling(plotArea, 'c:min');
   const valAxisMax = axisScaling(plotArea, 'c:max');
+  const valAxisMajorUnit = majorUnitOf(plotArea);
   // §21.2.2.134 — the category axis may run the other way, which is how a
   // ranked bar chart puts its first row at the top.
   const catAxisReversed = axisOrientation(catAxNode) === 'maxMin';
+  // §21.2.2.33/§21.2.2.34/§21.2.2.207 — where the category axis crosses the
+  // value axis, and where its labels stand.
+  const catAxisCrosses = axisCrossing(catAxNode);
+  const valAxisCrosses = axisCrossing(valAxNode);
+  const tickLblPos = catAxNode
+    ? poVal(poChildren(catAxNode).find((c) => poIs(c, 'c:tickLblPos')))
+    : undefined;
+  const catTickLabelPos =
+    tickLblPos === 'low' || tickLblPos === 'high' || tickLblPos === 'none' ? tickLblPos : undefined;
   // §21.2.2.198 — the chart-space frame sits beside <c:chart>, not inside it.
   const chartSpace = tree.find((c) => poIs(c, 'c:chartSpace'));
   const spaceSpPr = poChildren(chartSpace).find((c) => poIs(c, 'c:spPr'));
@@ -263,6 +276,7 @@ export function parseChart(
     ...(Number.isFinite(gapPercent) && gapPercent >= 0 ? { gapPercent } : {}),
     categories,
     ...(categoriesRef ? { categoriesRef } : {}),
+    ...(categoryGroups && categoryGroups.length > 0 ? { categoryGroups } : {}),
     series,
     hasLegend: legend !== undefined,
     ...(isLegendPos(legendPos) ? { legendPos } : {}),
@@ -272,6 +286,9 @@ export function parseChart(
     ...(showValues ? { showValues: true } : {}),
     ...(catAxisTitle ? { catAxisTitle } : {}),
     ...(catAxisReversed ? { catAxisReversed } : {}),
+    ...(catAxisCrosses !== undefined ? { catAxisCrosses } : {}),
+    ...(valAxisCrosses !== undefined ? { valAxisCrosses } : {}),
+    ...(catTickLabelPos ? { catTickLabelPos } : {}),
     ...(valAxisTitle ? { valAxisTitle } : {}),
     ...(secondaryValAxisTitle ? { secondaryValAxisTitle } : {}),
     ...(scatterStyle ? { scatterStyle } : {}),
@@ -282,6 +299,7 @@ export function parseChart(
     ...(gridLine ? { gridLine } : {}),
     ...(valAxisMin !== undefined ? { valAxisMin } : {}),
     ...(valAxisMax !== undefined ? { valAxisMax } : {}),
+    ...(valAxisMajorUnit !== undefined ? { valAxisMajorUnit } : {}),
     ...(frameFillHex ? { frameFillHex } : {}),
     ...(frameFillImage ? { frameFillImage } : {}),
     ...(frameLineHex ? { frameLineHex } : {}),
@@ -467,10 +485,16 @@ function fillColorOf(spPr: PoNode | undefined, resolveColor: ColorResolver): str
   return lnFill ? colorFromSolidFill(lnFill, resolveColor) : undefined;
 }
 
+/** The colour elements a chart's fill names a colour by (§20.1.2.3). */
+const CHART_COLOR_NODES = ['a:srgbClr', 'a:schemeClr', 'a:sysClr', 'a:prstClr'] as const;
+
 function colorFromSolidFill(solid: PoNode, resolveColor: ColorResolver): string | undefined {
   for (const c of poChildren(solid)) {
-    const isSrgb = poIs(c, 'a:srgbClr');
-    if (!isSrgb && !poIs(c, 'a:schemeClr')) continue;
+    // …a system or a preset colour as much as a scheme or an RGB one: Excel
+    // 2007 and 2010 outline a chart in `<a:sysClr val="windowText">`, and
+    // skipped, dataValidationTableRange.xlsx lost the black frame round its
+    // chart and round its plot.
+    if (!CHART_COLOR_NODES.some((name) => poIs(c, name))) continue;
     if (!poAttr(c, 'val')) continue;
     // Chart semantics: stop at the first colour node, even when the resolver
     // does not know the colour (the word drawing-parser continues instead).
@@ -563,9 +587,31 @@ function axisTitle(plotArea: PoNode, axTag: string): string | undefined {
  */
 // §21.2.2.157 c:valAx/c:scaling/c:min|c:max — an axis end the author fixed.
 /** §21.2.2.134 `c:scaling/c:orientation` — `minMax` (the default) or `maxMin`. */
+/**
+ * §21.2.2.33/§21.2.2.34 — where an axis crosses the one it is drawn against:
+ * `crossesAt` a value, or `crosses` at that axis's minimum or maximum.
+ * undefined for `autoZero`, the default.
+ */
+function axisCrossing(ax: PoNode | undefined): 'min' | 'max' | number | undefined {
+  if (!ax) return undefined;
+  const at = poChildren(ax).find((c) => poIs(c, 'c:crossesAt'));
+  const value = at ? Number(poAttr(at, 'val')) : Number.NaN;
+  if (Number.isFinite(value)) return value;
+  const crosses = poVal(poChildren(ax).find((c) => poIs(c, 'c:crosses')));
+  return crosses === 'min' || crosses === 'max' ? crosses : undefined;
+}
+
 function axisOrientation(ax: PoNode | undefined): string | undefined {
   const scaling = ax ? poChildren(ax).find((c) => poIs(c, 'c:scaling')) : undefined;
   return scaling ? poVal(poChildren(scaling).find((c) => poIs(c, 'c:orientation'))) : undefined;
+}
+
+/** §21.2.2.98 `c:valAx/c:majorUnit` — a positive step, or undefined for "auto". */
+function majorUnitOf(plotArea: PoNode): number | undefined {
+  const ax = poChildren(plotArea).find((c) => poIs(c, 'c:valAx'));
+  const node = ax ? poChildren(ax).find((c) => poIs(c, 'c:majorUnit')) : undefined;
+  const v = node ? Number(poAttr(node, 'val')) : Number.NaN;
+  return Number.isFinite(v) && v > 0 ? v : undefined;
 }
 
 function axisScaling(plotArea: PoNode, tag: 'c:min' | 'c:max'): number | undefined {
@@ -699,6 +745,44 @@ function denseStrings(container: PoNode): Array<string> {
   const arr = new Array<string>(denseLength(container, pts)).fill('');
   for (const p of pts) arr[p.idx] = p.v;
   return arr;
+}
+
+/**
+ * §21.2.2.115 `c:multiLvlStrCache` — categories labelled on several levels:
+ * the first `c:lvl` labels each category, every later one groups them, a
+ * group's label standing at the category it starts at. Read as one flat cache
+ * it read as none, and an xlsx chart fell back to the cells its reference
+ * names, both columns of them in turn: WithChartSheet.xlsx's six bars stood in
+ * the first six of sixteen slots under a jumble of years and measure names.
+ *
+ * @param cat The `c:cat` element.
+ * @returns The innermost labels and the outer levels' groups, or undefined
+ *   for a category axis of one level.
+ */
+function multiLevelCategories(
+  cat: PoNode,
+): { categories: Array<string>; groups: NonNullable<Chart['categoryGroups']> } | undefined {
+  const cache = poFindDescendant(cat, 'c:multiLvlStrCache');
+  if (!cache) return undefined;
+  const count = poIntAttr(poChildren(cache).find((c) => poIs(c, 'c:ptCount')) ?? cache, 'val') ?? 0;
+  const levels = poChildren(cache)
+    .filter((c) => poIs(c, 'c:lvl'))
+    .map((lvl) =>
+      poChildren(lvl)
+        .filter((pt) => poIs(pt, 'c:pt'))
+        .map((pt) => {
+          const v = poChildren(pt).find((c) => poIs(c, 'c:v'));
+          return { start: poIntAttr(pt, 'idx') ?? 0, label: v ? poText(v) : '' };
+        }),
+    );
+  const [inner, ...outer] = levels;
+  if (!inner) return undefined;
+  const categories = new Array<string>(Math.max(count, ...inner.map((p) => p.start + 1))).fill('');
+  for (const p of inner) categories[p.start] = p.label;
+  return {
+    categories,
+    groups: outer.map((level) => [...level].sort((a, b) => a.start - b.start)),
+  };
 }
 
 function isLegendPos(v: string | undefined): v is 'r' | 'l' | 't' | 'b' {

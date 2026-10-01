@@ -44,6 +44,26 @@ describe('frozen panes — parsing (E-SHEET SE2)', () => {
   });
 });
 
+describe('gridlines in the view (§18.3.1.87)', () => {
+  const gridOf = (xlsx: Uint8Array) => readXlsxToSheetDoc(xlsx).sheets[0]!.grid.showGridLines;
+
+  it('reads showGridLines="0", and nothing when the view says nothing', () => {
+    expect(gridOf(buildXlsx({ sheets: [{ name: 'S', rows: [[1]], hideGridLines: true }] }))).toBe(
+      false,
+    );
+    expect(gridOf(buildXlsx({ rows: [[1]] }))).toBeUndefined();
+  });
+
+  it('keeps hidden gridlines through a round trip, beside a frozen pane', async () => {
+    const xlsx = buildXlsx({
+      sheets: [{ name: 'S', rows: [[1], [2]], hideGridLines: true, freeze: { rows: 1 } }],
+    });
+    const again = await Ream.parse(xlsx).convert('xlsx');
+    expect(gridOf(again)).toBe(false);
+    expect(paneOf(again)).toEqual({ frozenRows: 1, frozenCols: 0 });
+  });
+});
+
 describe('frozen panes — HTML sticky (E-SHEET SE3)', () => {
   it('pins a frozen top row and first column with position:sticky', async () => {
     const xlsx = buildXlsx({

@@ -4,7 +4,7 @@ import { buildDocxFromBody } from './fixtures/build-docx';
 import { buildXlsx } from './fixtures/build-xlsx';
 import { createConverter } from '@/core/converter/facade';
 import { Ream } from '@/core/converter/ream';
-import { ConversionLossError } from '@/core/ir';
+import { ConversionLossError, pt } from '@/core/ir';
 import { htmlWriter, writeHtml } from '@/html/html-writer';
 import { readDocx } from '@/word/docx-reader';
 
@@ -85,6 +85,160 @@ describe('html writer (FlowDoc adapter)', () => {
     expect(html).toContain('<table');
     expect(html).toContain('answer');
     expect(html).toContain('42');
+  });
+
+  it("lays each sheet out whole, under its tab's name", async () => {
+    // Thirty 20-character columns are some 4000pt: printed, the sheet is cut
+    // into column bands a page wide, and the page breaks between them and
+    // between the sheets. On a screen it is one table, and every tab shows —
+    // the empty one too.
+    const wide = Array.from({ length: 30 }, (_, i) => `c${String(i + 1)}`);
+    const xlsx = buildXlsx({
+      sheets: [
+        { name: 'Wide', rows: [wide], columns: [{ min: 1, max: 30, widthChars: 20 }] },
+        { name: 'Empty', rows: [] },
+        { name: 'R&D', rows: [['x']] },
+      ],
+    });
+    const html = decode(await Ream.parse(xlsx).convert('html'));
+    expect(
+      [...html.matchAll(/<section class="sheet" data-sheet="([^"]*)">/gu)].map((m) => m[1]),
+    ).toEqual(['Wide', 'Empty', 'R&amp;D']);
+    const wideSheet = html.slice(
+      html.indexOf('data-sheet="Wide"'),
+      html.indexOf('data-sheet="Empty"'),
+    );
+    expect(wideSheet.match(/<table/gu)).toHaveLength(1);
+    expect(wideSheet).toContain('c30');
+    expect(html).not.toContain('break-before:page');
+    expect(html).toContain('<h2 class="sheet-name">R&amp;D</h2>');
+    // No page, so no page-wide column for the sheet to be squeezed into.
+    expect(html).toContain('<article>');
+  });
+
+  it("draws the window's gridlines, but not over a fill nor where the sheet hides them", async () => {
+    const STYLES = `
+      <fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts>
+      <fills count="3">
+        <fill><patternFill patternType="none"/></fill>
+        <fill><patternFill patternType="gray125"/></fill>
+        <fill><patternFill patternType="solid"><fgColor rgb="FFFFFF00"/></patternFill></fill>
+      </fills>
+      <borders count="1"><border/></borders>
+      <cellXfs count="2">
+        <xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>
+        <xf numFmtId="0" fontId="0" fillId="2" borderId="0" applyFill="1"/>
+      </cellXfs>`;
+    const xlsx = buildXlsx({
+      stylesXml: STYLES,
+      sheets: [
+        { name: 'Grid', rows: [['plain', { value: 'filled', styleIndex: 1 }]] },
+        { name: 'Clean', rows: [['plain']], hideGridLines: true },
+      ],
+    });
+    const html = decode(await Ream.parse(xlsx).convert('html'));
+    const sheet = (name: string): string =>
+      html.slice(html.indexOf(`data-sheet="${name}"`)).split('</section>')[0]!;
+    // Three edges round the plain cell: the fourth is the yellow one's, and a
+    // fill covers the gridlines on every side of it.
+    expect(sheet('Grid').match(/0\.5pt solid #D4D4D4/gu)).toHaveLength(3);
+    expect(
+      /<td style="([^"]*)">\s*<p[^>]*><span[^>]*>filled/u.exec(sheet('Grid'))?.[1],
+    ).not.toContain('D4D4D4');
+    expect(sheet('Clean')).not.toContain('D4D4D4');
+  });
+
+  it('flags a noted cell in its corner, and shows the note on hover', async () => {
+    const xlsx = buildXlsx({
+      rows: [['noted', 'plain']],
+      comments: [{ ref: 'A1', author: 'Ada', text: 'look here' }],
+    });
+    const html = decode(await Ream.parse(xlsx).convert('html'));
+    expect(html).toMatch(/<td title="Ada: look here" style="[^"]*position:relative/u);
+    expect(html).toContain('border-top:4.5pt solid #FF0000');
+    expect(html.match(/<td title=/gu)).toHaveLength(1);
+  });
+
+  it('leaves an edge to the neighbour that rules it', async () => {
+    // A gridline and a thin rule come out the same pixel wide, and collapsed
+    // borders then go to the cell above or to the left: a cell ruled all
+    // round lost its top and left sides to the grey grid next to them.
+    const STYLES = `
+      <fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts>
+      <fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>
+      <borders count="2"><border/><border><left style="thin"><color rgb="FF000000"/></left><right style="thin"><color rgb="FF000000"/></right><top style="thin"><color rgb="FF000000"/></top><bottom style="thin"><color rgb="FF000000"/></bottom></border></borders>
+      <cellXfs count="2">
+        <xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>
+        <xf numFmtId="0" fontId="0" fillId="0" borderId="1" applyBorder="1"/>
+      </cellXfs>`;
+    const xlsx = buildXlsx({
+      stylesXml: STYLES,
+      rows: [
+        ['', 'above'],
+        ['beside', { value: 'ruled', styleIndex: 1 }],
+      ],
+    });
+    const html = decode(await Ream.parse(xlsx).convert('html'));
+    const styleOf = (word: string): string =>
+      new RegExp(`<td style="([^"]*)">\\s*<p[^>]*><span[^>]*>${word}<`, 'u').exec(html)?.[1] ?? '';
+    expect(styleOf('ruled')).toContain('border-top:0.75pt solid #000000');
+    expect(styleOf('above')).not.toContain('border-bottom');
+    expect(styleOf('beside')).not.toContain('border-right');
+    // The edges nobody rules keep their gridline.
+    expect(styleOf('above')).toContain('border-top:0.5pt solid #D4D4D4');
+  });
+
+  it('sets a grid row at its height and a cell at the bottom of it', async () => {
+    const xlsx = buildXlsx({
+      rows: [['tall'], ['plain']],
+      rowHeights: [{ row: 0, heightPt: 30, customHeight: true }],
+      columns: [{ min: 1, max: 1, widthChars: 10 }],
+    });
+    const html = decode(await Ream.parse(xlsx).convert('html'));
+    expect(html).toContain('<tr style="height:30pt">');
+    expect(html).toContain('<tr style="height:15pt">');
+    expect(html).toMatch(/<td style="[^"]*vertical-align:bottom/u);
+    // A fixed table is given the width of its grid, or a browser ignores the
+    // fixed layout and sizes the columns to their content.
+    expect(html).toMatch(/<table style="width:[\d.]+pt;table-layout:fixed">/u);
+  });
+
+  it("places a sheet's drawing on its surface where it is anchored", () => {
+    const { doc } = readDocx(buildDocxFromBody('<w:p><w:r><w:t>x</w:t></w:r></w:p>'));
+    const html = decode(
+      writeHtml({
+        ...doc,
+        sections: [
+          { properties: { headers: [], footers: [] }, endIndex: 2, sheet: { name: 'Plot' } },
+        ],
+        body: [
+          {
+            kind: 'shape' as const,
+            shape: {
+              float: {
+                wrap: 'none' as const,
+                posH: { relativeFrom: 'margin' as const, offsetPt: pt(100) },
+                posV: { relativeFrom: 'margin' as const, offsetPt: pt(50) },
+              },
+              width: pt(80),
+              height: pt(40),
+              geometry: { kind: 'preset' as const, preset: 'rect' },
+              fill: { kind: 'solid' as const, colorHex: 'FF0000' },
+              paragraphProperties: {},
+            },
+          },
+          {
+            kind: 'paragraph' as const,
+            paragraph: { properties: {}, runs: [{ text: 'under it', properties: {} }] },
+          },
+        ],
+      }).bytes,
+    );
+    expect(html).toContain(
+      '<div class="drawing" style="position:absolute;left:100pt;top:50pt;width:80pt;height:40pt">',
+    );
+    // The surface reaches the drawing's far corner, so the next sheet starts below it.
+    expect(html).toContain('<div class="surface" style="min-width:180pt;min-height:90pt">');
   });
 
   it('reports headers/footers as a dropped loss; strict throws', async () => {
@@ -177,6 +331,69 @@ describe('html writer (FlowDoc adapter)', () => {
     expect(html).toContain('raw tree');
     expect(html).toContain('font-weight:700');
     expect(html).toContain('text-align:right');
+  });
+
+  it('sets a right-to-left paragraph to the sides its start and end are', () => {
+    // §17.3.1.13 — in a `w:bidi` paragraph "right" is the END of the line,
+    // which is the left of the page, and the indent named "left" is the one at
+    // the start, on the right: the layout crosses them over, and so must CSS,
+    // whose sides are the page's whatever `dir` says.
+    const { doc } = readDocx(
+      buildDocxFromBody(
+        '<w:p><w:pPr><w:bidi/><w:ind w:left="720"/><w:jc w:val="right"/></w:pPr><w:r><w:t>שלום</w:t></w:r></w:p>',
+      ),
+    );
+    const html = decode(writeHtml(doc).bytes);
+    expect(html).toMatch(/<p dir="rtl" style="[^"]*text-align:left/u);
+    expect(html).toMatch(/<p dir="rtl" style="[^"]*margin-right:36pt/u);
+    expect(html).not.toMatch(/<p dir="rtl" style="[^"]*margin-left:36pt/u);
+  });
+
+  it("keeps the whole of a run's style when the run names its font", async () => {
+    // The family is a CSS string inside a double-quoted attribute: written in
+    // double quotes it ended the attribute, and a browser dropped the size,
+    // weight and colour after it.
+    const docx = buildDocxFromBody(
+      '<w:p><w:r><w:rPr><w:rFonts w:ascii="Century Gothic" w:hAnsi="Century Gothic"/><w:b/>' +
+        '<w:color w:val="4E5B6F"/><w:sz w:val="50"/></w:rPr><w:t>Budget</w:t></w:r></w:p>',
+    );
+    const html = decode(await Ream.parse(docx).convert('html'));
+    expect(/<span style="([^"]*)">Budget<\/span>/u.exec(html)?.[1]).toBe(
+      "font-family:'Century Gothic',sans-serif;font-size:25pt;font-weight:700;color:#4E5B6F",
+    );
+  });
+
+  it('follows a family with its metric twin and its class, and escapes the name', () => {
+    const { doc } = readDocx(buildDocxFromBody('<w:p><w:r><w:t>x</w:t></w:r></w:p>'));
+    const run = (text: string, ascii: string) => ({ text, properties: { fontFamily: { ascii } } });
+    const html = decode(
+      writeHtml({
+        ...doc,
+        body: [
+          {
+            kind: 'paragraph' as const,
+            paragraph: {
+              properties: {},
+              runs: [
+                run('calibri', 'Calibri'),
+                run('cambria', 'Cambria'),
+                run('courier', 'Courier New'),
+                run('quoted', 'O\'Brien "Sans"'),
+              ],
+            },
+          },
+        ],
+      }).bytes,
+    );
+    const family = (text: string): string | undefined =>
+      new RegExp(`<span style="font-family:([^"]*?);font-size:[^"]*">${text}</span>`, 'u').exec(
+        html,
+      )?.[1];
+    expect(family('calibri')).toBe("'Calibri',Carlito,sans-serif");
+    expect(family('cambria')).toBe("'Cambria',Caladea,serif");
+    expect(family('courier')).toBe("'Courier New',monospace");
+    // A quote of either kind stays inside the name: escaped for CSS, then for the attribute.
+    expect(family('quoted')).toBe("'O\\'Brien &quot;Sans&quot;',sans-serif");
   });
 
   // ── charts and shapes as inline SVG ──────────────────────────────────────

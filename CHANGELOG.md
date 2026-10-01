@@ -3,6 +3,162 @@
 All notable changes to **Ream** (`reamkit`) are documented here. The project
 follows [Semantic Versioning](https://semver.org/).
 
+## 1.32.0
+
+A release about workbooks, and Excel as the judge of them.
+
+Until now a spreadsheet was checked against LibreOffice — its PDF, its pixels.
+This release asked Excel. Excel exports a PDF without a window, and each
+question LibreOffice answers its own way was put to it as a small workbook
+built for that question: where a chart across a page break prints, how a sheet
+that reads from the right turns round, what colour a table's stripes are, what
+a tint of 0.8 comes to. Where a file carries Excel's own arithmetic — the
+absolute position it writes beside every anchored drawing — that was read as
+well, and it settled how wide a column is in a Chinese or Japanese face.
+
+A workbook also has two new ways out. As HTML it comes out as Excel's window
+shows it, not as its printed pages without the paper; as SVG, as pictures of
+its sheets, each whole, its text drawn from the faces' own outlines.
+
+### Added
+
+- **A sheet that reads from the right.** §18.3.1.87 `rightToLeft` is read: the
+  grid turns round — column A at the right edge, each cell's left and right
+  borders crossed over, the drawings mirrored but not turned (a right arrow
+  still points right) — and on paper the sheet meets the right margin. What a
+  cell shows does not turn: its text keeps the side its alignment names, and
+  runs on past the cell the way that side points. General alignment sets text
+  by its first strong character, on any sheet. `readingOrder` is read and
+  written back. tdf66668.xlsx, a Hebrew house budget, came out as its own
+  mirror image.
+
+- **The notes a sheet shows.** A note whose VML shape is visible is drawn
+  where Excel draws it: in its `x:Anchor` box, the comment's runs in their own
+  faces, VML's hard shadow, a line to the cell's corner. A window always shows
+  them; paper does under `cellComments="asDisplayed"`, and lists them all only
+  under `atEnd`. A window also flags every noted cell with Excel's red corner —
+  purple for a threaded comment — and shows the note on hover.
+
+- **A table drawn in the style it names.** §18.8.40: the sixty styles Excel
+  builds in — TableStyleLight1…21, Medium1…28, Dark1…11, from the standard's
+  own presetTableStyles.xml — and the ones a workbook defines in
+  `<tableStyles>`. Each region is laid over the table in §18.8.41's order — the
+  whole table, column and row stripes, last and first columns, header and
+  total rows, their corner cells — with its fill, weight, colour and rules, a
+  region's `vertical` and `horizontal` ruling between its cells. Stripes run
+  through the data rows only, from the first. The cell's own formatting stays
+  on top, edge by edge; its text takes the table's colour only where its font
+  names its colour as the Normal style does, which is how Excel tells a
+  `theme="1"` black from an `rgb` one. Six styles were set beside Excel's PDF
+  of them.
+
+- **Structured references.** `Table[Column]`, `[#All]`, `[#Data]`,
+  `[#Headers]`, `[#Totals]`, `[@Column]` and column ranges evaluate, and a
+  defined name that is itself a formula resolves — simple-monthly-budget.xlsx
+  tops its gauge at `SUM(tblIncome[Amount])`.
+
+- **A category axis on several levels.** A pivot chart labels its categories
+  on two levels and more (§21.2.2.115 `c:multiLvlStrCache`): the first labels
+  each bar, each later one is a row of groups under it, centred under what it
+  spans, ruled apart. WithChartSheet.xlsx's six bars stood in the first six of
+  sixteen slots under a jumble of years and measure names.
+
+- **CodeQL.** Code scanning with the `security-extended` queries runs on every
+  push to main, every pull request and weekly, over the library's TypeScript
+  and the workflows themselves.
+
+### Changed
+
+- **A workbook as HTML is Excel's window.** `convert('html')` (and the
+  `createConverter` facade) projects a workbook for a screen: every visible
+  tab, an empty one too, a `<section data-sheet>` under its name; one table a
+  sheet, all of its columns at full size; no print area, repeated titles, page
+  breaks, printed headings or centring; text running on across the row.
+  Drawings stand where they are anchored, over the cells. The window's
+  gridlines are drawn where `showGridLines` asks — on every edge no border
+  claims and no fill covers, giving way to a neighbour that rules it. Headers
+  and footers are print furniture and are left out. Until now it was the
+  printed pages without the paper: column bands a page wide, shrunk by the
+  print scale, the sheets run together, the drawings stacked above the grid.
+
+- **A workbook as SVG is a picture of each sheet.** Each sheet whole, on a
+  page of its own as large as what is on it — the way LibreOffice's whole-sheet
+  export draws one — with its gridlines where the window shows them. Every
+  glyph is drawn from its face's own outline, sized, condensed and slanted as
+  the PDF sets it, the words laid over it unseen for search and selection, so
+  the page is one drawing in any viewer with no font to find. Pictures, shapes
+  and their opacity, dashes and gradients are placed as the PDF places them.
+
+- **A workbook with no theme takes Office 2023's colours.** A theme colour in a
+  workbook that carries no theme part is Excel's own starting theme now —
+  accent1 156082, then E97132, 196B24, 0F9ED5, A02B93, 4EA72E — where it was
+  2013's 4472C4 set. Excel's PDF of such a workbook paints exactly these.
+
+### Fixed
+
+- **A tint as Excel works it.** §18.8.19 is worked in the Windows HLS model —
+  0…240, integer steps — in tenths of a percent, as Excel works it: all fifty
+  shades of its colour picker come out to the digit (4472C4 lightened 80% is
+  D9E1F2, where it was DAE3F3), and so do 471 cells of a 483-cell grid Excel
+  drew of 23 colours under 21 tints. A tint lightens an `rgb` or `indexed`
+  colour as it does a theme one.
+
+- **Columns as wide as Excel makes them.** A Chinese, Japanese or Korean face's
+  digit counts a pixel more than its half-width figure — 宋体 12 is 9px,
+  ＭＳ Ｐゴシック 11 and 宋体 11 are 8px — which every absolute position Excel
+  wrote beside an anchor in 45540_form_Footer.xlsx, 50299.xlsx and 55745.xlsx
+  agrees with. A column no `<col>` covers is its `baseColWidth` digits and
+  padding rounded up to Excel's step of eight pixels (Calibri's famous 64px).
+
+- **Drawings on paper.** A sheet's drawings print on the pages their cells do:
+  each page shows the part over its own rows and columns, cut off where they
+  end — a chart across a page break prints in two pieces — a drawing in the
+  print titles repeats on every page, nothing outside the print area prints,
+  and the rows a drawing reaches print. Hidden rows and columns take no room; a
+  drawing's anchor counts columns in the grid's own unit, and moves with a
+  printed headings band. Drawings cover the cells under them, and one marked
+  `fPrintsWithSheet="0"` stays on the screen. A control a VML group holds
+  stands where Excel put it — 45540_form_Footer.xlsx's 27 industry check boxes
+  had come out as a list after the form — and a box placed by points alone
+  lands on the rows Excel counted it by.
+
+- **Charts.** An automatic value axis takes Excel's ends and step, measured on
+  eight of its column charts. The category axis lies where it crosses the
+  value axis (`crosses`, `crossesAt`, `tickLblPos`) — on the zero line of a
+  chart with values below zero — and a reversed one keeps its values at its
+  start; a crowded axis is thinned by the labels it draws, a point's index
+  among them. A bar chart keeps its names inside its frame, and a long title
+  wraps. A chart's system colours are read and transformed (`sysClr` with
+  `lumMod`/`lumOff`). A chart sheet prints landscape, its chart filling the
+  page.
+
+- **Data bars and icon sets.** A data bar joins its 2009-extension half by id —
+  solid where `gradient="0"`, 10–90% long, inset, the full height of a merge,
+  in its theme or indexed colour; a colour scale, bar or icon set evaluates a
+  stop that is a formula; an icon set that shows its icon only hides the value.
+
+- **Cells.** An indent is three spaces of the Normal font a level, from the
+  side the cell is aligned to, where it was three digits from the left. A `?`
+  in a number format is a digit — Excel's own Accounting zero printed "-??" —
+  and a `0` pads the integer part. Printed headings shrink with a sheet the
+  print scale fits, where full-size row numbers grew every row. A line in a
+  row of fixed height stays while its baseline fits.
+
+- **HTML.** A run that names its font keeps its size, weight and colour — the
+  family's quotes closed the style attribute, and nearly every run fell back to
+  the browser's default face. A row keeps its height, a cell its vertical
+  alignment, a fixed grid its widths. A cell's edge goes to the neighbour that
+  rules it. A line draws its arrowheads, and a horizontal one draws at all.
+
+### Internals
+
+- What drawing a page asks of every writer — a line's token order, a justified
+  space's stretch, a faked italic's lean, dash patterns, a washed picture's
+  veil — lives in `layout/line-paint`, shared by the PDF and SVG writers.
+- Two benches beside the PDF one: `npm run stand:html` (port 4478) and
+  `npm run stand:svg` (4479) set a workbook's web page and SVG beside
+  LibreOffice's.
+
 ## 1.31.0
 
 A release about three documents and the pages they come back on.

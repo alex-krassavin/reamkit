@@ -150,6 +150,33 @@ describe('printed headings + bands (§18.3.1.70)', () => {
       expect(second?.properties.pageBreakBefore ?? false).toBe(false);
     }
   });
+
+  it('shrinks the headings with a sheet the print scale fits to the page', () => {
+    // Twenty wide columns fitted one page across: everything on the page is
+    // scaled, the row numbers' column and their type with it. Left at full
+    // size, 11pt numbers in rows brought down to a few points grew every row
+    // to hold them, and the sheet printed four times as tall as it is.
+    const xlsx = buildXlsx({
+      rows: grid(20, 20),
+      columns: [{ min: 1, max: 20, widthChars: 20 }],
+      printOptions: { headings: true },
+      fitToPage: true,
+      pageSetup: { fitToWidth: 1, fitToHeight: 0 },
+    });
+    const table = Ream.parse(xlsx).flow.body.find((el) => el.kind === 'table');
+    if (table?.kind !== 'table') throw new Error('expected a table');
+    const [numbersPt, firstPt] = table.table.grid;
+    const scale = firstPt! / ((20 * 7 + 5) * 0.75);
+    expect(scale).toBeLessThan(0.3);
+    expect(numbersPt).toBeCloseTo(23 * scale, 0);
+    const numberCell = table.table.rows[1]!.cells[0]!;
+    const dataCell = table.table.rows[1]!.cells[1]!;
+    const sizeOf = (cell: typeof numberCell): number | undefined =>
+      cell.content[0]?.kind === 'paragraph'
+        ? cell.content[0].paragraph.runs[0]?.properties.fontSizePt
+        : undefined;
+    expect(sizeOf(numberCell)).toBeCloseTo(sizeOf(dataCell)!, 2);
+  });
 });
 
 // A drawing WIDER than a band does not stop at the band's edge: the page after
@@ -168,21 +195,37 @@ describe('a drawing wider than its column band (E-SHEET SE1)', () => {
       anchor: { from: [0, 0], to: [6, 3] },
     },
   });
-  const images = (xlsx: Uint8Array): Array<number> =>
-    Ream.parse(xlsx)
-      .flow.body.filter((el) => el.kind === 'image')
-      .map((el) => el.image.float?.posH?.offsetPt ?? 0);
+  // Which band tables carry the picture over them (TableOverlay), and where
+  // each band's part of the sheet begins.
+  const carriers = (xlsx: Uint8Array): Array<number> =>
+    Ream.parse(xlsx).flow.body.flatMap((el) =>
+      el.kind === 'table' && el.table.overlay?.drawings.some((d) => d.kind === 'image')
+        ? [el.table.overlay.sheetLeftPt]
+        : [],
+    );
 
-  it('is emitted once per band it reaches, rebased to that band', () => {
-    const lefts = images(across);
+  it('rides every band it reaches, each showing its own part of it', () => {
+    const lefts = carriers(across);
     expect(lefts.length).toBe(3);
-    // The first copy keeps the sheet's own anchor; each next one is measured
-    // from its band's left edge, so the offsets step DOWN.
-    expect(lefts[1]).toBeLessThan(lefts[0]!);
-    expect(lefts[2]).toBeLessThan(lefts[1]!);
+    // Each band frames the columns after the last one's.
+    expect(lefts[1]).toBeGreaterThan(lefts[0]!);
+    expect(lefts[2]).toBeGreaterThan(lefts[1]!);
+    // …and each of its three pages draws the picture once, cut off at its
+    // band's edges: the part seen moves left by a band's width a page.
+    const flow = Ream.parse(across).flow;
+    const pages = layoutStyledDocument(flow.body, {
+      registry: FontRegistry.fromBytes(FONTS),
+      ...flowRenderOptions(flow),
+    }).pages;
+    const placed = pages.map((page) => page.commands.filter((c) => c.type === 'image'));
+    expect(placed.map((p) => p.length)).toEqual([1, 1, 1]);
+    const xs = placed.map((p) => p[0]!.x);
+    expect(xs[0]! - xs[1]!).toBeCloseTo(lefts[1]! - lefts[0]!, 0);
+    expect(xs[1]! - xs[2]!).toBeCloseTo(lefts[2]! - lefts[1]!, 0);
+    for (const p of placed) expect(p[0]!.window).toBeDefined();
   });
 
-  it('leaves a drawing inside one band alone', () => {
+  it('leaves the bands it does not reach alone', () => {
     const inside = buildXlsx({
       rows: grid(3, 6),
       columns: wideCols,
@@ -191,7 +234,7 @@ describe('a drawing wider than its column band (E-SHEET SE1)', () => {
         anchor: { from: [0, 0], to: [1, 3] },
       },
     });
-    expect(images(inside)).toHaveLength(1);
+    expect(carriers(inside)).toHaveLength(1);
   });
 
   it('still starts a page for the band after one that only a drawing crosses', () => {

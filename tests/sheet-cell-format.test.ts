@@ -105,6 +105,26 @@ describe('left indent (E-SHEET W6)', () => {
     expect(indent1).toBeGreaterThan(0);
     expect(indent2).toBeCloseTo(indent1 * 2, 4);
   });
+
+  it('indents three spaces a level, from the side the text is aligned to', () => {
+    // §18.8.1: "an increment of 1 represents 3 spaces … of the normal style
+    // font" — 7.46pt in Calibri 11, where LibreOffice measures 7.49 — and a
+    // right-aligned cell is indented from its right edge.
+    const styles = STYLES.replace(
+      '</cellXfs>',
+      '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" applyAlignment="1">' +
+        '<alignment horizontal="right" indent="2"/></xf></cellXfs>',
+    );
+    const props = (styleIndex: number) => {
+      const para = firstCell(buildXlsx({ rows: [[{ value: 'a', styleIndex }]], stylesXml: styles }))
+        .content[0];
+      return para?.kind === 'paragraph' ? para.paragraph.properties : {};
+    };
+    const right = props(10);
+    expect(right.indentLeft ?? 0).toBe(0);
+    expect(right.indentRight).toBeCloseTo(2 * 3 * (463 / 2048) * 11, 1);
+    expect(props(6).indentLeft).toBeCloseTo(right.indentRight ?? 0, 4);
+  });
 });
 
 describe('diagonal borders (E-SHEET W6)', () => {

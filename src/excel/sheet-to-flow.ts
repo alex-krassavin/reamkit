@@ -7,13 +7,16 @@
 
 import type {
   BodyElement,
+  CellNoteFlag,
   FloatAnchor,
   HeaderFooterReference,
+  Run,
+  RunProperties,
   Section,
   SectionProperties,
   ShapeBlock,
 } from '@/core/document-model';
-import type { ParsedWorksheet, XlsxStyles } from '@/core/spreadsheet-model';
+import type { ParsedWorksheet, SheetRichRun, XlsxStyles } from '@/core/spreadsheet-model';
 import type { Pt } from '@/core/ir';
 import type { FlowDoc } from '@/core/ir/flow';
 import type { Loss } from '@/core/ir/loss';
@@ -25,12 +28,14 @@ import type {
   SheetDoc,
   SheetFormControl,
 } from '@/core/ir/sheet';
+import type { DrawingBox } from '@/excel/column-bands';
 
 import { pt } from '@/core/ir';
 import { EMPTY_STYLE_SHEET, resolveBodyStyles } from '@/core/style-cascade';
 import { buildHeaderFooterContent } from '@/excel/header-footer';
 import {
   cellPaintsVisibly,
+  noteKey,
   printableHeightPt,
   printableWidthPt,
   resolvePrintArea,
@@ -39,6 +44,7 @@ import {
   slicerTable,
   worksheetToBody,
 } from '@/excel/print-model';
+import { parseCellRef } from '@/excel/cell-reference';
 
 // Synthetic relationship ids keying each sheet's header/footer band content in
 // FlowDoc.headersFooters (E-SHEET W4). The sheet's index is appended — the map
@@ -108,7 +114,45 @@ export interface ProjectSheetOptions {
    * which is which; markdown asks for this, and gets `# Sheet1`.
    */
   readonly sheetHeadings?: boolean;
+  /**
+   * Project for a SCREEN rather than for paper: each sheet as Excel shows it in
+   * its window, not as it prints. One table a sheet with all of its columns —
+   * no column bands, no print scale, no print area or repeated titles, no page
+   * breaks — its drawings where they are anchored, every visible tab including
+   * an empty one, and each sheet a section that names its tab
+   * ({@link Section.sheet}). Headers and footers are print furniture and are
+   * left out. A flowed target that shows the workbook, HTML, asks for this.
+   */
+  readonly screen?: boolean;
+  /**
+   * With {@link screen}: each sheet on a page of its own with room for all of
+   * it — no paper and no margins but a sliver — for a target that draws a
+   * sheet as an image of itself and then cuts the page down to what was drawn
+   * on it (`fitPagesToContent`). The SVG target asks for this.
+   */
+  readonly wholeSheetPages?: boolean;
 }
+
+/**
+ * A page with room for any sheet, and the sliver of margin a sheet drawn as an
+ * image keeps round itself, so that the rules on its outer edges are not cut
+ * in half.
+ */
+const WHOLE_SHEET_PAGE_PT = 1_000_000;
+const WHOLE_SHEET_MARGIN_PT = 2;
+const WHOLE_SHEET_SECTION: SectionProperties = {
+  pageSize: { width: pt(WHOLE_SHEET_PAGE_PT), height: pt(WHOLE_SHEET_PAGE_PT) },
+  margins: {
+    top: pt(WHOLE_SHEET_MARGIN_PT),
+    right: pt(WHOLE_SHEET_MARGIN_PT),
+    bottom: pt(WHOLE_SHEET_MARGIN_PT),
+    left: pt(WHOLE_SHEET_MARGIN_PT),
+    header: pt(0),
+    footer: pt(0),
+  },
+  headers: [],
+  footers: [],
+};
 
 /**
  * Project a {@link SheetDoc} into a {@link FlowDoc} (E-SHEET SA2): each grid sheet
@@ -132,6 +176,8 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
   // recorded alongside once its blocks are in.
   const sheetSections: Array<SectionProperties> = [];
   const sheetEnds: Array<number> = [];
+  const sheetNames: Array<string> = [];
+  const screen = options.screen === true;
   // Kept for FlowDoc.section, the single-section field the render path falls
   // back to and which other consumers still read.
   let firstSheetSection: SectionProperties | undefined;
@@ -174,7 +220,8 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
     // is three empty tabs whose FIRST has both, and keeping the LAST one
     // standing printed the blank third: a page with nothing on it where
     // LibreOffice prints two lines of formatted text.
-    if (!sheetPrintsAnything(ws, sheet.styles) && ws !== fallbackSheet) {
+    // A screen shows every tab there is, an empty one too.
+    if (!screen && !sheetPrintsAnything(ws, sheet.styles) && ws !== fallbackSheet) {
       printableSheets--;
       continue;
     }
@@ -184,13 +231,33 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
     // out of the projection. Its blocks are pushed below, in their old place.
     const scaleSink = { value: 1 };
     const bandSink = { lefts: [0] };
-    const drawingExtentPt = drawingReachPt(ws);
-    const printArea = resolvePrintArea(sheet.definedNames, sheetIdx);
-    const titleRows = resolvePrintTitleRows(sheet.definedNames, sheetIdx);
+    const headingSink = { dxPt: 0, dyPt: 0 };
+    // §18.7 — a note its VML shape SHOWS is on the sheet, over everything
+    // else: a window draws it there, and so does paper when the sheet prints
+    // its notes `asDisplayed`.
+    const notesShown = screen || ws.grid.pageSetup?.cellComments === 'asDisplayed';
+    const drawingExtentPt = drawingReachPt(ws, notesShown, screen);
+    // W8/W10: a control that knows where it belongs is DRAWN there, as the
+    // widget it is — the ones with no geometry in the file are listed after the
+    // grid instead (formControlBlocks / activeXBlocks below).
+    const controlBlocks = controlShapeBlocks(ws.formControls, ws.activeXControls);
+    const noteBlocks = notesShown
+      ? (ws.comments ?? []).flatMap((comment) => noteShapes(comment, ws.grid.rightToLeft === true))
+      : [];
+    // A print area and the titles repeated on every page are what PRINTS; the
+    // window shows the whole sheet, once.
+    const printArea = screen ? undefined : resolvePrintArea(sheet.definedNames, sheetIdx);
+    const titleRows = screen ? undefined : resolvePrintTitleRows(sheet.definedNames, sheetIdx);
     const gridBody = worksheetToBody(ws.grid, sheet.sharedStrings, sheet.styles, sheet.date1904, {
+      ...(screen ? { screen } : {}),
+      ...(screen && options.wholeSheetPages === true ? { image: true } : {}),
       ...(printArea ? { printArea } : {}),
       ...(titleRows ? { titleRows } : {}),
-      gridLines: ws.grid.printOptions?.gridLines === true,
+      // The grid a window draws is the view's; the one paper gets is the print
+      // options'.
+      gridLines: screen
+        ? ws.grid.showGridLines !== false
+        : ws.grid.printOptions?.gridLines === true,
       sheetGrids,
       sheetName: ws.name,
       definedNames: sheet.definedNames,
@@ -205,78 +272,101 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
         ? { defaultFontPt: sheet.styles.fonts[0].sizePt }
         : {}),
       ...(options.losses ? { losses: options.losses } : {}),
+      ...(screen && ws.comments && ws.comments.length > 0
+        ? { noteFlags: noteFlagsOf(ws.comments) }
+        : {}),
       scaleSink,
       bandSink,
+      headingSink,
       ...(drawingExtentPt ? { drawingExtentPt } : {}),
+      ...(screen ? {} : { drawingBoxesPt: drawingBoxes(ws, [...controlBlocks, ...noteBlocks]) }),
     });
 
-    // Each sheet's header/footer band and page geometry are its own.
-    const sheetSection = withHeaderFooter(
-      sectionFromWorksheet(ws.grid),
-      ws,
-      headersFooters,
-      scaleSink.value,
-      sheet.styles.fonts[0]?.sizePt,
-      printed,
-      options.fileName,
-      sheet.themePalette,
-      options.now,
-    );
+    // Each sheet's header/footer band and page geometry are its own — and a
+    // screen has no page for a header or footer to be printed on.
+    const sheetSection = screen
+      ? options.wholeSheetPages === true
+        ? WHOLE_SHEET_SECTION
+        : sectionFromWorksheet(ws.grid)
+      : withHeaderFooter(
+          sectionFromWorksheet(ws.grid),
+          ws,
+          headersFooters,
+          scaleSink.value,
+          sheet.styles.fonts[0]?.sizePt,
+          printed,
+          options.fileName,
+          sheet.themePalette,
+          options.now,
+        );
     if (printed === 0) firstSheetSection = sheetSection;
     sheetSections.push(sheetSection);
+    sheetNames.push(ws.name);
 
     // Each sheet after the first starts on its own PDF page. We do NOT print the
     // sheet name (Calc/Excel `--convert-to pdf` emit it nowhere), so the page
     // break is an empty page-break-only paragraph — unless the caller asked for
     // the names, in which case the heading is the paragraph and carries the
     // break itself, and there is no empty one to keep beside it.
+    // A screen has no pages to break: its sheets are sections, which name
+    // themselves.
     if (options.sheetHeadings === true) {
       body.push({
         kind: 'paragraph',
         paragraph: {
-          properties: { outlineLevel: 0, ...(printed > 0 ? { pageBreakBefore: true } : {}) },
+          properties: {
+            outlineLevel: 0,
+            ...(printed > 0 && !screen ? { pageBreakBefore: true } : {}),
+          },
           runs: [{ text: ws.name, properties: {} }],
         },
       });
-    } else if (printed > 0) {
+    } else if (printed > 0 && !screen) {
       body.push({ kind: 'paragraph', paragraph: PAGE_BREAK_PARAGRAPH });
     }
 
-    // The sheet's drawings go in BEFORE its grid. They are out-of-flow floats,
-    // so they consume no space and the grid still starts at the top — but a
-    // float lands on whatever page the layout has reached when it meets the
-    // block, and a wide sheet's grid is several pages of column bands. Emitted
-    // after them, every chart on the sheet ended up on the LAST of those pages:
-    // chart_hyperlink.xlsx anchors two charts under its data in the first band
-    // and we printed them alone on the second page.
-    //
-    // First page of the sheet, then — which is where a drawing anchored in the
-    // first band belongs, and that is nearly all of them. One anchored in a
-    // later band still lands too early; putting each drawing on its own band's
-    // page needs the band boundaries the grid projection keeps to itself.
-
-    // Collected rather than pushed: a drawing anchored in a later column band
-    // has to go in beside THAT band's table, not ahead of the whole grid.
+    // The sheet's drawings, collected rather than pushed. On paper they go
+    // down the pages with the grid, each table carrying the ones over the
+    // columns it prints (intoOverlays below): a float placed in the body lands
+    // on whatever page the layout has reached when it meets it, and a chart
+    // anchored under the first page's rows was cut off at that page's foot.
+    // A window, and a sheet with no grid, keep them in the body ahead of the
+    // grid — out-of-flow floats, which take no room — and a drawing anchored
+    // in a later column band goes in beside that band's table.
     const drawings: Array<BodyElement> = [];
 
     // §20.5: the sheet's chart frames render as blocks after its grid,
-    // anchor-ordered (resolved chart data lives in sheet.chartData).
+    // anchor-ordered (resolved chart data lives in sheet.chartData). Paper
+    // leaves out what the sheet keeps for the window (§20.5.2.3).
+    // §18.3.1.99 — a chart sheet's chart prints filling the page between its
+    // margins, whatever size the window last gave it.
+    const pageFilling = ws.grid.chartSheet === true && !screen;
     for (const ref of ws.charts ?? []) {
+      if (ref.screenOnly && !screen) continue;
       drawings.push({
         kind: 'chart',
-        chart: {
-          ...anchorFloat(ref.xPt, ref.yPt, scaleSink.value),
-          chartRelId: ref.chartPartPath,
-          width: pt(ref.widthPt * scaleSink.value),
-          height: pt(ref.heightPt * scaleSink.value),
-          paragraphProperties: {},
-        },
+        chart: pageFilling
+          ? {
+              ...anchorFloat(0, 0, 1),
+              chartRelId: ref.chartPartPath,
+              width: pt(printableWidthPt(ws.grid)),
+              height: pt(printableHeightPt(ws.grid)),
+              paragraphProperties: {},
+            }
+          : {
+              ...anchorFloat(ref.xPt, ref.yPt, scaleSink.value),
+              chartRelId: ref.chartPartPath,
+              width: pt(ref.widthPt * scaleSink.value),
+              height: pt(ref.heightPt * scaleSink.value),
+              paragraphProperties: {},
+            },
       });
     }
 
     // W1: anchored pictures render as image blocks after the grid (anchor-ordered;
     // bytes live in sheet.resources). Like charts, placement collapses to inline.
     for (const img of ws.images ?? []) {
+      if (img.screenOnly && !screen) continue;
       drawings.push({
         kind: 'image',
         image: {
@@ -292,22 +382,11 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
     // W2: anchored shapes render as floating shape blocks over the grid, at the
     // point their `twoCellAnchor` names — scaled with the sheet, since that is
     // what the anchor's tracks were measured in.
-    for (const shape of ws.shapes ?? []) {
-      drawings.push({
-        kind: 'shape',
-        shape: centreShape(
-          scaleShape(shape, scaleSink.value),
-          ws.grid,
-          drawingExtentPt,
-          scaleSink.value,
-        ),
-      });
+    for (const [i, shape] of (ws.shapes ?? []).entries()) {
+      if (!screen && ws.screenOnlyShapes?.has(i)) continue;
+      drawings.push({ kind: 'shape', shape: screen ? shape : scaleShape(shape, scaleSink.value) });
     }
 
-    // W8/W10: a control that knows where it belongs is DRAWN there, as the
-    // widget it is — the ones with no geometry in the file are listed after the
-    // grid instead (formControlBlocks / activeXBlocks below).
-    const controlBlocks = controlShapeBlocks(ws.formControls, ws.activeXControls);
     // A sheet whose drawings run wider than the page paginates ACROSS them, the
     // way a wide grid paginates across its columns ("down, then over"). With no
     // grid there are no column bands to follow, so the drawings are banded on
@@ -319,8 +398,9 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
     // grid produces — and every trace of it fell off the document. Down first,
     // then over, the way Excel paginates; a sheet whose drawings all fit one
     // page deep bands exactly as before.
+    // …none of which a screen does: it has no pages to band onto.
     const drawingBands =
-      gridBody.length === 0
+      gridBody.length === 0 && !screen
         ? bandDrawings(controlBlocks, printableHeightPt(ws.grid), scaleSink.value, DOWN).flatMap(
             (row) => bandDrawings(row, printableWidthPt(ws.grid), scaleSink.value),
           )
@@ -332,17 +412,53 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
       for (const shape of drawingBands[band]!) {
         drawings.push({
           kind: 'shape',
-          shape: centreShape(
-            scaleShape(shape, scaleSink.value),
-            ws.grid,
-            drawingExtentPt,
-            scaleSink.value,
-          ),
+          shape: screen ? shape : scaleShape(shape, scaleSink.value),
         });
       }
     }
 
-    body.push(...withDrawingsByBand(drawings, gridBody, bandSink.lefts));
+    for (const shape of noteBlocks) {
+      drawings.push({ kind: 'shape', shape: screen ? shape : scaleShape(shape, scaleSink.value) });
+    }
+
+    // On paper the drawings go down the pages with the grid: each table takes
+    // the ones over the columns it prints (TableOverlay), and every page shows
+    // the part over its own rows, cut off where they end. A drawing over none
+    // of the grid's columns lies outside what prints — unless no print area
+    // says so, when only a sheet with no grid to carry it is left, and it
+    // stands at its anchor as before.
+    const { grid, loose } = screen
+      ? { grid: gridBody, loose: drawings }
+      : intoOverlays(gridBody, drawings, printArea !== undefined);
+    // `<printOptions horizontalCentered/verticalCentered>` centres what is
+    // printed; a table carries its own drawings with it, and a loose shape is
+    // moved by itself.
+    const centred = screen
+      ? loose
+      : loose.map((el) =>
+          el.kind === 'shape'
+            ? {
+                ...el,
+                shape: centreShape(el.shape, ws.grid, drawingExtentPt, scaleSink.value),
+              }
+            : el,
+        );
+    // A grid printed with its headings stands that much right and down of
+    // where the anchors were measured from, and its drawings with it.
+    const placed = withDrawingsByBand(centred, grid, bandSink.lefts).map((el) =>
+      headingSink.dxPt > 0 || headingSink.dyPt > 0
+        ? nudgeFloat(el, headingSink.dxPt, headingSink.dyPt)
+        : el,
+    );
+    body.push(
+      ...(ws.grid.rightToLeft === true
+        ? mirrorDrawings(
+            placed,
+            screen ? undefined : printableWidthPt(ws.grid),
+            (drawingExtentPt?.widthPt ?? 0) * scaleSink.value,
+          )
+        : placed),
+    );
     // §SV2: slicer panels render as styled button boxes after the grid + charts.
     for (const slicer of ws.slicers ?? []) {
       body.push({ kind: 'table', table: slicerTable(slicer) });
@@ -360,12 +476,14 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
     // NamedSheetViews.xlsx says nothing at all, and neither reference prints a
     // word of either. A default the format states and both readers honour is
     // not an unstated one. The omission is reported rather than silent.
-    const printComments =
-      ws.grid.pageSetup?.cellComments === 'atEnd' ||
-      ws.grid.pageSetup?.cellComments === 'asDisplayed';
+    //
+    // `asDisplayed` prints the notes the sheet shows, where it shows them (see
+    // noteShapes above) and nothing for the rest; `atEnd` is this listing. A
+    // window shows its notes in place and never lists them.
+    const listComments = !screen && ws.grid.pageSetup?.cellComments === 'atEnd';
     if (ws.comments && ws.comments.length > 0) {
-      if (printComments) body.push(...commentBlocks(ws.comments));
-      else
+      if (listComments) body.push(...commentBlocks(ws.comments));
+      else if (!notesShown)
         options.losses?.push({
           severity: 'dropped',
           feature: 'comments',
@@ -374,6 +492,18 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
             `<pageSetup cellComments> is "${ws.grid.pageSetup?.cellComments ?? 'none'}"`,
           where: `sheet "${ws.name}"`,
         });
+      else {
+        const hidden = ws.comments.filter((c) => c.shown === undefined).length;
+        if (hidden > 0)
+          options.losses?.push({
+            severity: 'dropped',
+            feature: 'comments',
+            detail: screen
+              ? `${hidden} cell note(s) not shown — a hidden note shows only while its cell is pointed at`
+              : `${hidden} cell note(s) not printed — "asDisplayed" prints the notes the sheet shows`,
+            where: `sheet "${ws.name}"`,
+          });
+      }
     }
 
     // W8: form controls are listed in a "Form controls" section after the grid,
@@ -414,9 +544,15 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
       detail: `${String(sheet.metafilePictures)} picture(s) not rendered — a WMF/EMF/PICT metafile is replayed, not embedded; the anchor keeps its space`,
     });
   }
+  // On a screen every sheet is a section, one alone included: the section is
+  // what names it.
   const sections: Array<Section> =
-    sheetSections.length > 1
-      ? sheetSections.map((properties, i) => ({ properties, endIndex: sheetEnds[i]! }))
+    sheetSections.length > 1 || screen
+      ? sheetSections.map((properties, i) => ({
+          properties,
+          endIndex: sheetEnds[i]!,
+          ...(screen ? { sheet: { name: sheetNames[i]! } } : {}),
+        }))
       : [];
 
   return {
@@ -432,6 +568,168 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
     ...(sheet.chartData && sheet.chartData.size > 0 ? { charts: sheet.chartData } : {}),
     ...(headersFooters.size > 0 ? { headersFooters } : {}),
     ...(sheet.info ? { info: sheet.info } : {}),
+    // A sheet's drawings float over its cells and hide what they cover.
+    floatsOverText: true,
+  };
+}
+
+/**
+ * E-SHEET W7 — what a window flags: each cell that carries a note or a
+ * comment, with what hovering over it shows. A cell with a threaded comment is
+ * flagged as one, and reads as its conversation — Excel writes a legacy
+ * placeholder note beside every thread ("[Threaded comment] Your version of
+ * Excel allows you to read…"), which is no part of what anyone wrote.
+ *
+ * @param comments The sheet's legacy notes and threaded comments.
+ * @returns The flags by absolute cell (print-model `noteKey`).
+ */
+function noteFlagsOf(comments: ReadonlyArray<SheetComment>): Map<string, CellNoteFlag> {
+  const byCell = new Map<string, { notes: Array<string>; thread: Array<string> }>();
+  for (const c of comments) {
+    let cell: { row: number; column: number };
+    try {
+      cell = parseCellRef(c.ref);
+    } catch {
+      continue;
+    }
+    const k = noteKey(cell.row, cell.column);
+    const entry = byCell.get(k) ?? { notes: [], thread: [] };
+    (c.threaded ? entry.thread : entry.notes).push(c.author ? `${c.author}: ${c.text}` : c.text);
+    byCell.set(k, entry);
+  }
+  const out = new Map<string, CellNoteFlag>();
+  for (const [k, { notes, thread }] of byCell) {
+    out.set(
+      k,
+      thread.length > 0
+        ? { kind: 'thread', text: thread.join('\n') }
+        : { kind: 'note', text: notes.join('\n') },
+    );
+  }
+  return out;
+}
+
+// Excel's note box: the text stands this far in from the outline, and the
+// hard shadow falls VML's own default distance down and to the right.
+const NOTE_INSET_PT = 1.5;
+const NOTE_SHADOW_PT = 2;
+const NOTE_LINE_PT = 0.75;
+// What a note's runs fall back to: the face and size Excel writes its notes in.
+const NOTE_FACE = 'Tahoma';
+const NOTE_SIZE_PT = 9;
+
+/**
+ * A shown note as Excel draws it: a pale box at the place its VML anchor
+ * names, holding the note's text run by run (the bold "Author:" line first),
+ * with a hard shadow down and to the right — and a thin line from the box to
+ * its cell's top-right corner, ending there in a small arrowhead.
+ *
+ * Built in the file's column order like every other drawing. On a sheet that
+ * reads from the right mirrorDrawings moves both, and the line, which has a
+ * direction the box has not, is turned round here so it still meets the
+ * cell's corner — the corner, too, is mirrored.
+ *
+ * @param comment The note, with the box its shape shows, if it shows one.
+ * @param rtl     Whether the sheet reads from the right.
+ * @returns The line then the box (the box over the line), or nothing.
+ */
+function noteShapes(comment: SheetComment, rtl: boolean): Array<ShapeBlock> {
+  const box = comment.shown;
+  if (!box) return [];
+  const runs: ReadonlyArray<SheetRichRun> = comment.runs ?? [
+    { text: comment.author ? `${comment.author}:\n${comment.text}` : comment.text },
+  ];
+  const frame: ShapeBlock = {
+    ...anchorFloat(box.xPt, box.yPt, 1),
+    width: pt(box.widthPt),
+    height: pt(box.heightPt),
+    geometry: { kind: 'preset', preset: 'rect' },
+    fill: { kind: 'solid', colorHex: box.fillHex },
+    line: { width: pt(NOTE_LINE_PT), colorHex: box.lineHex },
+    ...(box.shadow
+      ? {
+          shadow: {
+            dxPt: NOTE_SHADOW_PT,
+            dyPt: NOTE_SHADOW_PT,
+            blurPt: 0,
+            colorHex: '000000',
+            alpha: 1,
+          },
+        }
+      : {}),
+    text: {
+      content: noteParagraphs(runs, box.textAlign),
+      insetLeft: pt(NOTE_INSET_PT),
+      insetTop: pt(NOTE_INSET_PT),
+      insetRight: pt(NOTE_INSET_PT),
+      insetBottom: pt(NOTE_INSET_PT),
+      anchor: 't',
+    },
+    paragraphProperties: {},
+  };
+  // The line leaves the box at its point nearest the corner; a corner the box
+  // covers needs none.
+  const cx = box.cornerXPt;
+  const cy = box.cornerYPt;
+  const sx = Math.min(Math.max(cx, box.xPt), box.xPt + box.widthPt);
+  const sy = Math.min(Math.max(cy, box.yPt), box.yPt + box.heightPt);
+  if (sx === cx && sy === cy) return [frame];
+  // A preset line runs from its frame's top-left to its bottom-right; the
+  // flips make it run from the box to the corner instead.
+  const flipH = sx > cx !== rtl;
+  const flipV = sy > cy;
+  const line: ShapeBlock = {
+    ...anchorFloat(Math.min(sx, cx), Math.min(sy, cy), 1),
+    width: pt(Math.abs(cx - sx)),
+    height: pt(Math.abs(cy - sy)),
+    geometry: { kind: 'preset', preset: 'line' },
+    fill: { kind: 'none' },
+    line: {
+      width: pt(NOTE_LINE_PT),
+      colorHex: box.lineHex,
+      tailEnd: { type: 'triangle', width: 'sm', length: 'sm' },
+    },
+    ...(flipH || flipV
+      ? { transform: { ...(flipH ? { flipH: true } : {}), ...(flipV ? { flipV: true } : {}) } }
+      : {}),
+    paragraphProperties: {},
+  };
+  return [line, frame];
+}
+
+// A note's text, one paragraph per line: its runs carry their own fonts, and
+// a line break inside a run starts the next paragraph. A break the text ends
+// with draws nothing.
+function noteParagraphs(
+  runs: ReadonlyArray<SheetRichRun>,
+  align: 'left' | 'center' | 'right' | undefined,
+): Array<BodyElement> {
+  const lines: Array<Array<Run>> = [[]];
+  for (const r of runs) {
+    r.text.split(/\r\n|\r|\n/).forEach((part, i) => {
+      if (i > 0) lines.push([]);
+      if (part.length > 0)
+        lines[lines.length - 1]!.push({ text: part, properties: noteRunProps(r) });
+    });
+  }
+  while (lines.length > 1 && lines[lines.length - 1]!.length === 0) lines.pop();
+  return lines.map((line) => ({
+    kind: 'paragraph' as const,
+    paragraph: { properties: align ? { alignment: align } : {}, runs: line },
+  }));
+}
+
+function noteRunProps(r: SheetRichRun): RunProperties {
+  const face = r.fontName ?? NOTE_FACE;
+  return {
+    fontFamily: { ascii: face, hAnsi: face, cs: face },
+    fontSizePt: pt(r.sizePt ?? NOTE_SIZE_PT),
+    colorHex: r.colorHex ?? '000000',
+    ...(r.bold ? { bold: true } : {}),
+    ...(r.italic ? { italic: true } : {}),
+    ...(r.underline ? { underline: 'single' as const } : {}),
+    ...(r.strike ? { strike: true } : {}),
+    ...(r.vertAlign ? { verticalAlign: r.vertAlign } : {}),
   };
 }
 
@@ -763,6 +1061,112 @@ function withDrawingsByBand(
   return out;
 }
 
+/**
+ * §20.5 — each printed table of a sheet takes the drawings over the columns it
+ * prints, into its overlay (TableOverlay): the layout then shows every page
+ * the part of them over its own rows. A table none of them lies over keeps no
+ * overlay.
+ *
+ * @param grid       The sheet's grid, its tables framed by the print model.
+ * @param drawings   The sheet's drawings at the print scale, in the sheet's frame.
+ * @param printArea  Whether a print area bounds what prints.
+ * @returns The grid with the drawings in it, and those over none of its
+ *   columns that still print — none, when a print area leaves them out.
+ */
+function intoOverlays(
+  grid: ReadonlyArray<BodyElement>,
+  drawings: ReadonlyArray<BodyElement>,
+  printArea: boolean,
+): { grid: Array<BodyElement>; loose: Array<BodyElement> } {
+  if (!grid.some((el) => el.kind === 'table' && el.table.overlay)) {
+    return { grid: [...grid], loose: [...drawings] };
+  }
+  const taken = new Set<BodyElement>();
+  const framed = grid.map((el): BodyElement => {
+    if (el.kind !== 'table' || !el.table.overlay) return el;
+    const o = el.table.overlay;
+    const over = drawings.filter((d) => {
+      const x = floatLeftPt(d);
+      const w = floatWidthPt(d) ?? 0;
+      return x !== undefined && x < o.sheetLeftPt + o.widthPt && x + w > o.sheetLeftPt;
+    });
+    for (const d of over) taken.add(d);
+    if (over.length === 0) {
+      const { overlay: _none, ...table } = el.table;
+      return { kind: 'table', table };
+    }
+    return { kind: 'table', table: { ...el.table, overlay: { ...o, drawings: over } } };
+  });
+  return {
+    grid: framed,
+    loose: drawings.filter((d) => !taken.has(d) && (!printArea || floatLeftPt(d) === undefined)),
+  };
+}
+
+/**
+ * Where each of the sheet's printed drawings lies, unscaled, in the sheet's
+ * own frame — what a band keeps its rows under (PrintModelOptions
+ * .drawingBoxesPt).
+ *
+ * @param ws     The sheet.
+ * @param shapes The controls and shown notes drawn as shapes, besides its own.
+ * @returns The boxes.
+ */
+function drawingBoxes(ws: Sheet, shapes: ReadonlyArray<ShapeBlock>): Array<DrawingBox> {
+  const boxes: Array<DrawingBox> = [];
+  const add = (xPt: number | undefined, yPt: number | undefined, w: number, h: number): void => {
+    if (xPt !== undefined && yPt !== undefined) boxes.push({ xPt, yPt, widthPt: w, heightPt: h });
+  };
+  for (const c of ws.charts ?? []) if (!c.screenOnly) add(c.xPt, c.yPt, c.widthPt, c.heightPt);
+  for (const p of ws.images ?? []) if (!p.screenOnly) add(p.xPt, p.yPt, p.widthPt, p.heightPt);
+  for (const [i, shape] of [...(ws.shapes ?? []), ...shapes].entries()) {
+    if (i < (ws.shapes ?? []).length && ws.screenOnlyShapes?.has(i)) continue;
+    add(shape.float?.posH?.offsetPt, shape.float?.posV?.offsetPt, shape.width, shape.height);
+  }
+  return boxes;
+}
+
+/**
+ * §18.3.1.87 `rightToLeft` — a drawing on a sheet that reads from the right is
+ * anchored to the same cells, and they stand mirrored: it keeps its size and
+ * its own orientation (Excel does not turn a right arrow round) but its place
+ * is counted from the grid's right edge. Each float is measured against the
+ * table it was placed beside — a band's own when the sheet bands, the first
+ * one for the floats that go in ahead of the grid — and on paper that table
+ * stands against the right margin (mirrorTable), or in the middle when the
+ * sheet asks to be centred.
+ *
+ * @param elements       The sheet's grid and floats, as withDrawingsByBand placed them.
+ * @param contentWidthPt The width between the margins, or undefined for a screen.
+ * @param extentWidthPt  How far the drawings reach, for a sheet with no table.
+ */
+function mirrorDrawings(
+  elements: ReadonlyArray<BodyElement>,
+  contentWidthPt: number | undefined,
+  extentWidthPt: number,
+): Array<BodyElement> {
+  let table = elements.find((el) => el.kind === 'table')?.table;
+  const out: Array<BodyElement> = [];
+  for (const el of elements) {
+    if (el.kind === 'table') table = el.table;
+    const x = floatLeftPt(el);
+    const w = floatWidthPt(el);
+    if (el.kind === 'table' || x === undefined || w === undefined) {
+      out.push(el);
+      continue;
+    }
+    const gridWidth = table ? table.grid.reduce((sum, c) => sum + c, 0) : extentWidthPt;
+    const left =
+      contentWidthPt === undefined
+        ? 0
+        : table?.properties.alignment === 'center'
+          ? (contentWidthPt - gridWidth) / 2
+          : contentWidthPt - gridWidth;
+    out.push(shiftFloatLeft(el, x - (left + gridWidth - x - w)));
+  }
+  return out;
+}
+
 /** A float's horizontal anchor, for the block kinds a sheet anchors. */
 function floatLeftPt(el: BodyElement): number | undefined {
   const float =
@@ -782,6 +1186,26 @@ function floatWidthPt(el: BodyElement): number | undefined {
   if (el.kind === 'image') return el.image.width;
   if (el.kind === 'shape') return el.shape.width;
   return undefined;
+}
+
+/** The same block with its anchor moved `dx` right and `dy` down. */
+function nudgeFloat(el: BodyElement, dx: number, dy: number): BodyElement {
+  const moved = <T extends { float?: FloatAnchor }>(block: T): T => {
+    const f = block.float;
+    if (!f) return block;
+    return {
+      ...block,
+      float: {
+        ...f,
+        ...(f.posH ? { posH: { ...f.posH, offsetPt: pt((f.posH.offsetPt ?? 0) + dx) } } : {}),
+        ...(f.posV ? { posV: { ...f.posV, offsetPt: pt((f.posV.offsetPt ?? 0) + dy) } } : {}),
+      },
+    };
+  };
+  if (el.kind === 'chart') return { ...el, chart: moved(el.chart) };
+  if (el.kind === 'image') return { ...el, image: moved(el.image) };
+  if (el.kind === 'shape') return { ...el, shape: moved(el.shape) };
+  return el;
 }
 
 /** The same block with its horizontal anchor measured from `by` points later. */
@@ -1049,10 +1473,16 @@ function activeXLabel(c: SheetActiveXControl): string {
  * past the last value is still printed, and on a sheet whose values sit in a
  * handful of cells it is the drawing that decides the page.
  */
-function drawingReachPt(ws: Sheet): { widthPt: number; heightPt: number } | undefined {
+function drawingReachPt(
+  ws: Sheet,
+  notesShown: boolean,
+  screen: boolean,
+): { widthPt: number; heightPt: number } | undefined {
   let widthPt = 0;
   let heightPt = 0;
-  for (const shape of ws.shapes ?? []) {
+  // What does not print reaches nothing on paper (§20.5.2.3).
+  for (const [i, shape] of (ws.shapes ?? []).entries()) {
+    if (!screen && ws.screenOnlyShapes?.has(i)) continue;
     widthPt = Math.max(widthPt, (shape.float?.posH?.offsetPt ?? 0) + shape.width);
     heightPt = Math.max(heightPt, (shape.float?.posV?.offsetPt ?? 0) + shape.height);
   }
@@ -1061,12 +1491,22 @@ function drawingReachPt(ws: Sheet): { widthPt: number; heightPt: number } | unde
   // 57362.xlsx's chart hung 350pt off the right edge of a page the grid alone
   // said needed no splitting.
   for (const c of ws.charts ?? []) {
+    if (c.screenOnly && !screen) continue;
     widthPt = Math.max(widthPt, (c.xPt ?? 0) + c.widthPt);
     heightPt = Math.max(heightPt, (c.yPt ?? 0) + c.heightPt);
   }
   for (const p of ws.images ?? []) {
+    if (p.screenOnly && !screen) continue;
     widthPt = Math.max(widthPt, (p.xPt ?? 0) + p.widthPt);
     heightPt = Math.max(heightPt, (p.yPt ?? 0) + p.heightPt);
+  }
+  // …and so is a note the sheet shows, where it is drawn — the shadow it
+  // casts included. Past the last used column, a note no grid reached out to
+  // fell off the image, and on a sheet that reads from the right off its edge.
+  for (const c of notesShown ? (ws.comments ?? []) : []) {
+    if (!c.shown) continue;
+    widthPt = Math.max(widthPt, c.shown.xPt + c.shown.widthPt + NOTE_SHADOW_PT);
+    heightPt = Math.max(heightPt, c.shown.yPt + c.shown.heightPt + NOTE_SHADOW_PT);
   }
   return widthPt > 0 || heightPt > 0 ? { widthPt, heightPt } : undefined;
 }
@@ -1091,9 +1531,12 @@ function centreShape(
   const size = section.pageSize;
   const margins = section.margins;
   if (!size || !margins) return shape;
-  const dx = options.horizontalCentered
-    ? (size.width - margins.left - margins.right - extent.widthPt * scale) / 2
-    : 0;
+  // A sheet that reads from the right is centred against its table instead,
+  // where its drawings are mirrored (mirrorDrawings).
+  const dx =
+    options.horizontalCentered && worksheet.rightToLeft !== true
+      ? (size.width - margins.left - margins.right - extent.widthPt * scale) / 2
+      : 0;
   const dy = options.verticalCentered
     ? (size.height - margins.top - margins.bottom - extent.heightPt * scale) / 2
     : 0;

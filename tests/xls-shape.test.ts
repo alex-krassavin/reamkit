@@ -9,6 +9,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import { buildXls, msoDrawingShapesRec, numberRec, txoRecs } from './fixtures/build-xls';
+import { sheetDrawings } from './fixtures/sheet-drawings';
 import { readXlsToSheetDoc } from '@/excel/xls/biff-reader';
 import { projectSheetDoc } from '@/excel/sheet-to-flow';
 import { Ream } from '@/core/converter/ream';
@@ -48,7 +49,7 @@ describe('xls drawing shapes (XLS-7)', () => {
 
   it('projects the shapes as shape blocks after the grid', () => {
     const flow = projectSheetDoc(readXlsToSheetDoc(shapeXls()));
-    expect(flow.body.filter((el) => el.kind === 'shape')).toHaveLength(2);
+    expect(sheetDrawings(flow.body).filter((el) => el.kind === 'shape')).toHaveLength(2);
   });
 
   it('adds no shapes to a sheet without a drawing (byte-zero)', () => {

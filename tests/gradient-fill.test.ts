@@ -54,6 +54,22 @@ describe('gradient fills (E-PDF EP16)', () => {
     expect(svg).toContain('fill="url(#grad0)"');
   });
 
+  it("centres a radial gradient where DrawingML puts it, in the shape's y-up box", async () => {
+    // `fillToRect` collapsed onto the top-left corner lights the shape from
+    // there (tdf114848.pptx). The box is the shape's local one, y up, so the
+    // top of the shape is y = 1 in it.
+    const radial = GRAD.replace(
+      '<a:lin ang="0"/>',
+      '<a:path path="circle"><a:fillToRect l="0" t="0" r="100000" b="100000"/></a:path>',
+    );
+    const svg = new TextDecoder().decode(
+      await Ream.parse(buildDocxFromBody(`<w:p>${shapeRun(radial)}</w:p>`)).convert('svg', {
+        fonts: FONTS,
+      }),
+    );
+    expect(svg).toMatch(/<radialGradient id="grad\d+" cx="0" cy="1"/u);
+  });
+
   it('renders a gradient shape as an HTML inline-SVG gradient', async () => {
     const html = new TextDecoder().decode(await Ream.parse(gradientDocx()).convert('html'));
     expect(html).toContain('<linearGradient');

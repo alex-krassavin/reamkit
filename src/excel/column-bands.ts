@@ -9,15 +9,16 @@ import type {
   BodyElement,
   CellProperties,
   TableCell,
+  TableOverlay,
   TableProperties,
   TableRow,
 } from '@/core/document-model';
 
 import type { Pt } from '@/core/ir';
-import { twipsToPt } from '@/core/ir';
+import { pt, twipsToPt } from '@/core/ir';
 
 /** §18.3.1.70 — the width of the row-number column, in twips. */
-const HEADING_COL_TWIPS = 460;
+export const HEADING_COL_TWIPS = 460;
 
 /** The A1-style letters of an absolute column index (0 → A, 26 → AA). */
 function columnLetters(index: number): string {
@@ -31,6 +32,22 @@ function columnLetters(index: number): string {
 }
 
 /**
+ * §18.3.1.70 — how the printed headings stand: the sheet's print scale shrinks
+ * them with it, as it shrinks everything else on the page.
+ */
+export interface HeadingBand {
+  /** How tall the letters row stands — exactly, so a drawing anchored to the
+   *  grid can be moved down by just as much. */
+  readonly lettersPt?: number;
+  /** The row-number column's width, in twips; {@link HEADING_COL_TWIPS} unscaled. */
+  readonly colTwips?: number;
+  /** The size the letters and numbers are set in; the sheet's default unscaled. */
+  readonly fontPt?: number;
+  /** The width of the boxes' lines; 0.5pt unscaled. */
+  readonly lineWidthPt?: number;
+}
+
+/**
  * Wrap a grid in its printed row and column headings (§18.3.1.70 `headings`):
  * the column letters across the top, the row numbers down the left, each in a
  * thin box, the way the sheet looks on screen. A banded sheet gets its own
@@ -38,17 +55,21 @@ function columnLetters(index: number): string {
  *
  * @param rows       The band's rows.
  * @param widths     The band's column widths in twips.
- * @param colStart   The absolute index of the band's first column.
+ * @param columns    The absolute index of each of those columns — a hidden
+ *   one between them is skipped, and so is its letter.
  * @param rowNumbers The absolute 1-based row number of each row.
+ * @param band       How the headings stand, at the print scale.
  * @returns The rows and widths with the heading band added.
  */
 export function withHeadingBand(
   rows: ReadonlyArray<TableRow>,
   widths: ReadonlyArray<number>,
-  colStart: number,
+  columns: ReadonlyArray<number>,
   rowNumbers: ReadonlyArray<number>,
+  band: HeadingBand = {},
 ): { rows: Array<TableRow>; widths: Array<number> } {
-  const border = { style: 'single' as const, width: 0.5 as Pt, colorHex: '808080' };
+  const { lettersPt, colTwips = HEADING_COL_TWIPS, fontPt, lineWidthPt = 0.5 } = band;
+  const border = { style: 'single' as const, width: lineWidthPt as Pt, colorHex: '808080' };
   const borders = { top: border, bottom: border, left: border, right: border };
   const head = (text: string): TableCell => ({
     properties: { borders, verticalAlign: 'center' as const },
@@ -57,23 +78,39 @@ export function withHeadingBand(
         kind: 'paragraph' as const,
         paragraph: {
           properties: { alignment: 'center' as const },
-          runs: [{ text, properties: {} }],
+          runs: [{ text, properties: fontPt !== undefined ? { fontSizePt: pt(fontPt) } : {} }],
         },
       },
     ],
   });
   const letters: Array<TableCell> = [head('')];
-  for (let i = 0; i < widths.length; i++) letters.push(head(columnLetters(colStart + i)));
+  for (let i = 0; i < widths.length; i++) letters.push(head(columnLetters(columns[i] ?? i)));
   // The letters repeat at the top of every page, the way both references print
   // them — which is what a table's leading header row already does.
-  const out: Array<TableRow> = [{ properties: { isHeader: true }, cells: letters }];
+  const out: Array<TableRow> = [
+    {
+      properties: {
+        isHeader: true,
+        ...(lettersPt !== undefined ? { height: pt(lettersPt), heightRule: 'exact' as const } : {}),
+      },
+      cells: letters,
+    },
+  ];
   rows.forEach((row, i) => {
     out.push({
       properties: row.properties,
       cells: [head(String(rowNumbers[i] ?? i + 1)), ...row.cells],
     });
   });
-  return { rows: out, widths: [HEADING_COL_TWIPS, ...widths] };
+  return { rows: out, widths: [colTwips, ...widths] };
+}
+
+/** Where a drawing lies on its sheet, in points from the sheet's top-left corner. */
+export interface DrawingBox {
+  readonly xPt: number;
+  readonly yPt: number;
+  readonly widthPt: number;
+  readonly heightPt: number;
 }
 
 /** A contiguous run of columns that prints together as one band (E-SHEET SE1). */
@@ -136,9 +173,12 @@ export function computeColumnBands(
  * @param titleRowIndex The print-title row, or -1.
  * @param drawingReachTwips How far right the sheet's drawings reach (0 if none).
  * @param headings §18.3.1.70 — the printed row/column headings, when the sheet
- *   asks for them: the absolute index of the grid's first column and the sheet
- *   row number of each emitted row. Each band gets ITS OWN letters, which is
- *   what both references print across the top of a continuation page.
+ *   asks for them: the absolute index of each column and the sheet row number
+ *   of each emitted row. Each band gets ITS OWN letters, which is what both
+ *   references print across the top of a continuation page.
+ * @param sheet    §20.5 — where the grid's first column stands on the sheet and
+ *   where its printed drawings lie, at the print scale: each band is framed
+ *   for the drawings over it (TableOverlay) and keeps the rows they cover.
  * @returns One table body element per band, in band order.
  */
 export function bandedTables(
@@ -148,12 +188,46 @@ export function bandedTables(
   properties: TableProperties,
   titleRowIndex = -1,
   drawingReachTwips = 0,
-  headings?: { readonly colStart: number; readonly rowNumbers: ReadonlyArray<number> },
+  headings?: {
+    readonly columns: ReadonlyArray<number>;
+    readonly rowNumbers: ReadonlyArray<number>;
+    readonly band?: HeadingBand;
+  },
+  sheet?: { readonly sheetLeftPt: number; readonly drawings: ReadonlyArray<DrawingBox> },
 ): Array<BodyElement> {
   return bands.flatMap((band, bandIndex) => {
     const bandLeft = columnWidths.slice(0, band.start).reduce((sum, w) => sum + w, 0);
     const bandTwips = columnWidths.slice(band.start, band.end + 1);
     const grid = bandTwips.map((w) => twipsToPt(w));
+    // §20.5 — the part of the sheet this band prints, for the drawings over
+    // it (TableOverlay): put in later, and empty until then.
+    const sheetLeftPt = sheet ? sheet.sheetLeftPt + twipsToPt(bandLeft) : 0;
+    const sheetRightPt = sheetLeftPt + grid.reduce((sum, w) => sum + w, 0);
+    const overlayAt = (leftPt: number): { overlay?: TableOverlay } =>
+      sheet
+        ? {
+            overlay: {
+              sheetLeftPt: pt(sheetLeftPt),
+              widthPt: pt(sheetRightPt - sheetLeftPt),
+              leftPt: pt(leftPt),
+              drawings: [],
+            },
+          }
+        : {};
+    // A row a drawing in this band lies over prints, whatever its cells hold:
+    // the drawing is cut off where the band's rows end.
+    const underDrawing = (row: TableRow): boolean => {
+      const top = row.properties.sheetTopPt;
+      if (top === undefined || !sheet) return false;
+      const bottom = top + (row.properties.height ?? 0);
+      return sheet.drawings.some(
+        (d) =>
+          d.xPt < sheetRightPt &&
+          d.xPt + d.widthPt > sheetLeftPt &&
+          d.yPt < bottom &&
+          d.yPt + d.heightPt > top,
+      );
+    };
     const bandRowNumbers = [...(headings?.rowNumbers ?? [])];
     const bandRows: Array<TableRow> = rows.map((row, rowIndex) => {
       const cells = sliceRowCells(row.cells, band);
@@ -182,7 +256,11 @@ export function bandedTables(
     // three cells in row 30 and ran to twelve pages, eleven of them empty. The
     // used range already ends at the last row with content, so on the first
     // band — which spans it — this trims nothing.
-    while (bandRows.length > 1 && !rowDrawsSomething(bandRows[bandRows.length - 1]!)) {
+    while (
+      bandRows.length > 1 &&
+      !rowDrawsSomething(bandRows[bandRows.length - 1]!) &&
+      !underDrawing(bandRows[bandRows.length - 1]!)
+    ) {
       bandRows.pop();
       bandRowNumbers.pop();
     }
@@ -201,12 +279,19 @@ export function bandedTables(
       : [{ rows: bandRows, numbers: bandRowNumbers }];
     return parts.map((part) => {
       const headed = headings
-        ? withHeadingBand(part.rows, bandTwips, headings.colStart + band.start, part.numbers)
+        ? withHeadingBand(
+            part.rows,
+            bandTwips,
+            headings.columns.slice(band.start, band.end + 1),
+            part.numbers,
+            headings.band,
+          )
         : undefined;
       return {
         kind: 'table' as const,
         table: {
           properties,
+          ...overlayAt(headed ? twipsToPt(headings?.band?.colTwips ?? HEADING_COL_TWIPS) : 0),
           grid: headed ? headed.widths.map((w) => twipsToPt(w)) : grid,
           // The break that starts a band belongs to whatever row comes FIRST.
           // Set on the band's own first row above, prepending the letters row

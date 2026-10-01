@@ -48,6 +48,10 @@ export type {
   SparklineKind,
   ParsedSparkline,
   ExcelTable,
+  TableStyleElementType,
+  TableStyleRegion,
+  TableStyleFormat,
+  XlsxTableStyle,
   PivotTable,
   SheetPane,
 } from '@/core/spreadsheet-model/types';

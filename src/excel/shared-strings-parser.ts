@@ -115,9 +115,15 @@ function extractSi(si: unknown): ParsedSi {
   return { text, runs: anyFormatting && runs.length > 0 ? runs : undefined };
 }
 
-// §18.4.7 <rPr> — a run's own font properties (NOT a cellXf index): bold,
-// italic, underline, colour (rgb), size and vertical alignment.
-function richRun(text: string, rPr: unknown): SheetRichRun {
+/**
+ * §18.4.7 `<rPr>` — a run's own font properties (NOT a cellXf index): bold,
+ * italic, underline, strike, colour (rgb), size, vertical alignment and face.
+ * Shared with the comments part, whose `<text>` is the same rich string.
+ *
+ * @param text The run's text.
+ * @param rPr  The parsed `<rPr>` node, if the run has one.
+ */
+export function richRun(text: string, rPr: unknown): SheetRichRun {
   const p = rPr && typeof rPr === 'object' ? (rPr as Record<string, unknown>) : undefined;
   if (!p) return { text };
   const out: { -readonly [K in keyof SheetRichRun]: SheetRichRun[K] } = { text };
@@ -141,6 +147,8 @@ function richRun(text: string, rPr: unknown): SheetRichRun {
   if (sz !== undefined) out.sizePt = sz;
   const vert = attrStr(p['vertAlign'], 'val');
   if (vert === 'superscript' || vert === 'subscript') out.vertAlign = vert;
+  const face = attrStr(p['rFont'], 'val');
+  if (face) out.fontName = face;
   return out;
 }
 

@@ -1,0 +1,46 @@
+name: CodeQL
+
+# Static security analysis with GitHub CodeQL: the library's TypeScript and
+# these workflows themselves. Results land in Security → Code scanning, and a
+# pull request gets a check that flags the alerts it introduces.
+#
+# Ream parses documents nobody vouches for, so the query suite is
+# `security-extended`: it adds the denial-of-service and injection queries
+# (polynomial regular expressions, XML entity expansion, …) that the default
+# suite leaves out. What is scanned is set in .github/codeql/codeql-config.yml.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Weekly, so queries added to CodeQL reach code nobody has touched since.
+    - cron: '23 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write # upload the results to code scanning
+    strategy:
+      fail-fast: false
+      matrix:
+        # Neither needs a build: CodeQL reads TypeScript and workflow YAML as
+        # they are.
+        language: [javascript-typescript, actions]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+          queries: security-extended
+          config-file: ./.github/codeql/codeql-config.yml
+      - uses: github/codeql-action/analyze@v4
+        with:
+          category: /language:${{ matrix.language }}

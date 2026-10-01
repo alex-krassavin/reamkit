@@ -113,6 +113,59 @@ describe('parseChart', () => {
     expect(parseChart(enc.encode(BAR_CHART), defaultColorResolver)!.valAxisMax).toBeUndefined();
   });
 
+  it('reads a category axis labelled on two levels (§21.2.2.115)', () => {
+    // A pivot chart's categories: a measure under each bar, a year over each
+    // pair of them. The first level labels the categories, the second groups.
+    const cat =
+      '<c:cat><c:multiLvlStrRef><c:f>Sheet2!$A$4:$B$7</c:f><c:multiLvlStrCache><c:ptCount val="4"/>' +
+      '<c:lvl><c:pt idx="0"><c:v>Cost</c:v></c:pt><c:pt idx="1"><c:v>Revenue</c:v></c:pt>' +
+      '<c:pt idx="2"><c:v>Cost</c:v></c:pt><c:pt idx="3"><c:v>Revenue</c:v></c:pt></c:lvl>' +
+      '<c:lvl><c:pt idx="0"><c:v>2005</c:v></c:pt><c:pt idx="2"><c:v>2006</c:v></c:pt></c:lvl>' +
+      '</c:multiLvlStrCache></c:multiLvlStrRef></c:cat>';
+    const chart = parseChart(
+      enc.encode(BAR_CHART.replace(/<c:cat>[\s\S]*?<\/c:cat>/, cat)),
+      defaultColorResolver,
+    )!;
+    expect(chart.categories).toEqual(['Cost', 'Revenue', 'Cost', 'Revenue']);
+    expect(chart.categoryGroups).toEqual([
+      [
+        { start: 0, label: '2005' },
+        { start: 2, label: '2006' },
+      ],
+    ]);
+  });
+
+  it('reads where the category axis crosses and where its labels stand (§21.2.2.33)', () => {
+    const catAx = (inner: string): ReturnType<typeof parseChart> =>
+      parseChart(
+        enc.encode(
+          BAR_CHART.replace(
+            '<c:catAx><c:axId val="111"/></c:catAx>',
+            `<c:catAx><c:axId val="111"/>${inner}</c:catAx>`,
+          ),
+        ),
+        defaultColorResolver,
+      );
+    const plain = catAx('<c:tickLblPos val="nextTo"/><c:crosses val="autoZero"/>')!;
+    expect(plain.catAxisCrosses).toBeUndefined();
+    expect(plain.catTickLabelPos).toBeUndefined();
+    const low = catAx('<c:tickLblPos val="low"/><c:crosses val="max"/>')!;
+    expect(low.catTickLabelPos).toBe('low');
+    expect(low.catAxisCrosses).toBe('max');
+    expect(catAx('<c:crossesAt val="2.5"/>')!.catAxisCrosses).toBe(2.5);
+    // …and where the value axis crosses the category axis.
+    const valMax = parseChart(
+      enc.encode(
+        BAR_CHART.replace(
+          '<c:valAx><c:axId val="222"/></c:valAx>',
+          '<c:valAx><c:axId val="222"/><c:crosses val="max"/></c:valAx>',
+        ),
+      ),
+      defaultColorResolver,
+    )!;
+    expect(valMax.valAxisCrosses).toBe('max');
+  });
+
   it('reads the chart-space frame beside <c:chart> (§21.2.2.198)', () => {
     const framed = BAR_CHART.replace(
       '<c:chart>',
@@ -133,6 +186,30 @@ describe('parseChart', () => {
     );
     expect(bare!.frameFillHex).toBeUndefined();
     expect(bare!.frameLineHex).toBeUndefined();
+    // A system colour names it as well as an RGB one does — Excel 2007 and
+    // 2010 rule a chart in windowText — and is transformed like any other:
+    // windowText at lumMod 15% + lumOff 85% is a light grey.
+    const system = (clr: string): string =>
+      BAR_CHART.replace(
+        '<c:chart>',
+        `<c:spPr><a:ln w="12700"><a:solidFill>${clr}</a:solidFill></a:ln></c:spPr><c:chart>`,
+      );
+    expect(
+      parseChart(
+        enc.encode(system('<a:sysClr val="windowText" lastClr="000000"/>')),
+        defaultColorResolver,
+      )!.frameLineHex,
+    ).toBe('000000');
+    expect(
+      parseChart(
+        enc.encode(
+          system(
+            '<a:sysClr val="windowText" lastClr="000000"><a:lumMod val="15000"/><a:lumOff val="85000"/></a:sysClr>',
+          ),
+        ),
+        defaultColorResolver,
+      )!.frameLineHex,
+    ).toBe('D9D9D9');
   });
 
   it('reads the frame rule width and dash, and the plot rectangle (§21.2.2.145)', () => {

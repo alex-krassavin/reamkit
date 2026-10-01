@@ -783,6 +783,13 @@ describe('xls frozen panes + row heights (XLS-VIEW)', () => {
   it('emits no pane when nothing is frozen', () => {
     expect(sheet([numberRec(0, 0, 1)]).sheets[0]!.grid.pane).toBeUndefined();
   });
+
+  it('reads a window that hides its gridlines from Window2', () => {
+    const shown = sheet([numberRec(0, 0, 1), window2Rec(false)]);
+    const hidden = sheet([numberRec(0, 0, 1), window2Rec(false, false)]);
+    expect(shown.sheets[0]!.grid.showGridLines).toBeUndefined();
+    expect(hidden.sheets[0]!.grid.showGridLines).toBe(false);
+  });
 });
 
 describe('SST continuation strings (XLS-2)', () => {

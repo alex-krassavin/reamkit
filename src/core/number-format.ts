@@ -859,33 +859,50 @@ function applyNumericSection(value: number, format: string, negativeSection: boo
   // §18.8.31 — a comma against the last placeholder is not punctuation, it is a
   // scale: the value is shown in thousands (or millions, per comma).
   if (scaleCommas > 0) magnitude /= 1000 ** scaleCommas;
-  let decimals = 0;
-  for (const c of decFormat) if (c === '0' || c === '#') decimals++;
+  // §18.8.31 — three digit placeholders: `0` shows its digit, an
+  // insignificant zero included; `#` shows only a significant one; `?` shows
+  // a SPACE for an insignificant zero, so a column of them lines up. Excel's
+  // Accounting format writes its zero as `_-* "-"??_-`, and with `?` read as
+  // a literal every zero in such a column printed "-??".
+  const decPlaceholders = [...decFormat].filter((c) => c === '0' || c === '#' || c === '?');
+  const decimals = decPlaceholders.length;
 
   const fixed = toFixedDecimal(magnitude, decimals);
   const [intRaw, decRaw] = fixed.split('.');
-  const useThousands = /,(?=\d)/.test(intFormat) || /[0#],[0#]/.test(intFormat);
-  const intStr = useThousands ? intRaw!.replace(/\B(?=(\d{3})+(?!\d))/g, ',') : intRaw!;
+  const useThousands = /,(?=\d)/.test(intFormat) || /[0#?],[0#?]/.test(intFormat);
 
   // §18.8.31: `#` is an *optional* digit, so an integer part of zero written
   // only with `#` renders as nothing at all — format `#` blanks a zero cell
   // (tdf171828 uses that to hide a whole column of them) and `#.##` shows ".5"
-  // rather than "0.5". A `0` or `?` anywhere in the integer part forces it.
-  let numberPart = intRaw === '0' && !/[0?]/.test(intFormat) ? '' : intStr;
+  // rather than "0.5". Only a `0` forces it; a `?` puts a space in its place.
+  // …and the placeholders a short number leaves over pad it: with zeros under
+  // `0` — "000" shows 5 as "005" — with spaces under `?`, with nothing under
+  // `#`. The zeros are digits, grouped with the rest.
+  const intPlaceholders = [...intFormat].filter((c) => c === '0' || c === '#' || c === '?');
+  const significant = intRaw === '0' && !intFormat.includes('0') ? '' : intRaw!;
+  let zeros = '';
+  let spaces = '';
+  for (let i = 0; i < intPlaceholders.length - significant.length; i++) {
+    if (intPlaceholders[i] === '0') zeros += '0';
+    else if (intPlaceholders[i] === '?') spaces += ' ';
+  }
+  const intDigits = zeros + significant;
+  let numberPart =
+    spaces + (useThousands ? intDigits.replace(/\B(?=(\d{3})+(?!\d))/g, ',') : intDigits);
   if (decimals > 0) {
     let dec = decRaw ?? ''.padEnd(decimals, '0');
     if (dec.length < decimals) dec = dec.padEnd(decimals, '0');
     // '0' forces its digit, '#' drops it when the whole tail from there on is
-    // zeros — so `#.##` renders 0.5 as ".5", 0.55 as ".55" and 0.05 as ".05".
-    // The decision is per position and reads rightwards, which is why the tail
-    // is trimmed after the fact rather than skipped as it is built.
-    let kept = '';
-    for (let i = 0; i < decFormat.length; i++) {
-      const placeholder = decFormat[i]!;
-      if (placeholder === '0' || placeholder === '#') kept += dec[i] ?? '0';
-    }
-    for (let i = kept.length - 1; i >= 0 && kept[i] === '0' && decFormat[i] === '#'; i--) {
-      kept = kept.substring(0, i);
+    // zeros — so `#.##` renders 0.5 as ".5", 0.55 as ".55" and 0.05 as ".05" —
+    // and '?' turns such a zero into a space. The decision is per position and
+    // reads rightwards, which is why the tail is settled after the fact rather
+    // than as it is built.
+    let kept = dec.substring(0, decimals);
+    for (let i = kept.length - 1; i >= 0 && kept[i] === '0'; i--) {
+      if (decPlaceholders[i] === '#') kept = kept.substring(0, i);
+      else if (decPlaceholders[i] === '?')
+        kept = `${kept.substring(0, i)} ${kept.substring(i + 1)}`;
+      else break;
     }
     // Strip trailing # of empty content.
     if (kept.length > 0) numberPart += '.' + kept;
@@ -918,7 +935,7 @@ function splitNumberFormat(cleaned: string): SplitNumberFormat {
   let lastDigit = -1;
   for (let i = 0; i < cleaned.length; i++) {
     const ch = cleaned[i]!;
-    if (ch === '0' || ch === '#') {
+    if (ch === '0' || ch === '#' || ch === '?') {
       if (firstDigit < 0) firstDigit = i;
       lastDigit = i;
     }

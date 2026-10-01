@@ -101,6 +101,10 @@ export interface XlsxSheetSpec {
   readonly colBreaks?: ReadonlyArray<number>;
   /** <sheetView><pane state="frozen"> — frozen leading rows / columns. */
   readonly freeze?: { readonly rows?: number; readonly cols?: number };
+  /** <sheetView showGridLines="0"> — the window draws no gridlines. */
+  readonly hideGridLines?: boolean;
+  /** <sheetView rightToLeft="1"> — column A at the right edge. */
+  readonly rightToLeft?: boolean;
   /** Raw <conditionalFormatting> markup injected into the worksheet. */
   readonly conditionalFormattingXml?: string;
   /** Raw <dataValidations> markup injected into the worksheet (E-SHEET SV1). */
@@ -189,7 +193,19 @@ export interface XlsxBuilderOptions {
     readonly ref: string;
     readonly author: string;
     readonly text: string;
+    /**
+     * The note is SHOWN: its VML shape carries `<x:Visible/>` and this
+     * `<x:Anchor>` ("col, dx px, row, dy px, col, dx px, row, dy px"). When
+     * any comment has one, a vmlDrawing part is written for all of them.
+     */
+    readonly shownAnchor?: string;
   }>;
+  /**
+   * Raw legacy VML shapes (the inside of `<xml>`, `v:`/`o:`/`x:` prefixes) for
+   * the FIRST sheet's `vmlDrawing1.vml` — form controls, groups. Not combined
+   * with shown `comments`, which write that part themselves.
+   */
+  readonly legacyVmlXml?: string;
   /** Threaded comments on the FIRST sheet + the workbook person directory (W7). */
   readonly threadedComments?: ReadonlyArray<{
     readonly ref: string;
@@ -222,7 +238,13 @@ export interface XlsxBuilderOptions {
     readonly name?: string;
     readonly styleName?: string;
     readonly showRowStripes?: boolean;
+    readonly showColumnStripes?: boolean;
+    readonly showFirstColumn?: boolean;
     readonly headerRowCount?: number;
+    /** `totalsRowCount` — the totals row at the foot of the table. */
+    readonly totalsRowCount?: number;
+    /** `<tableColumn name>`s, left to right — what a structured reference names. */
+    readonly columns?: ReadonlyArray<string>;
     /** <autoFilter><filterColumn colId><filters><filter val> — slicer selection. */
     readonly filters?: ReadonlyArray<{
       readonly colId: number;
@@ -280,7 +302,11 @@ function buildTableXml(
     name?: string;
     styleName?: string;
     showRowStripes?: boolean;
+    showColumnStripes?: boolean;
+    showFirstColumn?: boolean;
     headerRowCount?: number;
+    totalsRowCount?: number;
+    columns?: ReadonlyArray<string>;
     filters?: ReadonlyArray<{ colId: number; values: ReadonlyArray<string> }>;
   },
 ): string {
@@ -288,6 +314,7 @@ function buildTableXml(
   const style = t.styleName ?? 'TableStyleMedium2';
   const stripes = t.showRowStripes === false ? '0' : '1';
   const hrc = t.headerRowCount !== undefined ? ` headerRowCount="${t.headerRowCount}"` : '';
+  const trc = t.totalsRowCount ? ` totalsRowCount="${t.totalsRowCount}"` : ' totalsRowShown="0"';
   const autoFilter =
     t.filters && t.filters.length > 0
       ? `<autoFilter ref="${t.ref}">${t.filters
@@ -300,10 +327,16 @@ function buildTableXml(
           .join('')}</autoFilter>`
       : `<autoFilter ref="${t.ref}"/>`;
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<table xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" id="${id}" name="${name}" displayName="${name}" ref="${t.ref}"${hrc} totalsRowShown="0">
+<table xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" id="${id}" name="${name}" displayName="${name}" ref="${t.ref}"${hrc}${trc}>
   ${autoFilter}
-  <tableColumns count="1"><tableColumn id="1" name="Col"/></tableColumns>
-  <tableStyleInfo name="${style}" showFirstColumn="0" showLastColumn="0" showRowStripes="${stripes}" showColumnStripes="0"/>
+  ${
+    t.columns
+      ? `<tableColumns count="${t.columns.length}">${t.columns
+          .map((c, i) => `<tableColumn id="${i + 1}" name="${escapeXml(c)}"/>`)
+          .join('')}</tableColumns>`
+      : '<tableColumns count="1"><tableColumn id="1" name="Col"/></tableColumns>'
+  }
+  <tableStyleInfo name="${style}" showFirstColumn="${t.showFirstColumn ? 1 : 0}" showLastColumn="0" showRowStripes="${stripes}" showColumnStripes="${t.showColumnStripes ? 1 : 0}"/>
 </table>`;
 }
 
@@ -554,14 +587,19 @@ export function buildXlsx(
       : '';
     const freezeCols = sheet.freeze?.cols ?? 0;
     const freezeRows = sheet.freeze?.rows ?? 0;
+    const gridAttr =
+      (sheet.hideGridLines ? ' showGridLines="0"' : '') +
+      (sheet.rightToLeft ? ' rightToLeft="1"' : '');
     const sheetViewsXml =
       freezeCols > 0 || freezeRows > 0
-        ? '<sheetViews><sheetView workbookViewId="0"><pane' +
+        ? `<sheetViews><sheetView${gridAttr} workbookViewId="0"><pane` +
           (freezeCols > 0 ? ` xSplit="${freezeCols}"` : '') +
           (freezeRows > 0 ? ` ySplit="${freezeRows}"` : '') +
           ` state="frozen"/>` +
           '</sheetView></sheetViews>'
-        : '';
+        : gridAttr
+          ? `<sheetViews><sheetView${gridAttr} workbookViewId="0"/></sheetViews>`
+          : '';
     const xml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
   ${sheetPrXml}
@@ -845,6 +883,59 @@ ${rels.join('\n')}
       entries,
       first.fileName,
       '  <Relationship Id="rIdCmt" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments" Target="../comments1.xml"/>',
+    );
+    // The note shapes, when any note is shown: Excel's own markup, one shape
+    // per comment, `<x:Visible/>` on the shown ones.
+    if (options.comments.some((c) => c.shownAnchor !== undefined)) {
+      const shapes = options.comments.map((c, i) => {
+        const col = /^[A-Z]+/.exec(c.ref)![0];
+        const column = [...col].reduce((n, ch) => n * 26 + ch.charCodeAt(0) - 64, 0) - 1;
+        const row = Number(c.ref.slice(col.length)) - 1;
+        return (
+          `<v:shape id="_x0000_s${1025 + i}" type="#_x0000_t202" style="position:absolute;` +
+          `margin-left:100pt;margin-top:10pt;width:96pt;height:55.5pt;z-index:${i + 1}` +
+          `${c.shownAnchor === undefined ? ';visibility:hidden' : ''}" fillcolor="#ffffe1" o:insetmode="auto">` +
+          '<v:fill color2="#ffffe1"/><v:shadow on="t" color="black" obscured="t"/>' +
+          '<v:path o:connecttype="none"/>' +
+          '<v:textbox style="mso-direction-alt:auto"><div style="text-align:left"></div></v:textbox>' +
+          '<x:ClientData ObjectType="Note"><x:MoveWithCells/><x:SizeWithCells/>' +
+          `<x:Anchor>${c.shownAnchor ?? '1, 15, 0, 2, 3, 15, 4, 16'}</x:Anchor>` +
+          `<x:AutoFill>False</x:AutoFill><x:Row>${row}</x:Row><x:Column>${column}</x:Column>` +
+          `${c.shownAnchor === undefined ? '' : '<x:Visible/>'}</x:ClientData></v:shape>`
+        );
+      });
+      entries['xl/drawings/vmlDrawing1.vml'] = encoder.encode(
+        '<xml xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office" ' +
+          'xmlns:x="urn:schemas-microsoft-com:office:excel">' +
+          '<v:shapetype id="_x0000_t202" coordsize="21600,21600" o:spt="202" path="m,l,21600r21600,l21600,xe">' +
+          '<v:stroke joinstyle="miter"/><v:path gradientshapeok="t" o:connecttype="rect"/></v:shapetype>' +
+          `${shapes.join('')}</xml>`,
+      );
+      first.xml = first.xml.replace(
+        '</worksheet>',
+        '<legacyDrawing xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:id="rIdVml"/></worksheet>',
+      );
+      mergeWorksheetRel(
+        entries,
+        first.fileName,
+        '  <Relationship Id="rIdVml" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/vmlDrawing" Target="../drawings/vmlDrawing1.vml"/>',
+      );
+    }
+  }
+  if (options.legacyVmlXml !== undefined && sheetParts.length > 0) {
+    const first = sheetParts[0]!;
+    entries['xl/drawings/vmlDrawing1.vml'] = encoder.encode(
+      '<xml xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office" ' +
+        `xmlns:x="urn:schemas-microsoft-com:office:excel">${options.legacyVmlXml}</xml>`,
+    );
+    first.xml = first.xml.replace(
+      '</worksheet>',
+      '<legacyDrawing xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:id="rIdVml"/></worksheet>',
+    );
+    mergeWorksheetRel(
+      entries,
+      first.fileName,
+      '  <Relationship Id="rIdVml" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/vmlDrawing" Target="../drawings/vmlDrawing1.vml"/>',
     );
   }
   // W7: threaded comments — the part + a worksheet rel; persons → workbook rel.

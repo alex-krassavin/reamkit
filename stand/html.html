@@ -1,0 +1,503 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>XLSX → HTML stand</title>
+    <style>
+      :root {
+        --bg: #eef0f3;
+        --panel: #ffffff;
+        --ink: #1b1e23;
+        --muted: #6a717c;
+        --line: #d9dde3;
+        --accent: #2f6fde;
+        --red: #de2626;
+        --blue: #1870e8;
+        --ok: #1f8a4c;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        font: 13px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+        background: var(--bg);
+        color: var(--ink);
+        display: grid;
+        grid-template-columns: 260px 1fr;
+        height: 100vh;
+        overflow: hidden;
+      }
+      aside {
+        background: var(--panel);
+        border-right: 1px solid var(--line);
+        overflow: auto;
+      }
+      aside h1 {
+        font-size: 13px;
+        margin: 0;
+        padding: 12px 14px;
+        border-bottom: 1px solid var(--line);
+        letter-spacing: 0.02em;
+      }
+      .sort {
+        padding: 8px 14px;
+        border-bottom: 1px solid var(--line);
+        color: var(--muted);
+        font-size: 12px;
+        display: flex;
+        gap: 6px;
+        align-items: center;
+      }
+      .sort button {
+        padding: 2px 8px;
+        font-size: 12px;
+      }
+      #count {
+        margin-left: auto;
+      }
+      .doc {
+        padding: 9px 14px;
+        border-bottom: 1px solid var(--line);
+        cursor: pointer;
+      }
+      .doc:hover {
+        background: #f6f7f9;
+      }
+      .doc.on {
+        background: #e8f0fd;
+        box-shadow: inset 3px 0 0 var(--accent);
+      }
+      .doc .n {
+        font-weight: 600;
+        word-break: break-all;
+      }
+      .doc .m {
+        color: var(--muted);
+        font-size: 12px;
+        margin-top: 2px;
+        font-variant-numeric: tabular-nums;
+      }
+      .bad {
+        color: var(--red);
+        font-weight: 600;
+      }
+      .spin {
+        color: var(--accent);
+        font-weight: 600;
+      }
+      main {
+        overflow: auto;
+        min-width: 0;
+      }
+      header {
+        position: sticky;
+        top: 0;
+        z-index: 2;
+        background: var(--panel);
+        border-bottom: 1px solid var(--line);
+        padding: 10px 16px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px 14px;
+        align-items: center;
+      }
+      header .title {
+        font-weight: 700;
+        font-size: 14px;
+        margin-right: auto;
+        word-break: break-all;
+      }
+      button,
+      .btn {
+        font: inherit;
+        border: 1px solid var(--line);
+        background: #fff;
+        border-radius: 6px;
+        padding: 4px 10px;
+        cursor: pointer;
+        color: var(--ink);
+        text-decoration: none;
+      }
+      button:hover,
+      .btn:hover {
+        border-color: var(--accent);
+      }
+      button.on {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: #fff;
+      }
+      .legend {
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .legend b.r {
+        color: var(--red);
+      }
+      .legend b.b {
+        color: var(--blue);
+      }
+      .banner {
+        margin: 12px 16px 0;
+        padding: 8px 12px;
+        border-radius: 6px;
+        background: #fff7e0;
+        border: 1px solid #f0d78a;
+        white-space: pre-wrap;
+        font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+        max-height: 180px;
+        overflow: auto;
+      }
+      .banner.err {
+        background: #fdecec;
+        border-color: #f2b8b8;
+      }
+      .page {
+        margin: 14px 16px 22px;
+      }
+      .page h2 {
+        font-size: 12px;
+        margin: 0 0 6px;
+        color: var(--muted);
+        font-weight: 600;
+        font-variant-numeric: tabular-nums;
+      }
+      .row {
+        display: grid;
+        grid-template-columns: repeat(var(--cols), minmax(0, 1fr));
+        gap: 10px;
+        align-items: start;
+      }
+      figure {
+        margin: 0;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        overflow: hidden;
+      }
+      figcaption {
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        padding: 5px 8px;
+        border-bottom: 1px solid var(--line);
+        color: var(--muted);
+        text-transform: uppercase;
+      }
+      figure.gold figcaption {
+        color: #9a6b00;
+      }
+      figure.ours figcaption {
+        color: var(--accent);
+      }
+      figure img {
+        display: block;
+        width: 100%;
+        height: auto;
+        cursor: zoom-in;
+      }
+      .none {
+        padding: 40px 10px;
+        text-align: center;
+        color: var(--muted);
+      }
+      .flip figure {
+        max-width: 1100px;
+      }
+      .flip img {
+        cursor: default;
+      }
+      .keys {
+        color: var(--muted);
+        font-size: 12px;
+        width: 100%;
+      }
+      kbd {
+        font: 11px ui-monospace, Menlo, monospace;
+        border: 1px solid var(--line);
+        border-bottom-width: 2px;
+        border-radius: 4px;
+        padding: 0 4px;
+        background: #fafbfc;
+      }
+      .empty {
+        padding: 40px;
+        color: var(--muted);
+      }
+      .flip figure {
+        max-width: none;
+        overflow: auto;
+      }
+      .flip figure img {
+        width: auto;
+        max-width: none;
+      }
+      details.losses {
+        margin: 12px 16px 0;
+        padding: 6px 12px;
+        border-radius: 6px;
+        background: #f4f6fa;
+        border: 1px solid var(--line);
+        font-size: 12px;
+      }
+      details.losses summary {
+        cursor: pointer;
+        color: var(--muted);
+        font-weight: 600;
+      }
+      details.losses ul {
+        margin: 6px 0 2px;
+        padding-left: 18px;
+      }
+      .sev {
+        font: 11px ui-monospace, Menlo, monospace;
+        color: var(--muted);
+      }
+    </style>
+  </head>
+  <body>
+    <aside>
+      <h1 id="title">Sheet stand</h1>
+      <div class="sort">
+        sort
+        <button data-sort="worst">worst first</button>
+        <button data-sort="name">name</button>
+        <span id="count"></span>
+      </div>
+      <div id="docs"></div>
+    </aside>
+    <main id="main"><div class="empty">Loading…</div></main>
+    <script>
+      // The stand says what its columns are and which files to open beside them.
+      let LAYERS = [];
+      let LINKS = [];
+      const remembered = (() => {
+        try {
+          return localStorage.getItem('stand-html-sort');
+        } catch {
+          return null;
+        }
+      })();
+      const view = {
+        name: decodeURIComponent(location.hash.slice(1)) || null,
+        mode: 'grid',
+        layer: 'ours',
+        shown: '',
+        sort: remembered === 'name' ? 'name' : 'worst',
+      };
+      let last = null;
+
+      const pct = (x) => (x * 100).toFixed(1) + '%';
+      const ago = (t) => {
+        const s = Math.round((Date.now() - t) / 1000);
+        return s < 60 ? s + 's ago' : s < 3600 ? Math.round(s / 60) + 'm ago' : Math.round(s / 3600) + 'h ago';
+      };
+      const esc = (s) =>
+        String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+      const worst = (r) => r.scores.reduce((m, s) => Math.max(m, s.missing, s.extra), 0);
+      const dims = (s) => (s ? `${s.width}×${s.height}` : '—');
+
+      async function poll() {
+        try {
+          const res = await fetch('/api/state', { cache: 'no-store' });
+          last = await res.json();
+          const bench = last.bench || {};
+          LAYERS = (bench.layers || []).map((l) => ({ ...l, cls: l.key }));
+          LINKS = bench.links || [];
+          if (bench.title) {
+            document.title = bench.title;
+            document.getElementById('title').textContent = bench.title;
+          }
+          render();
+        } catch {
+          /* the server restarts; try again */
+        }
+        setTimeout(poll, 1500);
+      }
+
+      function render() {
+        if (!last) return;
+        const score = (d) => (d.report ? worst(d.report) + (d.report.errors.length ? 2 : 0) : -1);
+        const docs = [...last.docs].sort((a, b) =>
+          view.sort === 'name' ? a.name.localeCompare(b.name) : score(b) - score(a) || a.name.localeCompare(b.name),
+        );
+        last.ordered = docs.map((d) => d.name);
+        if (!view.name && docs.length) view.name = docs[0].name;
+        for (const b of document.querySelectorAll('[data-sort]')) {
+          b.className = b.dataset.sort === view.sort ? 'on' : '';
+          b.onclick = () => {
+            view.sort = b.dataset.sort;
+            try {
+              localStorage.setItem('stand-html-sort', view.sort);
+            } catch {
+              /* a private window keeps nothing */
+            }
+            render();
+          };
+        }
+        const built = last.docs.filter((d) => d.report).length;
+        document.getElementById('count').textContent = `${built}/${last.docs.length} built`;
+        const list = docs
+          .map((d) => {
+            const r = d.report;
+            const busy = last.building === d.name ? ' <span class="spin">building…</span>' : last.queue.includes(d.name) ? ' <span class="spin">queued</span>' : '';
+            let meta = 'not built';
+            if (r) {
+              const sheets = r.perSheet ? `${r.sheets.length} sheet${r.sheets.length === 1 ? '' : 's'}` : `${r.sourcePages.count} sheet${r.sourcePages.count === 1 ? '' : 's'} · whole`;
+              const errs = r.errors.length ? ' <span class="bad">error</span>' : '';
+              meta = `${sheets} · worst ${pct(worst(r))} · ${ago(r.builtAt)}${errs}`;
+            }
+            return `<div class="doc${d.name === view.name ? ' on' : ''}" data-name="${esc(d.name)}"><div class="n">${esc(d.name)}${busy}</div><div class="m">${meta}</div></div>`;
+          })
+          .join('');
+        document.getElementById('docs').innerHTML = list || '<div class="empty">No workbooks. <br>npm run stand:html:build -- book.xlsx</div>';
+        for (const el of document.querySelectorAll('.doc')) el.onclick = () => select(el.dataset.name);
+
+        const doc = last.docs.find((d) => d.name === view.name);
+        const key = JSON.stringify([view.name, view.mode, view.layer, doc && doc.report && doc.report.builtAt, last.building, last.building ? last.log.length : 0]);
+        if (key === view.shown) return;
+        view.shown = key;
+        drawMain(doc);
+      }
+
+      function drawMain(doc) {
+        const main = document.getElementById('main');
+        if (!doc) {
+          main.innerHTML = '<div class="empty">Put a workbook on the stand: <code>npm run stand:html:build -- book.xlsx</code></div>';
+          return;
+        }
+        const r = doc.report;
+        const v = r ? r.builtAt : 0;
+        const base = `/out/${encodeURIComponent(doc.name)}/`;
+        const modeBtn = (m, label) => `<button data-mode="${m}" class="${view.mode === m ? 'on' : ''}">${label}</button>`;
+        const layerBtns =
+          view.mode === 'flip'
+            ? LAYERS.map((l, i) => `<button data-layer="${l.key}" class="${view.layer === l.key ? 'on' : ''}">${i + 1} ${l.key}</button>`).join('')
+            : '';
+        const links = r
+          ? LINKS.map((l) => `<a class="btn" target="_blank" href="${base}${l.path}?v=${v}">${esc(l.label)}</a>`).join('')
+          : '';
+        let html = `<header>
+          <span class="title">${esc(doc.name)}</span>
+          ${modeBtn('grid', 'Side by side')}${modeBtn('flip', 'Flip')}${layerBtns}
+          <button id="rebuild">Rebuild <kbd>R</kbd></button>
+          <button id="rebuild-all">Rebuild all</button>
+          ${links}
+          <span class="legend"><b class="r">red</b> gold has it, ours not · <b class="b">blue</b> ours has it, gold not</span>
+          <span class="keys"><kbd>↑</kbd><kbd>↓</kbd> file · <kbd>F</kbd> flip (1:1) / side by side · <kbd>1</kbd>–<kbd>${LAYERS.length}</kbd> layer · <kbd>Space</kbd> gold ⇄ ours · <kbd>R</kbd> rebuild</span>
+        </header>`;
+        if (last.building === doc.name) html += `<div class="banner">building ${esc(doc.name)}…\n${esc(last.log.slice(-2000))}</div>`;
+        if (r && r.errors.length) html += `<div class="banner err">${esc(r.errors.join('\n'))}</div>`;
+        if (!r) {
+          main.innerHTML = html + '<div class="empty">Not built yet — press R.</div>';
+          wire();
+          return;
+        }
+        if (r.losses.length) {
+          const items = r.losses.map((l) => `<li><span class="sev">${esc(l.severity)} · ${esc(l.feature)}</span> ${esc(l.detail)}</li>`).join('');
+          html += `<details class="losses"><summary>${r.losses.length} loss${r.losses.length === 1 ? '' : 'es'} reported by the writer</summary><ul>${items}</ul></details>`;
+        }
+        if (!r.perSheet) {
+          html += `<div class="banner">Our page does not say where its sheets begin, so each side is drawn whole: the gold from its first sheet's heading down, ours from the top.</div>`;
+        }
+        const count = Math.max(r.sheets.length, r.sourcePages.drawn);
+        for (let k = 1; k <= count; k++) {
+          const s = r.sheets[k - 1];
+          const has = {
+            source: k <= r.sourcePages.drawn,
+            gold: !!(s && s.drawn && s.drawn.gold),
+            ours: !!(s && s.drawn && s.drawn.ours),
+            diff: !!(s && s.score),
+          };
+          if (!LAYERS.some((l) => l.key === 'source') && !s) continue;
+          const title = s ? `Sheet ${k} · ${esc(s.name)} — gold ${dims(s.gold)} · ours ${dims(s.ours)}` : `Source page ${k}`;
+          const score = s && s.score ? ` — missing ${pct(s.score.missing)} · extra ${pct(s.score.extra)}` : '';
+          const layers = view.mode === 'flip' ? LAYERS.filter((l) => l.key === view.layer) : LAYERS;
+          const figs = layers
+            .map((l) => {
+              const img = has[l.key] ? `<img loading="lazy" src="${base}${l.key}-${k}.png?v=${v}" data-layer="${l.key}" data-page="${k}" alt="${l.key} ${k}">` : '<div class="none">—</div>';
+              return `<figure class="${l.cls}"><figcaption>${l.label}</figcaption>${img}</figure>`;
+            })
+            .join('');
+          html += `<section class="page${view.mode === 'flip' ? ' flip' : ''}" id="p${k}"><h2>${title}${score}</h2><div class="row" style="--cols:${layers.length}">${figs}</div></section>`;
+        }
+        main.innerHTML = html;
+        wire();
+      }
+      function wire() {
+        for (const b of document.querySelectorAll('[data-mode]')) b.onclick = () => setMode(b.dataset.mode);
+        for (const b of document.querySelectorAll('button[data-layer]')) b.onclick = () => setLayer(b.dataset.layer);
+        const rb = document.getElementById('rebuild');
+        if (rb) rb.onclick = () => rebuild(view.name);
+        const ra = document.getElementById('rebuild-all');
+        if (ra) ra.onclick = () => rebuild('*');
+        for (const img of document.querySelectorAll('.row img')) {
+          img.onclick = () => {
+            if (view.mode === 'flip') return;
+            view.layer = img.dataset.layer;
+            const page = img.dataset.page;
+            setMode('flip');
+            document.getElementById('p' + page)?.scrollIntoView();
+          };
+        }
+      }
+
+      function select(name) {
+        view.name = name;
+        location.hash = encodeURIComponent(name);
+        render();
+        document.getElementById('main').scrollTop = 0;
+      }
+      function setMode(m) {
+        view.mode = m;
+        render();
+      }
+      function setLayer(l) {
+        view.layer = l;
+        view.mode = 'flip';
+        const main = document.getElementById('main');
+        const top = main.scrollTop;
+        render();
+        main.scrollTop = top;
+      }
+      async function rebuild(name) {
+        if (!name) return;
+        await fetch('/api/build?name=' + encodeURIComponent(name), { method: 'POST' });
+        view.shown = '';
+        setTimeout(poll, 100);
+      }
+
+      document.addEventListener('keydown', (e) => {
+        if (e.metaKey || e.ctrlKey || e.altKey) return;
+        const names = last ? last.ordered || last.docs.map((d) => d.name) : [];
+        const at = names.indexOf(view.name);
+        if (e.key === 'ArrowDown' && at < names.length - 1) {
+          e.preventDefault();
+          select(names[at + 1]);
+        } else if (e.key === 'ArrowUp' && at > 0) {
+          e.preventDefault();
+          select(names[at - 1]);
+        } else if (e.key === 'f' || e.key === 'F') {
+          setMode(view.mode === 'flip' ? 'grid' : 'flip');
+        } else if (e.key >= '1' && e.key <= String(LAYERS.length)) {
+          setLayer(LAYERS[Number(e.key) - 1].key);
+        } else if (e.key === ' ') {
+          e.preventDefault();
+          setLayer(view.layer === 'ours' ? 'gold' : 'ours');
+        } else if (e.key === 'r' || e.key === 'R') {
+          rebuild(view.name);
+        }
+      });
+      window.addEventListener('hashchange', () => {
+        const n = decodeURIComponent(location.hash.slice(1));
+        if (n && n !== view.name) {
+          view.name = n;
+          render();
+        }
+      });
+      poll();
+    </script>
+  </body>
+</html>
