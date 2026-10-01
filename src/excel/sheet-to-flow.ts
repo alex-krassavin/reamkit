@@ -407,7 +407,16 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
       }
     }
 
-    body.push(...withDrawingsByBand(drawings, gridBody, bandSink.lefts));
+    const placed = withDrawingsByBand(drawings, gridBody, bandSink.lefts);
+    body.push(
+      ...(ws.grid.rightToLeft === true
+        ? mirrorDrawings(
+            placed,
+            screen ? undefined : printableWidthPt(ws.grid),
+            (drawingExtentPt?.widthPt ?? 0) * scaleSink.value,
+          )
+        : placed),
+    );
     // §SV2: slicer panels render as styled button boxes after the grid + charts.
     for (const slicer of ws.slicers ?? []) {
       body.push({ kind: 'table', table: slicerTable(slicer) });
@@ -834,6 +843,47 @@ function withDrawingsByBand(
   return out;
 }
 
+/**
+ * §18.3.1.87 `rightToLeft` — a drawing on a sheet that reads from the right is
+ * anchored to the same cells, and they stand mirrored: it keeps its size and
+ * its own orientation (Excel does not turn a right arrow round) but its place
+ * is counted from the grid's right edge. Each float is measured against the
+ * table it was placed beside — a band's own when the sheet bands, the first
+ * one for the floats that go in ahead of the grid — and on paper that table
+ * stands against the right margin (mirrorTable), or in the middle when the
+ * sheet asks to be centred.
+ *
+ * @param elements       The sheet's grid and floats, as withDrawingsByBand placed them.
+ * @param contentWidthPt The width between the margins, or undefined for a screen.
+ * @param extentWidthPt  How far the drawings reach, for a sheet with no table.
+ */
+function mirrorDrawings(
+  elements: ReadonlyArray<BodyElement>,
+  contentWidthPt: number | undefined,
+  extentWidthPt: number,
+): Array<BodyElement> {
+  let table = elements.find((el) => el.kind === 'table')?.table;
+  const out: Array<BodyElement> = [];
+  for (const el of elements) {
+    if (el.kind === 'table') table = el.table;
+    const x = floatLeftPt(el);
+    const w = floatWidthPt(el);
+    if (el.kind === 'table' || x === undefined || w === undefined) {
+      out.push(el);
+      continue;
+    }
+    const gridWidth = table ? table.grid.reduce((sum, c) => sum + c, 0) : extentWidthPt;
+    const left =
+      contentWidthPt === undefined
+        ? 0
+        : table?.properties.alignment === 'center'
+          ? (contentWidthPt - gridWidth) / 2
+          : contentWidthPt - gridWidth;
+    out.push(shiftFloatLeft(el, x - (left + gridWidth - x - w)));
+  }
+  return out;
+}
+
 /** A float's horizontal anchor, for the block kinds a sheet anchors. */
 function floatLeftPt(el: BodyElement): number | undefined {
   const float =
@@ -1162,9 +1212,12 @@ function centreShape(
   const size = section.pageSize;
   const margins = section.margins;
   if (!size || !margins) return shape;
-  const dx = options.horizontalCentered
-    ? (size.width - margins.left - margins.right - extent.widthPt * scale) / 2
-    : 0;
+  // A sheet that reads from the right is centred against its table instead,
+  // where its drawings are mirrored (mirrorDrawings).
+  const dx =
+    options.horizontalCentered && worksheet.rightToLeft !== true
+      ? (size.width - margins.left - margins.right - extent.widthPt * scale) / 2
+      : 0;
   const dy = options.verticalCentered
     ? (size.height - margins.top - margins.bottom - extent.heightPt * scale) / 2
     : 0;

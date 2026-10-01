@@ -376,7 +376,7 @@ function worksheetXml(
     `<worksheet xmlns="${MAIN_NS}" xmlns:r="${R_NS}">` +
     (grid.fitToPage ? '<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>' : '') +
     dimension +
-    sheetViewsXml(grid.pane, grid.showGridLines) +
+    sheetViewsXml(grid.pane, grid.showGridLines, grid.rightToLeft) +
     colsXml +
     `<sheetData>${rowsXml}</sheetData>` +
     mergesXml +
@@ -402,9 +402,15 @@ function worksheetXml(
 // §18.3.1.66 <sheetViews><sheetView><pane> — re-emit a frozen pane so the freeze
 // survives a round-trip. The reader reads only xSplit/ySplit/state; topLeftCell
 // and activePane are written for Excel's benefit but ignored on re-read. A
-// sheet that hides its gridlines says so on the view (§18.3.1.87).
-function sheetViewsXml(pane: SheetPane | undefined, showGridLines?: boolean): string {
-  const grid = showGridLines === false ? ' showGridLines="0"' : '';
+// sheet that hides its gridlines says so on the view (§18.3.1.87), and so does
+// one that reads from the right.
+function sheetViewsXml(
+  pane: SheetPane | undefined,
+  showGridLines?: boolean,
+  rightToLeft?: boolean,
+): string {
+  const grid =
+    (showGridLines === false ? ' showGridLines="0"' : '') + (rightToLeft ? ' rightToLeft="1"' : '');
   if (!pane || (pane.frozenRows <= 0 && pane.frozenCols <= 0)) {
     return grid ? `<sheetViews><sheetView${grid} workbookViewId="0"/></sheetViews>` : '';
   }
@@ -780,7 +786,9 @@ function cellXfXml(xf: XlsxCellXf): string {
         a.vertical ? ` vertical="${a.vertical}"` : ''
       }${a.wrapText ? ' wrapText="1"' : ''}${a.textRotation !== undefined ? ` textRotation="${a.textRotation}"` : ''}${
         a.indent !== undefined ? ` indent="${a.indent}"` : ''
-      }${a.shrinkToFit ? ' shrinkToFit="1"' : ''}/>`
+      }${a.shrinkToFit ? ' shrinkToFit="1"' : ''}${
+        a.readingOrder ? ` readingOrder="${a.readingOrder === 'rtl' ? 2 : 1}"` : ''
+      }/>`
     : '';
   return (
     `<xf numFmtId="${xf.numFmtId}" fontId="${xf.fontId}" fillId="${xf.fillId}" borderId="${xf.borderId}"${apply}>` +

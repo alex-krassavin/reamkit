@@ -115,6 +115,7 @@ export function parseWorksheet(data: Uint8Array, theme?: ThemePalette): ParsedWo
   const colBreaks = parseBreaks(wsObj, 'colBreaks');
   const pane = parsePane(wsObj);
   const showGridLines = parseShowGridLines(wsObj);
+  const rightToLeft = parseRightToLeft(wsObj);
   const drawingNode = wsObj['drawing'];
   const drawingRelId =
     drawingNode && typeof drawingNode === 'object'
@@ -155,6 +156,7 @@ export function parseWorksheet(data: Uint8Array, theme?: ThemePalette): ParsedWo
     ...(colBreaks.length > 0 ? { colBreaks } : {}),
     ...(pane ? { pane } : {}),
     ...(showGridLines === false ? { showGridLines } : {}),
+    ...(rightToLeft ? { rightToLeft } : {}),
     ...(drawingRelId !== undefined ? { drawingRelId } : {}),
     ...(legacyDrawingRelId !== undefined ? { legacyDrawingRelId } : {}),
     ...(conditionalFormats.length > 0 ? { conditionalFormats } : {}),
@@ -402,6 +404,18 @@ function parseShowGridLines(ws: Record<string, unknown>): false | undefined {
   if (!view || typeof view !== 'object') return undefined;
   const raw = strAttr(view as Record<string, unknown>, 'showGridLines');
   return raw === '0' || raw === 'false' ? false : undefined;
+}
+
+// ECMA-376 §18.3.1.87 — <sheetView rightToLeft>: the first view reads from the
+// right. Only an explicit "yes" is returned.
+function parseRightToLeft(ws: Record<string, unknown>): true | undefined {
+  const views = ws['sheetViews'];
+  if (!views || typeof views !== 'object') return undefined;
+  const viewRaw = (views as Record<string, unknown>)['sheetView'];
+  const view = Array.isArray(viewRaw) ? viewRaw[0] : viewRaw;
+  if (!view || typeof view !== 'object') return undefined;
+  const raw = strAttr(view as Record<string, unknown>, 'rightToLeft');
+  return raw === '1' || raw === 'true' ? true : undefined;
 }
 
 // ECMA-376 §18.3.1.74/§18.3.1.14 — <rowBreaks>/<colBreaks> with <brk id=".."/>.

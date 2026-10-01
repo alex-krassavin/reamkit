@@ -322,6 +322,7 @@ function readSheet(
   const rowHeights: Array<RowHeight> = [];
   let frozen = false; // Window2 freeze flag — Pane x/y are counts only when set.
   let showGrid = true; // Window2 fDspGrid — the window draws the gridlines.
+  let rightToLeft = false; // Window2 fRightToLeft — column A at the right.
   let paneSplit: { cols: number; rows: number } | undefined;
   let maxRow = -1;
   let maxColumn = -1;
@@ -426,10 +427,12 @@ function readSheet(
       case REC.WINDOW2:
         // §2.4.348 Window2: option-flag bit 0x08 (fFrozen) — the Pane x/y are pane
         // counts (not split positions) only when it is set.
-        // Bit 0x02 (fDspGrid) is whether the window draws the gridlines.
+        // Bit 0x02 (fDspGrid) is whether the window draws the gridlines, and
+        // 0x40 (fRightToLeft) whether the sheet reads from the right.
         if (d.length >= 2) {
           frozen = (readU16(d, 0) & 0x08) !== 0;
           showGrid = (readU16(d, 0) & 0x02) !== 0;
+          rightToLeft = (readU16(d, 0) & 0x40) !== 0;
         }
         break;
       case REC.PANE:
@@ -466,6 +469,7 @@ function readSheet(
     ...(conditionalFormats.length > 0 ? { conditionalFormats } : {}),
     ...(pane ? { pane } : {}),
     ...(showGrid ? {} : { showGridLines: false }),
+    ...(rightToLeft ? { rightToLeft: true } : {}),
   };
   const drawing = gatherDrawing(records, REC.MSODRAWING);
   // Drawings are placed on the sheet's OWN grid: a cell anchor means nothing

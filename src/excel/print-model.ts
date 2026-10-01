@@ -55,6 +55,7 @@ import type { SheetHyperlink, SheetSlicer } from '@/core/ir/sheet';
 import type { Loss } from '@/core/ir/loss';
 import { FEATURES } from '@/core/ir/features';
 import { eighthPtToPt, halfPtToPt, pt, twipsToPt } from '@/core/ir';
+import { firstStrongDirection } from '@/core/bidi';
 import {
   applyNumberFormat,
   generalToWidth,
@@ -856,7 +857,25 @@ export function worksheetToBody(
   date1904: boolean,
   print: PrintModelOptions,
 ): Array<BodyElement> {
+  const body = gridBody(worksheet, sharedStrings, styles, date1904, print);
+  if (worksheet.rightToLeft !== true) return body;
+  return body.map((el) =>
+    el.kind === 'table' ? { ...el, table: mirrorTable(el.table, print.screen === true) } : el,
+  );
+}
+
+// The grid in the file's own column order, A first — a sheet that reads from
+// the right is turned round afterwards (mirrorTable), and only the overflow
+// inside has to know (flowAlignment).
+function gridBody(
+  worksheet: ParsedWorksheet,
+  sharedStrings: ReadonlyArray<string>,
+  styles: XlsxStyles,
+  date1904: boolean,
+  print: PrintModelOptions,
+): Array<BodyElement> {
   if (worksheet.maxRow < 0 || worksheet.maxColumn < 0) return [];
+  const rtl = worksheet.rightToLeft === true;
 
   // A worksheet can declare cells far beyond its real data — e.g. a style
   // applied to whole rows produces tens of thousands of EMPTY styled cells out
@@ -1331,12 +1350,21 @@ export function worksheetToBody(
     }
     return props;
   };
-  const paraPropsByAlignment = new Map<Alignment | undefined, ParagraphProperties>();
-  const cellParaProps = (alignment: Alignment | undefined): ParagraphProperties => {
-    let props = paraPropsByAlignment.get(alignment);
+  // A cell whose text reads from the right is a `bidi` paragraph: that is the
+  // base direction its words are ordered in. In such a paragraph "left" and
+  // "right" name the line's start and end (§17.3.1.13), which every target
+  // turns back into sides — so the side the cell SHOWS is stored crossed over.
+  const paraPropsByAlignment = new Map<string, ParagraphProperties>();
+  const cellParaProps = (
+    alignment: Alignment | undefined,
+    rtlText: boolean,
+  ): ParagraphProperties => {
+    const memoKey = `${alignment ?? ''}|${rtlText ? 'rtl' : ''}`;
+    let props = paraPropsByAlignment.get(memoKey);
     if (props === undefined) {
-      props = alignment ? { alignment } : {};
-      paraPropsByAlignment.set(alignment, props);
+      const stored = rtlText ? crossedOver(alignment) : alignment;
+      props = { ...(stored ? { alignment: stored } : {}), ...(rtlText ? { bidi: true } : {}) };
+      paraPropsByAlignment.set(memoKey, props);
     }
     return props;
   };
@@ -1530,7 +1558,9 @@ export function worksheetToBody(
           runProps = { ...runProps, colorHex: fmtColor };
         }
       }
-      const alignment = alignmentFromXf(xf, ws?.type);
+      const alignment = alignmentFromXf(xf, ws?.type, text);
+      // Which way the text runs ON, in the file's column order (flowAlignment).
+      const flow = flowAlignment(alignment, rtl);
       let shading = xf ? shadingFromXf(xf, styles) : undefined;
       // A table's banded/header fill + header text colour sit below the cell's
       // own fill (used only when the cell declares none) and below conditional
@@ -1619,7 +1649,7 @@ export function worksheetToBody(
         // Requiring left alignment kept tdf171828.xlsx's centred "unter
         // Berücksichtung der Sondertilgungen" inside its own 73pt column, where
         // it was cut to "unter Berücksic"; every other reader runs it across.
-        (alignment === 'left' || alignment === 'center') &&
+        (flow === 'left' || flow === 'center') &&
         // …but only a cell that OVERRUNS spills. There was no such test here at
         // all, so any left or centred string claimed every empty neighbour to
         // the end of its band — and since overflow is modelled as a colSpan,
@@ -1839,13 +1869,16 @@ export function worksheetToBody(
       // edge, and we pushed it right instead, out past its own column. A
       // centred cell takes none: Excel offers no indent for one.
       const indentLevels = xf?.alignment?.indent ?? 0;
-      const baseParaProps = cellParaProps(alignment);
+      const rtlText = textDirection(xf, text) === 'rtl';
+      const baseParaProps = cellParaProps(alignment, rtlText);
       const indentPt = twipsToPt(indentLevels * indentTwips);
+      // …crossed over with the alignment in a right-to-left paragraph.
+      const indentAtRight = (alignment === 'right') !== rtlText;
       const paragraphProps =
         indentLevels > 0 && alignment !== 'center'
           ? {
               ...baseParaProps,
-              ...(alignment === 'right' ? { indentRight: indentPt } : { indentLeft: indentPt }),
+              ...(indentAtRight ? { indentRight: indentPt } : { indentLeft: indentPt }),
             }
           : baseParaProps;
       // A shared-string cell whose index carries rich runs (E-SHEET W6) emits one
@@ -1900,7 +1933,7 @@ export function worksheetToBody(
         !rotated &&
         !shrinkToFit &&
         c > 0 &&
-        alignment === 'right' &&
+        flow === 'right' &&
         estimateChars(text) * charTwips(xf, styles, textTwipsUnit) > columnWidths[c]!
       ) {
         leftOverflow.push({
@@ -2272,13 +2305,24 @@ function applyCfOverride(base: RunProperties, o: CfOverride): RunProperties {
  * the sheets where it matters most, since a column of figures is the common
  * case.
  */
-function alignmentFromXf(xf: XlsxCellXf | undefined, type: CellType | undefined): Alignment {
+function alignmentFromXf(
+  xf: XlsxCellXf | undefined,
+  type: CellType | undefined,
+  text = '',
+): Alignment {
   const explicit = xf?.alignment ? mapAlignment(xf.alignment.horizontal) : undefined;
   if (explicit) return explicit;
-  return generalAlignment(type);
+  return generalAlignment(type, textDirection(xf, text));
 }
 
-function generalAlignment(type: CellType | undefined): Alignment {
+/**
+ * §18.8.1 General: numbers to the right, logical values centred, and text to
+ * the side it STARTS from — the left for a word that reads from the left, the
+ * right for one that reads from the right. Excel sets "שלום" against the right
+ * edge of a General cell on any sheet, and the sheet's own direction does not
+ * enter into it: the numbers on a right-to-left sheet still sit at the right.
+ */
+function generalAlignment(type: CellType | undefined, direction: 'ltr' | 'rtl'): Alignment {
   switch (type) {
     case 'n':
     case 'd':
@@ -2288,8 +2332,33 @@ function generalAlignment(type: CellType | undefined): Alignment {
       return 'center';
     default:
       // 's' | 'str' | 'inlineStr' | an empty cell.
-      return 'left';
+      return direction === 'rtl' ? 'right' : 'left';
   }
+}
+
+/**
+ * The direction a cell's text reads in: its own §18.8.1 `readingOrder`, or
+ * else "context" — that of its first strong character.
+ */
+function textDirection(xf: XlsxCellXf | undefined, text: string): 'ltr' | 'rtl' {
+  return xf?.alignment?.readingOrder ?? firstStrongDirection(text) ?? 'ltr';
+}
+
+/**
+ * The side a cell's text runs ON to, in the file's own column order. The grid
+ * is built A first whatever the sheet's direction and turned round at the end
+ * (mirrorTable), so on a sheet that reads from the right a cell set against
+ * its right edge is one whose text runs FORWARD — into B, which stands to the
+ * left of A — and the overflow has to reason about the mirror of what the
+ * cell shows.
+ */
+function flowAlignment(alignment: Alignment, rtl: boolean): Alignment {
+  return rtl ? crossedOver(alignment) : alignment;
+}
+
+/** Left for right and right for left; every other alignment is its own mirror. */
+function crossedOver<T extends Alignment | undefined>(alignment: T): T {
+  return (alignment === 'left' ? 'right' : alignment === 'right' ? 'left' : alignment) as T;
 }
 
 function mapAlignment(h: XlsxHorizontalAlign | undefined): Alignment | undefined {
@@ -2833,10 +2902,11 @@ function overflowColumnsPastUsedRange(
     const xf = styles.cellXfs[cell.styleIndex ?? 0];
     const align = xf?.alignment;
     if (align?.wrapText || align?.shrinkToFit || align?.textRotation) continue;
-    if (alignmentFromXf(xf, cell.type) !== 'left') continue;
+    const text = resolveCellText(cell, sharedStrings, styles, date1904);
+    const side = alignmentFromXf(xf, cell.type, text);
+    if (flowAlignment(side, worksheet.rightToLeft === true) !== 'left') continue;
     let room = 0;
     for (let abs = cell.column; abs <= usedCol; abs++) room += widthOf(abs);
-    const text = resolveCellText(cell, sharedStrings, styles, date1904);
     needTwips = Math.max(
       needTwips,
       // Text is measured in Excel's own unit — see textTwipsUnit at the top of
@@ -3090,6 +3160,70 @@ function absorbLeftwards(
     });
     cellColumns.splice(first, span, cellColumns[first]!);
   }
+}
+
+/**
+ * §18.3.1.87 `rightToLeft` — the table turned round, the way Excel draws a
+ * sheet that reads from the right: column A last in every row and so at the
+ * right edge, and each cell's left and right borders crossed over with it
+ * (its diagonals too). What a cell shows is untouched — its text keeps the
+ * side its alignment names, and its overflow already runs the right way (see
+ * flowAlignment). On paper the sheet stands against the right margin, as
+ * Excel prints it, unless it asks to be centred.
+ *
+ * @param table  The grid as built, column A first.
+ * @param screen Whether it is drawn for a window, which has no margin to meet.
+ */
+function mirrorTable(table: Table, screen: boolean): Table {
+  const { frozen, ...properties } = table.properties;
+  return {
+    ...table,
+    properties: {
+      ...properties,
+      // The pane's frozen columns are the first ones, and they are on the
+      // right now — a pinned edge the window would show on the wrong side.
+      ...(frozen && frozen.rows > 0 ? { frozen: { rows: frozen.rows, cols: 0 } } : {}),
+      ...(!screen && properties.alignment !== 'center' ? { alignment: 'right' as const } : {}),
+    },
+    grid: [...table.grid].reverse(),
+    rows: table.rows.map((row) => ({ ...row, cells: [...row.cells].reverse().map(mirrorCell) })),
+  };
+}
+
+function mirrorCell(cell: TableCell): TableCell {
+  const p = cell.properties;
+  const span = p.colSpan ?? 1;
+  // An overflow span paints only the column its text came from, which is now
+  // the span's last one.
+  const paintAtEnd = p.paintColumns !== undefined && p.paintColumns < span;
+  if (!p.borders && !p.dataBar && !paintAtEnd) return cell;
+  return {
+    ...cell,
+    properties: {
+      ...p,
+      ...(p.borders ? { borders: mirrorBorders(p.borders) } : {}),
+      ...(p.dataBar ? { dataBar: mirrorDataBar(p.dataBar) } : {}),
+      ...(paintAtEnd ? { paintAtEnd: true } : {}),
+    },
+  };
+}
+
+function mirrorBorders(b: CellBorders): CellBorders {
+  const { left, right, diagonalUp, diagonalDown, ...rest } = b;
+  return {
+    ...rest,
+    ...(right ? { left: right } : {}),
+    ...(left ? { right: left } : {}),
+    ...(diagonalUp ? { diagonalDown: diagonalUp } : {}),
+    ...(diagonalDown ? { diagonalUp: diagonalDown } : {}),
+  };
+}
+
+// A data bar grows from the cell's start, which is its right edge here — and
+// so it fades the other way.
+function mirrorDataBar(bar: CellDataBar): CellDataBar {
+  const start = bar.startFraction ?? 0;
+  return { ...bar, startFraction: Math.max(0, 1 - start - bar.fraction), negative: !bar.negative };
 }
 
 /**

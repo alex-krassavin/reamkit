@@ -961,6 +961,12 @@ export interface CellProperties {
    * what a merge wants.
    */
   readonly paintColumns?: number;
+  /**
+   * The paint covers the LAST {@link paintColumns} of the span rather than the
+   * first. A sheet that reads from the right runs a cell's text over the
+   * neighbours on its left, so the cell the paint belongs to ends the span.
+   */
+  readonly paintAtEnd?: boolean;
   readonly shading?: CellShading;
   readonly dataBar?: CellDataBar;
   readonly icon?: CellIcon;

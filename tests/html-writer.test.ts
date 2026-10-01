@@ -292,6 +292,22 @@ describe('html writer (FlowDoc adapter)', () => {
     expect(html).toContain('text-align:right');
   });
 
+  it('sets a right-to-left paragraph to the sides its start and end are', () => {
+    // §17.3.1.13 — in a `w:bidi` paragraph "right" is the END of the line,
+    // which is the left of the page, and the indent named "left" is the one at
+    // the start, on the right: the layout crosses them over, and so must CSS,
+    // whose sides are the page's whatever `dir` says.
+    const { doc } = readDocx(
+      buildDocxFromBody(
+        '<w:p><w:pPr><w:bidi/><w:ind w:left="720"/><w:jc w:val="right"/></w:pPr><w:r><w:t>שלום</w:t></w:r></w:p>',
+      ),
+    );
+    const html = decode(writeHtml(doc).bytes);
+    expect(html).toMatch(/<p dir="rtl" style="[^"]*text-align:left/u);
+    expect(html).toMatch(/<p dir="rtl" style="[^"]*margin-right:36pt/u);
+    expect(html).not.toMatch(/<p dir="rtl" style="[^"]*margin-left:36pt/u);
+  });
+
   it("keeps the whole of a run's style when the run names its font", async () => {
     // The family is a CSS string inside a double-quoted attribute: written in
     // double quotes it ended the attribute, and a browser dropped the size,

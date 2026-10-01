@@ -103,6 +103,8 @@ export interface XlsxSheetSpec {
   readonly freeze?: { readonly rows?: number; readonly cols?: number };
   /** <sheetView showGridLines="0"> — the window draws no gridlines. */
   readonly hideGridLines?: boolean;
+  /** <sheetView rightToLeft="1"> — column A at the right edge. */
+  readonly rightToLeft?: boolean;
   /** Raw <conditionalFormatting> markup injected into the worksheet. */
   readonly conditionalFormattingXml?: string;
   /** Raw <dataValidations> markup injected into the worksheet (E-SHEET SV1). */
@@ -556,7 +558,9 @@ export function buildXlsx(
       : '';
     const freezeCols = sheet.freeze?.cols ?? 0;
     const freezeRows = sheet.freeze?.rows ?? 0;
-    const gridAttr = sheet.hideGridLines ? ' showGridLines="0"' : '';
+    const gridAttr =
+      (sheet.hideGridLines ? ' showGridLines="0"' : '') +
+      (sheet.rightToLeft ? ' rightToLeft="1"' : '');
     const sheetViewsXml =
       freezeCols > 0 || freezeRows > 0
         ? `<sheetViews><sheetView${gridAttr} workbookViewId="0"><pane` +

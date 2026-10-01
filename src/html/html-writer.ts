@@ -666,12 +666,27 @@ function emitParagraph(out: Array<string>, p: Paragraph, ctx: EmitCtx): void {
 
 function paragraphCss(r: ResolvedParagraphProperties): string {
   const css: Array<string> = [];
-  if (r.alignment === 'center' || r.alignment === 'right') css.push(`text-align:${r.alignment}`);
-  else if (r.alignment === 'both' || r.alignment === 'distribute') css.push('text-align:justify');
+  // §17.3.1.13 / §17.3.1.12 — in a `w:bidi` paragraph "left" and "right" are
+  // the START and END of the line, so the alignment and the indents cross over
+  // into sides, exactly as the paginated layout crosses them. CSS's own sides
+  // are physical whatever `dir` says, and `text-align:right` on a bidi "right"
+  // paragraph put it at the right where Word puts it at the left.
+  const bidi = r.bidi === true;
+  const align =
+    bidi && r.alignment === 'left'
+      ? 'right'
+      : bidi && r.alignment === 'right'
+        ? 'left'
+        : r.alignment;
+  if (align === 'center' || align === 'right' || (bidi && align === 'left')) {
+    css.push(`text-align:${align}`);
+  } else if (align === 'both' || align === 'distribute') css.push('text-align:justify');
   if (r.spacingBefore > 0) css.push(`margin-top:${fmt(r.spacingBefore)}pt`);
   if (r.spacingAfter > 0) css.push(`margin-bottom:${fmt(r.spacingAfter)}pt`);
-  if (r.indentLeft !== 0) css.push(`margin-left:${fmt(r.indentLeft)}pt`);
-  if (r.indentRight !== 0) css.push(`margin-right:${fmt(r.indentRight)}pt`);
+  const indentLeft = bidi ? r.indentRight : r.indentLeft;
+  const indentRight = bidi ? r.indentLeft : r.indentRight;
+  if (indentLeft !== 0) css.push(`margin-left:${fmt(indentLeft)}pt`);
+  if (indentRight !== 0) css.push(`margin-right:${fmt(indentRight)}pt`);
   if (r.indentFirstLine !== 0) css.push(`text-indent:${fmt(r.indentFirstLine)}pt`);
   if (r.spacingLine > 0) {
     // §17.3.1.33 w:spacing — rule 'auto' means a multiple of single spacing

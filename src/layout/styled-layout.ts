@@ -821,6 +821,8 @@ interface CellLayout {
    * made {@link widthPt} wider than the cell itself.
    */
   readonly paintWidthPt?: number;
+  /** Where that paint starts, from the cell's left edge, when it is not there. */
+  readonly paintOffsetPt?: number;
 }
 
 interface RowLayout {
@@ -7650,9 +7652,13 @@ function layoutTableRow(
     // A text-overflow span is wider than the box the cell's own fill and rules
     // belong in (CellProperties.paintColumns).
     const paintSpan = Math.min(span, Math.max(1, cell.properties.paintColumns ?? span));
+    // …at the span's far end, when the text ran leftwards out of its cell.
+    const paintFrom = cell.properties.paintAtEnd === true ? span - paintSpan : 0;
     let paintWidthPt = 0;
-    for (let k = 0; k < paintSpan && colIdx + k < columnWidthsPt.length; k++) {
-      paintWidthPt += columnWidthsPt[colIdx + k]!;
+    let paintOffsetPt = 0;
+    for (let k = 0; k < paintFrom + paintSpan && colIdx + k < columnWidthsPt.length; k++) {
+      if (k < paintFrom) paintOffsetPt += columnWidthsPt[colIdx + k]!;
+      else paintWidthPt += columnWidthsPt[colIdx + k]!;
     }
     columnXOffsets.push(cursorX);
     const mergeRole = rowMergeRoles[cellIdx] ?? 'standalone';
@@ -7673,7 +7679,11 @@ function layoutTableRow(
       leftNeighbor,
       aboveOfSpan(aboveBordersByCol, colIdx, span),
     );
-    cells.push(paintWidthPt < widthPt ? { ...cellLayout, paintWidthPt } : cellLayout);
+    cells.push(
+      paintWidthPt < widthPt
+        ? { ...cellLayout, paintWidthPt, ...(paintOffsetPt > 0 ? { paintOffsetPt } : {}) }
+        : cellLayout,
+    );
     cursorX += widthPt;
     colIdx += span;
   }
@@ -10151,7 +10161,7 @@ function emitRowChunk(
       }
       out.push({
         type: 'fill',
-        x: pt(marginLeft + (row.columnXOffsets[i] ?? 0)),
+        x: pt(marginLeft + (row.columnXOffsets[i] ?? 0) + (cell.paintOffsetPt ?? 0)),
         y: pt(pageHeight - rowBottom - row.heightPt - FILL_SEAM_PT),
         width: pt(width),
         height: pt(row.heightPt + FILL_SEAM_PT),
@@ -10633,7 +10643,8 @@ function emitCellBorders(
     out.push({
       type: 'border',
       side,
-      x: pt(cellX),
+      // A left rule closes the whole span; the others edge the painted box.
+      x: pt(side === 'left' ? cellX : cellX + (cell.paintOffsetPt ?? 0)),
       y: pt(pageHeight - cellY - rowHeight + lowered),
       // A rule belongs to the CELL, not to the run of empty neighbours its text
       // borrowed. The fill beside it already knows that; the border did not, so

@@ -250,6 +250,15 @@ export interface ParsedWorksheet {
    * the round trip; absent ⇒ shown, the default.
    */
   readonly showGridLines?: boolean;
+  /**
+   * ECMA-376 §18.3.1.87 `<sheetView rightToLeft>` — the sheet reads from the
+   * right: column A stands at the right edge and the columns run leftward,
+   * and each cell's left and right borders cross over with it. What a cell's
+   * text does is unchanged — it keeps the side its alignment names. Unlike
+   * the pane and the gridlines this one prints: Excel puts the sheet on the
+   * paper the way the window shows it. Absent ⇒ left to right.
+   */
+  readonly rightToLeft?: boolean;
 }
 
 /**
@@ -424,6 +433,12 @@ export interface XlsxCellAlignment {
   readonly textRotation?: number;
   /** §18.8.1 `shrinkToFit` — scale the text down so it fits the cell on one line (W6). */
   readonly shrinkToFit?: boolean;
+  /**
+   * §18.8.1 `readingOrder` — `1` left to right, `2` right to left. Absent (or
+   * `0`) is "context": the direction of the text's first strong character,
+   * which is also what a General cell aligns its text by.
+   */
+  readonly readingOrder?: 'ltr' | 'rtl';
 }
 
 /**

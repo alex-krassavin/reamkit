@@ -372,6 +372,9 @@ function parseCellXfs(root: Record<string, unknown>): Array<XlsxCellXf> {
       if (rotation !== undefined && rotation !== 0) a.textRotation = rotation;
       const shrink = boolAttr(align, 'shrinkToFit');
       if (shrink) a.shrinkToFit = true;
+      const order = numAttr(align, 'readingOrder');
+      if (order === 1) a.readingOrder = 'ltr';
+      else if (order === 2) a.readingOrder = 'rtl';
       if (Object.keys(a).length > 0) xf.alignment = a;
     }
     out.push(xf);
