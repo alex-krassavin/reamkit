@@ -61,6 +61,8 @@ interface Waiter {
 export class Chrome {
   private last = 0;
   private session: string | undefined;
+  /** Device pixels to a CSS pixel — 2 draws a page at twice its size, as a retina screen does. */
+  private scale = 1;
   private readonly waiting = new Map<number, Waiter>();
   private readonly listeners = new Set<(m: Message) => void>();
 
@@ -90,7 +92,7 @@ export class Chrome {
    * asks for Calibri.
    */
   static async launch(
-    viewport: { width: number; height: number },
+    viewport: { width: number; height: number; scale?: number },
     substitutes: ReadonlyArray<Substitute> = [],
   ): Promise<Chrome> {
     const binary = CANDIDATES.find((c) => existsSync(c)) ?? 'google-chrome';
@@ -148,6 +150,7 @@ export class Chrome {
     const { sessionId } = await chrome.call('Target.attachToTarget', { targetId, flatten: true });
     chrome.session = String(sessionId);
     await chrome.call('Page.enable');
+    chrome.scale = viewport.scale ?? 1;
     await chrome.size(viewport.width, viewport.height);
     if (substitutes.length > 0) {
       const faces = substitutes
@@ -193,12 +196,12 @@ export class Chrome {
     });
   }
 
-  /** The tab's window, in CSS pixels at one device pixel apiece. */
+  /** The tab's window, in CSS pixels, at the scale it was launched with. */
   async size(width: number, height: number): Promise<void> {
     await this.call('Emulation.setDeviceMetricsOverride', {
       width: Math.round(width),
       height: Math.round(height),
-      deviceScaleFactor: 1,
+      deviceScaleFactor: this.scale,
       mobile: false,
     });
   }

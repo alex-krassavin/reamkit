@@ -86,6 +86,8 @@
     "stand:build": "tsx stand/build.ts",
     "stand:html": "tsx stand/serve.ts html",
     "stand:html:build": "tsx stand/html-build.ts",
+    "stand:svg": "tsx stand/serve.ts svg",
+    "stand:svg:build": "tsx stand/svg-build.ts",
     "typecheck:dist": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

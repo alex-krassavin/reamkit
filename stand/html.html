@@ -259,7 +259,7 @@
   </head>
   <body>
     <aside>
-      <h1>XLSX → HTML stand</h1>
+      <h1 id="title">Sheet stand</h1>
       <div class="sort">
         sort
         <button data-sort="worst">worst first</button>
@@ -270,12 +270,9 @@
     </aside>
     <main id="main"><div class="empty">Loading…</div></main>
     <script>
-      const LAYERS = [
-        { key: 'source', label: 'Source · LibreOffice, the sheet whole', cls: 'source' },
-        { key: 'gold', label: 'Gold · LibreOffice HTML', cls: 'gold' },
-        { key: 'ours', label: 'Ours · Ream HTML', cls: 'ours' },
-        { key: 'diff', label: 'Diff · red gold only · blue ours only', cls: 'diff' },
-      ];
+      // The stand says what its columns are and which files to open beside them.
+      let LAYERS = [];
+      let LINKS = [];
       const remembered = (() => {
         try {
           return localStorage.getItem('stand-html-sort');
@@ -306,6 +303,13 @@
         try {
           const res = await fetch('/api/state', { cache: 'no-store' });
           last = await res.json();
+          const bench = last.bench || {};
+          LAYERS = (bench.layers || []).map((l) => ({ ...l, cls: l.key }));
+          LINKS = bench.links || [];
+          if (bench.title) {
+            document.title = bench.title;
+            document.getElementById('title').textContent = bench.title;
+          }
           render();
         } catch {
           /* the server restarts; try again */
@@ -373,7 +377,7 @@
             ? LAYERS.map((l, i) => `<button data-layer="${l.key}" class="${view.layer === l.key ? 'on' : ''}">${i + 1} ${l.key}</button>`).join('')
             : '';
         const links = r
-          ? `<a class="btn" target="_blank" href="${base}gold/gold.html?v=${v}">gold page</a><a class="btn" target="_blank" href="${base}ours.html?v=${v}">our page</a><a class="btn" target="_blank" href="${base}source.pdf?v=${v}">source.pdf</a>`
+          ? LINKS.map((l) => `<a class="btn" target="_blank" href="${base}${l.path}?v=${v}">${esc(l.label)}</a>`).join('')
           : '';
         let html = `<header>
           <span class="title">${esc(doc.name)}</span>
@@ -382,7 +386,7 @@
           <button id="rebuild-all">Rebuild all</button>
           ${links}
           <span class="legend"><b class="r">red</b> gold has it, ours not · <b class="b">blue</b> ours has it, gold not</span>
-          <span class="keys"><kbd>↑</kbd><kbd>↓</kbd> file · <kbd>F</kbd> flip (1:1) / side by side · <kbd>1</kbd>–<kbd>4</kbd> layer · <kbd>Space</kbd> gold ⇄ ours · <kbd>R</kbd> rebuild</span>
+          <span class="keys"><kbd>↑</kbd><kbd>↓</kbd> file · <kbd>F</kbd> flip (1:1) / side by side · <kbd>1</kbd>–<kbd>${LAYERS.length}</kbd> layer · <kbd>Space</kbd> gold ⇄ ours · <kbd>R</kbd> rebuild</span>
         </header>`;
         if (last.building === doc.name) html += `<div class="banner">building ${esc(doc.name)}…\n${esc(last.log.slice(-2000))}</div>`;
         if (r && r.errors.length) html += `<div class="banner err">${esc(r.errors.join('\n'))}</div>`;
@@ -407,6 +411,7 @@
             ours: !!(s && s.drawn && s.drawn.ours),
             diff: !!(s && s.score),
           };
+          if (!LAYERS.some((l) => l.key === 'source') && !s) continue;
           const title = s ? `Sheet ${k} · ${esc(s.name)} — gold ${dims(s.gold)} · ours ${dims(s.ours)}` : `Source page ${k}`;
           const score = s && s.score ? ` — missing ${pct(s.score.missing)} · extra ${pct(s.score.extra)}` : '';
           const layers = view.mode === 'flip' ? LAYERS.filter((l) => l.key === view.layer) : LAYERS;
@@ -476,7 +481,7 @@
           select(names[at - 1]);
         } else if (e.key === 'f' || e.key === 'F') {
           setMode(view.mode === 'flip' ? 'grid' : 'flip');
-        } else if (e.key >= '1' && e.key <= '4') {
+        } else if (e.key >= '1' && e.key <= String(LAYERS.length)) {
           setLayer(LAYERS[Number(e.key) - 1].key);
         } else if (e.key === ' ') {
           e.preventDefault();

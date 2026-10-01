@@ -1,8 +1,9 @@
 // The stand's page — every file on the stand beside what was made of it, the
-// gold and ours, and where the two differ. Two stands share it:
+// gold and ours, and where the two differ. Three stands share it:
 //
 //   npm run stand        PDF → DOCX   http://localhost:4477   stand/files
 //   npm run stand:html   xlsx → HTML  http://localhost:4478   stand/files-html
+//   npm run stand:svg    xlsx → SVG   http://localhost:4479   stand/files-html
 //
 // A rebuild runs the stand's build script in a child process, so it reads the
 // source as it is NOW: edit, press R (or run the build on the file), and the
@@ -18,6 +19,12 @@ import type { ServerResponse } from 'node:http';
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, '..');
 
+/** One picture column of a sheet stand: the file prefix of its pictures and what it shows. */
+interface Layer {
+  readonly key: string;
+  readonly label: string;
+}
+
 /** One stand: where its files and its output are, what builds them, and the page. */
 interface Bench {
   readonly page: string;
@@ -27,7 +34,14 @@ interface Bench {
   /** What a file on the stand is. */
   readonly kind: RegExp;
   readonly port: number;
+  /** For a page that shows any of several stands: its title, columns and links. */
+  readonly title?: string;
+  readonly layers?: ReadonlyArray<Layer>;
+  /** A file of a build to open beside its pictures, by its path in the build's folder. */
+  readonly links?: ReadonlyArray<{ readonly label: string; readonly path: string }>;
 }
+
+const DIFF_LAYER: Layer = { key: 'diff', label: 'Diff · red gold only · blue ours only' };
 
 const BENCHES: Readonly<Record<string, Bench>> = {
   docx: {
@@ -45,6 +59,36 @@ const BENCHES: Readonly<Record<string, Bench>> = {
     out: resolve(here, 'out-html'),
     kind: /\.(?:xlsx|xlsm|xls)$/iu,
     port: 4478,
+    title: 'XLSX → HTML stand',
+    layers: [
+      { key: 'source', label: 'Source · LibreOffice, the sheet whole' },
+      { key: 'gold', label: 'Gold · LibreOffice HTML' },
+      { key: 'ours', label: 'Ours · Ream HTML' },
+      DIFF_LAYER,
+    ],
+    links: [
+      { label: 'gold page', path: 'gold/gold.html' },
+      { label: 'our page', path: 'ours.html' },
+      { label: 'source.pdf', path: 'source.pdf' },
+    ],
+  },
+  svg: {
+    page: 'html.html',
+    build: 'svg-build.ts',
+    files: resolve(here, 'files-html'),
+    out: resolve(here, 'out-svg'),
+    kind: /\.(?:xlsx|xlsm|xls)$/iu,
+    port: 4479,
+    title: 'XLSX → SVG stand',
+    layers: [
+      { key: 'gold', label: 'Gold · LibreOffice, the sheet whole' },
+      { key: 'ours', label: 'Ours · Ream SVG' },
+      DIFF_LAYER,
+    ],
+    links: [
+      { label: 'our svg', path: 'ours.svg' },
+      { label: 'gold.pdf', path: 'gold.pdf' },
+    ],
   },
 };
 
@@ -69,6 +113,7 @@ const TYPES: Readonly<Record<string, string>> = {
   '.jpeg': 'image/jpeg',
   '.gif': 'image/gif',
   '.svg': 'image/svg+xml',
+  '.ttf': 'font/ttf',
   '.pdf': 'application/pdf',
   '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -102,7 +147,13 @@ function state(): unknown {
       report: existsSync(file) ? (JSON.parse(readFileSync(file, 'utf8')) as unknown) : null,
     };
   });
-  return { building, queue, log, docs };
+  return {
+    building,
+    queue,
+    log,
+    docs,
+    bench: { title: bench.title, layers: bench.layers, links: bench.links },
+  };
 }
 
 function next(): void {
