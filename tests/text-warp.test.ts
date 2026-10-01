@@ -314,7 +314,7 @@ describe('a WordArt body through the layout', () => {
           `<a:lstStyle/><a:p><a:r><a:rPr lang="en-US" sz="5400" b="1"/>` +
           `<a:t>Text Wave 1</a:t></a:r></a:p></p:txBody></p:sp>`,
       ]),
-    ).convert('pdf');
+    ).convert('pdf', { fonts: FONTS });
     const stream = Buffer.from(pdf).toString('latin1');
     const matrices = [
       ...stream.matchAll(/(-?[\d.]+) (-?[\d.]+) (-?[\d.]+) (-?[\d.]+) (-?[\d.]+) (-?[\d.]+) Tm/gu),

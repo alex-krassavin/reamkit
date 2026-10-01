@@ -5,7 +5,8 @@
 // v1 contract (epics.md, variant A): the writer emits a DENORMALIZED but
 // valid document. FlowDoc's body carries RESOLVED properties (the stage-6
 // cascade is already collapsed), so what we write is direct formatting — no
-// named styles. The round-trip guarantee is therefore semantic, not textual:
+// named styles, only the defaults a property stated nowhere takes (see
+// `stylesXml`). The round-trip guarantee is therefore semantic, not textual:
 // readDocx(writeDocx(flow)) yields an equivalent FlowDoc, never the original
 // bytes. Anything the writer does not serialize yet is reported as a loss,
 // exactly like the other writers.
@@ -45,11 +46,13 @@ import type {
   ParagraphProperties,
   Run,
   RunProperties,
+  Section,
   SectionColumns,
   SectionProperties,
   ShapeBlock,
   ShapeFill,
   ShapeGeometry,
+  ShapeGroupChild,
   ShapeLine,
   ShapeTextBody,
   ShapeTransform,
@@ -61,7 +64,7 @@ import type {
 import type { ResolvedParagraphProperties, ResolvedRunProperties } from '@/core/style-cascade';
 import type { ShapeGradient } from '@/core/vector';
 import type { DocumentWriter, WriteResult } from '@/core/ir/adapters';
-import type { FaceFamily, FlowDoc } from '@/core/ir/flow';
+import type { FaceFamily, FaceOutlines, FlowDoc } from '@/core/ir/flow';
 import type { Loss, ResourceId, ResourceStore } from '@/core/ir';
 import type { OpcPart, Relationship } from '@/core/opc';
 
@@ -69,6 +72,7 @@ import { FEATURES } from '@/core/ir';
 import { chartSpaceXml } from '@/core/drawingml/chart-serializer';
 import { detectImageFormat } from '@/core/images';
 import { buildOpcPackage } from '@/core/opc';
+import { OBFUSCATED_FONT_CONTENT_TYPE, embedFaces } from '@/word/font-embed';
 import {
   EMPTY_STYLE_SHEET,
   resolveParagraphProperties,
@@ -102,6 +106,14 @@ const REL_FONT_TABLE =
 const FONT_TABLE_CONTENT_TYPE =
   'application/vnd.openxmlformats-officedocument.wordprocessingml.fontTable+xml';
 const FONT_TABLE_PART = 'word/fontTable.xml';
+const REL_SETTINGS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings';
+const SETTINGS_CONTENT_TYPE =
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml';
+const SETTINGS_PART = 'word/settings.xml';
+const REL_STYLES = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles';
+const STYLES_CONTENT_TYPE =
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml';
+const STYLES_PART = 'word/styles.xml';
 const REL_FOOTNOTES =
   'http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes';
 const REL_ENDNOTES = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/endnotes';
@@ -122,6 +134,25 @@ const COMMENTS_EXTENDED_CONTENT_TYPE =
   'application/vnd.openxmlformats-officedocument.wordprocessingml.commentsExtended+xml';
 const COMMENTS_EXTENDED_PART = 'word/commentsExtended.xml';
 const W14_NS = 'http://schemas.microsoft.com/office/word/2010/wordml';
+const MC_NS = 'http://schemas.openxmlformats.org/markup-compatibility/2006';
+
+/**
+ * The namespaces a part's root declares: WordprocessingML's and the
+ * relationships', and — where the part uses one — Word 2010's `w14`, which a
+ * reader that does not know it is told to pass over (ECMA-376 Part 3
+ * `mc:Ignorable`) rather than to refuse the file.
+ *
+ * @param inner The part's content, to see whether it uses `w14`.
+ * @returns The attributes, each with its leading space.
+ */
+function rootNamespaces(inner: string): string {
+  const base =
+    ' xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"' +
+    ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"';
+  return inner.includes('<w14:')
+    ? `${base} xmlns:w14="${W14_NS}" xmlns:mc="${MC_NS}" mc:Ignorable="w14"`
+    : base;
+}
 const W15_NS = 'http://schemas.microsoft.com/office/word/2012/wordml';
 const REL_CHART = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart';
 const CHART_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.drawingml.chart+xml';
@@ -232,6 +263,10 @@ interface WriteState {
   // Word's `Inter`), and the families written, for the font table.
   readonly faceFamilies?: ReadonlyMap<string, FaceFamily>;
   readonly familiesUsed: Map<string, FaceFamily>;
+  // The outlines of the faces a run names, where the source carried them, and
+  // the faces the runs written name — the ones the package embeds.
+  readonly faceOutlines?: ReadonlyMap<string, FaceOutlines>;
+  readonly facesUsed: Set<string>;
   // Every z-order the document's floats state, by rank (see `relativeHeight`).
   readonly zRanks: ReadonlyMap<number, number>;
 }
@@ -279,6 +314,8 @@ export function writeDocx(flow: FlowDoc): WriteResult {
     ...(flow.charts ? { charts: flow.charts } : {}),
     ...(flow.faceFamilies ? { faceFamilies: flow.faceFamilies } : {}),
     familiesUsed: new Map(),
+    ...(flow.faceOutlines ? { faceOutlines: flow.faceOutlines } : {}),
+    facesUsed: new Set(),
     zRanks: zRanksOf(flow),
   };
   const docScope = newScope();
@@ -319,11 +356,11 @@ export function writeDocx(flow: FlowDoc): WriteResult {
   emitBody(body, flow.body, losses, state, docScope, sectPrByClosingIndex);
   if (finalSectPr) body.push(finalSectPr);
 
+  const bodyXml = body.join('');
   const documentXml =
     '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
-    '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"' +
-    ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
-    `<w:body>${body.join('')}</w:body>` +
+    `<w:document${rootNamespaces(bodyXml)}>` +
+    `<w:body>${bodyXml}</w:body>` +
     '</w:document>';
 
   // §17.9 numbering: re-emit the raw definitions whenever a paragraph carries
@@ -397,6 +434,16 @@ export function writeDocx(flow: FlowDoc): WriteResult {
   );
   emitCommentsExtended(flow.comments, commentParaIds, docScope, extraParts);
 
+  // §17.8.1 — the faces the runs name, embedded where the source carried
+  // their outlines and their licence lets them travel.
+  const embedded =
+    state.faceOutlines && state.faceFamilies
+      ? embedFaces(state.facesUsed, state.faceOutlines, state.faceFamilies, losses)
+      : undefined;
+  if (embedded && embedded.relationships.length > 0) {
+    extraPartRels.push({ sourcePart: FONT_TABLE_PART, relationships: [...embedded.relationships] });
+  }
+
   // §17.8.3 — the font table: every family the runs name, with the kind of
   // face it is (§17.8.3.10), so a reader without it substitutes a face of the
   // same kind instead of its default serif.
@@ -404,7 +451,7 @@ export function writeDocx(flow: FlowDoc): WriteResult {
     state.familiesUsed.size > 0
       ? {
           path: FONT_TABLE_PART,
-          data: encoder.encode(fontTableXml(state.familiesUsed)),
+          data: encoder.encode(fontTableXml(state.familiesUsed, embedded?.elements)),
           contentType: FONT_TABLE_CONTENT_TYPE,
         }
       : undefined;
@@ -416,6 +463,37 @@ export function writeDocx(flow: FlowDoc): WriteResult {
       targetMode: 'Internal',
     });
   }
+
+  // §17.15.1 — the settings the document is set by, where it states any. Left
+  // out, a document with headers for its even pages printed its odd pages'
+  // on every page once saved, and one bound along its head was bound along
+  // its side.
+  const settings = settingsXml(flow, sections, (embedded?.parts.length ?? 0) > 0);
+  const settingsPart =
+    settings !== undefined
+      ? { path: SETTINGS_PART, data: encoder.encode(settings), contentType: SETTINGS_CONTENT_TYPE }
+      : undefined;
+  if (settingsPart) {
+    docScope.rels.push({
+      id: `rId${++docScope.relSeq}`,
+      type: REL_SETTINGS,
+      target: 'settings.xml',
+      targetMode: 'Internal',
+    });
+  }
+
+  // §17.7.5 — what a property stated nowhere is, stated (see `stylesXml`).
+  const stylesPart = {
+    path: STYLES_PART,
+    data: encoder.encode(stylesXml()),
+    contentType: STYLES_CONTENT_TYPE,
+  };
+  docScope.rels.push({
+    id: `rId${++docScope.relSeq}`,
+    type: REL_STYLES,
+    target: 'styles.xml',
+    targetMode: 'Internal',
+  });
 
   const partRelationships = [
     ...(docScope.rels.length > 0
@@ -431,12 +509,18 @@ export function writeDocx(flow: FlowDoc): WriteResult {
         data: encoder.encode(documentXml),
         contentType: DOC_CONTENT_TYPE,
       },
+      stylesPart,
       ...(numberingPart ? [numberingPart] : []),
       ...(fontTablePart ? [fontTablePart] : []),
+      ...(settingsPart ? [settingsPart] : []),
       ...extraParts,
       ...state.chartParts,
       ...state.mediaParts,
+      ...(embedded?.parts ?? []),
     ],
+    ...((embedded?.parts.length ?? 0) > 0
+      ? { defaultsByExtension: { odttf: OBFUSCATED_FONT_CONTENT_TYPE } }
+      : {}),
     rootRelationships: [
       {
         id: 'rId1',
@@ -451,19 +535,101 @@ export function writeDocx(flow: FlowDoc): WriteResult {
   return { bytes, losses };
 }
 
-// §17.8.3.9 CT_Font — family (§17.8.3.10) before pitch (§17.8.3.13), the
-// schema's order.
-function fontTableXml(families: ReadonlyMap<string, FaceFamily>): string {
+/**
+ * §17.15.1.78 `w:settings` — the document-wide settings the model carries, in
+ * the order CT_Settings declares them: `w:embedTrueTypeFonts` and
+ * `w:saveSubsetFonts` (§17.15.1.42, .74) where the package embeds its faces,
+ * `w:gutterAtTop` (§17.15.1.49), `w:evenAndOddHeaders` (§17.15.1.36, which a
+ * section carries in the model), and inside `w:compat` §17.15.3.4's
+ * `w:doNotExpandShiftReturn` before the version of Word the document is laid
+ * out for ([MS-DOCX] `w:compatSetting` `compatibilityMode`), which CT_Compat
+ * keeps last.
+ *
+ * @param flow        The document.
+ * @param sections    The sections being written.
+ * @param embedsFonts Whether the package embeds fonts — which then stay
+ *                    embedded, as subsets, when the document is saved again.
+ * @returns The part's XML, or undefined where the document states none.
+ */
+function settingsXml(
+  flow: FlowDoc,
+  sections: ReadonlyArray<Section>,
+  embedsFonts: boolean,
+): string | undefined {
+  const parts: Array<string> = [];
+  if (embedsFonts) parts.push('<w:embedTrueTypeFonts/><w:saveSubsetFonts/>');
+  if (flow.gutterAtTop === true) parts.push('<w:gutterAtTop/>');
+  if (sections.some((sec) => sec.properties.evenAndOddHeaders === true)) {
+    parts.push('<w:evenAndOddHeaders/>');
+  }
+  const compat = [
+    ...(flow.doNotExpandShiftReturn === true ? ['<w:doNotExpandShiftReturn/>'] : []),
+    ...(flow.compatibilityMode !== undefined
+      ? [
+          '<w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word"' +
+            ` w:val="${String(flow.compatibilityMode)}"/>`,
+        ]
+      : []),
+  ];
+  if (compat.length > 0) parts.push(`<w:compat>${compat.join('')}</w:compat>`);
+  if (parts.length === 0) return undefined;
+  return (
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    `<w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">${parts.join('')}</w:settings>`
+  );
+}
+
+/**
+ * §17.7.2 `w:styles` — what a property the document states nowhere IS: the
+ * values the model resolves an empty sheet to (`DEFAULT_RUN`, `DEFAULT_PARA`
+ * — the very values a run or paragraph is written without), as §17.7.5
+ * `w:docDefaults`, under an empty default paragraph style (§17.7.4.17).
+ *
+ * A package with no styles part leaves them to its reader, and Word fills
+ * them from its own template's Normal: 8pt after every paragraph, lines 1.08
+ * apart, runs in 12pt — so every paragraph of a reconstruction stood 8pt
+ * further down than its page set it, and a run of the model's own 11pt, which
+ * states no size, was set in 12.
+ */
+function stylesXml(): string {
+  const size = Math.round(DEFAULT_RUN.fontSizePt * 2);
+  const widowControl = DEFAULT_PARA.widowControl
+    ? '<w:widowControl/>'
+    : '<w:widowControl w:val="0"/>';
+  const spacing =
+    `<w:spacing w:before="${twips(DEFAULT_PARA.spacingBefore)}"` +
+    ` w:after="${twips(DEFAULT_PARA.spacingAfter)}"` +
+    ` w:line="${twips(DEFAULT_PARA.spacingLine)}" w:lineRule="${DEFAULT_PARA.spacingLineRule}"/>`;
+  return (
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">' +
+    '<w:docDefaults>' +
+    `<w:rPrDefault><w:rPr><w:sz w:val="${size}"/><w:szCs w:val="${size}"/></w:rPr></w:rPrDefault>` +
+    `<w:pPrDefault><w:pPr>${widowControl}${spacing}</w:pPr></w:pPrDefault>` +
+    '</w:docDefaults>' +
+    '<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>' +
+    '</w:styles>'
+  );
+}
+
+// §17.8.3.9 CT_Font — family (§17.8.3.10) before pitch (§17.8.3.13), and the
+// embedded faces (§17.8.3.3–6) after both: the schema's order.
+function fontTableXml(
+  families: ReadonlyMap<string, FaceFamily>,
+  embeds?: ReadonlyMap<string, string>,
+): string {
   const fonts = [...families.values()]
     .map(
       (f) =>
         `<w:font w:name="${escapeAttr(f.family)}"><w:family w:val="${f.generic}"/>` +
-        `<w:pitch w:val="${f.generic === 'modern' ? 'fixed' : 'variable'}"/></w:font>`,
+        `<w:pitch w:val="${f.generic === 'modern' ? 'fixed' : 'variable'}"/>` +
+        `${embeds?.get(f.family) ?? ''}</w:font>`,
     )
     .join('');
   return (
     '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
-    `<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">${fonts}</w:fonts>`
+    '<w:fonts xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"' +
+    ` xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">${fonts}</w:fonts>`
   );
 }
 
@@ -555,13 +721,13 @@ function emitNotes(
       `<${cfg.noteTag} w:id="${escapeAttr(id)}">${inner.join('') || '<w:p/>'}</${cfg.noteTag}>`,
     );
   }
+  const notesXml = noteXmls.join('');
   const xml =
     '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
-    `<${cfg.rootTag} xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"` +
-    ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
+    `<${cfg.rootTag}${rootNamespaces(notesXml)}>` +
     stub('separator', -1, '<w:separator/>') +
     stub('continuationSeparator', 0, '<w:continuationSeparator/>') +
-    noteXmls.join('') +
+    notesXml +
     `</${cfg.rootTag}>`;
   extraParts.push({ path: cfg.partPath, data: encoder.encode(xml), contentType: cfg.contentType });
   if (scope.rels.length > 0) {
@@ -742,11 +908,10 @@ function emitHeadersFooters(
     const scope = newScope();
     const inner: Array<string> = [];
     for (const el of content) emitBlock(inner, el, losses, state, scope);
+    const bandXml = inner.join('');
     const xml =
       '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
-      `<${root} xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"` +
-      ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
-      `${inner.join('')}</${root}>`;
+      `<${root}${rootNamespaces(bandXml)}>${bandXml}</${root}>`;
     extraParts.push({
       path,
       data: encoder.encode(xml),
@@ -783,7 +948,7 @@ function emitHeadersFooters(
 export const docxWriter: DocumentWriter<FlowDoc> = {
   id: 'docx',
   consumes: 'flow',
-  supports: new Set([FEATURES.text]),
+  supports: new Set([FEATURES.text, FEATURES.fontsEmbedding]),
   write: (doc) => writeDocx(doc),
 };
 
@@ -1198,19 +1363,15 @@ function shapeDrawingXml(
   const cy = Math.round(shape.height * EMU_PER_PT);
   const id = ++state.drawingSeq;
   const descr = shape.altText ? ` descr="${escapeAttr(shape.altText)}"` : '';
-  const spPr =
-    `<wps:spPr>${xfrmXml(shape.transform, cx, cy)}${geomXml(shape.geometry)}` +
-    `${fillXml(shape.fill)}${shape.line ? lineXml(shape.line) : ''}</wps:spPr>`;
-  const txbx = shape.text ? txbxXml(shape.text, losses, state, scope) : '';
+  const members = shape.children ?? [];
   const graphic =
     '<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">' +
-    `<a:graphicData uri="${WPS_URI}">` +
-    '<wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">' +
-    '<wps:cNvSpPr/>' +
-    spPr +
-    txbx +
-    bodyPrXml(shape.text) +
-    '</wps:wsp></a:graphicData></a:graphic>';
+    (members.length > 0
+      ? `<a:graphicData uri="${WPG_URI}">` +
+        groupXml('wpg:wgp', members, { x: 0, y: 0, cx, cy }, losses, state, scope)
+      : `<a:graphicData uri="${WPS_URI}">` +
+        wspXml(shape, cx, cy, undefined, losses, state, scope)) +
+    '</a:graphicData></a:graphic>';
   return drawingFrame(
     shape.float,
     cx,
@@ -1222,13 +1383,124 @@ function shapeDrawingXml(
   );
 }
 
+/**
+ * `wps:wsp` — one shape: its box, geometry, fill and outline, and the text it
+ * holds. `id` is its own `wps:cNvPr` inside a group, where the members name
+ * themselves; a shape alone is named by the frame's `wp:docPr`.
+ */
+function wspXml(
+  shape: ShapeBlock,
+  cx: number,
+  cy: number,
+  member: { readonly id: number; readonly x: number; readonly y: number } | undefined,
+  losses: Array<Loss>,
+  state: WriteState,
+  scope: PartScope,
+): string {
+  const spPr =
+    `<wps:spPr>${xfrmXml(shape.transform, cx, cy, member)}${geomXml(shape.geometry)}` +
+    `${fillXml(shape.fill)}${shape.line ? lineXml(shape.line) : ''}</wps:spPr>`;
+  const txbx = shape.text ? txbxXml(shape.text, losses, state, scope) : '';
+  return (
+    `<wps:wsp xmlns:wps="${WPS_URI}">` +
+    (member ? `<wps:cNvPr id="${member.id}" name="Shape ${member.id}"/>` : '') +
+    '<wps:cNvSpPr/>' +
+    spPr +
+    txbx +
+    bodyPrXml(shape.text) +
+    '</wps:wsp>'
+  );
+}
+
+const WPG_URI = 'http://schemas.microsoft.com/office/word/2010/wordprocessingGroup';
+
+/**
+ * §20.5.2.17 `wpg:wgp` / `wpg:grpSp` — a group: its box, and its members in
+ * the order they are painted. The members are placed in a child space the
+ * same as the box, so a member's offset from the group's corner is its offset
+ * in the file. The inverse of drawing-parser's `groupChildren`.
+ *
+ * Written as one shape, the group came back an empty box: a figure's paths
+ * and labels were thrown away with it.
+ */
+function groupXml(
+  tag: 'wpg:wgp' | 'wpg:grpSp',
+  members: ReadonlyArray<ShapeGroupChild>,
+  box: { readonly x: number; readonly y: number; readonly cx: number; readonly cy: number },
+  losses: Array<Loss>,
+  state: WriteState,
+  scope: PartScope,
+): string {
+  const ns = tag === 'wpg:wgp' ? ` xmlns:wpg="${WPG_URI}"` : '';
+  const xfrm =
+    `<a:xfrm><a:off x="${box.x}" y="${box.y}"/><a:ext cx="${box.cx}" cy="${box.cy}"/>` +
+    `<a:chOff x="0" y="0"/><a:chExt cx="${box.cx}" cy="${box.cy}"/></a:xfrm>`;
+  const inner = members.map((m) => memberXml(m, losses, state, scope)).join('');
+  return `<${tag}${ns}><wpg:cNvGrpSpPr/><wpg:grpSpPr>${xfrm}</wpg:grpSpPr>${inner}</${tag}>`;
+}
+
+/**
+ * One member of a group: a group of its own, a picture (`pic:pic`, a shape
+ * whose fill is the picture — how the reader brings one in), or a shape.
+ */
+function memberXml(
+  member: ShapeGroupChild,
+  losses: Array<Loss>,
+  state: WriteState,
+  scope: PartScope,
+): string {
+  const s = member.shape;
+  const x = Math.round(member.xPt * EMU_PER_PT);
+  const y = Math.round(member.yPt * EMU_PER_PT);
+  const cx = Math.round(s.width * EMU_PER_PT);
+  const cy = Math.round(s.height * EMU_PER_PT);
+  if (s.children !== undefined && s.children.length > 0) {
+    return groupXml('wpg:grpSp', s.children, { x, y, cx, cy }, losses, state, scope);
+  }
+  const id = ++state.drawingSeq;
+  if (s.fill.kind !== 'picture') {
+    return wspXml(s, cx, cy, { id, x, y }, losses, state, scope);
+  }
+  const relId =
+    s.fill.imageResource !== undefined ? mediaRelId(s.fill.imageResource, state, scope) : undefined;
+  if (relId === undefined) {
+    losses.push({
+      severity: 'dropped',
+      feature: FEATURES.images,
+      detail: imageRefusal(s.fill.imageResource, state),
+    });
+    return '';
+  }
+  const alpha =
+    s.fill.alpha !== undefined && s.fill.alpha < 1
+      ? `<a:alphaModFix amt="${String(Math.round(Math.max(0, s.fill.alpha) * 100000))}"/>`
+      : '';
+  return (
+    '<pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture">' +
+    `<pic:nvPicPr><pic:cNvPr id="${id}" name="Image ${id}"/><pic:cNvPicPr/></pic:nvPicPr>` +
+    `<pic:blipFill><a:blip r:embed="${relId}">${alpha}</a:blip>${srcRectXml(s.fill.imageCrop)}` +
+    '<a:stretch><a:fillRect/></a:stretch></pic:blipFill>' +
+    `<pic:spPr>${xfrmXml(s.transform, cx, cy, { x, y })}` +
+    '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic>'
+  );
+}
+
 // §20.1.7.6 a:xfrm — rotation/flips plus the off+ext the reader uses as a size
-// fallback. Always emitted so a re-read recovers the box even without extent.
-function xfrmXml(t: ShapeTransform | undefined, cx: number, cy: number): string {
+// fallback. Always emitted so a re-read recovers the box even without extent;
+// a group's member states where in the group it stands.
+function xfrmXml(
+  t: ShapeTransform | undefined,
+  cx: number,
+  cy: number,
+  at?: { readonly x: number; readonly y: number },
+): string {
   const rot = t?.rotation60k !== undefined ? ` rot="${t.rotation60k}"` : '';
   const flipH = t?.flipH ? ' flipH="1"' : '';
   const flipV = t?.flipV ? ' flipV="1"' : '';
-  return `<a:xfrm${rot}${flipH}${flipV}><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm>`;
+  return (
+    `<a:xfrm${rot}${flipH}${flipV}><a:off x="${at?.x ?? 0}" y="${at?.y ?? 0}"/>` +
+    `<a:ext cx="${cx}" cy="${cy}"/></a:xfrm>`
+  );
 }
 
 /**
@@ -1258,7 +1530,12 @@ function pathScale(g: NonNullable<ShapeGeometry['custom']>): number {
     else if (c.cmd === 'arc') values.push(c.wR, c.hR);
   }
   if (values.every((v) => Number.isInteger(v))) return 1;
-  const span = Math.max(...values.map((v) => (Number.isFinite(v) ? Math.abs(v) : 0)), 1);
+  // Folded rather than spread: a label's traced letters are one path of tens of
+  // thousands of numbers, past what a call takes as arguments.
+  const span = values.reduce(
+    (most, v) => (Number.isFinite(v) ? Math.max(most, Math.abs(v)) : most),
+    1,
+  );
   return Math.max(1, Math.floor(PATH_SPACE / span));
 }
 
@@ -1399,8 +1676,10 @@ function bodyPrXml(text: ShapeTextBody | undefined): string {
   const ins = (v: number | undefined, name: string): string =>
     v !== undefined ? ` ${name}="${Math.round(v * EMU_PER_PT)}"` : '';
   const anchor = text.anchor ? ` anchor="${text.anchor}"` : '';
+  const wrap = text.noWrap === true ? ' wrap="none"' : '';
   return (
     '<wps:bodyPr' +
+    wrap +
     ins(text.insetLeft, 'lIns') +
     ins(text.insetTop, 'tIns') +
     ins(text.insetRight, 'rIns') +
@@ -1466,6 +1745,12 @@ function tblPrXml(p: TableProperties): string {
     out.push(`<w:tblW w:w="${w}" w:type="${p.widthType}"/>`);
   }
   if (p.alignment && p.alignment !== 'left') out.push(`<w:jc w:val="${p.alignment}"/>`);
+  // §17.4.65 — how far in from the margin the table stands, which the model
+  // carried and the writer never wrote: every table a PDF set in from its
+  // margin came back against it.
+  if (p.indentPt !== undefined && p.indentPt !== 0) {
+    out.push(`<w:tblInd w:w="${twips(p.indentPt)}" w:type="dxa"/>`);
+  }
   const borders = bordersXml('w:tblBorders', p.borders);
   if (borders) out.push(borders);
   // §17.4.53 — a FIXED table is laid out by its grid and nothing else. Left
@@ -1551,11 +1836,21 @@ function bordersXml(
     const el = tag === 'w:pBdr' && key === 'insideH' ? 'w:between' : name;
     // §17.4.x — w:sz in eighths of a point; the reader divides by 8.
     const sz = b.width !== undefined ? ` w:sz="${Math.round(b.width * 8)}"` : '';
+    // §17.3.4 `w:space` — how far a paragraph's rule stands off its text, in
+    // whole points (ST_PointMeasure). Read and not written, a rule set off its
+    // text came back hard against it.
+    const space =
+      b.spacePt !== undefined && Math.round(b.spacePt) > 0
+        ? ` w:space="${Math.min(Math.round(b.spacePt), MOST_BORDER_SPACE_PT)}"`
+        : '';
     const color = b.colorHex !== undefined ? ` w:color="${b.colorHex}"` : '';
-    return `<${el} w:val="${b.style}"${sz}${color}/>`;
+    return `<${el} w:val="${b.style}"${sz}${space}${color}/>`;
   }).join('');
   return sides ? `<${tag}>${sides}</${tag}>` : '';
 }
+
+/** §17.3.4 — the farthest a border may stand off its text, in points. */
+const MOST_BORDER_SPACE_PT = 31;
 
 function cellMarginsXml(tag: 'w:tblCellMar' | 'w:tcMar', margins: CellMargins | undefined): string {
   if (!margins) return '';
@@ -1721,9 +2016,21 @@ function runXml(run: Run, state: WriteState, scope: PartScope): string {
   // PDF sets a line the page laid out on stops with them — an invoice's "Bill
   // to" block stands beside the address it belongs to — and written as text the
   // two ran together.
+  //
+  // §17.3.3.1 — and so is a line BREAK: the reader reads `w:br` as a newline in
+  // the run's text, and written back inside `w:t` a newline is whitespace, so
+  // every address, verse and signature read and written again ran its lines
+  // together. A run the reader marked as a column break breaks to the next
+  // column there instead.
+  const lineBreak = run.columnBreak ? '<w:br w:type="column"/>' : '<w:br/>';
   const body = run.text
     .split('\t')
-    .map((piece) => (piece === '' ? '' : `<w:t xml:space="preserve">${escapeXml(piece)}</w:t>`))
+    .map((piece) =>
+      piece
+        .split('\n')
+        .map((line) => (line === '' ? '' : `<w:t xml:space="preserve">${escapeXml(line)}</w:t>`))
+        .join(lineBreak),
+    )
     .join('<w:tab/>');
   return `<w:r>${rPr}${body}${brk}</w:r>`;
 }
@@ -1731,7 +2038,8 @@ function runXml(run: Run, state: WriteState, scope: PartScope): string {
 // §17.3.2 — run properties as a delta from the resolved defaults.
 function rPrXml(r: ResolvedRunProperties, state?: WriteState): string {
   // §17.3.2.28 CT_RPr is a SEQUENCE, and a reader may drop what arrives out of
-  // it: rFonts, b, i, strike, color, sz, u, shd, vertAlign, rtl, lang. Written
+  // it: rFonts, b, i, strike, color, kern, sz, u, shd, vertAlign, rtl, lang, and
+  // Word 2010's own after them. Written
   // in the old order — `w:u` ahead of `w:rFonts` — LibreOffice ignored the
   // underline outright, so annotation-squiggly.pdf's wavy blue rule was in the
   // package and on no page.
@@ -1742,7 +2050,6 @@ function rPrXml(r: ResolvedRunProperties, state?: WriteState): string {
   // out as the string "undefined": `<w:color w:val="undefined"/>` in the foot
   // of every reconstructed PDF, which is not a colour and not valid markup.
   const states = <TKey extends keyof ResolvedRunProperties>(key: TKey): boolean =>
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
     r[key] !== undefined && r[key] !== DEFAULT_RUN[key];
   const fonts = rFontsXml(r.fontFamily, state);
   if (fonts) out.push(fonts);
@@ -1754,6 +2061,25 @@ function rPrXml(r: ResolvedRunProperties, state?: WriteState): string {
   if (states('italic')) out.push(toggle('w:i', r.italic), toggle('w:iCs', r.italic));
   if (states('strike')) out.push(toggle('w:strike', r.strike));
   if (states('colorHex')) out.push(`<w:color w:val="${r.colorHex}"/>`);
+  // §17.3.2.35 `w:spacing` — how much wider or tighter the characters stand,
+  // in twips, between the colour and the kerning. Read from a .docx and never
+  // written back: text set expanded or condensed came back at the face's own
+  // spacing.
+  if (r.letterSpacingPt !== undefined && r.letterSpacingPt !== 0) {
+    const twips = Math.round(r.letterSpacingPt * 20);
+    if (twips !== 0) out.push(`<w:spacing w:val="${String(twips)}"/>`);
+  }
+  // §17.3.2.43 `w:w` — the share of its width each glyph is set at, in whole
+  // percent (ST_TextScale, up to 600), after the spacing.
+  if (r.widthScale !== undefined) {
+    const percent = Math.min(600, Math.max(1, Math.round(r.widthScale * 100)));
+    if (percent !== 100) out.push(`<w:w w:val="${String(percent)}"/>`);
+  }
+  // §17.3.2.19 `w:kern` — after the colour and before the size, the schema's
+  // place for it; half-points, like the size.
+  if (r.kerningMinPt !== undefined && states('kerningMinPt')) {
+    out.push(`<w:kern w:val="${Math.round(r.kerningMinPt * 2)}"/>`);
+  }
   if (states('fontSizePt')) {
     // §17.3.2.38 w:sz — half-points.
     const half = Math.round(r.fontSizePt * 2);
@@ -1770,6 +2096,11 @@ function rPrXml(r: ResolvedRunProperties, state?: WriteState): string {
   }
   if (states('rtl')) out.push(toggle('w:rtl', r.rtl));
   if (r.lang !== undefined) out.push(`<w:lang w:val="${escapeAttr(r.lang)}"/>`);
+  // [MS-DOCX] `w14:ligatures` — Word 2010's own, after every element of the
+  // base schema (see `rootNamespaces` for the namespace it is declared in).
+  if (r.ligatures !== undefined && states('ligatures')) {
+    out.push(`<w14:ligatures w14:val="${r.ligatures}"/>`);
+  }
   return out.length > 0 ? `<w:rPr>${out.join('')}</w:rPr>` : '';
 }
 
@@ -1789,12 +2120,16 @@ function runShdXml(fill: string): string {
 function pPrBody(p: ResolvedParagraphProperties): string {
   // §17.3.1.26 CT_PPrBase is a SEQUENCE, and Word enforces it: a child out of
   // order is a file it refuses or a property it drops on the floor. The order
-  // below is the schema's — pageBreakBefore, numPr, pBdr, shd, tabs, bidi,
-  // spacing, ind, jc, outlineLvl — and it is not the order these were written
-  // in until now: `w:pBdr` and `w:tabs` were appended after `w:jc`, which
-  // LibreOffice reads anyway and Word does not.
+  // below is the schema's — keepNext, keepLines, pageBreakBefore, widowControl,
+  // numPr, pBdr, shd, tabs, bidi, spacing, ind, jc, outlineLvl — and it is not
+  // the order these were written in until now: `w:pBdr` and `w:tabs` were
+  // appended after `w:jc`, which LibreOffice reads anyway and Word does not.
   const out: Array<string> = [];
+  if (p.keepNext) out.push('<w:keepNext/>');
+  if (p.keepLines) out.push('<w:keepLines/>');
   if (p.pageBreakBefore) out.push('<w:pageBreakBefore/>');
+  // §17.3.1.44 — on is what the styles part states, so only off is said here.
+  if (p.widowControl === false) out.push('<w:widowControl w:val="0"/>');
   if (p.numbering) {
     // §17.3.1.19 — list membership; the marker itself comes from numbering.xml.
     out.push(
@@ -1806,6 +2141,10 @@ function pPrBody(p: ResolvedParagraphProperties): string {
   // paragraph it separates (see `pdf-reader/layout`).
   const pBdr = bordersXml('w:pBdr', p.borders);
   if (pBdr) out.push(pBdr);
+  // §17.3.1.31 `w:shd` — the paragraph's own background. Read from a .docx and
+  // not written back, a heading set white on a dark band came back white on
+  // the page.
+  if (p.shading) out.push(`<w:shd w:val="clear" w:color="auto" w:fill="${p.shading.colorHex}"/>`);
   // §17.3.1.38 `w:tabs` — the stops the paragraph's own tabs stand on. Without
   // them a tab falls to the default half-inch grid, which is not where the page
   // that was read set its second column.
@@ -1900,11 +2239,12 @@ function spacingXml(p: ResolvedParagraphProperties): string {
       p.spacingLine !== DEFAULT_PARA.spacingLine) &&
     p.spacingLine > 0
   ) {
-    // §17.3.1.33: 'auto' line spacing is in 240ths (line units); exact/atLeast
-    // in twips. The reader stores spacingLine in points either way.
-    const lineVal =
-      p.spacingLineRule === 'auto' ? Math.round(p.spacingLine * 12) : twips(p.spacingLine);
-    attrs.push(`w:line="${lineVal}"`, `w:lineRule="${p.spacingLineRule}"`);
+    // §17.3.1.33: 'auto' line spacing is in 240ths of a line, exact/atLeast
+    // in twips — and the reader reads either as twips, so an 'auto' line is
+    // twelve points a single line (see the HTML writer's `line-height`), and
+    // the number goes back as it came. Written as twelfths, Word's own 1.08
+    // lines (259) came back as 0.65 of one (155), each line over the last.
+    attrs.push(`w:line="${twips(p.spacingLine)}"`, `w:lineRule="${p.spacingLineRule}"`);
   }
   return attrs.length > 0 ? `<w:spacing ${attrs.join(' ')}/>` : '';
 }
@@ -1922,6 +2262,7 @@ function rFontsXml(fonts: FontFamilyMap | undefined, state?: WriteState): string
     const known = state?.faceFamilies?.get(name);
     if (known === undefined) return name;
     state?.familiesUsed.set(known.family, known);
+    if (state?.faceOutlines?.has(name) === true) state.facesUsed.add(name);
     return known.family;
   };
   const attrs: Array<string> = [];
@@ -2034,7 +2375,7 @@ function rawRFontsXml(fonts: FontFamilyMap): string {
 }
 
 // §17.6.17 — the section. Header/footer references first (Word's child order),
-// then page size/margins, columns and the titlePg toggle.
+// then page size/margins, columns, the titlePg toggle and the text direction.
 function sectPrXml(s: SectionProperties, hf: HeaderFooterRefs): string {
   const parts: Array<string> = [];
   for (const h of hf.headers) {
@@ -2064,8 +2405,19 @@ function sectPrXml(s: SectionProperties, hf: HeaderFooterRefs): string {
         ` w:bottom="${twips(m.bottom)}" w:left="${twips(m.left)}"${header}${footer}/>`,
     );
   }
+  // §17.6.12 — how the section numbers its pages, and from what. Left out,
+  // front matter numbered i, ii, iii printed 1, 2, 3 and the body went on
+  // counting from there instead of starting again at 1.
+  if (s.pageNumberFormat !== undefined || s.pageNumberStart !== undefined) {
+    const fmt = s.pageNumberFormat !== undefined ? ` w:fmt="${s.pageNumberFormat}"` : '';
+    const start = s.pageNumberStart !== undefined ? ` w:start="${String(s.pageNumberStart)}"` : '';
+    parts.push(`<w:pgNumType${fmt}${start}/>`);
+  }
   if (s.columns) parts.push(colsXml(s.columns));
   if (s.titlePg) parts.push('<w:titlePg/>');
+  // §17.6.20 — which way the lines run, after the title-page toggle as
+  // CT_SectPr orders them.
+  if (s.textDirection) parts.push(`<w:textDirection w:val="${s.textDirection}"/>`);
   if (parts.length === 0) return '';
   return `<w:sectPr>${parts.join('')}</w:sectPr>`;
 }

@@ -9,17 +9,21 @@ import type {
   BodyElement,
   CustomPathCmd,
   FloatAnchor,
+  Ligatures,
   ParagraphProperties,
   Section,
   SectionProperties,
+  ShapeBlock,
   ShapeFill,
   ShapeLine,
+  StyleSheet,
   TextOutline,
 } from '@/core/document-model';
-import type { FaceFamily, FlowDoc } from '@/core/ir/flow';
+import type { FaceFamily, FaceOutlines, FlowDoc } from '@/core/ir/flow';
 import type { FontRegistry } from '@/core/font';
 import type { Loss, Pt } from '@/core/ir';
 
+import type { Display } from './display';
 import type { PdfImage } from './images';
 import type { PdfPage } from './document';
 import type { PdfVector } from './vector';
@@ -76,14 +80,27 @@ export function paragraphBlock(text: string, outlineLevel?: number): BodyElement
  * them up to "78110"; in 7-point footnotes the same space is half as wide
  * again as the page's, and pushes their lines over.
  *
+ * A space between two words one text markup marks is marked with them: the
+ * band a highlighter lays runs across the gap. comments.pdf highlights two
+ * lines on its sixth page, and with its spaces left bare the band came back
+ * broken at every word.
+ *
  * @param before The span the space follows, where there is one.
+ * @param after  What follows the space, where anything does.
  * @returns The space.
  */
-export function spaceAfter(before: TextSpan | undefined): TextSpan {
+export function spaceAfter(
+  before: TextSpan | undefined,
+  after?: { readonly markup?: TextMarkup },
+): TextSpan {
+  const markup = before?.markup;
   return {
     text: ' ',
     ...(before?.sizePt !== undefined ? { sizePt: before.sizePt } : {}),
     ...(before?.fontName !== undefined ? { fontName: before.fontName } : {}),
+    ...(markup !== undefined && after?.markup !== undefined && sameMarkup(markup, after.markup)
+      ? { markup }
+      : {}),
   };
 }
 
@@ -110,6 +127,12 @@ export interface TextSpan {
   readonly script?: 'superscript' | 'subscript';
   /** §12.5.6.10 — a text-markup annotation marks these words. */
   readonly markup?: TextMarkup;
+  /**
+   * §17.3.2.43 — the share of their own width the characters are set at: a
+   * word space the page set narrower than the face's own (see `fittedSpace` in
+   * ./layout).
+   */
+  readonly widthScale?: number;
 }
 
 /**
@@ -144,6 +167,7 @@ export function paragraphFromRuns(
     italic?: boolean;
     script?: 'superscript' | 'subscript';
     markup?: TextMarkup;
+    widthScale?: number;
   }> = [];
   for (const s of spans) {
     const last = merged[merged.length - 1];
@@ -158,6 +182,7 @@ export function paragraphFromRuns(
       last.bold === s.bold &&
       last.italic === s.italic &&
       last.script === s.script &&
+      last.widthScale === s.widthScale &&
       sameMarkup(last.markup, s.markup)
     ) {
       last.text += s.text;
@@ -173,6 +198,7 @@ export function paragraphFromRuns(
         ...(s.italic !== undefined ? { italic: s.italic } : {}),
         ...(s.script !== undefined ? { script: s.script } : {}),
         ...(s.markup !== undefined ? { markup: s.markup } : {}),
+        ...(s.widthScale !== undefined ? { widthScale: s.widthScale } : {}),
       });
   }
   // Whitespace a page never drew — the gaps this reader put in — collapses to
@@ -240,6 +266,9 @@ export function paragraphFromRuns(
               ? { underlineColorHex: r.markup.underlineHex }
               : {}),
             ...(r.markup?.strike === true ? { strike: true } : {}),
+            // §17.3.2.43 `w:w` — a word space the page set narrower than the
+            // face's own.
+            ...(r.widthScale !== undefined ? { widthScale: r.widthScale } : {}),
           },
           ...(r.href ? { href: r.href } : {}),
         })),
@@ -359,15 +388,6 @@ export function positionedText(
   zOrder: number,
   rotation60k?: number,
 ): BodyElement {
-  // §17.3.1.33 — the line stands EXACTLY as tall as its box, so its baseline
-  // falls where an exact line's does, four fifths down (`BASELINE_AT`) — which
-  // is where the box was measured to put it. Left to single spacing the face's
-  // own ascent placed it, a tenth of an em too high: bug1724918.pdf's "hello"
-  // and "world" rode up against the tops of the fields they are typed in.
-  const paragraph = paragraphFromRuns(spans, undefined, {
-    spacingLine: pt(Math.max(1, box.height)),
-    spacingLineRule: 'exact',
-  });
   return {
     kind: 'shape',
     shape: {
@@ -380,25 +400,165 @@ export function positionedText(
           offsetPt: pt(Math.max(0, frame.top - box.y - box.height)),
         },
       },
-      width: pt(Math.max(1, box.width)),
-      height: pt(Math.max(1, box.height)),
-      ...(rotation60k !== undefined ? { transform: { rotation60k } } : {}),
-      geometry: { kind: 'preset', preset: 'rect' },
-      fill: { kind: 'none' },
-      // A box drawn round a line of a form would be a box the page never had:
-      // the shape is here to place the words, not to be seen.
-      text: {
-        content: [paragraph],
-        insetLeft: pt(0),
-        insetTop: pt(0),
-        insetRight: pt(0),
-        insetBottom: pt(0),
-      },
+      ...lineBox(spans, box, rotation60k),
       // The box floats, so the paragraph that carries it takes no room, as a
       // placed drawing's does (`FLOAT_CARRIER`). Floats in a row share one
       // carrier, the first one's: left at single spacing it is a blank line,
       // and every line under it moves down one.
       paragraphProperties: FLOAT_CARRIER,
+    },
+  };
+}
+
+/** A line of text in a box of its own, sized to the box, which nobody sees. */
+function lineBox(
+  spans: ReadonlyArray<TextSpan>,
+  box: { width: number; height: number },
+  rotation60k?: number,
+  noWrap = false,
+): Omit<ShapeBlock, 'paragraphProperties'> {
+  // §17.3.1.33 — the line stands EXACTLY as tall as its box, so its baseline
+  // falls where an exact line's does, four fifths down (`BASELINE_AT`) — which
+  // is where the box was measured to put it. Left to single spacing the face's
+  // own ascent placed it, a tenth of an em too high: bug1724918.pdf's "hello"
+  // and "world" rode up against the tops of the fields they are typed in.
+  const paragraph = paragraphFromRuns(spans, undefined, {
+    spacingLine: pt(Math.max(1, box.height)),
+    spacingLineRule: 'exact',
+  });
+  return {
+    width: pt(Math.max(1, box.width)),
+    height: pt(Math.max(1, box.height)),
+    ...(rotation60k !== undefined ? { transform: { rotation60k } } : {}),
+    geometry: { kind: 'preset', preset: 'rect' },
+    fill: { kind: 'none' },
+    // A box drawn round a line of a form would be a box the page never had:
+    // the shape is here to place the words, not to be seen.
+    text: {
+      content: [paragraph],
+      insetLeft: pt(0),
+      insetTop: pt(0),
+      insetRight: pt(0),
+      insetBottom: pt(0),
+      ...(noWrap ? { noWrap: true } : {}),
+    },
+  };
+}
+
+/**
+ * One part of a figure (see `./figures`): the shape it is drawn as, and where
+ * its box stands on the page — its left edge and its top, y-up.
+ */
+export interface FigureMember {
+  readonly shape: ShapeBlock;
+  readonly left: number;
+  readonly top: number;
+}
+
+/** A path of a figure, drawn where the page drew it. */
+export function vectorMember(v: PdfVector): FigureMember {
+  const el = shapeBlock(v);
+  if (el.kind !== 'shape') throw new Error('a path is drawn as a shape');
+  return { shape: el.shape, left: v.minX, top: v.maxY };
+}
+
+/**
+ * A picture of a figure: a box filled with it (§20.1.8.14), which is what a
+ * `pic:pic` inside a group is — the shadows comments.pdf lays under each of
+ * its boxes.
+ */
+export function imageMember(image: PdfImage, resources: ResourceStore): FigureMember {
+  const turned = image.rotationDeg !== undefined || image.flipV === true;
+  return {
+    shape: {
+      width: pt(image.widthPt),
+      height: pt(image.heightPt),
+      ...(turned
+        ? {
+            transform: {
+              ...(image.rotationDeg !== undefined
+                ? { rotation60k: Math.round(-image.rotationDeg * 60000) }
+                : {}),
+              ...(image.flipV === true ? { flipV: true } : {}),
+            },
+          }
+        : {}),
+      geometry: { kind: 'preset', preset: 'rect' },
+      fill: {
+        kind: 'picture',
+        imageResource: resources.put(image.bytes),
+        ...(image.crop ? { imageCrop: image.crop } : {}),
+        ...(image.alpha !== undefined ? { alpha: image.alpha } : {}),
+      },
+      paragraphProperties: {},
+    },
+    left: image.x,
+    top: image.y + image.heightPt,
+  };
+}
+
+/**
+ * A label of a figure: a line of its words, in a box as wide as they are.
+ * The box never wraps — set in a face a little wider than the page's, one
+ * word would break in two.
+ */
+export function labelMember(
+  spans: ReadonlyArray<TextSpan>,
+  box: { x: number; y: number; width: number; height: number },
+  rotation60k?: number,
+): FigureMember {
+  return {
+    shape: { ...lineBox(spans, box, rotation60k, true), paragraphProperties: {} },
+    left: box.x,
+    top: box.y + box.height,
+  };
+}
+
+/** The box a figure's parts stand in, on the page (y-up). */
+export function membersBox(members: ReadonlyArray<FigureMember>): {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+} {
+  return {
+    left: Math.min(...members.map((m) => m.left)),
+    top: Math.max(...members.map((m) => m.top)),
+    right: Math.max(...members.map((m) => m.left + m.shape.width)),
+    bottom: Math.min(...members.map((m) => m.top - m.shape.height)),
+  };
+}
+
+/**
+ * §20.5.2.17 — a figure as the one drawing it is: a group holding its paths,
+ * its pictures and its labels at their places in it, set in a paragraph of
+ * its own. An inline drawing takes the room it is tall (a line holding
+ * nothing but a picture is the picture's height in Word), so the text after
+ * it follows it, and the figure goes with its paragraph wherever the text
+ * puts that.
+ *
+ * @param members    Its parts, in the order they are painted.
+ * @param properties The paragraph it stands in.
+ */
+export function figureBlock(
+  members: ReadonlyArray<FigureMember>,
+  properties: ParagraphProperties,
+): BodyElement {
+  const box = membersBox(members);
+  return {
+    kind: 'shape',
+    shape: {
+      width: pt(box.right - box.left),
+      height: pt(box.top - box.bottom),
+      children: members.map((m) => ({
+        shape: m.shape,
+        xPt: pt(m.left - box.left),
+        yPt: pt(box.top - m.top),
+      })),
+      // A group is a container: nothing is drawn for its own box.
+      geometry: { kind: 'custom', custom: { pathWidth: 0, pathHeight: 0, commands: [] } },
+      fill: { kind: 'none' },
+      paragraphProperties: properties,
     },
   };
 }
@@ -540,14 +700,18 @@ export function shapeBlock(
  * this single geometry — a known approximation, still far better than a fixed
  * `A4`. Returns `undefined` when there is no usable first-page box.
  */
-export function sectionFromPdfPages(pages: ReadonlyArray<PdfPage>): SectionProperties | undefined {
+export function sectionFromPdfPages(
+  pages: ReadonlyArray<PdfPage>,
+  display?: Display,
+): SectionProperties | undefined {
   const first = pages[0];
   if (!first) return undefined;
   // §14.11.1 — the page as it is SHOWN. A landscape sheet drawn sideways in a
   // portrait box with `/Rotate 270` is a landscape page, and read as its box
   // says every one of Brotli-Prototype-FileA.pdf's twenty-five came back
-  // portrait with its words running down the page.
-  const shown = displayOf(first);
+  // portrait with its words running down the page. (A page READ in a frame of
+  // its own is sized to that frame; see `sectionOnSheet`.)
+  const shown = display ?? displayOf(first);
   const width = shown.width;
   const height = shown.height;
   if (!(width > 0 && height > 0)) return undefined;
@@ -566,6 +730,85 @@ export function sectionFromPdfPages(pages: ReadonlyArray<PdfPage>): SectionPrope
     headers: [],
     footers: [],
   };
+}
+
+/**
+ * §17.6.20 — a section read in a page's text frame (see `textFrameOf`), set
+ * back on the sheet the page is shown on, its lines running down it (`tbRl`).
+ *
+ * The frame is the sheet turned back a quarter, so its measurements carry
+ * over edge for edge: the frame's left margin is where each line starts, the
+ * sheet's top one; its top margin is where the first line stands, the
+ * sheet's right one.
+ *
+ * @param section The section as the frame measured it.
+ * @param display The geometry its pages were read in.
+ * @returns The section on the sheet, or the section unchanged for a page read
+ *          on its sheet.
+ */
+export function sectionOnSheet(
+  section: SectionProperties | undefined,
+  display: Display | undefined,
+): SectionProperties | undefined {
+  const sheet = display?.sheet;
+  if (!section || !sheet) return section;
+  const m = section.margins;
+  return {
+    ...section,
+    pageSize: {
+      width: pt(sheet.width),
+      height: pt(sheet.height),
+      orientation: sheet.width > sheet.height ? 'landscape' : 'portrait',
+    },
+    ...(m ? { margins: { ...m, top: m.left, right: m.top, bottom: m.right, left: m.bottom } } : {}),
+    textDirection: 'tbRl',
+  };
+}
+
+/**
+ * A mark anchored to a page read in its text frame, set on the SHEET the page
+ * is shown on: where the page drew it, turned with the page.
+ *
+ * Word lays a `tbRl` section's text down the sheet but stands a drawing
+ * anchored to the page at its offsets on the sheet, upright (§17.6.20) — so a
+ * picture the frame placed is carried onto the sheet, and turned a quarter
+ * clockwise as the words around it are.
+ *
+ * @param el         A body element, anchored or not.
+ * @param sheetWidth The sheet's width, which is the frame's height.
+ * @returns The element, anchored on the sheet.
+ */
+export function floatOntoSheet(el: BodyElement, sheetWidth: number): BodyElement {
+  const onto = (float: FloatAnchor, width: number, height: number): FloatAnchor | undefined => {
+    if (float.posH?.relativeFrom !== 'page' || float.posV?.relativeFrom !== 'page')
+      return undefined;
+    // The box's centre, frame (x, y) → sheet (sheetWidth − y, x); the box keeps
+    // its size and turns about that centre.
+    const cx = (float.posH.offsetPt ?? 0) + width / 2;
+    const cy = (float.posV.offsetPt ?? 0) + height / 2;
+    return {
+      ...float,
+      posH: { relativeFrom: 'page', offsetPt: pt(sheetWidth - cy - width / 2) },
+      posV: { relativeFrom: 'page', offsetPt: pt(cx - height / 2) },
+    };
+  };
+  const quarter = (rotation60k: number | undefined): number =>
+    ((rotation60k ?? 0) + 90 * 60000) % (360 * 60000);
+  if (el.kind === 'image' && el.image.float) {
+    const float = onto(el.image.float, el.image.width, el.image.height);
+    if (!float) return el;
+    return { ...el, image: { ...el.image, float, rotation60k: quarter(el.image.rotation60k) } };
+  }
+  if (el.kind === 'shape' && el.shape.float) {
+    const float = onto(el.shape.float, el.shape.width, el.shape.height);
+    if (!float) return el;
+    const rotation60k = quarter(el.shape.transform?.rotation60k);
+    return {
+      ...el,
+      shape: { ...el.shape, float, transform: { ...el.shape.transform, rotation60k } },
+    };
+  }
+  return el;
 }
 
 /**
@@ -665,7 +908,7 @@ export const NATURAL_LINE_EM = 1.2;
  * in exact boxes (see `groupIntoParagraphs`), so this is where the box's top
  * stands, not where a face's ascender happens to.
  */
-const ASCENDER = BASELINE_AT * NATURAL_LINE_EM;
+export const ASCENDER = BASELINE_AT * NATURAL_LINE_EM;
 
 /**
  * And how far below its baseline the last line's box reaches. A box set half
@@ -915,6 +1158,83 @@ export function withMeasuredMargins(
   };
 }
 
+/** What a face's runs ask of a word processor to be set as the page set them. */
+export interface Typesetting {
+  /** §17.3.2.19 — kerned from this size up. */
+  readonly kerningMinPt?: Pt;
+  /** [MS-DOCX] `w14:ligatures` — set with these ligatures. */
+  readonly ligatures?: Ligatures;
+}
+
+/**
+ * The runs set in a face the page KERNED or LIGATED, marked so (see
+ * `pageSpacing`, `FaceOutlines.ligatures`): a word processor kerns nothing a
+ * run does not ask it to, and set unkerned, a line kerned on the page runs
+ * longer than it did there; a ligature the embedded face carries is formed
+ * where the run asks for its face's ligatures.
+ *
+ * @param blocks   The blocks to mark, tables and text boxes within them too.
+ * @param typeset  Run font name → what its runs ask for.
+ * @returns The blocks, their runs in those faces asking for it.
+ */
+export function typesetRuns(
+  blocks: ReadonlyArray<BodyElement>,
+  typeset: ReadonlyMap<string, Typesetting>,
+): Array<BodyElement> {
+  if (typeset.size === 0) return [...blocks];
+  const shape = (s: ShapeBlock): ShapeBlock => ({
+    ...s,
+    ...(s.text ? { text: { ...s.text, content: typesetRuns(s.text.content, typeset) } } : {}),
+    ...(s.children
+      ? { children: s.children.map((child) => ({ ...child, shape: shape(child.shape) })) }
+      : {}),
+  });
+  return blocks.map((el): BodyElement => {
+    if (el.kind === 'paragraph') {
+      const runs = el.paragraph.runs.map((run) => {
+        const face = run.properties.fontFamily?.ascii;
+        const asked = face !== undefined ? typeset.get(face) : undefined;
+        return asked ? { ...run, properties: { ...run.properties, ...asked } } : run;
+      });
+      return { ...el, paragraph: { ...el.paragraph, runs } };
+    }
+    if (el.kind === 'table') {
+      const rows = el.table.rows.map((row) => ({
+        ...row,
+        cells: row.cells.map((cell) => ({ ...cell, content: typesetRuns(cell.content, typeset) })),
+      }));
+      return { ...el, table: { ...el.table, rows } };
+    }
+    if (el.kind === 'shape') return { ...el, shape: shape(el.shape) };
+    return el;
+  });
+}
+
+/**
+ * What each face's runs ask for: kerning where the page kerned the face, and
+ * its standard ligatures where the page drew one of them (the ligatures the
+ * face's embedded font then forms are exactly the ones the page drew).
+ *
+ * @param kerned       The run font names of the faces the page kerned.
+ * @param faceOutlines Run font name → the face's outlines, ligatures among them.
+ */
+export function typesetting(
+  kerned: ReadonlySet<string>,
+  faceOutlines: ReadonlyMap<string, FaceOutlines> | undefined,
+): Map<string, Typesetting> {
+  const out = new Map<string, Typesetting>();
+  for (const face of kerned) out.set(face, { kerningMinPt: KERN_FROM_PT });
+  for (const [face, outlines] of faceOutlines ?? []) {
+    if (outlines.ligatures && outlines.ligatures.size > 0) {
+      out.set(face, { ...out.get(face), ligatures: 'standard' });
+    }
+  }
+  return out;
+}
+
+/** §17.3.2.19 — kerned from one point up: at every size a page is set in. */
+const KERN_FROM_PT = pt(1);
+
 /**
  * Assemble the final {@link FlowDoc} for a reconstruction: the body elements
  * with their styles resolved against the empty style sheet, the lifted-image
@@ -930,18 +1250,45 @@ export function buildFlowDoc(
   sections: ReadonlyArray<Section> = [],
   headersFooters?: ReadonlyMap<string, ReadonlyArray<BodyElement>>,
   faceFamilies?: ReadonlyMap<string, FaceFamily>,
+  faceOutlines?: ReadonlyMap<string, FaceOutlines>,
+  kerned: ReadonlySet<string> = new Set(),
 ): FlowDoc {
+  const typeset = typesetting(kerned, faceOutlines);
+  const bands =
+    headersFooters && typeset.size > 0
+      ? new Map([...headersFooters].map(([id, blocks]) => [id, typesetRuns(blocks, typeset)]))
+      : headersFooters;
   return {
     kind: 'flow',
-    body: resolveBodyStyles([...body], EMPTY_STYLE_SHEET),
+    body: resolveBodyStyles(typesetRuns(body, typeset), RECONSTRUCTION_SHEET),
     // §17.6 — a document whose pages differ in size is several sections; one
     // page size for all of them is the ordinary case and states none.
     sections,
-    ...(headersFooters && headersFooters.size > 0 ? { headersFooters } : {}),
+    ...(bands && bands.size > 0 ? { headersFooters: bands } : {}),
     ...(section ? { section } : {}),
     ...(embeddedFonts && embeddedFonts.size > 0 ? { embeddedFonts } : {}),
     ...(faceFamilies && faceFamilies.size > 0 ? { faceFamilies } : {}),
+    ...(faceOutlines && faceOutlines.size > 0 ? { faceOutlines } : {}),
+    // A reconstruction was set by no older Word's rules, and only a current
+    // Word's layout forms the ligatures its embedded faces carry.
+    compatibilityMode: CURRENT_WORD_LAYOUT,
     styles: EMPTY_STYLE_SHEET,
     resources,
   };
 }
+
+/** [MS-DOCX] `compatibilityMode` 15 — Word 2013's layout, a current Word's. */
+const CURRENT_WORD_LAYOUT = 15;
+
+/**
+ * §17.3.1.44 — the sheet a reconstruction's paragraphs resolve against: the
+ * empty one, with widow control off. Every source page opens a page of its
+ * own, and the page already broke its paragraphs where it did; where a
+ * reconstructed column runs a line long, widow control — on wherever nothing
+ * says otherwise — carries a second line over with it, and the column after
+ * runs longer still.
+ */
+const RECONSTRUCTION_SHEET: StyleSheet = {
+  ...EMPTY_STYLE_SHEET,
+  defaultParagraphProperties: { widowControl: false },
+};

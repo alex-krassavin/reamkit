@@ -473,7 +473,20 @@ async function fetchTtf(
     })();
     cache.set(url, pending);
   }
-  const result = await pending;
+  let result: Uint8Array | undefined;
+  try {
+    result = await pending;
+  } catch (cause) {
+    // The request itself failed: offline, a failed DNS lookup, a dropped
+    // connection. That says nothing about the font, only about the network at
+    // that moment, yet cached it answered every later call with the same error
+    // without asking again, for as long as the process ran. So it is forgotten,
+    // unless a newer download already stands in its place, and a best-effort
+    // face goes missing, as it does when the CDN answers with an error.
+    if (cache.get(url) === pending) cache.delete(url);
+    if (!required) return undefined;
+    throw new Error(`Failed to download font from ${url}`, { cause });
+  }
   if (!result && required) {
     cache.delete(url);
     throw new Error(`Failed to download font from ${url}`);

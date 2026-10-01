@@ -237,6 +237,15 @@ function mergeRun(base: ResolvedRunProperties, override: RunProperties): Resolve
     ...((override.letterSpacingPt ?? base.letterSpacingPt) !== undefined
       ? { letterSpacingPt: override.letterSpacingPt ?? base.letterSpacingPt }
       : {}),
+    ...((override.widthScale ?? base.widthScale) !== undefined
+      ? { widthScale: override.widthScale ?? base.widthScale }
+      : {}),
+    ...((override.kerningMinPt ?? base.kerningMinPt) !== undefined
+      ? { kerningMinPt: override.kerningMinPt ?? base.kerningMinPt }
+      : {}),
+    ...((override.ligatures ?? base.ligatures) !== undefined
+      ? { ligatures: override.ligatures ?? base.ligatures }
+      : {}),
   };
 }
 
@@ -264,6 +273,11 @@ function mergePar(
   const sectionBreak = override.sectionBreak ?? base.sectionBreak;
   const textDirection = override.textDirection ?? base.textDirection;
   const snapToGrid = override.snapToGrid ?? base.snapToGrid;
+  // Whether the space before is the automatic one: the layer that decides it
+  // asked for it.
+  const beforeAuto =
+    override.spacingBeforeAuto ??
+    (override.spacingBefore === undefined ? base.spacingBeforeAuto : undefined);
   return {
     alignment: override.alignment ?? base.alignment,
     // §17.3.1.1/§17.3.1.3 — an autospacing flag at this layer beats the length
@@ -276,6 +290,9 @@ function mergePar(
     indentRight: override.indentRight ?? base.indentRight,
     indentFirstLine: override.indentFirstLine ?? base.indentFirstLine,
     pageBreakBefore: override.pageBreakBefore ?? base.pageBreakBefore,
+    keepNext: override.keepNext ?? base.keepNext,
+    keepLines: override.keepLines ?? base.keepLines,
+    widowControl: override.widowControl ?? base.widowControl,
     contextualSpacing: override.contextualSpacing ?? base.contextualSpacing,
     // A paragraph's own stops REPLACE the style's — they are not merged.
     tabs: override.tabs ?? base.tabs,
@@ -291,6 +308,7 @@ function mergePar(
     ...(sectionBreak !== undefined ? { sectionBreak } : {}),
     ...(textDirection !== undefined ? { textDirection } : {}),
     ...(snapToGrid !== undefined ? { snapToGrid } : {}),
+    ...(beforeAuto !== undefined ? { spacingBeforeAuto: beforeAuto } : {}),
   };
 }
 
@@ -369,6 +387,12 @@ function primeParagraphFixpoint(para: ParagraphProperties): void {
   if (!bySheet.has(para)) bySheet.set(para, para as ResolvedParagraphProperties);
 }
 
+// The mark-resolving half of resolveBodyStyles, keyed like paragraphCascadeCache.
+const markCascadeCache = new WeakMap<
+  StyleSheet,
+  WeakMap<ParagraphProperties, ParagraphProperties>
+>();
+
 /**
  * Resolve the style cascade across an entire body so the tree carries final
  * effective run/paragraph properties (FlowDoc transform, ir-design stage 6).
@@ -379,6 +403,30 @@ export function resolveBodyStyles(
   body: ReadonlyArray<BodyElement>,
   sheet: StyleSheet,
 ): ReadonlyArray<BodyElement> {
+  // §17.3.1.29 — the paragraph MARK is a run as well, formatted by the same
+  // cascade, and it is what an empty paragraph stands as tall as and what the
+  // extra lines of a spaced-out picture are lines of. Left as the bare `w:rPr`
+  // the paragraph states, a document that sets 12pt Calibri in its defaults
+  // stood every blank paragraph on Word's empty-document 11pt, in no family.
+  // One result per distinct input, as the paragraph cascade keeps: the grid
+  // mapper shares a properties object across a sheet's cells.
+  let bySheet = markCascadeCache.get(sheet);
+  if (!bySheet) {
+    bySheet = new WeakMap();
+    markCascadeCache.set(sheet, bySheet);
+  }
+  const marks = bySheet;
+  const withResolvedMark = (pp: ParagraphProperties): ParagraphProperties => {
+    const hit = marks.get(pp);
+    if (hit) return hit;
+    const resolved: ParagraphProperties = {
+      ...resolveParagraphProperties(pp, sheet),
+      runProperties: resolveRunProperties(pp.runProperties ?? {}, pp, sheet),
+    };
+    marks.set(pp, resolved);
+    return resolved;
+  };
+
   const visitParagraph = (p: Paragraph): void => {
     // Run resolution sees the RAW paragraph properties (its styleId drives
     // the paragraph-style rPr layer) — so resolve every run first, then
@@ -390,10 +438,7 @@ export function resolveBodyStyles(
         sheet,
       );
     }
-    (p as { properties: ParagraphProperties }).properties = resolveParagraphProperties(
-      p.properties,
-      sheet,
-    );
+    (p as { properties: ParagraphProperties }).properties = withResolvedMark(p.properties);
     primeParagraphFixpoint(p.properties);
     for (const r of p.runs) primeResolvedFixpoint(r.properties, p.properties);
   };
@@ -417,8 +462,27 @@ export function resolveBodyStyles(
         for (const member of sh.children ?? []) shapeText(member.shape);
       };
       shapeText(el.shape);
+      standsOn(el.shape);
+    } else if (el.kind === 'image') {
+      standsOn(el.image);
+    } else {
+      standsOn(el.chart);
     }
-    // image, chart, textless shape: nothing to resolve
+  };
+
+  // §17.3.1 — a picture, chart or shape of its own in the flow stands on the
+  // paragraph that held it, spaced and aligned by that paragraph's style as
+  // much as by what it states itself: Bug51170.docx's header logo is a
+  // paragraph of the Header style, 10pt after it from Normal, and read raw it
+  // stood the body 10pt higher up the page than Word does. An anchored one
+  // stands on no paragraph of its own and takes no room: resolved, the four
+  // text boxes of tdf117843.docx's header took the document's 8pt each.
+  const standsOn = (block: {
+    paragraphProperties: ParagraphProperties;
+    readonly float?: unknown;
+  }): void => {
+    if (block.float !== undefined) return;
+    block.paragraphProperties = withResolvedMark(block.paragraphProperties);
   };
 
   for (const el of body) visit(el);

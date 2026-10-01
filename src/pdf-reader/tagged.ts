@@ -7,26 +7,49 @@
 // tagged PDF Ream writes.
 
 import {
+  ASCENDER,
+  CARRIER_LINE_PT,
   buildFlowDoc,
   dedupeLosses,
+  floatOntoSheet,
   imageBlock,
   paragraphBlock,
   paragraphFromRuns,
   sectionFromPdfPages,
+  sectionOnSheet,
   shapeBlock,
   spaceAfter,
   withMeasuredMargins,
 } from './flow-build';
-import { displayOf, placeRuns, placeVectors } from './display';
+import { displayOf, placeRuns, placeVectors, textFrameOf, wordsTurnOf } from './display';
 import { collectEmbeddedFonts } from './embedded-fonts';
 import { collectFaceFamilies } from './font';
 import { collectPageImages } from './images';
 import { collectPageVectors } from './vector';
-import { UNMAPPED, endedParagraph } from './layout';
+import {
+  FOOTER_PART,
+  HEADER_PART,
+  UNMAPPED,
+  endedParagraph,
+  footerBand,
+  numberedFrom,
+  numberingOf,
+  pageTextEdges,
+  runningFoot,
+  stepsBetweenWords,
+} from './layout';
 import { markDrawnRules } from './text-rules';
 import { readStructTree } from './struct-tree';
 import { extractPageText } from './text';
-import type { BodyElement, Table, TableCell, TableRow } from '@/core/document-model';
+import { faceOutlinesOf, kernedFaces, pageSpacing } from './face-outlines';
+import type { ShownCodes } from './face-outlines';
+import type {
+  BodyElement,
+  SectionProperties,
+  Table,
+  TableCell,
+  TableRow,
+} from '@/core/document-model';
 import type { Loss, Pt } from '@/core/ir';
 
 import type { TextRun } from './content';
@@ -65,8 +88,21 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
   // §14.11.1 — the pages as they are SHOWN, and every run placed on them. The
   // tree says what the words ARE; where they sit is still the page's to say,
   // and it is the only witness of the margins the author set.
-  const shown = pages.map((page) => displayOf(page));
-  const placedRuns = pages.map((page, i) => placeRuns(extractPageText(file, page), shown[i]!));
+  const sheets = pages.map((page) => displayOf(page));
+  // §9.9 — the codes each font paints, for the faces a writer may embed.
+  const painted: ShownCodes = new Map();
+  const extracted = pages.map((page) => extractPageText(file, page, painted));
+  // §9.4.3 — how the page spaces each face: between words, and inside them.
+  const spacing = pageSpacing(extracted);
+  const onSheets = extracted.map((runs, i) => placeRuns(runs, sheets[i]!));
+  // §17.6.20 — a document whose words run DOWN its sheets is read in the frame
+  // where they stand upright and set back on the sheets turned, as the untagged
+  // reading does a page at a time. A tagged reading is one section, so it
+  // turns when every page that has words has them running down it.
+  const worded = onSheets.filter((runs) => runs.some((r) => r.text.trim() !== ''));
+  const turned = worded.length > 0 && worded.every((runs) => wordsTurnOf(runs) === 270);
+  const shown = turned ? sheets.map((sheet) => textFrameOf(sheet)) : sheets;
+  const placedRuns = turned ? extracted.map((runs, i) => placeRuns(runs, shown[i]!)) : onSheets;
   // A PDF has no underline: it draws a thin bar under the words, and the tree
   // says nothing about it. Read onto the runs before they are gathered, so it
   // travels with them, and the bar itself is not placed a second time.
@@ -180,6 +216,24 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
   // Where each emitted paragraph was SET on the page, for the space between
   // them: the tree says what the words are and never how far apart they stood.
   const setting = new Map<BodyElement, Setting>();
+  // …and the page each element begins on, which the tree does not say either.
+  const pageOf = new Map<BodyElement, number>();
+  /** The highest baseline a page's own paragraphs stand on, page space (y up). */
+  const highestOf = (own: ReadonlyArray<BodyElement>): number | undefined => {
+    const tops = own.flatMap((el) => {
+      const set = setting.get(el);
+      return set ? [set.top] : [];
+    });
+    return tops.length > 0 ? Math.max(...tops) : undefined;
+  };
+  /** The lowest baseline a page's own paragraphs reach, page space (y up). */
+  const lowestOf = (own: ReadonlyArray<BodyElement>): number | undefined => {
+    const bottoms = own.flatMap((el) => {
+      const set = setting.get(el);
+      return set ? [set.bottom] : [];
+    });
+    return bottoms.length > 0 ? Math.min(...bottoms) : undefined;
+  };
 
   /** The topmost and bottommost baseline under a node, and its largest face. */
   function baselinesOf(node: StructNode): Setting | undefined {
@@ -301,21 +355,28 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
   }
 
   function emit(node: StructNode, out: Array<BodyElement>): void {
+    // The page the node's words begin on, which is the page what it becomes
+    // begins on (see `byPage`).
+    const on = (el: BodyElement): BodyElement => {
+      const page = firstPageOf(node);
+      if (page !== undefined) pageOf.set(el, page);
+      return el;
+    };
     if (node.type === 'Table') {
       const table = buildTable(node);
-      if (table) out.push(table);
+      if (table) out.push(on(table));
       return;
     }
     if (node.type === 'Figure') {
       for (const img of imagesForNode(node)) {
         emitted.add(img);
-        out.push(imageBlock(img, resources, node.alt));
+        out.push(on(imageBlock(img, resources, node.alt)));
       }
       return;
     }
     if (node.type === 'LI') {
       const text = collectText(node);
-      if (text.length > 0) out.push(paragraphBlock(text, undefined));
+      if (text.length > 0) out.push(on(paragraphBlock(text, undefined)));
       return;
     }
     if (node.children.length === 0) {
@@ -323,12 +384,23 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
         for (const part of settingsOf(node)) {
           const el = paragraphFromRuns(part.spans, headingLevel(node.type));
           setting.set(el, part.set);
-          out.push(el);
+          out.push(on(el));
         }
       }
       return;
     }
     for (const child of node.children) emit(child, out);
+  }
+
+  /** The first page any marked content under a node stands on. */
+  function firstPageOf(node: StructNode): number | undefined {
+    let first: number | undefined;
+    const visit = (n: StructNode): void => {
+      for (const { page } of n.mcids) if (first === undefined || page < first) first = page;
+      for (const child of n.children) visit(child);
+    };
+    visit(node);
+    return first;
   }
 
   function buildTable(tableNode: StructNode): BodyElement | undefined {
@@ -390,9 +462,22 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
     return { header: allHeader && cells.length > 0, cells };
   }
 
-  const body: Array<BodyElement> = [];
-  emit(root, body);
-  spaceParagraphs(body, setting, shown[0]?.height ?? 0);
+  const named: Array<BodyElement> = [];
+  emit(root, named);
+  // §14.8 — a tree names a document's elements in reading order and says
+  // nothing of the pages they stand on, and read as one flow a document came
+  // back with its pages run together: bug793632.pdf is four pages of a line
+  // each — three of front matter and the first of the body — and came back as
+  // one. Each element stands on the page its words begin on, and each source
+  // page opens an output page of its own, as the heuristic reading's do.
+  const byPage: Array<Array<BodyElement>> = pages.map(() => []);
+  let current = 0;
+  for (const el of named) {
+    // A tree may name something on an earlier page after something on a
+    // later one; it keeps its place in the reading order rather than go back.
+    current = Math.max(current, pageOf.get(el) ?? current);
+    byPage[current]!.push(el);
+  }
   // Artwork sits UNDER the text the tree placed: `zOrder` starts below zero so
   // a lifted rule never covers the words it rules off.
   let zOrder = -1_000_000;
@@ -408,24 +493,110 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
     // §14.11.1/§14.11.2 — the page as it is SHOWN, corner and turn together.
     const frame = { left: 0, top: shown[index]!.height };
     const taken = ruled[index]?.consumed;
+    const drawn: Array<BodyElement> = [];
     for (const v of pageVectors[index] ?? []) {
       // A bar that became a run's underline is not also a bar on the page.
       if (taken?.has(v) === true) continue;
-      body.push(shapeBlock(v, frame, zOrder++, true));
+      const shape = shapeBlock(v, frame, zOrder++, true);
+      // …and on a turned sheet it stands where the page drew it, turned with it.
+      drawn.push(turned ? floatOntoSheet(shape, shown[index]!.height) : shape);
     }
+    // First on its page: anchored there, whatever the page's words run on to.
+    byPage[index]!.unshift(...drawn);
   });
 
   // Images not claimed by a /Figure (untagged figures, third-party PDFs) still
-  // belong in the document — append them in page + top-down order so nothing is
-  // silently lost.
-  const orphans: Array<{ page: number; img: PdfImage }> = [];
+  // belong in the document — each at the end of its own page, top-down, so
+  // nothing is silently lost.
   pageImages.forEach((p, page) => {
-    for (const img of p.images) if (!emitted.has(img)) orphans.push({ page, img });
+    const left = p.images.filter((img) => !emitted.has(img)).sort((a, b) => b.y - a.y);
+    byPage[page]!.push(...left.map((img) => imageBlock(img, resources)));
   });
-  orphans.sort((a, b) => a.page - b.page || b.img.y - a.img.y);
-  for (const { img } of orphans) body.push(imageBlock(img, resources));
 
-  if (body.length === 0) return undefined;
+  if (byPage.every((own) => own.length === 0)) return undefined;
+  // §14.8.2.2.2 — a running head or foot is an ARTIFACT, named by no element
+  // of the tree, and read from the tree alone a tagged document lost every
+  // page number it had. The words no element claimed are read for the bands
+  // the untagged reading finds — the same line at the same place on every
+  // page — and for the numbering they print: bug793632.pdf numbers its front
+  // matter i, ii, iii before its body starts again at 1. A page read turned
+  // keeps its band in its text (§17.6.20).
+  const loose = placedRuns.map((runs, i) =>
+    shown[i]!.sheet ? [] : runs.filter((r) => !claimed.has(r)),
+  );
+  const foot = runningFoot(loose, shown, 'foot');
+  const head = runningFoot(loose, shown, 'head');
+  const numberedBand = foot?.numbered === true ? foot : head?.numbered === true ? head : undefined;
+  const numbering = numberingOf(numberedBand);
+  const lifted = (r: TextRun, i: number): boolean =>
+    foot?.lift[i]?.has(r) === true || head?.lift[i]?.has(r) === true;
+  // A tagged reading re-sets the words exactly as an untagged one does, so it
+  // needs the same margins: measured off where the source put them. Without
+  // this every tagged PDF came back with its text against all four edges of
+  // the paper. A band is not the body, and measures nothing but the room the
+  // foot takes.
+  const measured = withMeasuredMargins(
+    sectionFromPdfPages(pages, shown[0]),
+    shown,
+    placedRuns.map((runs, i) => runs.filter((r) => !lifted(r, i))),
+    pageImages.map((p) => p.images),
+    foot?.band,
+  );
+  const body: Array<BodyElement> = [];
+  const top = measured?.margins?.top ?? 0;
+  const bottom = measured?.margins?.bottom ?? 0;
+  // Taken before the spacing below re-writes the paragraphs it spaces.
+  const ends = byPage.map((own) => lowestOf(own));
+  const tops = byPage.map((own) => highestOf(own));
+  // Where each section ends: a page whose numbering starts again opens one.
+  const sectionsFrom = (numbering?.runs ?? []).map((run) => run.from).filter((from) => from > 0);
+  const endsAt: Array<{ at: number; from: number }> = [];
+  let sectionFrom = 0;
+  byPage.forEach((own, index) => {
+    if (sectionsFrom.includes(index)) {
+      endsAt.push({ at: body.length, from: sectionFrom });
+      sectionFrom = index;
+    }
+    const height = shown[index]?.height ?? 0;
+    spaceParagraphs(own, setting, height);
+    // A page OPENS an output page of its own where the page before it ended
+    // short of its foot: a title page, the end of a chapter, a sheet of front
+    // matter a line long — a break its author made. A page the words filled
+    // was broken by the paper, and where the words re-set, the break falls
+    // wherever the new setting puts it: bug1997343.pdf's first page is two
+    // columns of a paper read as one, and broken again where the page broke,
+    // a sheet of it ran on to a page of its own. A page with nothing on it is
+    // still a page, and so is the one after it.
+    const ended = ends[index - 1];
+    const opens =
+      index > 0 &&
+      (own.length === 0 ||
+        ended === undefined ||
+        ended - bottom > (height - top - bottom) * SHORT_PAGE_SHARE);
+    // §17.3.1.33 — a page that opens a sheet — by a break or by a section —
+    // begins its text where the page began it, not against the top margin,
+    // which is measured to the highest ink of any.
+    const lead = own.findIndex((el) => !floats(el));
+    const set = lead >= 0 ? setting.get(own[lead]!) : undefined;
+    const fresh = index === 0 || opens || sectionsFrom.includes(index);
+    // …where what the tree names first IS the page's first line. A tree may
+    // open a page anywhere on it: chrome-text-selection-markedContent.pdf's
+    // opens with the guidance box from the foot of its sidebar, and spaced
+    // down to where that box stands, the whole report began at the foot of
+    // its first sheet.
+    const highest = tops[index];
+    const first = set !== undefined && highest !== undefined && set.top >= highest - set.size;
+    if (fresh && first && measured?.margins) {
+      const gap = height - top - (set.top + set.size * ASCENDER);
+      if (gap > 1) own[lead] = spacedBefore(own[lead]!, gap);
+    }
+    // A break stands before the paragraph that carries it, so a blank FIRST
+    // sheet holds a carrier of its own for the second to break from. A page
+    // that opens a section is broken by the section.
+    if (opens && !sectionsFrom.includes(index)) body.push(pageBreak(true));
+    else if (index === 0 && own.length === 0 && pages.length > 1) body.push(pageBreak(false));
+    body.push(...own);
+  });
   // A tree that names words the page never marked describes nothing.
   //
   // annotation-choice-widget.pdf carries a structure tree and not one of its
@@ -446,27 +617,69 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
         'some glyphs map to no character — the font states no /ToUnicode and its program says nothing either, so that text is unrecoverable',
     });
   }
-  const onPage = placedRuns.flat().reduce((n, r) => n + r.text.length, 0);
+  // …and a band read as one is accounted for: a page of front matter a line
+  // long is outweighed by its own foot.
+  const onPage = placedRuns
+    .flatMap((runs, i) => runs.filter((r) => !lifted(r, i)))
+    .reduce((n, r) => n + r.text.length, 0);
   const reached = [...claimed].reduce((n, r) => n + r.text.length, 0);
   if (onPage > 0 && reached * 2 < onPage) return undefined;
+  endsAt.push({ at: body.length, from: sectionFrom });
+  // The bands, built from the page that showed each first and referenced by
+  // every section, as the untagged reading does.
+  const stepped0 = stepsBetweenWords(placedRuns[0] ?? []);
+  const edges0 = pageTextEdges(placedRuns[0] ?? []);
+  const numeralOf = (of: typeof foot): string | undefined => {
+    if (of === undefined || of !== numberedBand || numbering === undefined) return undefined;
+    const first = of.lift.findIndex((set) => set.size > 0);
+    return first >= 0 ? numbering.numbers[first]?.text : undefined;
+  };
+  const footBand = foot
+    ? footerBand(foot.band, stepped0, edges0, foot.numbered, numeralOf(foot))
+    : [];
+  const headBand = head
+    ? footerBand(head.band, stepped0, edges0, head.numbered, numeralOf(head))
+    : [];
+  // The margins measured above, on the sheet the pages are shown on, with the
+  // bands and the numbering each section starts.
+  const sectionAt = (from: number): SectionProperties | undefined => {
+    const base = sectionOnSheet(measured, shown[0]);
+    return base
+      ? {
+          ...base,
+          ...numberedFrom(numbering, from),
+          ...(footBand.length > 0
+            ? { footers: [{ type: 'default' as const, relationshipId: FOOTER_PART }] }
+            : {}),
+          ...(headBand.length > 0
+            ? { headers: [{ type: 'default' as const, relationshipId: HEADER_PART }] }
+            : {}),
+        }
+      : base;
+  };
+  const sections =
+    endsAt.length > 1
+      ? endsAt.flatMap((end) => {
+          const properties = sectionAt(end.from);
+          return properties ? [{ properties, endIndex: end.at }] : [];
+        })
+      : [];
   return {
     doc: buildFlowDoc(
       body,
       resources,
-      // A tagged reading re-sets the words exactly as an untagged one does, so
-      // it needs the same margins: measured off where the source put them.
-      // Without this every tagged PDF came back with its text against all four
-      // edges of the paper.
-      withMeasuredMargins(
-        sectionFromPdfPages(pages),
-        shown,
-        placedRuns,
-        pageImages.map((p) => p.images),
-      ),
+      sectionAt(0),
       collectEmbeddedFonts(file, pages, imageLosses),
-      [],
-      undefined,
+      sections,
+      footBand.length > 0 || headBand.length > 0
+        ? new Map([
+            ...(footBand.length > 0 ? ([[FOOTER_PART, footBand]] as const) : []),
+            ...(headBand.length > 0 ? ([[HEADER_PART, headBand]] as const) : []),
+          ])
+        : undefined,
       collectFaceFamilies(file, pages),
+      faceOutlinesOf(painted, spacing),
+      kernedFaces(spacing),
     ),
     losses: imageLosses,
   };
@@ -606,6 +819,45 @@ const MCID_SPACE_EM = 0.15;
 
 function squash(text: string): string {
   return text.replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * How much of a page's text area the page may leave empty below its last line
+ * and still be FULL: a page that ends higher than this ended on purpose.
+ */
+const SHORT_PAGE_SHARE = 0.25;
+
+/** Whether an element FLOATS — a drawing anchored to its page, which takes no room. */
+function floats(el: BodyElement): boolean {
+  return (
+    (el.kind === 'image' && el.image.float !== undefined) ||
+    (el.kind === 'shape' && el.shape.float !== undefined)
+  );
+}
+
+/** A paragraph given the space the page left above it; anything else as it is. */
+function spacedBefore(el: BodyElement, before: number): BodyElement {
+  if (el.kind !== 'paragraph') return el;
+  const properties = { ...el.paragraph.properties, spacingBefore: pt(before) };
+  return { ...el, paragraph: { ...el.paragraph, properties } };
+}
+
+/**
+ * An empty paragraph that takes no room: the carrier of a page break, or of
+ * nothing at all on a blank first sheet the next page's break has to follow.
+ */
+function pageBreak(breaks: boolean): BodyElement {
+  return {
+    kind: 'paragraph',
+    paragraph: {
+      properties: {
+        ...(breaks ? { pageBreakBefore: true } : {}),
+        spacingLine: CARRIER_LINE_PT,
+        spacingLineRule: 'exact',
+      },
+      runs: [],
+    },
+  };
 }
 
 // H1–H6 → outline level 0–5 (the FlowDoc heading representation, §17.3.1.20).

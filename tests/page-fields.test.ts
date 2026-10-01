@@ -102,6 +102,38 @@ describe('PAGE / NUMPAGES fields (§17.16.5.33/.35)', () => {
     expect(para.paragraph.runs.every((r) => r.field === undefined)).toBe(true);
   });
 });
+describe('a section that numbers its pages in numerals of its own (§17.6.12)', () => {
+  // Front matter numbered i, ii, then a body that starts again at 1 — how a
+  // thesis or a book is paginated, and bug793632.pdf's four pages.
+  const FRONT_AND_BODY =
+    '<w:p><w:r><w:t>Front one</w:t></w:r></w:p>' +
+    '<w:p><w:pPr><w:pageBreakBefore/></w:pPr><w:r><w:t>Front two</w:t></w:r></w:p>' +
+    '<w:p><w:pPr><w:sectPr><w:footerReference w:type="default" r:id="rId11"/>' +
+    '<w:pgNumType w:fmt="lowerRoman"/></w:sectPr></w:pPr></w:p>' +
+    '<w:p><w:r><w:t>Body one</w:t></w:r></w:p>' +
+    '<w:sectPr><w:footerReference w:type="default" r:id="rId11"/>' +
+    '<w:pgNumType w:start="1"/></w:sectPr>';
+
+  it('prints each page’s number in its section’s numerals, and restarts where told', () => {
+    const docx = buildDocxFromBody(FRONT_AND_BODY, { footerXml: FOOTER });
+    const flow = Ream.parse(docx).flow;
+    expect(flow.sections[0]?.properties.pageNumberFormat).toBe('lowerRoman');
+    const laid = layoutStyledDocument(flow.body, {
+      registry: FontRegistry.fromBytes(FONTS),
+      ...flowRenderOptions(flow),
+    });
+    const feet = laid.pages.map((page) => /Page (\S+) of/u.exec(pageText(page.commands))?.[1]);
+    expect(feet).toEqual(['i', 'ii', '1']);
+  });
+
+  it('writes the numbering back out, so a round trip keeps it', async () => {
+    const docx = buildDocxFromBody(FRONT_AND_BODY, { footerXml: FOOTER });
+    const again = readDocx(await Ream.parse(docx).convert('docx')).doc;
+    expect(again.sections[0]?.properties.pageNumberFormat).toBe('lowerRoman');
+    expect(again.sections[1]?.properties.pageNumberStart).toBe(1);
+  });
+});
+
 describe('&F — the workbook file name (§18.3.1.34)', () => {
   it('prints it when the caller supplies one, and drops it otherwise', () => {
     // A byte-oriented reader cannot know the name, so it is an explicit input

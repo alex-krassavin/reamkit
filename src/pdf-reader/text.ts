@@ -10,8 +10,10 @@ import { textMarkupOf } from './annot-draw';
 import { patternTint, tintedHex } from './pattern-tint';
 import { hiddenProperties, hiddenXObject } from './optional-content';
 import { buildColorSpaceMap, buildShadingMap } from './shading';
+import { addShown } from './face-outlines';
 import type { Quad, TextMarkup, TextMarkupAnnot } from './annot-draw';
 import type { ContentFont, Matrix, TextRun } from './content';
+import type { ShownCodes } from './face-outlines';
 import type { PdfDict } from '@/pdf/objects';
 import type { PdfFile, PdfPage, Rectangle } from './document';
 
@@ -26,13 +28,19 @@ const MAX_FORM_DEPTH = 8;
  * origin falls inside a `/Link` annotation's `/Rect` with that link's URI (EP8)
  * so hyperlinks survive.
  *
- * @param file The owning {@link PdfFile}.
- * @param page The page to extract.
+ * @param file  The owning {@link PdfFile}.
+ * @param page  The page to extract.
+ * @param painted Where to gather the codes each font painted, for a caller
+ *                that embeds the faces (see `./face-outlines`).
  * @returns The page's runs, each carrying an `href` when it sits under a link.
  */
-export function extractPageText(file: PdfFile, page: PdfPage): Array<TextRun> {
+export function extractPageText(
+  file: PdfFile,
+  page: PdfPage,
+  painted?: ShownCodes,
+): Array<TextRun> {
   const runs: Array<TextRun> = [];
-  collectRuns(file, page.resources, file.pageContent(page), IDENTITY, 0, new Set(), runs);
+  collectRuns(file, page.resources, file.pageContent(page), IDENTITY, 0, new Set(), runs, painted);
   // §12.5.5 — an annotation draws in its own appearance stream, and the words
   // it draws are the page's words too: a field's value, a button's caption.
   // Only its ARTWORK was being lifted, so 160F-2019.pdf's reset button arrived
@@ -47,12 +55,13 @@ export function extractPageText(file: PdfFile, page: PdfPage): Array<TextRun> {
       1,
       new Set([appearance.stream]),
       runs,
+      painted,
     );
   }
   for (let i = own; i < runs.length; i++) runs[i] = { ...runs[i]!, annotation: true };
   const links = collectLinks(file, page);
   const marks = collectTextMarkup(file, page);
-  const shown = withoutRestrikes(runs);
+  const shown = withAccentsComposed(withoutRestrikes(runs));
   if (links.length === 0 && marks.length === 0) return shown;
   return shown.flatMap((run) => {
     const link = links.find((l) => inRect(run.x, run.y, l.rect));
@@ -186,6 +195,94 @@ function withoutRestrikes(runs: ReadonlyArray<TextRun>): Array<TextRun> {
 /** How near, in ems, a re-strike of the same text lands to the one it thickens. */
 const RESTRIKE_EM = 0.08;
 
+/**
+ * §9.4.3 — an accent struck over a letter, composed with it.
+ *
+ * TeX sets an accented letter its font has no glyph for as two: the accent,
+ * and the letter drawn back under it — "ï" is a dieresis and a dotless i.
+ * Read as they come, comments.pdf's "naïve" came back "na¨ıve", the accent a
+ * character of the word. A run that is one spacing accent, with the pen taken
+ * back under it for the run after it, is the accent of that run's first letter
+ * — or, where the accent was struck after its letter, of the last letter of the
+ * run before it. The two are written as the one character Unicode composes them
+ * into, a dotless i or j taking back its dot's place under the accent.
+ *
+ * @param runs The page's runs, in painting order.
+ * @returns The runs with each such accent composed into its letter.
+ */
+function withAccentsComposed(runs: ReadonlyArray<TextRun>): Array<TextRun> {
+  const out: Array<TextRun> = [];
+  for (let i = 0; i < runs.length; i++) {
+    const run = runs[i]!;
+    const mark = ACCENTS.get(run.text);
+    const next = runs[i + 1];
+    const prev = out[out.length - 1];
+    if (mark !== undefined && next !== undefined && struckOver(run, next, 'first')) {
+      const [first = '', ...rest] = [...next.text];
+      out.push({ ...next, text: accented(first, mark) + rest.join('') });
+      i++;
+      continue;
+    }
+    if (mark !== undefined && prev !== undefined && struckOver(run, prev, 'last')) {
+      const chars = [...prev.text];
+      const last = chars.pop() ?? '';
+      out[out.length - 1] = { ...prev, text: chars.join('') + accented(last, mark) };
+      continue;
+    }
+    out.push(run);
+  }
+  return out;
+}
+
+/**
+ * Whether an accent stands over the first letter of a run (the pen taken back
+ * under it) or over the last (the pen taken back to strike it): on one
+ * baseline, give or take the lift an accent over a capital takes, and
+ * overlapping it by more than a hair.
+ */
+function struckOver(accent: TextRun, base: TextRun, which: 'first' | 'last'): boolean {
+  if (accent.angleDeg !== undefined || base.angleDeg !== undefined) return false;
+  const size = base.fontSizePt || accent.fontSizePt || 10;
+  if (Math.abs(accent.y - base.y) > size * ACCENT_LIFT_EM) return false;
+  if (!/^\p{L}/u.test(which === 'first' ? base.text : ([...base.text].at(-1) ?? ''))) return false;
+  const hair = size * ACCENT_OVERLAP_EM;
+  return which === 'first'
+    ? base.x < accent.endX - hair && base.x > accent.x - size
+    : accent.x < base.endX - hair && accent.x > base.x;
+}
+
+/** A letter with an accent composed onto it: a dotless i or j takes back its dot's place. */
+function accented(letter: string, mark: string): string {
+  const base = letter === '\u0131' ? 'i' : letter === '\u0237' ? 'j' : letter;
+  return (base + mark).normalize('NFC');
+}
+
+/** How far over the line, in ems, TeX lifts an accent to stand over a capital. */
+const ACCENT_LIFT_EM = 0.6;
+
+/** How far, in ems, an accent must overlap its letter to stand over it. */
+const ACCENT_OVERLAP_EM = 0.05;
+
+/** The spacing accents TeX strikes over a letter, and the combining marks they are. */
+const ACCENTS: ReadonlyMap<string, string> = new Map([
+  ['\u0060', '\u0300'],
+  ['\u00b4', '\u0301'],
+  ['\u02c6', '\u0302'],
+  ['\u005e', '\u0302'],
+  ['\u02dc', '\u0303'],
+  ['\u007e', '\u0303'],
+  ['\u00af', '\u0304'],
+  ['\u02c9', '\u0304'],
+  ['\u02d8', '\u0306'],
+  ['\u02d9', '\u0307'],
+  ['\u00a8', '\u0308'],
+  ['\u02da', '\u030a'],
+  ['\u02dd', '\u030b'],
+  ['\u02c7', '\u030c'],
+  ['\u00b8', '\u0327'],
+  ['\u02db', '\u0328'],
+]);
+
 // §8.6 — the colour spaces one resource dictionary names, read once. A page's
 // forms nearly all share one, and reading the same `/Separation`'s tint
 // transform for every stream is work with one answer.
@@ -229,6 +326,7 @@ function collectRuns(
   depth: number,
   visiting: Set<PdfStream>,
   out: Array<TextRun>,
+  shown?: ShownCodes,
 ): void {
   const result = interpretContent(
     content,
@@ -249,6 +347,7 @@ function collectRuns(
     hiddenProperties(file, resources),
   );
   out.push(...result.texts.map((r) => withPatternColour(file, resources, r, visiting)));
+  if (shown) addShown(shown, result.shown);
   if (depth >= MAX_FORM_DEPTH) return;
   // §9.6.5 — a Type 3 glyph's procedure may show text of its own, and it is
   // text the page shows. ContentStreamCycleType3insideType3.pdf sets a word
@@ -264,6 +363,7 @@ function collectRuns(
       depth + 1,
       visiting,
       out,
+      shown,
     );
     visiting.delete(glyph.stream);
   }
@@ -287,6 +387,7 @@ function collectRuns(
       depth + 1,
       visiting,
       out,
+      shown,
     );
     visiting.delete(stream);
   }

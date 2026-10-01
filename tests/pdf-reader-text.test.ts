@@ -233,6 +233,17 @@ describe('a font that names its glyphs rather than mapping them (§9.6.6.1)', ()
     expect(textForGlyphName('ff')).toBe('ﬀ');
   });
 
+  it('reads the Greek and the mathematics TeX names its glyphs by', () => {
+    // comments.pdf sets "The α symbol is used…" with its α in CMMI9, named
+    // `alpha`, and the letter was traced and left out of the line.
+    expect(textForGlyphName('alpha')).toBe('α');
+    expect(textForGlyphName('Gamma')).toBe('Γ');
+    expect(textForGlyphName('epsilon1')).toBe('ϵ');
+    expect(textForGlyphName('arrowdblright')).toBe('⇒');
+    expect(textForGlyphName('asteriskmath')).toBe('∗');
+    expect(textForGlyphName('element')).toBe('∈');
+  });
+
   it('reads the algorithmic names, and says nothing for a slot number', () => {
     expect(textForGlyphName('uni0041')).toBe('A');
     expect(textForGlyphName('uni00410042')).toBe('AB');
@@ -708,15 +719,18 @@ describe('page text extraction — real Ream output (E-PDF EP2)', () => {
  * One line of text with a text-markup annotation over it. `annot` states the
  * subtype and its colour; the quad is the box round the line.
  */
-function markedTextPdf(annot: string): Uint8Array {
-  const content = 'BT /F1 12 Tf 72 720 Td (Marked) Tj ET';
+function markedTextPdf(
+  annot: string,
+  content = 'BT /F1 12 Tf 72 720 Td (Marked) Tj ET',
+  quad = '70 734 140 734 70 716 140 716',
+): Uint8Array {
   const objects = [
     '<< /Type /Catalog /Pages 2 0 R >>',
     '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
     '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] ' +
       '/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R ' +
       `/Annots [<< /Type /Annot ${annot} /Rect [70 716 140 734] ` +
-      '/QuadPoints [70 734 140 734 70 716 140 716] >>] >>',
+      `/QuadPoints [${quad}] >>] >>`,
     `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
     '<< /Type /Font /Subtype /TrueType /BaseFont /Arial /FirstChar 32 /LastChar 255 ' +
       '/Encoding /WinAnsiEncoding >>',
@@ -786,6 +800,24 @@ describe('text-markup annotations (§12.5.6.10)', () => {
     expect(extractPageText(wavy, wavy.pages()[0]!)[0]?.markup?.underline).toBe('wave');
     const struck = PdfFile.parse(markedTextPdf('/Subtype /StrikeOut /C [1 0 0]'));
     expect(extractPageText(struck, struck.pages()[0]!)[0]?.markup?.strike).toBe(true);
+  });
+
+  it('marks the white between two words it marks, which the page never wrote', () => {
+    // TeX writes no space: it moves the pen, and the space between two words
+    // is this reader's own. comments.pdf highlights whole lines, and with its
+    // spaces left bare the band came back broken at every word.
+    const file = PdfFile.parse(
+      markedTextPdf(
+        '/Subtype /Highlight /C [1 1 0]',
+        'BT /F1 12 Tf 72 720 Td (Marked) Tj 46 0 Td (words) Tj ET',
+        '70 734 160 734 70 716 160 716',
+      ),
+    );
+    const [first] = reconstructByLayout(file).doc.body;
+    expect(first?.kind).toBe('paragraph');
+    if (first?.kind !== 'paragraph') return;
+    expect(first.paragraph.runs.map((r) => r.text).join('')).toBe('Marked words');
+    expect(first.paragraph.runs.every((r) => r.properties.shadingColorHex === 'FFFF00')).toBe(true);
   });
 
   it('leaves a line the quads do not cover unmarked', () => {
@@ -1654,5 +1686,50 @@ describe('a composite font that names a system face and embeds nothing (§9.7.4)
   it('leaves a face nobody knows unread', () => {
     // Its glyph order is its own, and guessing at it is inventing text.
     expect(shown('SomeFoundryFace', '0039002400370026')).not.toBe('VATC');
+  });
+});
+
+describe('an accent struck over a letter (§9.4.3)', () => {
+  /** "naïve" in Helvetica as TeX sets it: the dieresis, and a dotless i drawn back under it. */
+  const accentedPdf = (under: string): Uint8Array => {
+    const content =
+      'BT /F1 12 Tf 1 0 0 1 72 720 Tm (na) Tj ' +
+      `1 0 0 1 85.34 720 Tm (\\310) Tj 1 0 0 1 ${under} 720 Tm (\\365ve) Tj ET`;
+    const objects = [
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] ' +
+        '/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>',
+      `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+      '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+    ];
+    let pdf = '%PDF-1.7\n';
+    const offsets: Array<number> = [];
+    objects.forEach((body, i) => {
+      offsets.push(pdf.length);
+      pdf += `${String(i + 1)} 0 obj\n${body}\nendobj\n`;
+    });
+    const xref = pdf.length;
+    pdf += `xref\n0 ${String(objects.length + 1)}\n0000000000 65535 f \n`;
+    for (const off of offsets) pdf += `${String(off).padStart(10, '0')} 00000 n \n`;
+    pdf += `trailer\n<< /Size ${String(objects.length + 1)} /Root 1 0 R >>\n`;
+    pdf += `startxref\n${String(xref)}\n%%EOF\n`;
+    return new TextEncoder().encode(pdf);
+  };
+  const textOf = (pdf: Uint8Array): string => {
+    const file = PdfFile.parse(pdf);
+    return extractPageText(file, file.pages()[0]!)
+      .map((r) => r.text)
+      .join('');
+  };
+
+  it('composes it with the letter the pen was taken back to', () => {
+    // comments.pdf's "naïve" came back "na¨ıve", the accent a character of
+    // the word and the i without its dot.
+    expect(textOf(accentedPdf('85.34'))).toBe('na\u00efve');
+  });
+
+  it('leaves an accent the pen moved on from as it stands', () => {
+    expect(textOf(accentedPdf('89.34'))).toBe('na\u00a8\u0131ve');
   });
 });

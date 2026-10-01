@@ -10,10 +10,13 @@ import { describe, expect, it } from 'vitest';
 import { buildDocxFromBody } from './fixtures/build-docx';
 import type { BodyElement } from '@/core/document-model';
 import { Ream } from '@/core/converter/ream';
+import { OpcPackage } from '@/core/opc';
 import { PdfFile } from '@/pdf-reader/document';
 import { BASELINE_AT, FLOAT_CARRIER, positionedText } from '@/pdf-reader/flow-build';
 import { drawnWords, endedParagraph, reconstructByLayout } from '@/pdf-reader/layout';
 import { extractPageText } from '@/pdf-reader/text';
+import { standardWidth } from '@/pdf-reader/standard-widths';
+import { writeDocx } from '@/word/docx-writer';
 
 const FONTS = {
   regular: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Regular.ttf')),
@@ -83,6 +86,26 @@ describe('a multi-page PDF keeps its pages (E-PDF EP4)', () => {
       (b) => b.kind === 'paragraph' && b.paragraph.properties.pageBreakBefore === true,
     );
     expect(breaks).toHaveLength(file.pages().length - 1);
+  });
+
+  it('turns widow control off, so a column the page broke is not broken again (§17.3.1.44)', async () => {
+    // Every source page opens a page of its own; where a reconstructed column
+    // runs a line long, widow control would carry a second line along.
+    const docx = buildDocxFromBody(
+      '<w:p><w:r><w:t>PageOne</w:t></w:r></w:p>' +
+        '<w:p><w:pPr><w:pageBreakBefore/></w:pPr><w:r><w:t>PageTwo</w:t></w:r></w:p>',
+    );
+    const pdf = await Ream.parse(docx).convert('pdf', { fonts: FONTS });
+    const doc = reconstructByLayout(PdfFile.parse(pdf)).doc;
+    const found = paragraphs(doc);
+    expect(found.length).toBeGreaterThan(0);
+    for (const p of found) {
+      expect((p.paragraph.properties as { widowControl?: boolean }).widowControl).toBe(false);
+    }
+    const body = new TextDecoder().decode(
+      OpcPackage.open(writeDocx(doc).bytes).getMainDocument().data,
+    );
+    expect(body).toContain('<w:widowControl w:val="0"/>');
   });
 
   it('opens a SECTION where the page size changes', () => {
@@ -504,6 +527,72 @@ describe('a running foot is a foot, not a paragraph (§17.6.13)', () => {
     expect(lines).toHaveLength(2);
     expect(lines[0]).toContain('Thing Press');
     expect(lines[1]).toContain('The Journal of Things');
+  });
+
+  /**
+   * Six pages of a book: the folio at the outer edge of each, "<n> THE BOOK"
+   * on the left of the even pages with the address it is published at under
+   * it, and the chapter's name before the number on the right of the odd ones.
+   */
+  const book = (): Uint8Array =>
+    pages(
+      [1, 2, 3, 4, 5, 6].map((n) => {
+        const ops: Array<string> = [];
+        for (let i = 0; i < 8; i++)
+          ops.push(
+            `BT /F0 10 Tf 1 0 0 1 40 ${String(360 - i * 14)} Tm (body line ${String(i)}) Tj ET`,
+          );
+        if (n % 2 === 0) {
+          ops.push(`BT /F0 8 Tf 1 0 0 1 40 40 Tm (${String(n)}) Tj ET`);
+          ops.push('BT /F0 8 Tf 1 0 0 1 52 40 Tm (THE BOOK) Tj ET');
+          ops.push('BT /F0 8 Tf 1 0 0 1 100 20 Tm (<http://example.org/book>) Tj ET');
+        } else {
+          const chapter = ['Alpha', 'Beta', 'Gamma'][(n - 1) / 2]!;
+          ops.push(`BT /F0 8 Tf 1 0 0 1 220 40 Tm (${chapter}) Tj ET`);
+          ops.push(`BT /F0 8 Tf 1 0 0 1 255 40 Tm (${String(n)}) Tj ET`);
+        }
+        return ops.join('\n');
+      }),
+    );
+  const bandText = (
+    doc: ReturnType<typeof reconstructByLayout>['doc'],
+    type: 'default' | 'even',
+  ): Array<string> => {
+    const part = doc.section?.footers.find((f) => f.type === type)?.relationshipId;
+    const band = part !== undefined ? doc.headersFooters?.get(part) : undefined;
+    return (
+      band?.map((b) =>
+        b.kind === 'paragraph'
+          ? b.paragraph.runs.map((r) => (r.field ? `{${r.field}}` : r.text)).join('')
+          : '',
+      ) ?? []
+    );
+  };
+
+  it('lifts the feet of a book that signs one side of its spreads with more than the other', () => {
+    // freeculture.pdf sets its folio forty-eight points up every page and the
+    // URL it is published at under it on the left-hand ones. Asked where each
+    // foot ends, the two sides disagreed by the line between them, and the
+    // book's feet were read into the text of every page.
+    const doc = reconstructByLayout(PdfFile.parse(book())).doc;
+    const body = doc.body
+      .flatMap((b) => (b.kind === 'paragraph' ? b.paragraph.runs.map((r) => r.text) : []))
+      .join(' ');
+    expect(body).toContain('body line 0');
+    expect(body).not.toContain('THE BOOK');
+    expect(body).not.toContain('example.org');
+    expect(body).not.toContain('Alpha');
+  });
+
+  it('signs the two sides of a book with feet of their own, each saying what its pages say', () => {
+    // …and read as one foot, every page was signed the way the first was:
+    // "Alpha 1" at the right of all of them, the chapter the book opens with.
+    // A side's foot says what most of its pages say, and the chapter's name,
+    // which no two chapters share, is left to the text.
+    const doc = reconstructByLayout(PdfFile.parse(book())).doc;
+    expect(doc.section?.evenAndOddHeaders).toBe(true);
+    expect(bandText(doc, 'default')).toEqual(['{PAGE}']);
+    expect(bandText(doc, 'even')).toEqual(['{PAGE} THE BOOK', '<http://example.org/book>']);
   });
 
   it('sets a foot written in REGIONS on the stops it was written at', () => {
@@ -1124,6 +1213,85 @@ describe('placed reconstruction (E-PDF EP4)', () => {
     expect(shape.shape.float?.posH?.offsetPt).toBeCloseTo(200, 5);
   });
 
+  it('turns the words with a page whose turn leaves them running down it (§17.6.20)', () => {
+    // hello_world_rotated.pdf sets its words upright in a portrait box and
+    // turns the page by /Rotate 90: every viewer shows them running down a
+    // landscape sheet. Read on the sheet, they came back flat across it.
+    const pdf = onePagePdf(
+      '/MediaBox [0 0 400 800] /Rotate 90',
+      'BT /F1 20 Tf 100 600 Td (Hello world) Tj ET 0 0 1 rg 100 300 50 30 re f',
+    );
+    const flowed = reconstructByLayout(PdfFile.parse(pdf));
+    const section = flowed.doc.section;
+    expect(section?.textDirection).toBe('tbRl');
+    expect([section?.pageSize?.width, section?.pageSize?.height]).toEqual([800, 400]);
+    expect(section?.pageSize?.orientation).toBe('landscape');
+    // Read in the frame where the words stand upright, they are one line, and
+    // the line starts where the page starts it: at x=100 of the box, which is
+    // the sheet's top margin once the section runs down it.
+    const paras = paragraphs(flowed.doc);
+    expect(paras.map((p) => p.paragraph.runs.map((r) => r.text).join(''))).toContain('Hello world');
+    expect(section?.margins?.top).toBeCloseTo(100, 0);
+    // The box drawn on the page stands on the SHEET, turned with the page, as
+    // Word stands an anchored drawing: (100, 300) 50×30 on the box is x 300–330,
+    // y 100–150 on the sheet, and a 50×30 box turned a quarter about its
+    // centre covers exactly that.
+    const shape = flowed.doc.body.find((b) => b.kind === 'shape');
+    if (shape?.kind !== 'shape') throw new Error('expected the box');
+    expect(shape.shape.transform?.rotation60k).toBe(90 * 60000);
+    expect(shape.shape.float?.posH?.offsetPt).toBeCloseTo(290, 3);
+    expect(shape.shape.float?.posV?.offsetPt).toBeCloseTo(110, 3);
+  });
+
+  it('gives a page whose media box bounds nothing the size a page has when it states none', () => {
+    // boundingBox_invalid.pdf's first page is `/MediaBox [0 0 0 0]`. Every
+    // viewer shows it as a Letter sheet with its words on it; taken at its
+    // word, the sheet had no size and every word stood outside it.
+    const pdf = onePagePdf('/MediaBox [0 0 0 0]', 'BT /F1 20 Tf 72 700 Td (Empty) Tj ET');
+    const flowed = reconstructByLayout(PdfFile.parse(pdf));
+    expect(
+      paragraphs(flowed.doc).map((p) => p.paragraph.runs.map((r) => r.text).join('')),
+    ).toContain('Empty');
+    expect([flowed.doc.section?.pageSize?.width, flowed.doc.section?.pageSize?.height]).toEqual([
+      612, 792,
+    ]);
+  });
+
+  it('places what stands off the sheet as a mark, and measures nothing by it', () => {
+    // freeculture.pdf sets a printer's bar of ZapfDingbats nine points under
+    // the crop of its front matter's pages. Read into the page's lines it came
+    // back as four lines of bars on a page of their own, and — standing at
+    // x=0 — it put every page's left margin against the paper's edge.
+    const pdf = onePagePdf(
+      '/MediaBox [0 0 400 600]',
+      [
+        'BT /F1 12 Tf 60 500 Td (The body of the page starts here.) Tj ET',
+        'BT /F1 12 Tf 60 486 Td (It runs on for a line or two more.) Tj ET',
+        'BT /F1 40 Tf 0 -9 Td (off the sheet) Tj ET',
+      ].join('\n'),
+    );
+    const flowed = reconstructByLayout(PdfFile.parse(pdf));
+    const texts = paragraphs(flowed.doc).map((p) => p.paragraph.runs.map((r) => r.text).join(''));
+    expect(texts.join(' ')).not.toContain('off the sheet');
+    const mark = flowed.doc.body.find((b) => b.kind === 'shape');
+    if (mark?.kind !== 'shape') throw new Error('expected the mark placed');
+    expect(mark.shape.float?.posV?.relativeFrom).toBe('page');
+    expect(flowed.doc.section?.margins?.left).toBeGreaterThan(50);
+  });
+
+  it('sets words that run UP the sheet across it, and says so', () => {
+    // No section runs its lines up a sheet — Word and LibreOffice set a
+    // section down it or across it — so /Rotate 270 over upright words is
+    // read across the sheet, with a loss that names what was not kept.
+    const pdf = onePagePdf(
+      '/MediaBox [0 0 400 800] /Rotate 270',
+      'BT /F1 20 Tf 100 600 Td (Up) Tj ET',
+    );
+    const flowed = reconstructByLayout(PdfFile.parse(pdf));
+    expect(flowed.doc.section?.textDirection).toBeUndefined();
+    expect(flowed.losses.some((l) => /running up the sheet/u.test(l.detail))).toBe(true);
+  });
+
   it('leaves a page its box describes exactly where it stands', () => {
     // The same file with no turn: portrait, and the words still on their side.
     const placed = reconstructByLayout(PdfFile.parse(turnedPagePdf(0)), 'positional');
@@ -1381,6 +1549,103 @@ describe('a flowing reading re-sets the page where the page set it', () => {
   const textOf = (p: { paragraph: { runs: ReadonlyArray<{ text: string }> } }): string =>
     p.paragraph.runs.map((r) => r.text).join('');
 
+  it('stands a line on its type, not on a mark set over it', () => {
+    // comments.pdf's "…back to a double.¹ Clearly, a" stood on its footnote
+    // mark's baseline, 3.8 points up, and the line under it came back a
+    // paragraph of its own.
+    const first = 'and then convert any integer result back to a double.';
+    const end =
+      54 +
+      [...first].reduce(
+        (sum, c) => sum + (standardWidth('Helvetica', c.charCodeAt(0), c) ?? 0),
+        0,
+      ) *
+        0.009;
+    const doc = reconstructByLayout(
+      PdfFile.parse(
+        helvetica(
+          [
+            `BT /F1 9 Tf 1 0 0 1 54 700 Tm (${first}) Tj`,
+            `/F1 6 Tf 1 0 0 1 ${end.toFixed(2)} 703.8 Tm (1) Tj`,
+            `/F1 9 Tf 1 0 0 1 ${(end + 6.8).toFixed(2)} 700 Tm (Clearly, a) Tj`,
+            '1 0 0 1 54 690 Tm (JavaScript VM that wants to be fast must find a way to operate on) Tj',
+            '1 0 0 1 54 680 Tm (integers directly and avoid these conversions.) Tj ET',
+          ].join('\n'),
+        ),
+      ),
+    ).doc;
+    expect(paragraphs(doc).map(textOf)).toHaveLength(1);
+  });
+
+  describe('lines set in the middle of the measure', () => {
+    const long =
+      'This line runs the whole measure of the page from the left margin across to the right one, as prose does.';
+    /** How wide `text` is in 9pt Helvetica. */
+    const widthOf = (text: string): number =>
+      [...text].reduce((sum, c) => sum + (standardWidth('Helvetica', c.charCodeAt(0), c) ?? 0), 0) *
+      0.009;
+    const middle = 54 + widthOf(long) / 2;
+    /** `lines` centred on the measure, 11pt apart from 700 down, and the prose line under them. */
+    const page = (lines: ReadonlyArray<string>): Array<string> =>
+      paragraphs(
+        reconstructByLayout(
+          PdfFile.parse(
+            helvetica(
+              [
+                ...lines.map(
+                  (text, k) =>
+                    `BT /F1 9 Tf 1 0 0 1 ${(middle - widthOf(text) / 2).toFixed(2)} ${String(700 - k * 11)} Tm (${text}) Tj ET`,
+                ),
+                `BT /F1 9 Tf 1 0 0 1 54 600 Tm (${long}) Tj ET`,
+              ].join('\n'),
+            ),
+          ),
+        ).doc,
+      ).map(textOf);
+
+    it('ends a centred line where the first word of the next would have fit on it', () => {
+      // comments.pdf centres its authors' affiliations a line apiece, and run
+      // together they came back re-wrapped a line shorter, the columns under
+      // them risen into the white.
+      const lines = [
+        'Mozilla Corporation',
+        'gal, brendan, shaver, danderson, dmandelin, mrbkap at mozilla dot com',
+        'Adobe Corporation',
+      ];
+      expect(page(lines)).toEqual([...lines, long]);
+    });
+
+    it('reads two full lines as prose, however evenly the white stands either side', () => {
+      // comments.pdf's list items stand in from a column whose left edge is
+      // their bullets' and whose right one an overfull line pushed out: two
+      // full lines of one item stood in by as much on each side, and "on this
+      // programs…" came back a paragraph of its own.
+      const lines = [
+        'A title set in centred lines that fill very nearly the whole measure of this page, from its left edge to the',
+        'on it runs as far again, a second line very nearly as long as the first one and set in its middle as well',
+      ];
+      expect(page(lines)).toEqual([lines.join(' '), long]);
+    });
+
+    it('ends a line of names where the next, set in by more than a twentieth, would have fit', () => {
+      // comments.pdf centres its authors three lines to a block, the second a
+      // thirteenth in from either edge, and the third came back run into it.
+      const lines = [
+        'Andreas Gal, Brendan Eich, Mike Shaver, David Anderson, David Mandelin, Mohammad Haghighat,',
+        'Al Ruderman, Edwin Smith, Rick Reitmaier, Michael Bebenita, Mason Chang, Michael Franz',
+      ];
+      expect(page(lines)).toEqual([...lines, long]);
+    });
+
+    it('keeps a centred paragraph whole where its line ran as far as the measure lets it', () => {
+      const title = [
+        'A title set in centred lines that fill very nearly the whole measure of this page, from its left edge to the',
+        'right',
+      ];
+      expect(page(title)).toEqual([title.join(' '), long]);
+    });
+  });
+
   it('stands its lines EXACTLY as far apart as the page stood them (§17.3.1.33)', () => {
     // An invoice sets its 9pt lines 13.5 apart. Left to a reader's single
     // spacing they closed up to the substitute face's own leading, and every
@@ -1536,6 +1801,30 @@ describe('a flowing reading re-sets the page where the page set it', () => {
     expect(paragraphs(doc).map(textOf).join(' ')).not.toContain('Invoice');
   });
 
+  it('sets a block of PROSE beside another as the paragraphs it is, not a line apiece', () => {
+    // comments.pdf's two columns, read as blocks side by side, were set a line
+    // to a paragraph, and each line a word wider in a substitute's widths left
+    // that word standing alone under it: half again as long.
+    const line = 'the words of a column run out to its edge here';
+    // Each column at a leading of its own, so their lines never share a baseline.
+    const column = (x: number, top: number, leading: number): Array<string> =>
+      Array.from(
+        { length: 6 },
+        (_, i) =>
+          `BT /F1 9 Tf 1 0 0 1 ${String(x)} ${String(top - i * leading)} Tm (${line}) Tj ET`,
+      );
+    const doc = reconstructByLayout(
+      PdfFile.parse(helvetica([...column(40, 700, 11), ...column(300, 697, 11.5)].join('\n'))),
+    ).doc;
+    const table = doc.body.find((b) => b.kind === 'table');
+    if (table?.kind !== 'table') throw new Error('the band is a table');
+    const cells = table.table.rows[0]!.cells.map((c) =>
+      c.content.filter((el) => el.kind === 'paragraph'),
+    );
+    expect(cells.map((paras) => paras.length)).toEqual([1, 1]);
+    expect(textOf(cells[0]![0]!)).toContain(`${line} ${line}`);
+  });
+
   it('takes a rule drawn in pieces as one rule (§17.3.1.24)', () => {
     // An invoice draws the rule under its headings cell by cell. Measured apart
     // only the widest piece was long enough to be a rule: it moved with the
@@ -1580,6 +1869,333 @@ describe('a flowing reading re-sets the page where the page set it', () => {
       const borders = p.paragraph.properties.borders as Record<string, unknown>;
       expect(borders.insideH).toEqual(borders.top);
     }
+  });
+
+  it('opens a paragraph on a line set out on stops', () => {
+    // canvas.pdf sets each method a row of its table and its arguments on the
+    // lines under its name. The next row came back run on from the last
+    // argument: "[Variadic] any args) Object getContext(".
+    const prose = Array.from(
+      { length: 8 },
+      (_, k) =>
+        `1 0 0 1 72 ${String(720 - k * 12)} Tm (Line ${String(k)} of the body text of the page) Tj`,
+    );
+    const doc = reconstructByLayout(
+      PdfFile.parse(
+        helvetica(
+          [
+            'BT /F1 9 Tf',
+            ...prose,
+            '1 0 0 1 72 600 Tm (string) Tj 1 0 0 1 150 600 Tm (toDataURL\\() Tj',
+            '1 0 0 1 160 588 Tm ([Optional] string type,) Tj',
+            '1 0 0 1 160 576 Tm ([Variadic] any args\\)) Tj',
+            '1 0 0 1 72 564 Tm (Object) Tj 1 0 0 1 150 564 Tm (getContext\\( string contextId\\)) Tj',
+            'ET',
+          ].join('\n'),
+        ),
+      ),
+    ).doc;
+    const texts = paragraphs(doc).map((p) => textOf(p).replace(/\s+/gu, ' '));
+    expect(texts.some((t) => t.startsWith('Object'))).toBe(true);
+    expect(texts.some((t) => t.includes('args) Object'))).toBe(false);
+  });
+
+  it('lands a run the page reached with spaces on the stop the rows around it share', () => {
+    // canvas.pdf spaces its way from a method's return type to its name,
+    // "CanvasGradient" and two spaces to the column every other row reaches
+    // with white, and the row came back one run of words.
+    const faces = (content: string): Uint8Array =>
+      onePagePdf(
+        '/MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R /F2 6 0 R /F3 7 0 R >> >>',
+        content,
+        [
+          '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+          '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Oblique >>',
+          '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>',
+        ],
+      );
+    const prose = Array.from(
+      { length: 8 },
+      (_, k) =>
+        `/F1 9 Tf 1 0 0 1 72 ${String(720 - k * 12)} Tm (Line ${String(k)} of the body text of the page) Tj`,
+    );
+    const row = (y: number, type: string, name: string, spaces: boolean): Array<string> => [
+      `/F2 9 Tf 1 0 0 1 72 ${String(y)} Tm (${type}) Tj`,
+      ...(spaces ? ['/F1 9 Tf ( ) Tj ( ) Tj'] : []),
+      `/F3 9 Tf 1 0 0 1 150 ${String(y)} Tm (${name}) Tj`,
+    ];
+    const doc = reconstructByLayout(
+      PdfFile.parse(
+        faces(
+          [
+            'BT',
+            ...prose,
+            ...row(600, 'void', 'fill\\( \\)', false),
+            ...row(588, 'void', 'stroke\\( \\)', false),
+            ...row(576, 'CanvasGradient', 'createLinearGradient\\(', true),
+            '/F1 9 Tf 1 0 0 1 160 564 Tm (float x0, float y0, float x1, float y1\\)) Tj',
+            ...row(552, 'CanvasPattern', 'createPattern\\(', true),
+            'ET',
+          ].join('\n'),
+        ),
+      ),
+    ).doc;
+    const texts = paragraphs(doc).map((p) => textOf(p));
+    expect(texts).toContain('CanvasGradient\tcreateLinearGradient(');
+    expect(texts.some((t) => t.includes('y1) CanvasPattern'))).toBe(false);
+  });
+
+  it('drops a space the page draws over a word, its ink closed up on either side', () => {
+    // canvas.pdf writes the space that opens an empty cell at the column the
+    // cell stands in, and a name that runs on into that column took it
+    // between two of its letters: "globalCompositeO peration".
+    const head = 'globalCompositeO';
+    const end =
+      72 +
+      [...head].reduce((sum, c) => sum + (standardWidth('Helvetica', c.charCodeAt(0), c) ?? 0), 0) *
+        0.009;
+    const prose = Array.from(
+      { length: 8 },
+      (_, k) =>
+        `1 0 0 1 72 ${String(720 - k * 12)} Tm (Line ${String(k)} of the body text of the page) Tj`,
+    );
+    const doc = reconstructByLayout(
+      PdfFile.parse(
+        helvetica(
+          [
+            'BT /F1 9 Tf',
+            ...prose,
+            `1 0 0 1 72 600 Tm (${head}) Tj`,
+            `1 0 0 1 ${String(end - 0.7)} 600 Tm ( ) Tj`,
+            `1 0 0 1 ${String(end)} 600 Tm (peration) Tj`,
+            'ET',
+          ].join('\n'),
+        ),
+      ),
+    ).doc;
+    const text = paragraphs(doc)
+      .map((p) => textOf(p))
+      .join(' ');
+    expect(text).toContain('globalCompositeOperation');
+  });
+
+  it('keeps a space the next word starts where it ends, however far the run before it reaches', () => {
+    // freeculture.pdf's runs claim a quarter of an em more than they ink, and
+    // every word space it steps overlaps the word before it by as much: taken
+    // for spaces drawn over the ink, "a copyright" came back "acopyright".
+    const widths = Array.from({ length: 91 }, (_, k) =>
+      k === 0 ? 250 : k + 32 === 97 ? 800 : 500,
+    ).join(' ');
+    const prose = Array.from(
+      { length: 8 },
+      (_, k) =>
+        `1 0 0 1 72 ${String(720 - k * 12)} Tm (Line ${String(k)} of the body text of the page) Tj`,
+    );
+    const doc = reconstructByLayout(
+      PdfFile.parse(
+        onePagePdf(
+          '/MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >>',
+          [
+            'BT /F1 10 Tf',
+            ...prose,
+            '1 0 0 1 72 600 Tm (a) Tj',
+            '1 0 0 1 77 600 Tm ( ) Tj',
+            '1 0 0 1 79.5 600 Tm (copyright) Tj',
+            'ET',
+          ].join('\n'),
+          [
+            `<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /FirstChar 32 /LastChar 122 /Widths [${widths}] >>`,
+          ],
+        ),
+      ),
+    ).doc;
+    const text = paragraphs(doc)
+      .map((p) => textOf(p))
+      .join(' ');
+    expect(text).toContain('a copyright');
+  });
+
+  it('indents a paragraph from the edge of its column, not from where its own lines start', () => {
+    // canvas.pdf sets its tables' rows seven points in from the headings of
+    // its columns, and indented from the rows themselves they came back
+    // against the edge of the column.
+    const doc = reconstructByLayout(
+      PdfFile.parse(
+        helvetica(
+          [
+            'BT /F1 12 Tf 1 0 0 1 40 740 Tm (A heading set against the edge of the column) Tj',
+            '/F1 9 Tf',
+            ...Array.from(
+              { length: 12 },
+              (_, k) =>
+                `1 0 0 1 72 ${String(720 - k * 12)} Tm (Line ${String(k)} of the body text, set in) Tj`,
+            ),
+            'ET',
+          ].join('\n'),
+        ),
+      ),
+    ).doc;
+    const body = doc.body.find((b) => b.kind === 'paragraph' && textOf(b).startsWith('Line 0'));
+    if (body?.kind !== 'paragraph') throw new Error('the body is a paragraph');
+    expect(body.paragraph.properties.indentLeft).toBeCloseTo(32, 0);
+  });
+
+  describe('a box filled behind a line (§17.3.1.31)', () => {
+    /** The paragraph whose text is `text`, as the model has it. */
+    const paragraphAt = (doc: { body: ReadonlyArray<BodyElement> }, text: string) => {
+      const el = doc.body.find((b) => b.kind === 'paragraph' && textOf(b) === text);
+      if (el?.kind !== 'paragraph') throw new Error(`no paragraph "${text}"`);
+      return el.paragraph;
+    };
+    /** Whether any paragraph of `doc` is shaded. */
+    const shaded = (doc: { body: ReadonlyArray<BodyElement> }): boolean =>
+      doc.body.some((b) => b.kind === 'paragraph' && b.paragraph.properties.shading !== undefined);
+    const body = (from: number, count: number): Array<string> =>
+      Array.from(
+        { length: count },
+        (_, k) =>
+          `1 0 0 1 72 ${String(from - k * 12)} Tm (Line ${String(k)} of the body text of the page) Tj`,
+      );
+
+    it('is the shading of the paragraph set on it, and goes where the paragraph goes', () => {
+      // canvas.pdf heads each section with its name in white on a dark bar.
+      // Drawn where the page drew it, the bar stayed on the sheet while the
+      // words were set again, and the heading slid off it, white on white.
+      const doc = reconstructByLayout(
+        PdfFile.parse(
+          helvetica(
+            [
+              '0.25 g 66 614 148 19 re f',
+              'BT /F1 9 Tf 0 g',
+              ...body(700, 6),
+              '/F1 12 Tf 1 g 1 0 0 1 72 618 Tm (Canvas element) Tj',
+              '/F1 9 Tf 0 g',
+              ...body(598, 6),
+              'ET',
+            ].join('\n'),
+          ),
+        ),
+      ).doc;
+      const { properties } = paragraphAt(doc, 'Canvas element');
+      expect(properties.shading).toEqual({ colorHex: '404040' });
+      // The bar stands out over the line's box and under it: a border of its
+      // own colour is the rest of it.
+      expect(properties.borders?.top?.colorHex).toBe('404040');
+      expect(properties.borders?.top?.width).toBeCloseTo(3.5, 0);
+      expect(properties.borders?.bottom?.width).toBeCloseTo(1.1, 0);
+      // …and the bar is not drawn again.
+      expect(doc.body.some((b) => b.kind === 'shape')).toBe(false);
+    });
+
+    it("is the paper's where it is white, and stays where the page drew it", () => {
+      // bug1815476.pdf backs its form with white boxes as wide as the sheet,
+      // and taken for shading, "A N E X O" stood off centre by as much as the
+      // box reached past the column.
+      const doc = reconstructByLayout(
+        PdfFile.parse(
+          helvetica(
+            [
+              '1 g 66 614 148 19 re f',
+              'BT /F1 9 Tf 0 g',
+              ...body(700, 6),
+              '/F1 12 Tf 1 0 0 1 72 618 Tm (Canvas element) Tj',
+              '/F1 9 Tf',
+              ...body(598, 6),
+              'ET',
+            ].join('\n'),
+          ),
+        ),
+      ).doc;
+      expect(shaded(doc)).toBe(false);
+    });
+
+    it('is drawn where the page drew it behind a block of lines', () => {
+      const doc = reconstructByLayout(
+        PdfFile.parse(
+          helvetica(
+            ['0.9 g 66 632 148 30 re f', 'BT /F1 9 Tf 0 g', ...body(700, 12), 'ET'].join('\n'),
+          ),
+        ),
+      ).doc;
+      expect(shaded(doc)).toBe(false);
+      expect(doc.body.some((b) => b.kind === 'shape')).toBe(true);
+    });
+  });
+
+  it('keeps an ellipsis the page steps between the dots of together', () => {
+    // freeculture.pdf sets "at the scene. . . ." with a step between the dots,
+    // as wide as most of its face's space: read as word spaces, the steps
+    // came back "scene. .. .".
+    const prose = Array.from(
+      { length: 8 },
+      (_, k) =>
+        `1 0 0 1 72 ${String(720 - k * 12)} Tm (Line ${String(k)} of the body text of the page) Tj`,
+    );
+    const doc = reconstructByLayout(
+      PdfFile.parse(
+        helvetica(
+          [
+            'BT /F1 10 Tf',
+            ...prose,
+            '1 0 0 1 72 600 Tm [(whose blood was at the scene.) -230 (.) -230 (.)] TJ',
+            'ET',
+          ].join('\n'),
+        ),
+      ),
+    ).doc;
+    expect(
+      paragraphs(doc)
+        .map((p) => textOf(p))
+        .join('\n'),
+    ).toContain('at the scene...');
+  });
+
+  it("reads a step as wide as most of the face's space as a space, where the line draws its others", () => {
+    // freeculture.pdf's index draws the space in "academic journals" and
+    // steps the one after "journals," — 1.71 points against a space of 2.03 —
+    // and the entry came back "journals,262,280–82".
+    const prose = Array.from(
+      { length: 8 },
+      (_, k) =>
+        `1 0 0 1 72 ${String(720 - k * 12)} Tm (Line ${String(k)} of the body text of the page) Tj`,
+    );
+    const doc = reconstructByLayout(
+      PdfFile.parse(
+        helvetica(
+          [
+            'BT /F1 8 Tf',
+            ...prose,
+            '1 0 0 1 72 600 Tm [(academic journals,)-214(262,)-214(280)] TJ',
+            'ET',
+          ].join('\n'),
+        ),
+      ),
+    ).doc;
+    const text = paragraphs(doc)
+      .map((p) => textOf(p))
+      .join(' ');
+    expect(text).toContain('academic journals, 262, 280');
+  });
+
+  it('joins a line the page broke at a dash closed up to the word before it', () => {
+    // freeculture.pdf's index breaks "167–68" after its dash, and the entry
+    // came back "167– 68, 321n". A dash set apart is broken at a space.
+    const doc = reconstructByLayout(
+      PdfFile.parse(
+        helvetica(
+          [
+            'BT /F1 9 Tf 1 0 0 1 54 700 Tm (advertising, 36, 45\\26146, 127, 145\\26146, 167\\261) Tj',
+            '1 0 0 1 54 689 Tm (68, 321n) Tj',
+            '1 0 0 1 54 650 Tm (and the page sets its dash apart from the words \\261) Tj',
+            '1 0 0 1 54 639 Tm (as it does here) Tj ET',
+          ].join('\n'),
+        ),
+      ),
+    ).doc;
+    expect(paragraphs(doc).map(textOf)).toEqual([
+      'advertising, 36, 45\u201346, 127, 145\u201346, 167\u201368, 321n',
+      'and the page sets its dash apart from the words \u2013 as it does here',
+    ]);
   });
 });
 

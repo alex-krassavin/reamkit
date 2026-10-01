@@ -22,11 +22,13 @@ const FONTS = {
 // spacing in the way. (E-PARITY FP2.)
 const docx = buildDocxFromBody(`<w:p><w:r><w:t>${'word '.repeat(200)}</w:t></w:r></w:p>`);
 
-function lineCmds(profile?: LayoutProfile): ReadonlyArray<TextLineItem> {
+// `flat`: the layout as a document that asks for no line model gets it.
+function lineCmds(profile?: LayoutProfile, flat = false): ReadonlyArray<TextLineItem> {
   const flow = Ream.parse(docx).flow;
+  const { typesetBy: _asked, ...options } = flowRenderOptions(flow);
   const laid = layoutStyledDocument(flow.body, {
     registry: FontRegistry.fromBytes(FONTS),
-    ...flowRenderOptions(flow),
+    ...(flat ? options : flowRenderOptions(flow)),
     ...(profile ? { layoutProfile: profile } : {}),
   });
   return laid.pages[0]!.commands.filter((c): c is TextLineItem => c.type === 'line');
@@ -34,8 +36,8 @@ function lineCmds(profile?: LayoutProfile): ReadonlyArray<TextLineItem> {
 
 // Line height = the gap between the 2nd and 3rd baselines (skip line 0, which
 // also carries the block's leading-edge offset).
-function lineHeightOf(profile?: LayoutProfile): number {
-  const lines = lineCmds(profile);
+function lineHeightOf(profile?: LayoutProfile, flat = false): number {
+  const lines = lineCmds(profile, flat);
   return Math.abs(lines[2]!.baselineY - lines[1]!.baselineY);
 }
 
@@ -63,20 +65,25 @@ describe('layoutProfile — metric-derived leading (E-PARITY FP2)', () => {
   const upem = parsed.unitsPerEm;
   const size = lineCmds()[1]!.line.maxFontSizePt; // body font size (same for all)
 
-  it("default is the 'ream' profile — flat 1.2× leading, byte-identical", () => {
+  const hhea = ((parsed.ascender - parsed.descender + parsed.lineGap) / upem) * size;
+
+  it("default is the 'ream' profile, with the lines the document asks for", () => {
     const def = lineCmds().map((c) => c.baselineY);
     const ream = lineCmds('ream').map((c) => c.baselineY);
     expect(def).toEqual(ream);
-    // Flat model: a single-spaced line is exactly 1.2× the font size.
-    expect(lineHeightOf()).toBeCloseTo(size * 1.2, 4);
+    // A Word document asks for Word's lines: a family Word's table does not
+    // know stands on the line of the face that draws it…
+    expect(lineHeightOf()).toBeCloseTo(hhea, 4);
+    // …and a layout nothing asks gets the flat model, 1.2× the font size.
+    expect(lineHeightOf(undefined, true)).toBeCloseTo(size * 1.2, 4);
   });
 
-  it("'word' derives leading from the font's OS/2 usWin metrics", () => {
-    const vm = parsed.vmetrics;
-    const expected = ((vm.winAscent + vm.winDescent) / upem) * size;
-    expect(lineHeightOf('word')).toBeCloseTo(expected, 4);
-    // Roboto's win box differs from the flat 1.2×, so the profile moves leading.
-    expect(lineHeightOf('word')).not.toBeCloseTo(size * 1.2, 2);
+  it("'word' stands lines as Word does whatever the document asks", () => {
+    // Asked for nothing, the layout still takes the face's line under the
+    // profile (Roboto's hhea line and usWin cell agree; see
+    // word-line-heights.test.ts for a family Word's own line is known for).
+    expect(lineHeightOf('word', true)).toBeCloseTo(hhea, 4);
+    expect(lineHeightOf('word', true)).not.toBeCloseTo(size * 1.2, 2);
   });
 
   it("'libreoffice' derives leading from the hhea triple", () => {

@@ -254,6 +254,7 @@ export function readDoc(bytes: Uint8Array): ReadResult<FlowDoc> {
     styles: EMPTY_STYLE_SHEET,
     resources,
     ...(headersFooters.size > 0 ? { headersFooters } : {}),
+    typesetBy: 'word',
   };
   return { doc, losses: [content.encrypted ? DOC_ENCRYPTED_LOSS : DOC_TEXT_LOSS] };
 }
@@ -546,6 +547,9 @@ function toParaProperties(p: DocParaProps): ParagraphProperties {
     ...(p.indentFirstTwips !== undefined ? { indentFirstLine: pt(p.indentFirstTwips / 20) } : {}),
     ...(p.spaceBeforeTwips !== undefined ? { spacingBefore: pt(p.spaceBeforeTwips / 20) } : {}),
     ...(p.spaceAfterTwips !== undefined ? { spacingAfter: pt(p.spaceAfterTwips / 20) } : {}),
+    ...(p.widowControl !== undefined ? { widowControl: p.widowControl } : {}),
+    ...(p.keepNext !== undefined ? { keepNext: p.keepNext } : {}),
+    ...(p.keepLines !== undefined ? { keepLines: p.keepLines } : {}),
   };
 }
 

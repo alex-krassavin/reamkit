@@ -44,5 +44,7 @@ export function flowRenderOptions(flow: FlowDoc): FlowRenderOptions {
     ...(flow.pageBackgroundColorHex ? { pageBackgroundColorHex: flow.pageBackgroundColorHex } : {}),
     ...(flow.pageBackgroundFill ? { pageBackgroundFill: flow.pageBackgroundFill } : {}),
     ...(flow.gutterAtTop ? { gutterAtTop: true } : {}),
+    ...(flow.typesetBy ? { typesetBy: flow.typesetBy } : {}),
+    ...(flow.compatibilityMode !== undefined ? { compatibilityMode: flow.compatibilityMode } : {}),
   };
 }

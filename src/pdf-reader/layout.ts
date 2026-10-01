@@ -18,31 +18,52 @@ import {
   NATURAL_LINE_EM,
   buildFlowDoc,
   dedupeLosses,
+  figureBlock,
+  floatOntoSheet,
   imageBlock,
+  imageMember,
+  labelMember,
+  membersBox,
   paragraphFromRuns,
   positionedText,
   sectionFromPdfPages,
+  sectionOnSheet,
   shapeBlock,
   spaceAfter,
   textSizeOf,
   tooSmallToRead,
+  vectorMember,
   withMeasuredMargins,
 } from './flow-build';
-import { displayOf, placeImages, placeRuns, placeVectors } from './display';
+import {
+  displayOf,
+  placeImages,
+  placeRuns,
+  placeVectors,
+  textFrameOf,
+  wordsTurnOf,
+} from './display';
 import { collectEmbeddedFonts } from './embedded-fonts';
 import { collectFaceFamilies } from './font';
 import { collectPageImages } from './images';
 import { extractPageText } from './text';
+import { faceOutlinesOf, kernedFaces, pageSpacing } from './face-outlines';
 import { collectPageVectors } from './vector';
 import { markDrawnRules } from './text-rules';
+import { joinLetters, pageFigures, tracedRun } from './figures';
 import { regionsOf } from './regions';
 import { punctuationOf } from './glyph-shapes';
 import { matrixBlocks } from './math-rows';
+import { pageNumberingOf, runOf } from './page-numbers';
 import { isRightToLeft } from './content';
+import type { ShownCodes } from './face-outlines';
+import type { PageFigure } from './figures';
+import type { PageNumbering } from './page-numbers';
 import type { SideBySide } from './regions';
 import type { PdfVector } from './vector';
 import type {
   BodyElement,
+  Border,
   ParagraphProperties,
   Run,
   SectionProperties,
@@ -54,12 +75,14 @@ import type { Loss, Pt } from '@/core/ir';
 
 import type { TextRun } from './content';
 import type { PdfFile, PdfPage } from './document';
-import type { Reconstruction, TextSpan } from './flow-build';
+import type { FigureMember, Reconstruction, TextSpan } from './flow-build';
 import { FEATURES, ResourceStore, pt } from '@/core/ir';
 
 /** The relationships the reconstruction files its running head and foot under. */
-const FOOTER_PART = 'pdf-running-foot';
-const HEADER_PART = 'pdf-running-head';
+export const FOOTER_PART = 'pdf-running-foot';
+/** The part the running foot of a book's even pages is written to (see `sidesOf`). */
+export const EVEN_FOOTER_PART = 'pdf-running-foot-even';
+export const HEADER_PART = 'pdf-running-head';
 
 /** §9.10.2 — a glyph the face maps to no character (see `./font`). */
 export const UNMAPPED = '\uFFFD';
@@ -74,6 +97,11 @@ interface Line {
   readonly width: number;
   /** Whether a TAB stands inside it — a gap no word space could be. */
   readonly tabbed?: boolean;
+  /**
+   * Whether it is a line of CODE: every word of it set in a typewriter face.
+   * Such a line is ended where the page ends it, and re-set as its own.
+   */
+  readonly code?: boolean;
   /**
    * Where the pieces after each such gap begin, in page space. A line the page
    * SET OUT stands on stops, and a space in place of them puts the second piece
@@ -127,14 +155,51 @@ export function reconstructByLayout(
   const pages = file.pages();
   // §14.11.1 — every mark is lifted into the page's SHOWN frame, so nothing
   // downstream has to know the page was ever turned.
-  const shown = pages.map((page) => displayOf(page));
-  const allRuns = pages.map((page, i) => placeRuns(extractPageText(file, page), shown[i]!));
+  const sheets = pages.map((page) => displayOf(page));
+  // §9.9 — the codes each font paints, for the faces a writer may embed.
+  const painted: ShownCodes = new Map();
+  const extracted = typewritten(pages.map((page) => extractPageText(file, page, painted)));
+  // §9.4.3 — how the page spaces each face: between words, and inside them.
+  const spacing = pageSpacing(extracted);
+  // §9.9 — the faces the document carries, and the space each is set with
+  // there (see `fittedSpace`).
+  const outlines = faceOutlinesOf(painted, spacing);
+  const faceSpaces: FaceSpaces = new Map(
+    [...outlines].flatMap(([name, face]): Array<[string, number]> => {
+      const advance = face.glyphs.get(' ')?.advance;
+      return advance !== undefined ? [[name, advance]] : [];
+    }),
+  );
+  const onSheets = extracted.map((runs, i) => placeRuns(runs, sheets[i]!));
+  // §17.6.20 — …and a page whose words run DOWN its sheet is read in the frame
+  // where they stand upright, and set back on the sheet turned: a viewer turns
+  // the words with the page, and so does the document (`sectionOnSheet`). A
+  // placed reading has no frame to read in: every line of it already stands
+  // where the page shows it, turned boxes and all.
+  const turns = onSheets.map((runs) => wordsTurnOf(runs));
+  const shown = sheets.map((sheet, i) =>
+    mode !== 'positional' && turns[i] === 270 ? textFrameOf(sheet) : sheet,
+  );
+  const allRuns = shown.map((d, i) => (d.sheet ? placeRuns(extracted[i]!, d) : onSheets[i]!));
   // §17.6.13 — what the document repeats at the foot of its pages is a running
   // foot, not a paragraph of the body. Lifted off before anything else reads
   // the page: it must not measure the margins either, and a page number in the
   // text block is a page number in the wrong place.
-  const foot = mode === 'positional' ? undefined : runningFoot(allRuns, shown, 'foot');
-  const head = mode === 'positional' ? undefined : runningFoot(allRuns, shown, 'head');
+  // …on a page read the way it is shown. A header and a footer stay across the
+  // sheet whichever way a section's lines run (§17.6.20), so the band of a page
+  // whose words run down it stays in its text and turns with it.
+  // …and a mark set off the sheet (see `offSheet` below) is no band either.
+  const offSheet = (r: TextRun, i: number): boolean => r.y < 0 || r.y > shown[i]!.height;
+  const bandRuns = allRuns.map((runs, i) =>
+    shown[i]!.sheet ? [] : runs.filter((r) => !offSheet(r, i)),
+  );
+  const foot = mode === 'positional' ? undefined : runningFoot(bandRuns, shown, 'foot');
+  const head = mode === 'positional' ? undefined : runningFoot(bandRuns, shown, 'head');
+  // §17.6.12 — the page numbers the band prints, and the sequences they run
+  // in: front matter numbered i, ii, iii before a body that starts again at 1
+  // is two sections, each numbering its pages its own way.
+  const numberedBand = foot?.numbered === true ? foot : head?.numbered === true ? head : undefined;
+  const numbering = numberingOf(numberedBand);
   // …and what is set too small to read is a mark the producer left on the
   // sheet, not a line of it: TCPDF signs the last page of everything it makes
   // in one-point type in the very corner of the paper. Read as text it was the
@@ -146,17 +211,61 @@ export function reconstructByLayout(
   // caption, a field's value, a tick. Its box is placed where the page has
   // it, and read into the page's lines the words left it — evaljs.pdf's
   // "Execute" stood at the margin, two hundred points from its button.
-  const stamp = (r: TextRun): boolean =>
-    mode !== 'positional' && (r.annotation === true || tooSmallToRead(r, textSize));
-  const stamps = allRuns.map((runs) => runs.filter(stamp));
-  const pageRuns =
+  // …and so is what stands OFF the sheet: a run whose baseline lies past the
+  // page's foot or its head shows a sliver of its glyphs at the edge, if
+  // anything. freeculture.pdf sets a printer's bar of ZapfDingbats at forty
+  // points nine points under the crop of every page of its front matter; read
+  // into the page's lines, it came back four lines of bars at the head of a
+  // page of their own, and every page after it one sheet late.
+  const stamp = (r: TextRun, i: number): boolean =>
+    mode !== 'positional' &&
+    (r.annotation === true || tooSmallToRead(r, textSize) || offSheet(r, i));
+  const stamps = allRuns.map((runs, i) => runs.filter((r) => stamp(r, i)));
+  const readRuns =
     foot || head || stamps.some((s) => s.length > 0)
       ? allRuns.map((runs, i) =>
           runs.filter(
-            (r) => foot?.lift[i]?.has(r) !== true && head?.lift[i]?.has(r) !== true && !stamp(r),
+            (r) => foot?.lift[i]?.has(r) !== true && head?.lift[i]?.has(r) !== true && !stamp(r, i),
           ),
         )
       : allRuns;
+  // Every page's pictures and paths, lifted before its text is read.
+  // A white box drawn over a picture is not invisible paint but the thing that
+  // hides it, so the paths are filtered against the pictures already placed.
+  const art = pages.map((page, i) => {
+    const raw = collectPageImages(file, page);
+    const images = placeImages(raw.images, shown[i]!);
+    const covered = images.map((img) => ({
+      minX: img.x,
+      minY: img.y,
+      maxX: img.x + img.widthPt,
+      maxY: img.y + img.heightPt,
+    }));
+    const lifted = collectPageVectors(file, page, covered);
+    return {
+      images,
+      imageLosses: raw.losses,
+      vectors: placeVectors(lifted.vectors, shown[i]!),
+      vectorLosses: lifted.losses,
+    };
+  });
+  // §8.5 — the figures the pages draw (see `./figures`). The words set on a
+  // figure are its labels: the page's text is read without them, and they are
+  // set with the drawing they label. Read as text, comments.pdf's state machine
+  // cut its page into so many columns that the page was taken for a table.
+  // …in a FLOWING reading of a page read upright: a placed one anchors every
+  // mark where it stands already.
+  const figures = art.map((a, i) =>
+    mode === 'positional' || shown[i]!.sheet !== undefined
+      ? []
+      : pageFigures(a.vectors, a.images, readRuns[i]!, shown[i]!),
+  );
+  const pageRuns = figures.some((f) => f.length > 0)
+    ? readRuns.map((runs, i) => {
+        const labels = new Set(figures[i]!.flatMap((f) => f.labels));
+        return labels.size > 0 ? runs.filter((r) => !labels.has(r)) : runs;
+      })
+    : readRuns;
 
   // Every page's pictures, kept for the margins the section is measured to.
   const pageMarks: Array<
@@ -172,6 +281,17 @@ export function reconstructByLayout(
 
   const resources = new ResourceStore();
   const losses: Array<Loss> = [];
+  // Words that run UP a sheet, or stand on their heads, have no section to be
+  // set in that way — Word and LibreOffice both lay a section's text down the
+  // sheet or across it and no other way — and are set across it.
+  if (mode !== 'positional' && turns.some((t) => t === 90 || t === 180)) {
+    losses.push({
+      severity: 'degraded',
+      feature: FEATURES.text,
+      detail:
+        'a page shows its words running up the sheet or upside down; a document sets a section’s text across the sheet or down it, so they are set across it',
+    });
+  }
   // §8.6.6.2 — type filled with a tiling pattern keeps the pattern's colour at
   // the pattern's own density and loses its shape: a run carries one colour, not
   // a content stream, so a hatch that alternates ink and paper becomes the flat
@@ -180,7 +300,8 @@ export function reconstructByLayout(
   // words are unrecoverable, and a page that silently comes back blank is the
   // one loss this reader must never take without saying so:
   // arial_unicode_ab_cidfont.pdf is four Arabic letters and nothing else.
-  if (pageRuns.some((page) => page.some((r) => r.text.includes(UNMAPPED)))) {
+  // A figure's traced labels are among them: drawn, and still not text.
+  if (readRuns.some((page) => page.some((r) => r.text.includes(UNMAPPED)))) {
     losses.push({
       severity: 'dropped',
       feature: FEATURES.text,
@@ -214,10 +335,19 @@ export function reconstructByLayout(
   // clean lines for the vote to answer, and read as one column its citations
   // ran into its theorems. Where a page says nothing, the answer the rest of
   // the document gave is put to it, and kept only if its own lines agree.
-  const perPage = pages.map((_, i) => detectGutters(pageRuns[i]!, shown[i]!.width));
+  // …and not the gutters a page's code listings show (see `withoutListings`),
+  // nor those of a table set over text in columns (`withoutTables`): the
+  // text's own gutters are the page's where it has any, and a page that is its
+  // table is ruled by it.
+  const gutterRuns = pageRuns.map((runs, i) => {
+    const listed = withoutListings(runs);
+    const prose = withoutTables(listed);
+    return prose !== listed && detectGutters(prose, shown[i]!.width).length > 0 ? prose : listed;
+  });
+  const perPage = pages.map((_, i) => detectGutters(gutterRuns[i]!, shown[i]!.width));
   const shared = commonGutters(perPage);
   const pageGutters = perPage.map((own, i) =>
-    own.length > 0 ? own : shared && fitsGutters(pageRuns[i]!, shared) ? shared : own,
+    own.length > 0 ? own : shared && fitsGutters(gutterRuns[i]!, shared) ? shared : own,
   );
   const body: Array<BodyElement> = [];
   // §17.6 — where the pages differ in size the document is several sections,
@@ -232,6 +362,8 @@ export function reconstructByLayout(
   }> = [];
   let sectionFrom = 0;
   let lastSize = '';
+  // Each page's sheet: its size, and whether it is set turned.
+  const sheetSizes: Array<string> = [];
   // The first paragraph each page's text begins with: where in the body it is,
   // and the baseline and box the page set its first line at.
   const leads: Array<{ page: number; at: number; baseline: number; lineHeight: number }> = [];
@@ -241,9 +373,28 @@ export function reconstructByLayout(
   let curColumns = 1;
   let curSpace = 0;
   let pendingContinuous = false;
+  // Where each page's last columns end, down the page (see `balancedEnd`).
+  const columnFeet: Array<ReadonlyArray<number> | undefined> = [];
+  // Where in the body a page turns from one of its columns to the next: where
+  // the column before the turn ends and the one after it, up the page, and
+  // whether a line across the page closes their band (see `columnTurns` below).
+  const columnTurns: Array<{
+    at: number;
+    foot: number;
+    next: number;
+    closed: boolean;
+    /** Where the next column's first line stands, and the first line of the band's first column. */
+    head?: { at: number; baseline: number; lineHeight: number };
+    opens?: { at: number; baseline: number; lineHeight: number };
+  }> = [];
   pages.forEach((page, i) => {
     const runs = pageRuns[i]!;
     const display = shown[i]!;
+    // §17.6.20 — a page read in its text frame is set back on its sheet turned,
+    // and Word turns a section's paragraphs and not its tables: a table set
+    // there lies flat in the corner of the sheet while the text around it runs
+    // down. Such a page is read as the lines and stops it shows.
+    const turned = display.sheet !== undefined;
     // EP17 — the page's gutters, and so its columns. Each column is grouped and
     // read independently, and its blocks precede the next column's.
     const gutters = pageGutters[i]!;
@@ -253,7 +404,10 @@ export function reconstructByLayout(
     const stepped = stepsBetweenWords(runs);
     // Blocks carry a column key so the final sort reads column-by-column: left
     // column top-to-bottom, then right column.
-    const blocks: Array<{ band: number; col: number; top: number; el: BodyElement }> = [];
+    const blocks: Array<Block> = [];
+    // The boxes the page fills behind a line, which became its shading and so
+    // are not drawn again (see `onBoxes`).
+    const shaded = new Set<PdfVector>();
     // EP17 — a full-width line cuts the page in two: what is above it is read
     // before it and what is below after, so a paper's columns do not start at
     // the top of the sheet.
@@ -270,9 +424,22 @@ export function reconstructByLayout(
     // before it and what is below after, so a paper's columns do not start at
     // the top of the sheet.
     const split = gutters.length > 0 && inColumns ? assignColumns(runs, gutters) : undefined;
+    // The page's figures, each read in the column it stands in. One that
+    // reaches across a gutter spans the columns, and cuts the page in two
+    // where it begins, as a line set across the page does.
+    const figs = figures[i]!;
+    const spansGutter = (f: PageFigure): boolean =>
+      gutters.some((g) => f.minX < g.mid && f.maxX > g.mid);
+    const breaks = split
+      ? [...split.breaks, ...figs.filter(spansGutter).map((f) => f.maxY)].sort((a, b) => b - a)
+      : [];
     const bandEpsilon = (median(runs.map((r) => r.fontSizePt).filter((s) => s > 0)) || 10) / 2;
-    const bandAt = (top: number): number => bandOf(split?.breaks ?? [], top, bandEpsilon);
-    const addColumn = (allRuns: ReadonlyArray<TextRun>, col: number): void => {
+    const bandAt = (top: number): number => bandOf(breaks, top, bandEpsilon);
+    const addColumn = (
+      allRuns: ReadonlyArray<TextRun>,
+      col: number,
+      columnFigures: ReadonlyArray<PageFigure> = [],
+    ): void => {
       // §9.6.5 — a Type 3 run's marks are its glyph PROCEDURES, which the path
       // and picture passes lift. Re-setting its codes in a substitute face
       // would draw a second, smaller copy of a drawing.
@@ -372,54 +539,154 @@ export function reconstructByLayout(
       }
       // The column read region by region: a stretch that reads straight down,
       // then a band of blocks side by side, each spaced from the one before.
+      // A figure stands between the text over it and the text under it, and
+      // the text under it is spaced from its foot.
       let above: LineBox | undefined;
-      for (const region of regionsOf(textRuns)) {
-        if (region.kind === 'side') {
-          const made = sideBySide(region, measure, above);
-          if (made === undefined) continue;
+      const slabs: Array<{ runs: ReadonlyArray<TextRun>; figure?: PageFigure }> = [];
+      let rest = textRuns;
+      for (const figure of columnFigures) {
+        slabs.push({ runs: rest.filter((r) => r.y > figure.maxY), figure });
+        rest = rest.filter((r) => r.y <= figure.maxY);
+      }
+      slabs.push({ runs: rest });
+      for (const slab of slabs) {
+        const regions = turned
+          ? [{ kind: 'flow' as const, runs: slab.runs }]
+          : regionsOf(slab.runs);
+        for (const region of regions) {
+          if (region.kind === 'side') {
+            const made = sideBySide(region, measure, above);
+            if (made === undefined) continue;
+            blocks.push({ band: bandAt(made.top), col, top: made.top, el: made.el });
+            above = made.below;
+            continue;
+          }
+          const regionLines = groupIntoLines(
+            region.runs,
+            false,
+            stepped,
+            faceSpaces,
+            columnRules(vectors),
+          ).filter((l) => l.text.length > 0);
+          // A sheet of a line or two shows no measure (see `MEASURE_LINES`):
+          // its longest line reaches the edge only because it IS the edge, and
+          // the .docx is re-set across the sheet's own width instead — at the
+          // least all but the third a guessed margin may take. A line whose
+          // next word would have fit short of THAT was ended, not broken: run
+          // together, checkbox-bad-appearance.pdf's "Checkbox 1 - not checked"
+          // and "✔ Checkbox 2 - Checked" came back side by side on one line.
+          const reach =
+            lines.length < MEASURE_LINES && gutters.length === 0
+              ? pageWidth * (1 - GUESSED_MARGIN)
+              : undefined;
+          const { paras, under } = onBoxes(
+            groupIntoParagraphs(regionLines, measure, display.height, above, false, reach),
+            vectors.filter(solidBox),
+            measure,
+          );
+          for (const set of setParagraphs(
+            paras,
+            measure && {
+              left: measure.left,
+              // The table runs to where the PAGE's text ends, not to where this
+              // column's longest line does: the last column of a payment history
+              // begins at its heading and its figures reach past it, and measured
+              // to the line the column came out a point wide.
+              right: Math.max(measure.right, textEdges?.right ?? measure.right),
+            },
+            pageWidth,
+          )) {
+            blocks.push({
+              band: bandAt(set.top),
+              col,
+              top: set.top,
+              el: set.el,
+              ...(set.foot !== undefined ? { foot: set.foot } : {}),
+            });
+          }
+          const last = paras[paras.length - 1];
+          // A box under the last line reaches down into the white under it.
+          if (last !== undefined) above = { y: last.bottom - under, lineHeight: last.lineHeight };
+        }
+        if (slab.figure !== undefined) {
+          const made = figureIn(slab.figure, measure, above, col === SPANNING_COLUMN);
           blocks.push({ band: bandAt(made.top), col, top: made.top, el: made.el });
           above = made.below;
-          continue;
         }
-        const regionLines = groupIntoLines(region.runs, false, stepped).filter(
-          (l) => l.text.length > 0,
-        );
-        // A sheet of a line or two shows no measure (see `MEASURE_LINES`):
-        // its longest line reaches the edge only because it IS the edge, and
-        // the .docx is re-set across the sheet's own width instead — at the
-        // least all but the third a guessed margin may take. A line whose
-        // next word would have fit short of THAT was ended, not broken: run
-        // together, checkbox-bad-appearance.pdf's "Checkbox 1 - not checked"
-        // and "✔ Checkbox 2 - Checked" came back side by side on one line.
-        const reach =
-          lines.length < MEASURE_LINES && gutters.length === 0
-            ? pageWidth * (1 - GUESSED_MARGIN)
-            : undefined;
-        const paras = groupIntoParagraphs(
-          regionLines,
-          measure,
-          display.height,
-          above,
-          false,
-          reach,
-        );
-        for (const set of setParagraphs(
-          paras,
-          measure && {
-            left: measure.left,
-            // The table runs to where the PAGE's text ends, not to where this
-            // column's longest line does: the last column of a payment history
-            // begins at its heading and its figures reach past it, and measured
-            // to the line the column came out a point wide.
-            right: Math.max(measure.right, textEdges?.right ?? measure.right),
-          },
-          pageWidth,
-        )) {
-          blocks.push({ band: bandAt(set.top), col, top: set.top, el: set.el });
-        }
-        const last = paras[paras.length - 1];
-        if (last !== undefined) above = { y: last.bottom, lineHeight: last.lineHeight };
       }
+    };
+    /** A figure's parts in the order the page painted them, its words over its drawing. */
+    const figureMembers = (figure: PageFigure): Array<FigureMember> => {
+      const painted = [...figure.vectors].sort((a, b) => compareOrder(a.orderKey, b.orderKey));
+      const drawn = [
+        ...joinLetters(painted).map((v) => ({ key: v.orderKey, member: vectorMember(v) })),
+        ...figure.images.map((img) => ({ key: img.orderKey, member: imageMember(img, resources) })),
+      ].sort((a, b) => compareOrder(a.key, b.key));
+      const labels: Array<FigureMember> = [];
+      // Lettering that states no character is drawn with the figure's paths.
+      const written = figure.labels.filter((r) => !tracedRun(r));
+      for (const [angle, turnedRuns] of byAngle(written)) {
+        for (const layer of byPainter(turnedRuns)) {
+          for (const line of groupIntoLines(rotate(layer, -angle), true, stepped)) {
+            if (line.text.length === 0) continue;
+            // Upright, the box is the words' own and an em more. It is told
+            // not to wrap (see `labelMember`), and LibreOffice wraps it all
+            // the same where the words fill it: comments.pdf's "Guard" came
+            // back "Guar".
+            const box =
+              angle === 0
+                ? {
+                    x: line.x,
+                    y: line.y - line.fontSize * 0.25,
+                    width: line.width + line.fontSize,
+                    height: line.fontSize * 1.25,
+                  }
+                : turnedBox(line, angle, pageWidth);
+            labels.push(labelMember(line.spans, box, rotation60kOf(angle)));
+          }
+        }
+      }
+      return [...drawn.map((d) => d.member), ...labels];
+    };
+    /**
+     * §20.5.2.17 — a figure as the paragraph it stands in (see `figureBlock`):
+     * spaced from the text over it as a paragraph is, and set in from its
+     * column's edge as far as the page set it.
+     *
+     * A figure across the columns is spaced from the text nearest over it in
+     * any column: what its own column holds over it is the line before the
+     * columns began.
+     */
+    const figureIn = (
+      figure: PageFigure,
+      measure: { left: number; right: number } | undefined,
+      over: LineBox | undefined,
+      across = false,
+    ): { top: number; below: LineBox; el: BodyElement } => {
+      const members = figureMembers(figure);
+      const box = membersBox(members);
+      const nearest = across
+        ? runs
+            .map((r) => r.y - r.fontSizePt * 0.25)
+            .filter((edge) => edge > box.top)
+            .reduce<number | undefined>((low, edge) => Math.min(low ?? edge, edge), undefined)
+        : undefined;
+      const above: LineBox | undefined =
+        nearest !== undefined ? { y: nearest, lineHeight: 0 } : over;
+      const opened =
+        above !== undefined ? above.y - (1 - BASELINE_AT) * above.lineHeight - box.top : 0;
+      const indent = box.left - (measure?.left ?? box.left);
+      const properties: ParagraphProperties = {
+        ...(opened > SPACING_NOISE_PT
+          ? { spacingBefore: pt(Math.min(opened, display.height / 3)) }
+          : {}),
+        ...(Math.abs(indent) > SPACING_NOISE_PT ? { indentLeft: pt(indent) } : {}),
+      };
+      return {
+        top: box.top,
+        below: { y: box.bottom, lineHeight: 0 },
+        el: figureBlock(members, properties),
+      };
     };
     /**
      * A region's paragraphs as the elements they are set in: the lines that
@@ -430,17 +697,19 @@ export function reconstructByLayout(
     // say, with their lines (see `setOff`).
     const far = new WeakMap<BodyElement, ReadonlyArray<Line>>();
     const setParagraphs = (
-      paras: ReturnType<typeof groupIntoParagraphs>,
+      paras: ReadonlyArray<ShadedParagraph>,
       tableMeasure: { left: number; right: number } | undefined,
       sheetWidth = 0,
-    ): Array<{ top: number; el: BodyElement }> => {
+    ): Array<{ top: number; el: BodyElement; foot?: number }> => {
       // §17.4.38 — consecutive lines set out on the SAME stops are a table:
       // "Description / Qty / Unit price / Tax / Amount" and the row under it.
       // Written as tabbed paragraphs the picture is right and the document is
       // not — nothing downstream can read a column out of it, and a reader that
       // re-wraps one cell drags the whole line with it.
-      const asRows = tabbedRows(paras, tableMeasure);
-      const out: Array<{ top: number; el: BodyElement }> = [];
+      const asRows = turned
+        ? new Map<number, BodyElement | null>()
+        : tabbedRows(paras, tableMeasure);
+      const out: Array<{ top: number; el: BodyElement; foot?: number }> = [];
       for (const [at, para] of paras.entries()) {
         const table = asRows.get(at);
         if (table !== undefined) {
@@ -449,6 +718,8 @@ export function reconstructByLayout(
         }
         // A cell's lines keep to the cell: there is no sheet for them to run on into.
         const overflow = sheetWidth > 0 ? runOn(para, tableMeasure, sheetWidth) : 0;
+        const { shade } = para;
+        if (shade) shaded.add(shade.box);
         const el = paragraphFromRuns(para.spans, headingLevel(para.fontSize, medianFont), {
           ...(para.stops !== undefined && para.stops.length > 0
             ? {
@@ -466,9 +737,14 @@ export function reconstructByLayout(
             ? { indentFirstLine: pt(para.indentFirstLine) }
             : {}),
           ...(overflow > 0 ? { indentRight: pt(-overflow) } : {}),
+          ...(shade ? shadeProperties(shade) : {}),
         });
         if (sheetWidth > 0 && para.far !== undefined) far.set(el, para.far);
-        out.push({ top: para.top, el });
+        out.push({
+          top: para.top,
+          el,
+          foot: para.bottom - (1 - BASELINE_AT) * para.lineHeight - (shade?.under ?? 0),
+        });
       }
       return out;
     };
@@ -489,7 +765,9 @@ export function reconstructByLayout(
         ...region.cells.map((c) => c.to),
       );
       const cells = region.cells.map((cell) => {
-        const lines = groupIntoLines(cell.runs, false, stepped).filter((l) => l.text.length > 0);
+        const lines = groupIntoLines(cell.runs, false, stepped, faceSpaces).filter(
+          (l) => l.text.length > 0,
+        );
         return { cell, lines };
       });
       if (cells.some((c) => c.lines.length === 0)) return undefined;
@@ -510,8 +788,13 @@ export function reconstructByLayout(
         const own = { left: cell.from, right: cell.to };
         // A block beside another is a stack of lines — a label over its value,
         // an address — set as narrow as it is: run together, its lines re-wrap
-        // wherever a substitute's widths put the break.
-        const paras = groupIntoParagraphs(lines, own, display.height, edge, true);
+        // wherever a substitute's widths put the break. A block of PROSE is
+        // not: its lines run to the edge the column breaks them at, and set a
+        // line apiece, each one a word wider in a substitute's widths left
+        // that word on a line of its own — comments.pdf's two columns, read
+        // as blocks side by side, came back half again as long, a word
+        // standing alone under every line.
+        const paras = groupIntoParagraphs(lines, own, display.height, edge, !isProse(lines, own));
         const last = paras[paras.length - 1]!;
         foot = Math.min(foot, last.bottom - (1 - BASELINE_AT) * last.lineHeight);
         const inset = cell.from - starts[k]!;
@@ -574,30 +857,26 @@ export function reconstructByLayout(
         });
       }
     }
-    const raw = collectPageImages(file, page);
-    const imgs = { images: placeImages(raw.images, display), losses: raw.losses };
-    losses.push(...imgs.losses);
+    const lifted = art[i]!;
+    losses.push(...lifted.imageLosses);
     // …and kept, because a margin is measured to the page's INK and a picture
     // is ink (see `withMeasuredMargins`).
-    pageMarks[i] = imgs.images;
+    pageMarks[i] = lifted.images;
+    losses.push(...lifted.vectorLosses);
+    // What a figure draws is set with the figure (see `figureIn`).
+    const figured = new Set<object>(figures[i]!.flatMap((f) => [...f.vectors, ...f.images]));
+    const imgs = {
+      images: figured.size > 0 ? lifted.images.filter((img) => !figured.has(img)) : lifted.images,
+    };
     // Filled vector paths (EP10) are ANCHORED where the page drew them — they
     // are artwork, not paragraphs, and a sheet of them has no reading order to
     // take a place in. They still sort by top edge, so their z-order is the
     // order the page painted them in.
-    // A white box drawn over a picture is not invisible paint but the thing
-    // that hides it, so the paths are filtered against what is already placed.
-    const covered = imgs.images.map((img) => ({
-      minX: img.x,
-      minY: img.y,
-      maxX: img.x + img.widthPt,
-      maxY: img.y + img.heightPt,
-    }));
-    const lifted = collectPageVectors(file, page, covered);
-    losses.push(...lifted.losses);
     // A PDF has no underline: it draws a thin bar under the words. Read onto
     // the runs BEFORE they are grouped, so the mark travels with them and the
     // bar is not placed a second time where the words no longer are.
-    const placedVectors = placeVectors(lifted.vectors, display);
+    const placedVectors =
+      figured.size > 0 ? lifted.vectors.filter((v) => !figured.has(v)) : lifted.vectors;
     const drawnRules = markDrawnRules(runs, placedVectors);
     const strayGlyphs = strayMarks(placedVectors, runs);
     // …and the marks the page draws for want of a character, read where their
@@ -627,7 +906,8 @@ export function reconstructByLayout(
     // A page RULED into columns is a table, and its ROWS are what it says; a
     // page SET in columns is prose, and its columns are. Read by column, a
     // table comes back one column at a time with every row torn up.
-    const ruledIntoColumns = mode !== 'positional' && looksRuled(ruled.runs, gutters, textEdges);
+    const ruledIntoColumns =
+      mode !== 'positional' && !turned && looksRuled(ruled.runs, gutters, textEdges);
     const asTable =
       ruledIntoColumns && textEdges
         ? tableFrom(ruled.runs, gutters, textEdges, stepped)
@@ -636,19 +916,29 @@ export function reconstructByLayout(
       for (const block of asTable) {
         blocks.push({ band: bandAt(block.top), col: 0, top: block.top, el: block.el });
       }
+      // A table's rows are read whole and spaced by their own pitch, so a
+      // figure among them stands at its top, spaced from nothing.
+      for (const figure of figs) {
+        const made = figureIn(figure, undefined, undefined);
+        blocks.push({ band: bandAt(made.top), col: 0, top: made.top, el: made.el });
+      }
     } else if (split && !ruledIntoColumns) {
       // A run the rules pass rebuilt is not the one the split was measured on,
       // so its column is looked up by where it stands.
       const columnFor = (r: TextRun): number => split.columnOf.get(r) ?? colOf(r.x);
+      const figureColumn = (f: PageFigure): number =>
+        spansGutter(f) ? SPANNING_COLUMN : colOf((f.minX + f.maxX) / 2);
       const columns = Array.from({ length: gutters.length + 1 }, (_, n) => n);
       for (const col of [SPANNING_COLUMN, ...columns]) {
         addColumn(
           ruled.runs.filter((r) => columnFor(r) === col),
           col,
+          figs.filter((f) => figureColumn(f) === col),
         );
       }
+      spaceUnderSpans(blocks);
     } else {
-      addColumn(ruled.runs, 0);
+      addColumn(ruled.runs, 0, figs);
     }
 
     // §20.4.2.3 `relativeHeight` — pictures and paths share one z-order, and
@@ -673,7 +963,7 @@ export function reconstructByLayout(
       positionedText(line.spans, turnedBox(line, 0, pageWidth), frame, FAR_Z + k),
     );
     const givenAway =
-      mode !== 'positional' ? ruleBorders(vectors, blocks, display.width) : undefined;
+      mode !== 'positional' ? ruleBorders(vectors, blocks, display.width, colOf) : undefined;
     const marks = [
       ...imgs.images.map((img) => ({
         key: img.orderKey,
@@ -682,7 +972,7 @@ export function reconstructByLayout(
         make: (z: number): BodyElement => imageBlock(img, resources, undefined, frame, z, under),
       })),
       ...drawn
-        .filter((v) => givenAway?.has(v) !== true)
+        .filter((v) => givenAway?.has(v) !== true && !shaded.has(v))
         .map((v) => ({
           key: v.orderKey,
           col: colOf((v.minX + v.maxX) / 2),
@@ -710,8 +1000,12 @@ export function reconstructByLayout(
     // as one size the second sheet's six squares were cut down to the one that
     // fitted. A section break already forces a page, so the break paragraph
     // below is for the pages that stay inside one.
-    const size = `${shown[i]!.width.toFixed(2)}x${shown[i]!.height.toFixed(2)}`;
-    const opensSection = i > 0 && size !== lastSize;
+    // …and so does a page whose lines run another way than the one before
+    // (§17.6.20): a section is what carries the direction too.
+    const size = `${shown[i]!.width.toFixed(2)}x${shown[i]!.height.toFixed(2)}${turned ? ' down' : ''}`;
+    // …and where the pages' numbering starts again, which only a section does.
+    const opensSection =
+      i > 0 && (size !== lastSize || numbering?.runs.some((run) => run.from === i) === true);
     if (opensSection) {
       sectionEnds.push({
         at: body.length,
@@ -725,6 +1019,7 @@ export function reconstructByLayout(
       pendingContinuous = false;
     }
     lastSize = size;
+    sheetSizes[i] = size;
     // Each source page after the first opens an output page of its own. Flowed,
     // the layout repaginates and this hardly shows; PLACED, every mark is
     // anchored to "the page", so without it all twenty-five pages of
@@ -732,6 +1027,8 @@ export function reconstructByLayout(
     //
     // …and so does a page with nothing on it to read. A blank sheet is still a
     // sheet: doc_actions.pdf is three of them, and came back as one.
+    // Where this page's break stands in the body, where it has one.
+    const breakAt = i > 0 && !opensSection ? body.length : undefined;
     if (i > 0 && !opensSection) {
       body.push({
         kind: 'paragraph',
@@ -772,8 +1069,103 @@ export function reconstructByLayout(
     const columnsHere =
       ruledIntoColumns || !proseColumns(runs, gutters, textEdges) ? 1 : gutters.length + 1;
     const spacePt = columnsHere > 1 ? median(gutters.map((g) => g.to - g.from)) : 0;
+    columnFeet[i] = columnsHere > 1 ? lastColumnFeet(blocks) : undefined;
     let led = false;
+    // Whether a block of this page stands in the body yet.
+    let begun = false;
+    // Where each column of a band ends, up the page: the foot of its lowest
+    // block, where that is a paragraph's.
+    const footOf = (band: number, col: number): number | undefined => {
+      const column = blocks.filter((b) => b.band === band && b.col === col);
+      if (column.length === 0) return undefined;
+      return column.reduce((low, b) => (b.top < low.top ? b : low)).foot;
+    };
+    let prev: Block | undefined;
+    // Where in the body each of the page's blocks went.
+    const placedAt = new Map<Block, number>();
     for (const block of blocks) {
+      if (
+        columnsHere > 1 &&
+        prev !== undefined &&
+        block.band === prev.band &&
+        prev.col !== SPANNING_COLUMN &&
+        block.col > prev.col
+      ) {
+        const ends = footOf(prev.band, prev.col);
+        const next = footOf(block.band, block.col);
+        const closed = blocks.some((b) => b.band === block.band && b.col === SPANNING_COLUMN);
+        if (ends !== undefined && next !== undefined) {
+          // The next column's first line: past the drawings anchored ahead of
+          // it, which take no room in the column they are written in.
+          const rest = blocks.slice(blocks.indexOf(block));
+          const skipped = rest.findIndex((b) => !floating(b.el));
+          const lead = skipped >= 0 ? leadingLine(rest[skipped]!.el) : undefined;
+          // …and the first line of the band's first column, which the next
+          // column's stands level with or under as the page stands it.
+          const opener = blocks.find(
+            (b) => b.band === block.band && b.col !== SPANNING_COLUMN && !floating(b.el),
+          );
+          const openerAt = opener !== undefined ? placedAt.get(opener) : undefined;
+          const openerLine = opener !== undefined ? leadingLine(opener.el) : undefined;
+          columnTurns.push({
+            at: body.length,
+            foot: ends,
+            next,
+            closed,
+            ...(lead !== undefined
+              ? {
+                  head: {
+                    at: body.length + skipped,
+                    baseline: rest[skipped]!.top,
+                    lineHeight: lead,
+                  },
+                }
+              : {}),
+            ...(opener !== undefined && openerAt !== undefined && openerLine !== undefined
+              ? { opens: { at: openerAt, baseline: opener.top, lineHeight: openerLine } }
+              : {}),
+          });
+        }
+      }
+      prev = block;
+      const count = block.col === SPANNING_COLUMN ? 1 : columnsHere;
+      if (count !== curColumns) {
+        // §17.18.77 — a section that opens a page opens it itself, not
+        // continuously after a break: Word does not break before a paragraph
+        // that carries the section before it, and comments.pdf's twelfth page
+        // came back under the eleventh on one sheet.
+        const opensPage = breakAt !== undefined && !begun;
+        if (opensPage) {
+          // The section before it ends on its own page's last paragraph where
+          // that is the section's own. Anywhere else the break stays as its
+          // carrier, a line of no height — which, on a page the words fill to
+          // the foot, is a line that goes over onto a sheet of its own.
+          const last = body[breakAt - 1];
+          const own = sectionEnds.every((e) => e.at < breakAt);
+          if (last?.kind === 'paragraph' && own) body.pop();
+          else {
+            body[breakAt] = {
+              kind: 'paragraph',
+              paragraph: {
+                properties: { spacingLine: CARRIER_LINE_PT, spacingLineRule: 'exact' },
+                runs: [],
+              },
+            };
+          }
+        }
+        sectionEnds.push({
+          at: body.length,
+          from: sectionFrom,
+          to: opensPage ? i : i + 1,
+          columns: curColumns,
+          spacePt: curSpace,
+          continuous: pendingContinuous,
+        });
+        sectionFrom = i;
+        pendingContinuous = !opensPage;
+        curColumns = count;
+        curSpace = spacePt;
+      }
       if (!led && mode !== 'positional') {
         const lead = leadingLine(block.el);
         if (lead !== undefined)
@@ -782,40 +1174,97 @@ export function reconstructByLayout(
         // anchored to the page takes no room and does not.
         led = lead !== undefined || block.el.kind === 'table' || block.el.kind === 'paragraph';
       }
-      const count = block.col === SPANNING_COLUMN ? 1 : columnsHere;
-      if (count !== curColumns) {
-        sectionEnds.push({
-          at: body.length,
-          from: sectionFrom,
-          to: i + 1,
-          columns: curColumns,
-          spacePt: curSpace,
-          continuous: pendingContinuous,
-        });
-        sectionFrom = i;
-        pendingContinuous = true;
-        curColumns = count;
-        curSpace = spacePt;
-      }
+      placedAt.set(block, body.length);
       body.push(block.el);
+      begun = true;
     }
   });
   // A placed reading anchors everything to the page, so its margins must stay
   // at zero or the anchors move. A FLOWING one is a document being re-set, and
   // a document with no margins prints its words against the edge of the paper
   // — which is what every converted PDF looked like.
-  const setUp = (from: number, to: number): SectionProperties | undefined => {
-    const own = sectionFromPdfPages(pages.slice(from, to));
-    return mode === 'positional'
-      ? own
-      : withMeasuredMargins(
-          own,
-          shown.slice(from, to),
-          pageRuns.slice(from, to),
-          pageMarks.slice(from, to),
-          foot?.band,
-        );
+  // Measured in the frame the pages were READ in; `sectionOnSheet` sets a
+  // turned one back on its sheet once everything measured against it is done.
+  const measured = (
+    own: SectionProperties | undefined,
+    from: number,
+    to: number,
+  ): SectionProperties | undefined =>
+    withMeasuredMargins(
+      own,
+      shown.slice(from, to),
+      pageRuns.slice(from, to),
+      pageMarks.slice(from, to),
+      // The band is the upright pages' own, and a turned page kept its own.
+      shown[from]?.sheet ? undefined : foot?.band,
+    );
+  // §17.6.11 — the head and foot of the text block are the SHEET's, not a
+  // section's: a section a change of columns opens is measured on the pages
+  // it touches, one of them perhaps, and what one page happens to set first
+  // is no margin. comments.pdf's eleventh page opens on a chart, and its top
+  // margin was measured to the caption under it, 352 points down; Word sets
+  // the page from there, and three pages ran over. Every page cut from the
+  // same sheet gives its head and foot; across it, a section keeps its own.
+  const sheetRun = (from: number): [number, number] => {
+    let start = from;
+    while (start > 0 && sheetSizes[start - 1] === sheetSizes[from]) start--;
+    let end = from + 1;
+    while (end < pages.length && sheetSizes[end] === sheetSizes[from]) end++;
+    return [start, end];
   };
+  const setUps = new Map<string, SectionProperties | undefined>();
+  const setUp = (from: number, to: number): SectionProperties | undefined => {
+    const key = `${String(from)}:${String(to)}`;
+    if (setUps.has(key)) return setUps.get(key);
+    const own = sectionFromPdfPages(pages.slice(from, to), shown[from]);
+    let section = mode === 'positional' ? own : measured(own, from, to);
+    const [start, end] = sheetRun(from);
+    if (mode !== 'positional' && section?.margins && (start < from || end > to)) {
+      const sheet = measured(own, start, end)?.margins;
+      if (sheet) {
+        section = {
+          ...section,
+          margins: { ...section.margins, top: sheet.top, bottom: sheet.bottom },
+        };
+      }
+    }
+    setUps.set(key, section);
+    return section;
+  };
+  // §17.6.4 — a last page that sets its columns BALANCED, level with each
+  // other above the foot of the sheet, ends their section before the document
+  // does. A word processor balances the columns of a section another follows
+  // on the same page, and runs the last section's first column to the foot of
+  // the sheet: comments.pdf's references stand nine to a column, and came
+  // back all nineteen down the left one, the right one empty.
+  const lastFeet = columnFeet[pages.length - 1];
+  const floor = setUp(sectionFrom, pages.length)?.margins?.bottom;
+  if (
+    mode !== 'positional' &&
+    curColumns > 1 &&
+    lastFeet !== undefined &&
+    floor !== undefined &&
+    balancedEnd(lastFeet, floor, medianFont)
+  ) {
+    sectionEnds.push({
+      at: body.length,
+      from: sectionFrom,
+      to: pages.length,
+      columns: curColumns,
+      spacePt: curSpace,
+      continuous: pendingContinuous,
+    });
+    body.push({
+      kind: 'paragraph',
+      paragraph: {
+        properties: { spacingLine: CARRIER_LINE_PT, spacingLineRule: 'exact' },
+        runs: [],
+      },
+    });
+    curColumns = 1;
+    curSpace = 0;
+    pendingContinuous = true;
+  }
   sectionEnds.push({
     at: body.length,
     from: sectionFrom,
@@ -824,21 +1273,6 @@ export function reconstructByLayout(
     spacePt: curSpace,
     continuous: pendingContinuous,
   });
-  const sections =
-    sectionEnds.length > 1
-      ? sectionEnds.flatMap((end) => {
-          const base = setUp(end.from, end.to);
-          if (!base) return [];
-          const properties: SectionProperties = {
-            ...base,
-            ...(end.columns > 1 && mode !== 'positional'
-              ? { columns: { count: end.columns, spacePt: end.spacePt } }
-              : {}),
-            ...(end.continuous ? { sectionStart: 'continuous' as const } : {}),
-          };
-          return [{ properties, endIndex: end.at }];
-        })
-      : [];
   // §17.3.1.33 — a page's text begins where the page began it, not against the
   // top margin: the margin is measured to the highest ink, and an invoice
   // paints a band across the top of the sheet thirty points above its title.
@@ -848,30 +1282,202 @@ export function reconstructByLayout(
     const top = (end ? setUp(end.from, end.to) : setUp(0, pages.length))?.margins?.top;
     const page = shown[lead.page];
     const el = body[lead.at];
-    if (top === undefined || page === undefined || el?.kind !== 'paragraph') continue;
-    const before = page.height - top - lead.baseline - BASELINE_AT * lead.lineHeight;
+    if (top === undefined || page === undefined) continue;
+    // A border over the line takes its room out of the white over it, as it
+    // does anywhere else on the page (see `ruleBorders`, `onBoxes`).
+    const border =
+      el?.kind === 'paragraph' ? (el.paragraph.properties.borders?.top?.width ?? 0) : 0;
+    const before = page.height - top - lead.baseline - BASELINE_AT * lead.lineHeight - border;
     if (before <= SPACING_NOISE_PT) continue;
-    body[lead.at] = {
-      ...el,
+    if (el?.kind === 'paragraph') {
+      body[lead.at] = {
+        ...el,
+        paragraph: {
+          ...el.paragraph,
+          properties: { ...el.paragraph.properties, spacingBefore: pt(before) },
+        },
+      };
+    } else if (el?.kind === 'shape') {
+      body[lead.at] = {
+        ...el,
+        shape: {
+          ...el.shape,
+          paragraphProperties: { ...el.shape.paragraphProperties, spacingBefore: pt(before) },
+        },
+      };
+    }
+  }
+  // §17.3.3.1 — a column the page ends short of the foot of its text ends
+  // there. A word processor runs a column to the foot of the text before it
+  // turns to the next one, and the foot is the section's, the lowest any of
+  // its pages sets: canvas.pdf ends its first sheet's left column fifty points
+  // above the foot its second sheet sets, and the head of the right column,
+  // "http://blog.nihilogic.dk/" and "Compositing", came back under the left
+  // one. A break to the next column says where the page ended it — only
+  // where the column ends lines short of the foot, so that one set a line or
+  // two longer than the page set it still turns before the foot does.
+  //
+  // …and a band a line across the page closes is a section of its own, whose
+  // columns a word processor balances, level with each other: where the page
+  // did not, the break keeps them as the page ended them. canvas.pdf ends its
+  // second sheet's left column five lines below its right one, over the line
+  // that names its source, and balanced, "Text" and its bar came back at the
+  // foot of the left column.
+  //
+  // The break is a paragraph of its own, of no height: a break inside a
+  // paragraph leaves what is before it in the column it turns from — at the
+  // head of the next column's first line, Word left that line's box at the
+  // foot of the left one, and the right column stood eleven points high;
+  // at the end of the column's last, LibreOffice opened the next column with
+  // what was left of it, a line. And the next column's first line stands off
+  // the head of the column as the page stands it, level with the first line
+  // of the band's first column or under it by as much as the page sets it.
+  const line = medianFont * NATURAL_LINE_EM;
+  const breaks: Array<{ at: number; head?: { at: number; before: number } }> = [];
+  for (const turn of columnTurns) {
+    const end = sectionEnds.find((e) => e.at > turn.at);
+    const margins = (end ? setUp(end.from, end.to) : undefined)?.margins;
+    if (turn.closed) {
+      if (Math.abs(turn.foot - turn.next) <= line * BALANCED_LINES) continue;
+    } else if (margins?.bottom === undefined || turn.foot - margins.bottom < line * SHORT_LINES) {
+      continue;
+    }
+    // The next column's first line stands under the first line of the band's
+    // first column as far as the page stands it, and that line's white is
+    // what the column's head keeps over it: the page's own margin where the
+    // band opens the page (see `leads`), the white under a line across the
+    // page where one closes the band over it.
+    const { head: start, opens } = turn;
+    const opener = opens !== undefined ? body[opens.at] : undefined;
+    const openerProps =
+      opener?.kind === 'paragraph'
+        ? opener.paragraph.properties
+        : opener?.kind === 'shape'
+          ? opener.shape.paragraphProperties
+          : undefined;
+    const before =
+      start !== undefined && opens !== undefined && openerProps !== undefined
+        ? (openerProps.spacingBefore ?? 0) +
+          (openerProps.borders?.top?.width ?? 0) +
+          (opens.baseline + BASELINE_AT * opens.lineHeight) -
+          (start.baseline + BASELINE_AT * start.lineHeight)
+        : undefined;
+    breaks.push({
+      at: turn.at,
+      ...(start !== undefined && before !== undefined ? { head: { at: start.at, before } } : {}),
+    });
+  }
+  // From the last to the first, so each lands where it was found; the ends of
+  // the sections after it move down one.
+  for (const brk of [...breaks].sort((x, y) => y.at - x.at)) {
+    const el = brk.head !== undefined ? body[brk.head.at] : undefined;
+    if (brk.head !== undefined && el?.kind === 'paragraph') {
+      const border = el.paragraph.properties.borders?.top?.width ?? 0;
+      const before = brk.head.before - border;
+      const { spacingBefore: _, ...rest } = el.paragraph.properties;
+      body[brk.head.at] = {
+        ...el,
+        paragraph: {
+          ...el.paragraph,
+          properties: before > SPACING_NOISE_PT ? { ...rest, spacingBefore: pt(before) } : rest,
+        },
+      };
+    }
+    body.splice(brk.at, 0, {
+      kind: 'paragraph',
       paragraph: {
-        ...el.paragraph,
-        properties: { ...el.paragraph.properties, spacingBefore: pt(before) },
+        properties: { spacingLine: CARRIER_LINE_PT, spacingLineRule: 'exact' },
+        runs: [{ text: '\n', properties: {}, columnBreak: true }],
       },
-    };
+    });
+    for (const e of sectionEnds) if (e.at > brk.at) e.at++;
+  }
+  const sections =
+    sectionEnds.length > 1
+      ? sectionEnds.flatMap((end) => {
+          const base = sectionOnSheet(setUp(end.from, end.to), shown[end.from]);
+          if (!base) return [];
+          const properties: SectionProperties = {
+            ...base,
+            ...numberedFrom(numbering, end.from),
+            ...(end.columns > 1 && mode !== 'positional'
+              ? { columns: { count: end.columns, spacePt: end.spacePt } }
+              : {}),
+            ...(end.continuous ? { sectionStart: 'continuous' as const } : {}),
+          };
+          return [{ properties, endIndex: end.at }];
+        })
+      : [];
+  // §17.6.20 — what a page read in its text frame anchors, it anchors on the
+  // SHEET: Word stands a drawing at its offsets there, however the section's
+  // lines run, so each one is carried onto the sheet and turned with the page.
+  let sectionStart = 0;
+  for (const end of sectionEnds) {
+    const sheet = shown[end.from]?.sheet;
+    if (sheet) {
+      for (let k = sectionStart; k < end.at; k++) body[k] = floatOntoSheet(body[k]!, sheet.width);
+    }
+    sectionStart = end.at;
   }
   // The band is built from the page that showed it first, and referenced by
   // every section: the foot runs through the document, not through a section.
-  const stepped0 = stepsBetweenWords(allRuns[0] ?? []);
-  const edges0 = pageTextEdges(allRuns[0] ?? []);
-  const band = foot ? footerBand(foot.band, stepped0, edges0, foot.numbered) : [];
-  const headBand = head ? footerBand(head.band, stepped0, edges0, head.numbered) : [];
+  // A band is set across a page it stands on, which need not be the first:
+  // freeculture.pdf opens on its cover, a sheet of another size, and set
+  // across that its folio came back at the left of every page.
+  const setOn = (
+    runs: ReadonlyArray<TextRun>,
+    page: number,
+    numbered: boolean,
+    numeral: string | undefined,
+  ): Array<BodyElement> =>
+    footerBand(
+      runs,
+      stepsBetweenWords(allRuns[page] ?? []),
+      pageTextEdges(allRuns[page] ?? []),
+      numbered,
+      numeral,
+    );
+  const firstOf = (of: typeof foot): number =>
+    Math.max(0, of?.lift.findIndex((set) => set.size > 0) ?? 0);
+  // The numeral a band's own first page prints its number as — for the band
+  // the numbering was read from.
+  const numeralOf = (of: typeof foot): string | undefined => {
+    if (of === undefined || of !== numberedBand || numbering === undefined) return undefined;
+    const first = of.lift.findIndex((set) => set.size > 0);
+    return first >= 0 ? numbering.numbers[first]?.text : undefined;
+  };
+  // …and a book signs its two sides with feet of their own (see `sidesOf`).
+  const sides =
+    foot !== undefined && foot === numberedBand && numbering !== undefined
+      ? sidesOf(
+          foot,
+          numbering,
+          shown.map((s) => s.width / 2),
+        )
+      : undefined;
+  const band = foot
+    ? sides
+      ? setOn(sides.odd.runs, sides.odd.page, true, sides.odd.numeral)
+      : setOn(foot.band, firstOf(foot), foot.numbered, numeralOf(foot))
+    : [];
+  const evenBand = sides ? setOn(sides.even.runs, sides.even.page, true, sides.even.numeral) : [];
+  const headBand = head ? setOn(head.band, firstOf(head), head.numbered, numeralOf(head)) : [];
   const withFooter = (properties: SectionProperties | undefined): SectionProperties | undefined =>
     properties
       ? {
           ...properties,
           ...(band.length > 0
-            ? { footers: [{ type: 'default' as const, relationshipId: FOOTER_PART }] }
+            ? {
+                footers: [
+                  { type: 'default' as const, relationshipId: FOOTER_PART },
+                  ...(evenBand.length > 0
+                    ? [{ type: 'even' as const, relationshipId: EVEN_FOOTER_PART }]
+                    : []),
+                ],
+              }
             : {}),
+          // §17.15.1.36 — which Word reads off the settings, for every page.
+          ...(evenBand.length > 0 ? { evenAndOddHeaders: true } : {}),
           ...(headBand.length > 0
             ? { headers: [{ type: 'default' as const, relationshipId: HEADER_PART }] }
             : {}),
@@ -881,16 +1487,19 @@ export function reconstructByLayout(
     doc: buildFlowDoc(
       body,
       resources,
-      withFooter(setUp(0, pages.length)),
+      withFooter(numberedAs(sectionOnSheet(setUp(0, pages.length), shown[0]), numbering)),
       collectEmbeddedFonts(file, pages, losses),
       sections.map((s) => ({ ...s, properties: withFooter(s.properties) ?? s.properties })),
       band.length > 0 || headBand.length > 0
         ? new Map([
             ...(band.length > 0 ? ([[FOOTER_PART, band]] as const) : []),
+            ...(evenBand.length > 0 ? ([[EVEN_FOOTER_PART, evenBand]] as const) : []),
             ...(headBand.length > 0 ? ([[HEADER_PART, headBand]] as const) : []),
           ])
         : undefined,
       collectFaceFamilies(file, pages),
+      outlines,
+      kernedFaces(spacing),
     ),
     losses: dedupeLosses(losses),
   };
@@ -997,6 +1606,12 @@ function detectGutters(runs: ReadonlyArray<TextRun>, pageWidth: number): Array<G
       if (before.length === 0 || after.length === 0) continue;
       const gap = Math.min(...after.map(([l]) => l)) - Math.max(...before.map(([, r]) => r));
       if (gap >= fontSize * MIN_GUTTER_EM) columned++;
+      // …and a line with a word space over x runs across it as surely as one
+      // with a word: counted as neither, a page of long lines whose spaces
+      // happened to fall together voted for a gutter there. freeculture.pdf's
+      // index split its left column seventy points short of the right one,
+      // and read every entry longer than that across the page.
+      else crossing++;
     }
     // Enough lines have to be split at the SAME x, or it is not a gutter: a
     // form's label-and-value rows have a wide gap on every line and it is in a
@@ -1023,11 +1638,146 @@ function detectGutters(runs: ReadonlyArray<TextRun>, pageWidth: number): Array<G
   // on this page was inside a word, and the line was then read straight across.
   const near = (band: Gutter): boolean =>
     empty.some((e) => band.mid > e.from - fontSize && band.mid < e.to + fontSize);
-  return separating(
-    [...empty, ...voted.filter((v) => !near(v))].sort((a, b) => a.mid - b.mid),
-    spans,
+  return withoutNarrowColumns(
+    separating(
+      [...empty, ...voted.filter((v) => !near(v))].sort((a, b) => a.mid - b.mid),
+      spans,
+    ),
+    empty,
+    rows,
+    [minX, maxX],
+    fontSize,
   );
 }
+
+/**
+ * The gutters left when no column beside a gap the page's lines run across is
+ * narrower than a page's column can be.
+ *
+ * A table's columns stand apart as a page's do, line after line, and a page
+ * set in columns of tables has gaps between its tables' columns as well as
+ * its own: canvas.pdf sets two columns of Name, Type and Default, and read at
+ * every gap its sheets came back in three and five columns, a word wide each,
+ * on seven pages where it has two. What gives such a gap away is that the
+ * page's other lines — the headings over each table, the prose between them —
+ * run across it, and that a column it leaves is a few ems wide: such a gap
+ * goes, the one with the less white beside the narrowest column first, until
+ * no column is left so narrow. A gap NO line crosses stays however narrow the
+ * columns beside it — a page that is one table from edge to edge is read by
+ * its columns, as a table — and so does a page's one gap.
+ *
+ * The gaps that stay are then measured afresh, as the white every line split
+ * there leaves. The vote answers wherever more lines stand apart than run
+ * across, which is where MOST of a column's lines end and not where its
+ * longest does: a gutter voted across a column of short cells reaches back
+ * into that column, and a section set with it stood its columns sixty-five
+ * points further apart than the page does. freeculture.pdf's index sets its
+ * entries ragged, two columns six to twenty points apart, and set seventy
+ * apart its columns came back a third narrower than the page's: the thirteen
+ * pages of the index ran to twenty-seven, and its longest entries ran on past
+ * the middle of the white and were read as lines across the page.
+ *
+ * @param gutters  The gutters found, left to right.
+ * @param firm     The gutters no line crosses, which stay.
+ * @param rows     Each line's ink across the page, left to right.
+ * @param extent   Where the page's ink begins and ends.
+ * @param fontSize The page's body size.
+ */
+function withoutNarrowColumns(
+  gutters: ReadonlyArray<Gutter>,
+  firm: ReadonlyArray<Gutter>,
+  rows: ReadonlyArray<ReadonlyArray<readonly [number, number]>>,
+  extent: readonly [number, number],
+  fontSize: number,
+): Array<Gutter> {
+  const kept = [...gutters];
+  const least = fontSize * NARROWEST_COLUMN_EM;
+  const white = (g: Gutter): number => g.to - g.from;
+  // A page split once is two columns however narrow they are: a column a few
+  // ems wide is a table's only where there is another column to be part of.
+  while (kept.length > 1) {
+    const edges = [extent[0], ...kept.flatMap((g) => [g.from, g.to]), extent[1]];
+    // The narrowest column with a gap beside it that may go, and that gap.
+    let narrowest: { width: number; gap: Gutter } | undefined;
+    for (let k = 0; k <= kept.length; k++) {
+      const width = edges[2 * k + 1]! - edges[2 * k]!;
+      if (width >= least || (narrowest && narrowest.width <= width)) continue;
+      const beside = [kept[k - 1], kept[k]].filter(
+        (g): g is Gutter => g !== undefined && !firm.includes(g),
+      );
+      if (beside.length === 0) continue;
+      const gap = beside.reduce((a, b) => (white(b) < white(a) ? b : a));
+      narrowest = { width, gap };
+    }
+    if (!narrowest) break;
+    kept.splice(kept.indexOf(narrowest.gap), 1);
+  }
+  return kept.map((g) => {
+    if (firm.includes(g)) return g;
+    const starts: Array<number> = [];
+    const ends: Array<number> = [];
+    for (const row of rows) {
+      // The row's widest white across the band, where the row is split there.
+      let widest: readonly [number, number] | undefined;
+      let reach = row[0]?.[1] ?? -Infinity;
+      for (const [l, r] of row.slice(1)) {
+        const overlaps = l > g.from && reach < g.to;
+        if (l - reach >= fontSize * MIN_GUTTER_EM && overlaps) {
+          if (!widest || l - reach > widest[1] - widest[0]) widest = [reach, l];
+        }
+        reach = Math.max(reach, r);
+      }
+      if (!widest) continue;
+      starts.push(widest[0]);
+      ends.push(widest[1]);
+    }
+    if (starts.length === 0) return g;
+    // …where the column before agrees on an edge, that is: a justified column
+    // has one most of its lines stop at, and a line past it is set over its
+    // measure. TeX leaves one where it can break a paragraph no better, and
+    // comments.pdf's, ten points past the edge of its column, set the measure
+    // there: every justified line of the column stopped short of it, and ran
+    // on into the next paragraph. A ragged column agrees on no edge, and its
+    // longest line is its measure; the column after begins at its first line.
+    const from = sharedEdge(starts) ?? Math.max(...starts);
+    const to = Math.min(...ends);
+    return to > from ? { from, to, mid: (from + to) / 2 } : g;
+  });
+}
+
+/**
+ * The edge at least half of `ends` agree on, to {@link FLUSH_PT}: the furthest
+ * out of the agreeing ones, which every one of them clears — where no more
+ * than a line in twenty stops past it, set over the measure. Lines of one
+ * length agree on where they stop too, and the column's longer lines past
+ * them are its measure.
+ *
+ * @param ends Where each line stops.
+ * @returns The edge, or `undefined` where no half of them agree on one.
+ */
+function sharedEdge(ends: ReadonlyArray<number>): number | undefined {
+  const sorted = [...ends].sort((a, b) => a - b);
+  let best: readonly [number, number] | undefined;
+  let low = 0;
+  for (let high = 0; high < sorted.length; high++) {
+    while (sorted[high]! - sorted[low]! > FLUSH_PT) low++;
+    if (!best || high - low > best[1] - best[0]) best = [low, high];
+  }
+  if (!best || (best[1] - best[0] + 1) * 2 < sorted.length) return undefined;
+  const over = sorted.length - 1 - best[1];
+  if (over > Math.max(1, Math.floor(sorted.length * OVERSET_SHARE))) return undefined;
+  return sorted[best[1]];
+}
+
+/** How many of a column's lines, as a share of them, may be set over its measure. */
+const OVERSET_SHARE = 0.05;
+
+/**
+ * How narrow, in ems of the page's body, a column of the page may be: narrower
+ * is a table's. The columns canvas.pdf's tables leave are two to six ems wide,
+ * and eight is four or five words of prose.
+ */
+const NARROWEST_COLUMN_EM = 8;
 
 /**
  * The candidate gutters that actually separate something, left to right.
@@ -1211,7 +1961,9 @@ function runInk(run: TextRun): [number, number] | undefined {
 const SPACE = /\s/u;
 
 /** Where the page's text starts and ends, ignoring what is only a space. */
-function pageTextEdges(runs: ReadonlyArray<TextRun>): { left: number; right: number } | undefined {
+export function pageTextEdges(
+  runs: ReadonlyArray<TextRun>,
+): { left: number; right: number } | undefined {
   let left = Number.POSITIVE_INFINITY;
   let right = Number.NEGATIVE_INFINITY;
   for (const run of runs) {
@@ -1324,6 +2076,35 @@ function assignColumns(
     }
     for (const run of row) columnOf.set(run, SPANNING_COLUMN);
     breaks.push(Math.max(...row.map((r) => r.y)));
+  }
+  // A listing is one block (see `isCode`), and so is a table (`isTableRow`):
+  // where one row of the block reaches across the page, every row of it
+  // does. A listing's short lines stand left of the gutter and read as the
+  // left column's — comments.pdf's second listing came back with its tail,
+  // "...", "side_exit_1:", under the text in the columns — and a table's
+  // rows are cut at the gutter where the white between two of its columns
+  // stands over it: Figure 13 came back as two tables, one a column.
+  // …where one row DOES reach across, or the rows run deeper than two
+  // columns' rows fall together by chance: two columns that each set a
+  // table are rows of cells on the same baselines too, for as long as their
+  // pitches agree. canvas.pdf sets one down either side of the sheet, three
+  // rows abreast, and read as one the two came back in a row.
+  const inRows = rows.filter((row) => row.some((r) => r.text.trim() !== ''));
+  const across = (block: ReadonlyArray<ReadonlyArray<TextRun>>): boolean =>
+    block.some((row) => row.some((r) => columnOf.get(r) === SPANNING_COLUMN));
+  const blocks = [
+    ...blocksOf(inRows, isCode, 1).filter(across),
+    ...blocksOf(inRows, isTableRow, LEAST_TABLE_ROWS).filter(
+      (block) => across(block) || block.length >= SPANNING_TABLE_ROWS,
+    ),
+  ];
+  for (const block of blocks) {
+    for (const row of block) {
+      if (row.some((r) => columnOf.get(r) !== SPANNING_COLUMN)) {
+        breaks.push(Math.max(...row.map((r) => r.y)));
+      }
+      for (const run of row) columnOf.set(run, SPANNING_COLUMN);
+    }
   }
   return { columnOf, breaks: breaks.sort((a, b) => b - a) };
 }
@@ -1507,7 +2288,13 @@ const BASELINE_STEP_EM = 0.05;
 // With `split`, a cluster is cut wherever a column-wide gap opens or a baseline
 // steps, so each piece keeps its own x and its own y instead of being dragged
 // against its neighbour.
-function groupIntoLines(runs: ReadonlyArray<TextRun>, split = false, stepped = false): Array<Line> {
+function groupIntoLines(
+  runs: ReadonlyArray<TextRun>,
+  split = false,
+  stepped = false,
+  spaces?: FaceSpaces,
+  rules: ReadonlyArray<ColumnRule> = [],
+): Array<Line> {
   const sorted = [...runs].sort((a, b) => b.y - a.y || a.x - b.x);
   const clusters: Array<{ y: number; fontSize: number; runs: Array<TextRun> }> = [];
   for (const run of sorted) {
@@ -1515,17 +2302,27 @@ function groupIntoLines(runs: ReadonlyArray<TextRun>, split = false, stepped = f
     const tol = Math.max(1, (run.fontSizePt || 10) * 0.5);
     if (last && Math.abs(last.y - run.y) <= tol) {
       last.runs.push(run);
+      // The line stands on its type's baseline, not on a mark set over it. Its
+      // runs are read from the top of the page down, and a footnote mark is
+      // the first of them: comments.pdf's "…back to a double.¹ Clearly, a"
+      // stood on the mark's baseline, 3.8 points up, and so ten points over
+      // the line after it stood thirteen — a paragraph's gap, and "JavaScript
+      // VM that wants to be fast…" came back a paragraph of its own.
+      if ((run.fontSizePt || 0) > last.fontSize) last.y = run.y;
       last.fontSize = Math.max(last.fontSize, run.fontSizePt || 0);
     } else {
       clusters.push({ y: run.y, fontSize: run.fontSizePt || 10, runs: [run] });
     }
   }
   for (const c of clusters) c.runs.sort((a, b) => a.x - b.x);
-  const stops = sharedStops(clusters.map((c) => c.runs));
+  const stops = sharedStops(
+    clusters.map((c) => c.runs),
+    rules,
+  );
   return clusters.flatMap((c) => {
     const ordered = c.runs;
     const fontSize = c.fontSize || 10;
-    if (!split) return [lineOf(ordered, c.y, fontSize, stepped, stops)];
+    if (!split) return [lineOf(ordered, c.y, fontSize, stepped, stops, spaces)];
     const pieces: Array<Array<TextRun>> = [[]];
     for (const run of ordered) {
       const prev = pieces[pieces.length - 1]!;
@@ -1569,10 +2366,46 @@ function groupIntoLines(runs: ReadonlyArray<TextRun>, split = false, stepped = f
         Math.max(...piece.map((r) => r.fontSizePt || 0)) || fontSize,
         stepped,
         stops,
+        spaces,
       ),
     );
   });
 }
+
+/**
+ * Whether a block's lines are PROSE: many of them, across a measure a sentence
+ * is set to, and most running out to the edge that measure breaks them at, as
+ * a column of text does — where a stack of labels and values, or an address,
+ * is short lines of their own lengths.
+ *
+ * @param lines The block's lines, top first.
+ * @param own   The block's own left and right edges.
+ * @returns True for a column of running text.
+ */
+function isProse(lines: ReadonlyArray<Line>, own: { left: number; right: number }): boolean {
+  if (lines.length < PROSE_LINES) return false;
+  // …and a measure wide enough to set a sentence in: an invoice's stack of
+  // labels and values is lines of a few words, which end as near its edge as
+  // a column's do because the edge is the longest of them.
+  const size = median(lines.map((l) => l.fontSize)) || 10;
+  if (own.right - own.left < size * PROSE_MEASURE_EM) return false;
+  // The last line of a paragraph ends where its words do, so it is not asked.
+  const asked = lines.slice(0, -1);
+  const full = asked.filter((l) => l.x + l.width >= own.right - l.fontSize * FULL_LINE_EM);
+  return full.length >= asked.length * PROSE_FULL_SHARE;
+}
+
+/** How many lines a block needs before it can be told for prose. */
+const PROSE_LINES = 5;
+
+/** The narrowest measure, in ems, a column of prose is set to. */
+const PROSE_MEASURE_EM = 20;
+
+/** How near the block's edge, in ems, a line has to end to have run out to it. */
+const FULL_LINE_EM = 2;
+
+/** The share of a block's lines that run out to its edge in a column of prose. */
+const PROSE_FULL_SHARE = 0.6;
 
 /**
  * §17.3.1.38 — the stops a block of lines is set out on: where text resumes,
@@ -1585,10 +2418,20 @@ function groupIntoLines(runs: ReadonlyArray<TextRun>, split = false, stepped = f
  * other two came back with their values a word's width after the label
  * instead of in the column.
  *
+ * …or a gap a rule is drawn down. A table ruled into columns needs no white
+ * wider than a space between them, the rule says where one ends: comments.pdf's
+ * Figure 9 sets its codes "xx1", "000" in a column all as wide as each other,
+ * twelve points from the types beside them and a rule between, and the two
+ * columns came back one, "xx1 number", with the rule struck through it.
+ *
  * @param lines Each line's runs, left to right.
+ * @param rules The rules drawn down the block (see {@link columnRules}).
  * @returns The x of every stop two lines share.
  */
-function sharedStops(lines: ReadonlyArray<ReadonlyArray<TextRun>>): Array<number> {
+function sharedStops(
+  lines: ReadonlyArray<ReadonlyArray<TextRun>>,
+  rules: ReadonlyArray<ColumnRule> = [],
+): Array<number> {
   const seen: Array<{ x: number; line: number; tab: boolean }> = [];
   lines.forEach((runs, line) => {
     let end: number | undefined;
@@ -1596,7 +2439,11 @@ function sharedStops(lines: ReadonlyArray<ReadonlyArray<TextRun>>): Array<number
       if (run.text.replaceAll(UNMAPPED, '').trim() === '') continue;
       const size = run.fontSizePt || 10;
       if (end !== undefined && run.x - end >= size * STOP_GAP_EM) {
-        seen.push({ x: run.x, line, tab: run.x - end >= size * TAB_GAP_EM });
+        const from = end;
+        const ruled = rules.some(
+          (r) => r.x > from && r.x < run.x && r.minY <= run.y + size * 0.5 && r.maxY >= run.y,
+        );
+        seen.push({ x: run.x, line, tab: ruled || run.x - end >= size * TAB_GAP_EM });
       }
       end = Math.max(end ?? run.endX, run.endX);
     }
@@ -1614,6 +2461,32 @@ function sharedStops(lines: ReadonlyArray<ReadonlyArray<TextRun>>): Array<number
 
 /** The least gap, in ems, that lands a run on a stop the lines around it share. */
 const STOP_GAP_EM = 0.5;
+
+/** A rule drawn down a block of lines: where across it stands, and how far down. */
+type ColumnRule = { x: number; minY: number; maxY: number };
+
+/**
+ * The rules a page draws down its lines: thin upright paths, a line's height
+ * long at the least — the edges of a table's columns.
+ *
+ * @param vectors The page's paths.
+ */
+function columnRules(vectors: ReadonlyArray<PdfVector>): Array<ColumnRule> {
+  return vectors
+    .filter(
+      (v) =>
+        v.glyph !== true &&
+        v.maxX - v.minX <= COLUMN_RULE_THIN_PT &&
+        v.maxY - v.minY >= COLUMN_RULE_LEAST_PT,
+    )
+    .map((v) => ({ x: (v.minX + v.maxX) / 2, minY: v.minY, maxY: v.maxY }));
+}
+
+/** No thicker than this, a path drawn down the page is a rule. */
+const COLUMN_RULE_THIN_PT = 1;
+
+/** …and no shorter than this: a rule stands at least a line of small type tall. */
+const COLUMN_RULE_LEAST_PT = 5;
 
 /** How far from a shared stop a run may start and still stand on it. */
 const STOP_SLACK_PT = 0.75;
@@ -1647,6 +2520,174 @@ function inkSpan(runs: ReadonlyArray<TextRun>): { x: number; width: number } {
   return { x, width: Math.max(0, last.endX - trail - x) };
 }
 
+/**
+ * A document's runs as its listings are read (see {@link isCode}).
+ *
+ * A typewriter face is a listing's only where the document is set in another:
+ * a letter typed throughout, a screenplay, a page set in Courier for its even
+ * widths, is PROSE in that face, and its lines run on and its double spaces
+ * are spaces. Where most of what the document shows is typewritten, its runs
+ * are read as any other face's.
+ *
+ * @param pages Each page's runs.
+ * @returns The same runs, or copies without `fixedPitch` where the typewriter
+ *          face is the document's own.
+ */
+function typewritten(
+  pages: ReadonlyArray<ReadonlyArray<TextRun>>,
+): ReadonlyArray<ReadonlyArray<TextRun>> {
+  let typed = 0;
+  let all = 0;
+  for (const runs of pages) {
+    for (const run of runs) {
+      const letters = run.text.replace(/\s/gu, '').length;
+      all += letters;
+      if (run.fixedPitch === true) typed += letters;
+    }
+  }
+  if (typed === 0 || typed * 2 <= all) return pages;
+  return pages.map((runs) =>
+    runs.map((run) => {
+      if (run.fixedPitch !== true) return run;
+      const { fixedPitch: _typed, ...prose } = run;
+      return prose;
+    }),
+  );
+}
+
+/**
+ * Whether a line is CODE: every word of it set in a typewriter face (§9.8.2).
+ *
+ * A listing is set line by line with its indents and its comments lined up in
+ * columns of the typewriter's cells, and re-set as prose it is no program:
+ * comments.pdf's "v0 := ld state[748]" and "st sp[0], v0" ran together as
+ * one line of a paragraph, and so did line 4 of Figure 1 and its line 5.
+ */
+function isCode(runs: ReadonlyArray<TextRun>): boolean {
+  const inked = runs.filter((r) => r.text.trim() !== '');
+  return inked.length > 0 && inked.every((r) => r.fixedPitch === true);
+}
+
+/**
+ * Whether the white between two runs of a typewriter face LINES UP what
+ * follows it: wider than a cell and a half, where a word space is one cell.
+ * A listing puts its comments in a column that way, and a space in their
+ * place set each comment against its own line's code.
+ */
+function aligned(before: TextRun, after: TextRun): boolean {
+  if (before.fixedPitch !== true || after.fixedPitch !== true) return false;
+  const letters = [...before.text].length;
+  if (letters === 0) return false;
+  const cell = (before.endX - before.x) / letters;
+  return cell > 0 && after.x - before.endX >= cell * ALIGNED_CELLS;
+}
+
+/** How many of a typewriter's cells of white line up what follows them. */
+const ALIGNED_CELLS = 1.5;
+
+/**
+ * A page's runs less its code listings: the rows every word of which is set
+ * in a typewriter face (see {@link isCode}).
+ *
+ * A listing says nothing about the page's columns. comments.pdf sets two
+ * across the head of its third page, the code at the left and each comment
+ * lined up at one x: the white between them — thirty-five lines of it at the
+ * same place — was taken for the gutter of a page in two columns, while the
+ * real one, under the listings, was crossed by every comment and not found.
+ * The code came back as a column of prose and the comments as another.
+ */
+function withoutListings(runs: ReadonlyArray<TextRun>): ReadonlyArray<TextRun> {
+  if (!runs.some((r) => r.fixedPitch === true)) return runs;
+  const fontSize = median(runs.map((r) => r.fontSizePt).filter((s) => s > 0)) || 10;
+  const listed = new Set(rowsOf(runs, fontSize).filter(isCode).flat());
+  return listed.size > 0 ? runs.filter((r) => !listed.has(r)) : runs;
+}
+
+/**
+ * A page's runs less its tables (see {@link isTableRow}): the rows of every
+ * block of three and more table rows. The same runs where it has none.
+ *
+ * The white between a table's columns says nothing about the columns of the
+ * text around it. comments.pdf sets Figure 13, a benchmark and nine figures a
+ * row, twenty-six rows deep, over two columns of text: its nine gaps were
+ * taken for the page's gutters, the text's own was crossed by its rows and
+ * not found, and the whole page came back as one table, each line of the text
+ * a row of it.
+ */
+function withoutTables(runs: ReadonlyArray<TextRun>): ReadonlyArray<TextRun> {
+  const fontSize = median(runs.map((r) => r.fontSizePt).filter((s) => s > 0)) || 10;
+  const rows = rowsOf(runs, fontSize).filter((row) => row.some((r) => r.text.trim() !== ''));
+  const tabled = new Set(blocksOf(rows, isTableRow, LEAST_TABLE_ROWS).flat(2));
+  return tabled.size > 0 ? runs.filter((r) => !tabled.has(r)) : runs;
+}
+
+/**
+ * The rows of a page that stand in runs of at least `least` for which `holds`
+ * is true, each run of them a block.
+ */
+function blocksOf(
+  rows: ReadonlyArray<ReadonlyArray<TextRun>>,
+  holds: (row: ReadonlyArray<TextRun>) => boolean,
+  least: number,
+): Array<Array<ReadonlyArray<TextRun>>> {
+  const out: Array<Array<ReadonlyArray<TextRun>>> = [];
+  for (let from = 0; from < rows.length; ) {
+    let to = from;
+    while (to < rows.length && holds(rows[to]!)) to++;
+    if (to - from >= least) out.push(rows.slice(from, to));
+    from = Math.max(to, from + 1);
+  }
+  return out;
+}
+
+/**
+ * Whether a row is a TABLE's: four cells or more — its words as far as each
+ * gap wider than an em — and none of them as long as a line of prose. A row
+ * of a page in columns is two long pieces; comments.pdf's Figure 13 is ten
+ * short ones a row, a benchmark and nine figures, twenty-six rows deep.
+ */
+function isTableRow(runs: ReadonlyArray<TextRun>): boolean {
+  const cells = cellsOf(runs);
+  if (cells.length < TABLE_CELLS) return false;
+  const size = median(runs.map((r) => r.fontSizePt).filter((s) => s > 0)) || 10;
+  return cells.every((c) => c.to - c.from <= size * WIDEST_CELL_EM);
+}
+
+/** A row's ink as its cells: its words, as far as each gap wider than an em. */
+function cellsOf(runs: ReadonlyArray<TextRun>): Array<Extent> {
+  const inks = runs
+    .map((run) => ({ run, ink: runInk(run) }))
+    .filter((r): r is { run: TextRun; ink: [number, number] } => r.ink !== undefined)
+    .sort((a, b) => a.ink[0] - b.ink[0]);
+  const cells: Array<{ from: number; to: number }> = [];
+  for (const { run, ink } of inks) {
+    const last = cells[cells.length - 1];
+    if (last && ink[0] - last.to < (run.fontSizePt || 10) * CELL_GAP_EM) {
+      last.to = Math.max(last.to, ink[1]);
+    } else cells.push({ from: ink[0], to: ink[1] });
+  }
+  return cells;
+}
+
+/** How many cells make a row a table's. */
+const TABLE_CELLS = 4;
+
+/** How many such rows make a table. */
+const LEAST_TABLE_ROWS = 3;
+
+/**
+ * …and how many make one across the page's columns with no row of it
+ * reaching over the gutter on its own: more than two columns' rows fall
+ * together by chance.
+ */
+const SPANNING_TABLE_ROWS = 6;
+
+/** The white between two cells of a table row, in ems: wider than a word space ever is. */
+const CELL_GAP_EM = 1;
+
+/** The longest a table's cell runs, in ems; a line of a column of prose runs further. */
+const WIDEST_CELL_EM = 12;
+
 /** One run of runs, left to right on a shared baseline, as a {@link Line}. */
 function lineOf(
   runs: ReadonlyArray<TextRun>,
@@ -1654,6 +2695,7 @@ function lineOf(
   fontSize: number,
   stepped: boolean,
   shared: ReadonlyArray<number> = [],
+  spaces?: FaceSpaces,
 ): Line {
   // A page may do both. A LaTeX document writes its prose with spaces in it and
   // sets its mathematics by stepping — TeX's thin space is a sixth of an em and
@@ -1662,7 +2704,7 @@ function lineOf(
   // "f(x) = sin x + cos x". A line with no space in it anywhere was stepped
   // across, whatever the rest of the page does.
   const steppedLine = stepped || (runs.length > 1 && !runs.some((r) => SPACE.test(r.text)));
-  const { spans: ordered, stops, pieces } = lineSpans(runs, fontSize, steppedLine, shared);
+  const { spans: ordered, stops, pieces } = lineSpans(runs, fontSize, steppedLine, shared, spaces);
   // §9.4 — the runs came off the page in the order they were PAINTED, which is
   // left to right whatever the script. `logicalOrder` turned each run's own
   // letters back the right way round; the runs themselves are still in visual
@@ -1679,6 +2721,7 @@ function lineOf(
     fontSize,
     ...(tabbed(runs, fontSize) || stops.length > 0 ? { tabbed: true as const } : {}),
     ...(stops.length > 0 ? { stops, pieces } : {}),
+    ...(isCode(runs) ? { code: true as const } : {}),
     text: spans
       .map((s) => s.text)
       .join('')
@@ -1741,10 +2784,30 @@ const TAB_GAP_EM = 2.5;
  * {@link stepsBetweenWords}). The tight one still clears the gaps a producer
  * leaves INSIDE a word when it splits one for kerning, which measure eight
  * hundredths of an em at their widest across this corpus.
+ *
+ * …and a page that draws its spaces may step some of them all the same: a
+ * gap as wide as most of the face's own space is one, set by a step instead
+ * of a glyph. freeculture.pdf's index draws the space in "academic journals"
+ * and steps the one after "journals," — 1.71 points against a space of 2.03,
+ * short of a quarter em — and the entry came back "journals,262,280–82".
  */
 function spaceGap(prev: TextRun, fontSize: number, stepped: boolean): number {
-  return (prev.fontSizePt || fontSize) * (stepped ? STEPPED_SPACE_EM : DRAWN_SPACE_EM);
+  const size = prev.fontSizePt || fontSize;
+  if (stepped) return size * STEPPED_SPACE_EM;
+  const space = prev.spaceWidthPt;
+  const face =
+    space !== undefined && space >= size * LEAST_FACE_SPACE_EM && space <= size * MOST_FACE_SPACE_EM
+      ? space * STEPPED_SPACE_SHARE
+      : Infinity;
+  return Math.min(size * DRAWN_SPACE_EM, face);
 }
+
+/** How much of the face's own space a step has to be to stand for one. */
+const STEPPED_SPACE_SHARE = 0.75;
+
+/** The narrowest and widest space, in ems, a face is taken at its word for. */
+const LEAST_FACE_SPACE_EM = 0.15;
+const MOST_FACE_SPACE_EM = 0.5;
 
 /**
  * §17.3.1.25 — one character of a LEADER, the dotted rule that carries the eye
@@ -1759,6 +2822,24 @@ function spaceGap(prev: TextRun, fontSize: number, stepped: boolean): number {
  */
 function isLeader(text: string): boolean {
   return text.length === 1 && LEADER_CHARS.has(text);
+}
+
+/**
+ * Whether `run` carries on the leader `prev` is a character of: the same
+ * character, a step no wider than a word space on from it. A dash a column
+ * further on is a cell's: comments.pdf's Figure 13 marks three empty figures
+ * "-", a column apart, and joined as one leader they came back "---", one
+ * cell standing where three had.
+ */
+function continuesLeader(prev: TextRun, run: TextRun, fontSize: number): boolean {
+  // …and a dot stepped on from a word that ends in one is the rest of an
+  // ellipsis: freeculture.pdf steps between the dots of its "scene. . . .",
+  // and read as word spaces the steps came back "scene. .. .".
+  const dots = prev.text.endsWith('.') && run.text.startsWith('.');
+  return (
+    ((isLeader(prev.text) && prev.text === run.text) || dots) &&
+    run.x - prev.endX < (run.fontSizePt || fontSize) * CELL_GAP_EM
+  );
 }
 
 const LEADER_CHARS = new Set(['.', '\u00b7', '_', '-', '\u2010', '\u2013']);
@@ -1777,7 +2858,7 @@ const STEPPED_SPACE_EM = 0.12;
  * both. A page with almost no text says nothing either way and keeps the
  * cautious reading.
  */
-function stepsBetweenWords(runs: ReadonlyArray<TextRun>): boolean {
+export function stepsBetweenWords(runs: ReadonlyArray<TextRun>): boolean {
   if (runs.length < 8) return false;
   const drawn = runs.filter((r) => /\s/u.test(r.text)).length;
   return drawn / runs.length < 0.05;
@@ -1790,10 +2871,18 @@ function lineSpans(
   fontSize: number,
   stepped: boolean,
   shared: ReadonlyArray<number> = [],
+  spaces?: FaceSpaces,
 ): { spans: Array<TextSpan>; stops: Array<number>; pieces: Array<Extent> } {
   const spans: Array<TextSpan> = [];
   const stops: Array<number> = [];
   const pieces: Array<{ from: number; to: number }> = [{ from: Infinity, to: -Infinity }];
+  // A table's row (see `isTableRow`) is its cells, each on the stop the page
+  // set it at: a gap wider than an em between two of them is a tab, where one
+  // narrower than a column's usual white became a space, and the rows of one
+  // table came to stand on different numbers of stops.
+  const table = isTableRow(runs);
+  // A listing's blanks are its own, and stand as they were set.
+  const code = isCode(runs);
   // §17.3.2.42 — the line's OWN baseline, which a script stands off. Taken from
   // the runs set at the line's size: the marks are the ones that moved.
   const body = runs.filter((r) => (r.fontSizePt || fontSize) > fontSize * SCRIPT_SIZE);
@@ -1809,9 +2898,22 @@ function lineSpans(
     // mark of no width to U+0020, and "(คำแปล)" came back "(คำ แปล)", a word
     // broken in two. A space of no width that DOES stand in a gap is a word
     // space set by its gap, and stays.
-    if (run.text.trim() === '' && run.endX - run.x <= 0 && inked !== undefined) {
+    //
+    // …and so is a space the next letter is set down INSIDE, whatever it
+    // steps: the page drew it over the ink rather than stepping across it.
+    // canvas.pdf writes the space that opens an empty cell at the column the
+    // cell stands in, and where the name in the cell before it runs on into
+    // that column the space lands between two of its letters — "p" set down
+    // a point into it, the ink on either side closed up — and
+    // "globalCompositeOperation" came back broken in two. Where the next word
+    // starts where the space ends, the space was stepped, however far the run
+    // before it claims to reach: freeculture.pdf's runs claim a quarter of an
+    // em more than they ink, and its every word space overlaps the word
+    // before it by as much.
+    if (run.text.trim() === '' && inked !== undefined) {
       const next = runs.slice(i + 1).find((r) => r.text.trim() !== '');
-      if (next !== undefined && next.x - inked < spaceGap(next, fontSize, true)) continue;
+      const over = run.endX - run.x <= 0 || (next !== undefined && next.x < (run.x + run.endX) / 2);
+      if (over && next !== undefined && next.x - inked < spaceGap(next, fontSize, true)) continue;
     }
     // §9.10.2 — a glyph the file names no character for is a character this
     // reader cannot write, and dropped it takes its place on the line with it:
@@ -1819,10 +2921,33 @@ function lineSpans(
     // "Aug 11Sep 11". What it stood in is still a gap between two words, and
     // the next run is measured from the last one that says something.
     if (run.text.replaceAll(UNMAPPED, '') === '' && run.text !== '') continue;
+    // …and a run the page reached across blanks of its own, landing on a stop
+    // the lines around it share, stands on that stop as a run reached across
+    // white does: canvas.pdf spaces its way from a method's return type to
+    // its name, "CanvasGradient" and two spaces to the column of names every
+    // other row reaches with white, and the row came back one run of words,
+    // the lines under it run on into it. The blanks were the page's way to
+    // the stop, and so is the tab; set before it, they would push it on.
     if (
+      !code &&
+      prev !== undefined &&
+      prev.text.trim() === '' &&
+      run.text.trim() !== '' &&
+      inked !== undefined &&
+      run.x - inked >= (run.fontSizePt || fontSize) * STOP_GAP_EM &&
+      shared.some((x) => Math.abs(x - run.x) <= STOP_SLACK_PT)
+    ) {
+      while (spans.length > 0 && spans[spans.length - 1]!.text.trim() === '') {
+        if (spans[spans.length - 1]!.text === '\t') break;
+        spans.pop();
+      }
+      spans.push({ text: '\t' });
+      stops.push(run.x);
+      pieces.push({ from: Infinity, to: -Infinity });
+    } else if (
       prev !== undefined &&
       run.x - prev.endX > spaceGap(prev, fontSize, stepped) &&
-      !(isLeader(prev.text) && prev.text === run.text)
+      !continuesLeader(prev, run, fontSize)
     ) {
       // A gap no word space could be is a TAB, and the piece after it starts
       // where the page starts it. Written as a space the two pieces close up.
@@ -1832,11 +2957,26 @@ function lineSpans(
         inked !== undefined &&
         run.x - inked >= size * STOP_GAP_EM &&
         shared.some((x) => Math.abs(x - run.x) <= STOP_SLACK_PT);
-      if (run.x - prev.endX >= size * TAB_GAP_EM || onStop) {
+      if (
+        run.x - prev.endX >= size * TAB_GAP_EM ||
+        onStop ||
+        aligned(prev, run) ||
+        (table && run.x - prev.endX >= size * CELL_GAP_EM)
+      ) {
         spans.push({ text: '\t' });
         stops.push(run.x);
         pieces.push({ from: Infinity, to: -Infinity });
-      } else spans.push(spaceAfter(spans[spans.length - 1]));
+      } else if (
+        (!/\s$/u.test(prev.text) && !/^\s/u.test(run.text)) ||
+        run.x - prev.endX > (prev.fontSizePt || fontSize) * DRAWN_SPACE_EM
+      ) {
+        // …and beside a space the page drew, a step is a space of its own only
+        // where it is wide as one: a narrower one is the drawn space's advance
+        // come out wider than its glyph. bug1815476.pdf draws the space after
+        // "IDIOMA ………" in a smaller face and steps past it, and read by that
+        // face's space the step came back a second one.
+        spans.push(fittedSpace(spaceAfter(spans[spans.length - 1], run), prev, run, spaces));
+      }
     }
     // §9.3.1/§8.6.8 — the size and colour the page showed the glyphs at. The
     // tagged path has carried these since it learned to; this one never did, so
@@ -1868,6 +3008,67 @@ function lineSpans(
   }
   return { spans, stops, pieces };
 }
+
+/** Face name → the advance of the space the document sets it with, in thousandths of an em. */
+type FaceSpaces = ReadonlyMap<string, number>;
+
+/**
+ * §17.3.2.43 — a word space set as narrow as the page set it.
+ *
+ * TeX justifies a line by stretching its word spaces or SHRINKING them, and a
+ * line it shrank holds more than the same words with the face's own spaces:
+ * re-set with those, its last word no longer fits and goes to the next line,
+ * and the paragraph grows by a line. comments.pdf sets its 9pt Times with
+ * word spaces of 1.70 to 3.44 points against the face's 2.24, and every column
+ * of it ran one to four lines long. A space the page set narrower than the
+ * face's is set at that share of the face's width (`w:w`, whole percent
+ * rounded down, so the line still fits). A wider one is left alone: a line TeX
+ * stretched fits with the face's spaces too.
+ *
+ * The share of the glyph and not a spacing after it: LibreOffice lays no
+ * character spacing (§17.3.2.35) after the last character of a run, and a
+ * run that is one space has nothing else — Word and LibreOffice both narrow
+ * the glyph itself.
+ *
+ * Only in a face the document carries, whose space is known: a substitute's
+ * could be anything.
+ *
+ * @param space  The space as the line would have it.
+ * @param before The run the space follows.
+ * @param after  The run it precedes.
+ * @param spaces The space each face the document carries is set with.
+ * @returns The space, narrowed where the page set it narrower.
+ */
+function fittedSpace(
+  space: TextSpan,
+  before: TextRun,
+  after: TextRun,
+  spaces: FaceSpaces | undefined,
+): TextSpan {
+  // A space a run brings itself is the one written, and one more beside it
+  // collapses into it — which a space narrowed on its own would not.
+  if (spaces === undefined || /\s$/u.test(before.text) || /^\s/u.test(after.text)) return space;
+  const advance = before.fontName !== undefined ? spaces.get(before.fontName) : undefined;
+  const size = space.sizePt ?? before.fontSizePt;
+  if (advance === undefined || !(size > 0)) return space;
+  const own = (advance / 1000) * size;
+  const gap = after.x - before.endX;
+  if (gap > own - FIT_SLACK_PT) return space;
+  const share = Math.floor((gap / own) * 100) / 100;
+  return { ...space, widthScale: Math.max(share, 1 - MOST_SHRINK) };
+}
+
+/** A space this much narrower than the face's is the page's rounding, not a shrink. */
+const FIT_SLACK_PT = 0.02;
+
+/**
+ * The most of a space a line may take back. TeX shrinks a Times space by a
+ * quarter of itself and a Computer Modern one by a third — but the space after
+ * a word in type is written in the type's face, and comments.pdf sets its
+ * `primes` in 9pt Courier-wide cmtt9 and the space after it in Times: 2.25
+ * points of a 4.72-point space. A gap narrower still is not a word space.
+ */
+const MOST_SHRINK = 0.6;
 
 /**
  * §17.3.2.42 — a run set off the line's baseline, and smaller, as the script it
@@ -1964,18 +3165,41 @@ function groupIntoParagraphs(
   lineHeight: number;
   stops?: Array<number>;
   pieces?: Array<Extent>;
-  /** How many lines the page set the paragraph in, and where the farthest of them ends. */
+  /** How many lines the page set the paragraph in, where the nearest begins and the farthest ends. */
   lineCount: number;
+  left: number;
   right: number;
   /** Its lines, where the white above it was more than the spacing may say (see `setOff`). */
   far?: ReadonlyArray<Line>;
 }> {
   const groups: Array<Array<Line>> = [];
   const gaps: Array<number> = [];
+  // A column set against both edges runs its every line to the measure but a
+  // paragraph's last: there, a line short of it ENDED, where a ragged column's
+  // quarter-measure rule (see `endedParagraph`) let a nearly full last line
+  // run on into the next paragraph. comments.pdf's "…break even after running
+  // a trace 270 times." stops twenty-seven points short, and "The other VMs we
+  // compared…" came back joined to it.
+  const flushEnds = column
+    ? lines.filter((l) => Math.abs(column.right - (l.x + l.width)) <= JUSTIFIED_SLACK_PT).length
+    : 0;
+  const setJustified =
+    column !== undefined &&
+    lines.length >= JUSTIFIED_COLUMN_LINES &&
+    flushEnds >= lines.length * JUSTIFIED_COLUMN_SHARE;
+  // …and a column whose paragraphs HANG — their first line at the edge, the
+  // lines after it set in — opens a paragraph at every line nearer the edge
+  // than the level they go on at, and goes on at every line at that level
+  // however short the line before it: its lines end where an entry does or
+  // where the word after would not fit, and that word may be a long one.
+  const hangsAt = column !== undefined ? hangingEdge(lines, column) : undefined;
   let prev: Line | undefined;
+  // …and the line before that, whose end says where the block's edge is.
+  let beforePrev: Line | undefined;
   for (const line of lines) {
     const gap = prev !== undefined ? prev.y - line.y : 0;
     const opened = prev !== undefined && gap > line.fontSize * 1.5;
+    const goesOn = hangsAt !== undefined && line.x >= hangsAt;
     if (
       groups.length === 0 ||
       eachLine ||
@@ -1986,10 +3210,23 @@ function groupIntoParagraphs(
       // the end of "…NOT to our San Francisco office. ----------------------".
       // It takes no line with it either, so what follows opens its own.
       ruleOfCharacters(line) ||
+      line.code === true ||
+      (hangsAt !== undefined && line.x < hangsAt) ||
+      // …and nothing runs on into a line the page set out on stops, as it
+      // runs on into nothing: canvas.pdf sets each method a row of its table,
+      // its arguments on the lines under its name, and the next row came back
+      // run on from the last argument of the row before, "[Variadic] any
+      // args) Object getContext(", the return type torn off its own row.
+      line.tabbed === true ||
+      (prev !== undefined && opensItem(prev, line)) ||
       (prev !== undefined &&
         (ruleOfCharacters(prev) ||
-          endedParagraph(prev, line, column) ||
-          (reach !== undefined && roomForWord(prev, line, reach)) ||
+          prev.code === true ||
+          (!goesOn &&
+            (endedParagraph(prev, line, column) ||
+              (reach !== undefined && roomForWord(prev, line, reach)) ||
+              (setJustified && endedJustified(beforePrev, prev, line, column)) ||
+              (column !== undefined && endedCentred(prev, line, column)))) ||
           carriesLeader(prev) ||
           prev.tabbed === true))
     ) {
@@ -1999,16 +3236,22 @@ function groupIntoParagraphs(
       gaps.push(prev === undefined ? (before !== undefined ? before.y - line.y : 0) : gap);
     }
     groups[groups.length - 1]!.push(line);
+    beforePrev = prev;
     prev = line;
   }
-  // §17.3.1.12 — where the COLUMN's own text begins, which is what an indented
-  // paragraph is indented from. Not the leftmost line: a marginal note set
-  // outside the measure is not the measure, and bug1997343.pdf puts one forty-
-  // five points left of its body. Not the median either — a page can be half
-  // list — but the low end of the run of line starts, which the body holds
-  // whatever else is on the page.
+  // §17.3.1.12 — where the column begins, which is what an indented paragraph
+  // is indented from: the edge the .docx sets the column's text against, and
+  // so the column's own edge on the page wherever it is known. Not where this
+  // region's lines begin: a region is a stretch of a column, and its lines
+  // stand in from the column's edge as far as the page stands them —
+  // canvas.pdf sets its tables' rows seven points in from the headings of its
+  // columns, and ZapfDingbats.pdf its entries thirteen in from its running
+  // head, and indented from the rows and entries themselves both came back
+  // against the edge of the column. Where no column is given, the low end of
+  // the run of line starts: not the leftmost line, which may be a note set in
+  // the margin, nor the median, since a page can be half list.
   const starts = lines.map((l) => l.x).sort((a, b) => a - b);
-  const columnLeft = starts[Math.floor(starts.length * COLUMN_LEFT_QUANTILE)] ?? 0;
+  const columnLeft = column?.left ?? starts[Math.floor(starts.length * COLUMN_LEFT_QUANTILE)] ?? 0;
   const heights: Array<number> = [];
   return groups.map((g, i) => {
     const first = g[0]!;
@@ -2073,10 +3316,10 @@ function groupIntoParagraphs(
       // the last column of a table came out a point wide.
       ...(stops.length > 0
         ? {
-            stops: stops.map((x) => x - (column?.left ?? columnLeft)),
+            stops: stops.map((x) => x - columnLeft),
             pieces: (first.pieces ?? []).map((p) => ({
-              from: p.from - (column?.left ?? columnLeft),
-              to: p.to - (column?.left ?? columnLeft),
+              from: p.from - columnLeft,
+              to: p.to - columnLeft,
             })),
           }
         : {}),
@@ -2085,11 +3328,105 @@ function groupIntoParagraphs(
       ...aligned,
       ...indentOf(g, columnLeft, aligned.alignment),
       lineCount: g.length,
+      left: Math.min(...g.map((l) => l.x)),
       right: Math.max(...g.map((l) => l.x + l.width)),
       ...(opened > most ? { far: g } : {}),
     };
   });
 }
+
+/**
+ * Where a column's paragraphs go on, where they HANG: the first line of each
+ * at the column's edge — or at a level set in from it — and the lines after it
+ * set in further, as an index sets its entries and a bibliography its
+ * references. freeculture.pdf's index sets "democracy:" at the edge, "digital
+ * sharing within, 184" and the other entries under it a level in, and the
+ * lines that carry an entry on — "41–42, 43, 44–45" — at a level further in
+ * again; read by the measure alone, its short entries ran together, and a line
+ * back at the edge after one set in was taken for the second line of a
+ * paragraph whose first is set in.
+ *
+ * The level a paragraph goes on at is reached from full lines, the ones the
+ * entry ran to the measure and turned from, and many of its lines are short:
+ * they end their entries. The level a paragraph's own first line is set in to
+ * is reached from short lines — the paragraph before ended there — or runs to
+ * the measure itself.
+ *
+ * @param lines  The column's lines, top to bottom.
+ * @param column The column they are set in.
+ * @returns How far in a line goes on its paragraph; a line nearer the edge
+ *          opens one. `undefined` where the column's paragraphs do not hang.
+ */
+function hangingEdge(
+  lines: ReadonlyArray<Line>,
+  column: { left: number; right: number },
+): number | undefined {
+  const width = column.right - column.left;
+  if (!(width > 0) || lines.length < HANGING_LINES) return undefined;
+  const size = median(lines.map((l) => l.fontSize)) || 10;
+  const edge = Math.min(...lines.map((l) => l.x));
+  const short = (l: Line): boolean => column.right - (l.x + l.width) > width * 0.25;
+  // The levels the column's lines are set in to, and how each is reached.
+  const levels: Array<{ x: number; lines: number; afterFull: number; short: number }> = [];
+  for (let k = 1; k < lines.length; k++) {
+    const prev = lines[k - 1]!;
+    const line = lines[k]!;
+    const setIn = line.x - edge;
+    if (setIn < size * 0.5 || setIn > size * HANGING_DEEPEST_EM) continue;
+    let level = levels.find((v) => Math.abs(v.x - line.x) <= size * HANGING_SLACK_EM);
+    if (level === undefined) {
+      level = { x: line.x, lines: 0, afterFull: 0, short: 0 };
+      levels.push(level);
+    }
+    level.lines++;
+    if (!short(prev)) level.afterFull++;
+    if (short(line)) level.short++;
+  }
+  const goesOn = levels.filter(
+    (v) =>
+      v.lines >= HANGING_LEAST &&
+      v.afterFull >= v.lines * HANGING_FULL_SHARE &&
+      v.short >= v.lines * HANGING_SHORT_SHARE,
+  );
+  if (goesOn.length === 0) return undefined;
+  // …and where two lines at the edge follow one another, the first ENDED an
+  // entry more often than not. In prose a line at the edge after another
+  // carries its paragraph on, the line before it run to the measure, and a
+  // page of prose with a list or a quotation set in reaches that level from
+  // full lines too: freeculture.pdf's index follows a line at its edge with
+  // another after a short one four times in five, its prose never, and read
+  // as hanging a page of it came back a paragraph to every line.
+  let pairs = 0;
+  let fullPairs = 0;
+  for (let k = 1; k < lines.length; k++) {
+    if (lines[k - 1]!.x - edge >= size * 0.5 || lines[k]!.x - edge >= size * 0.5) continue;
+    pairs++;
+    if (!short(lines[k - 1]!)) fullPairs++;
+  }
+  if (fullPairs > Math.max(1, pairs * HANGING_RUN_ON_SHARE)) return undefined;
+  return Math.min(...goesOn.map((v) => v.x)) - size * HANGING_SLACK_EM;
+}
+
+/** How many lines a column needs before its paragraphs can be seen to hang. */
+const HANGING_LINES = 8;
+
+/** …and how many lines a level needs before a paragraph can be seen to go on at it. */
+const HANGING_LEAST = 2;
+
+/** How far off a level, in ems, a line may start and still stand at it. */
+const HANGING_SLACK_EM = 0.25;
+
+/** How far in from the edge, in ems, a level may stand. */
+const HANGING_DEEPEST_EM = 4;
+
+/** How many of a level's lines, as a share of them, follow full lines where paragraphs go on at it. */
+const HANGING_FULL_SHARE = 0.8;
+
+/** …and how many of them are short, ending their paragraphs. */
+const HANGING_SHORT_SHARE = 0.3;
+
+/** How many lines at the edge, as a share of those after another, may follow a full one. */
+const HANGING_RUN_ON_SHARE = 0.6;
 
 /**
  * Whether the first word of `next` would have fit on `prev` short of `reach` —
@@ -2106,6 +3443,86 @@ function roomForWord(prev: Line, next: Line, reach: number): boolean {
   return reach - (prev.x + prev.width) > width + prev.fontSize * WORD_SPACE_EM;
 }
 
+/**
+ * Whether a centred line ended its paragraph: the line under it is centred too,
+ * and its first word would have fit on this one. A centred paragraph that wraps
+ * fills its lines to the measure but the last, as any paragraph does; lines a
+ * page centres one by one do not. comments.pdf centres its authors'
+ * affiliations a line apiece — "{gal,brendan,…}@mozilla.com", and under it
+ * "Adobe Corporation" — and run together they came back re-wrapped a line
+ * shorter, the columns under them risen into the white.
+ */
+function endedCentred(prev: Line, next: Line, column: { left: number; right: number }): boolean {
+  const width = column.right - column.left;
+  if (!(width > 0)) return false;
+  const centred = (l: Line): boolean => {
+    const lead = l.x - column.left;
+    const trail = column.right - (l.x + l.width);
+    return Math.abs(lead - trail) <= width * CENTRED_SLACK && Math.min(lead, trail) > 0;
+  };
+  if (!centred(prev) || !centred(next)) return false;
+  // …and one of the two set in from both edges, as a full line is not. A
+  // list's lines stand in from a column whose left edge is its bullets', and
+  // where an overfull line pushed the right edge out they stood in by as much
+  // there: comments.pdf's "…We expect to improve performance" and "on this
+  // programs by improving…", two full lines of one item, read as centred, and
+  // the item came back two paragraphs, its page a line over its sheet.
+  const inset = (l: Line): number => Math.min(l.x - column.left, column.right - (l.x + l.width));
+  if (Math.max(inset(prev), inset(next)) < width * CENTRED_INSET) return false;
+  const text = next.text.trimStart();
+  const word = text.split(/\s/u)[0] ?? '';
+  if (word.length === 0) return false;
+  const wordWidth = (next.width * word.length) / text.length;
+  return width - prev.width > wordWidth + prev.fontSize * WORD_SPACE_EM;
+}
+
+/** How far off the middle of the measure, as a share of it, a centred line may stand. */
+const CENTRED_SLACK = 0.06;
+
+/**
+ * How far in from both edges, as a share of the measure, a centred line
+ * stands: further than a full line stands in from a column whose edges are
+ * its bullets' and an overfull line's (comments.pdf's, a thirtieth at most),
+ * and no further than a block of names needs — the paper's second line of
+ * authors stands in by a thirteenth, and asked for a tenth, the line under it
+ * came back run into it.
+ */
+const CENTRED_INSET = 0.05;
+
+/**
+ * Whether a line of a column set against both edges ended its paragraph: it
+ * stops short of the measure, and the line after it is indented or its first
+ * word would have fit on it.
+ *
+ * Not where a line beside it stops at the same place: that is the edge of a
+ * narrower block, not the end of the text. A quotation set in from both sides
+ * stops short of the measure on every line, and freeculture.pdf's came back a
+ * paragraph a line.
+ */
+function endedJustified(
+  before: Line | undefined,
+  prev: Line,
+  next: Line,
+  column: { left: number; right: number },
+): boolean {
+  const end = prev.x + prev.width;
+  if (column.right - end <= prev.fontSize * WORD_SPACE_EM) return false;
+  const edge = (l: Line | undefined): boolean =>
+    l !== undefined && Math.abs(l.x + l.width - end) <= JUSTIFIED_SLACK_PT;
+  if (edge(before) || edge(next)) return false;
+  const indented = next.x - prev.x >= prev.fontSize * INDENT_EM;
+  return indented || roomForWord(prev, next, column.right);
+}
+
+/** How many lines a column needs to show it is set against both edges. */
+const JUSTIFIED_COLUMN_LINES = 8;
+
+/** …and how many of them run to the measure, at the least. */
+const JUSTIFIED_COLUMN_SHARE = 0.6;
+
+/** How far short of the measure a line of it may end and still run to it: the page's rounding. */
+const JUSTIFIED_SLACK_PT = 1;
+
 /** A word space, in ems: what stands between a line's end and the word put after it. */
 const WORD_SPACE_EM = 0.3;
 
@@ -2114,6 +3531,9 @@ const WORD_SPACE_EM = 0.3;
  * line of text set to one (see {@link groupIntoParagraphs}).
  */
 function leadingLine(el: BodyElement): number | undefined {
+  // A figure in the flow (see `figureIn`) is where the page's text begins as
+  // much as a line is: its top is where the page set it.
+  if (el.kind === 'shape' && el.shape.float === undefined) return 0;
   if (el.kind !== 'paragraph' || el.paragraph.runs.length === 0) return undefined;
   const { spacingLine, spacingLineRule } = el.paragraph.properties;
   return spacingLineRule === 'exact' && spacingLine !== undefined && spacingLine > 0
@@ -2140,6 +3560,11 @@ const SPACING_NOISE_PT = 0.25;
  * "typical two-column docu ment incorporating tables, figures and mathemat
  * ics" — the soft hyphens dropped by the page and a space in their place.
  *
+ * A dash closed up to the word before it binds that word to the one after,
+ * as the hyphen does: freeculture.pdf's index breaks "167–68" after its dash,
+ * and the entry came back "167– 68". A dash with a space before it stands
+ * apart, and the break is a space.
+ *
  * @param lines The paragraph's lines, in order.
  */
 function joinLines(lines: ReadonlyArray<Line>): Array<TextSpan> {
@@ -2149,13 +3574,17 @@ function joinLines(lines: ReadonlyArray<Line>): Array<TextSpan> {
       const prev = out[out.length - 1];
       const ends = prev?.text ?? '';
       const soft = ends.endsWith(SOFT_HYPHEN);
-      const hard = HYPHENS.has(ends.slice(-1));
+      // The character before the dash, where a span ends in one.
+      const before =
+        ends.length > 1 ? ends.slice(-2, -1) : (out[out.length - 2]?.text.slice(-1) ?? '');
+      const hard =
+        HYPHENS.has(ends.slice(-1)) || (DASHES.has(ends.slice(-1)) && /\S/u.test(before));
       if (soft && prev) out[out.length - 1] = { ...prev, text: ends.slice(0, -1) };
       // A line the page ended with a space has its break written already:
       // joined with another, bug1057544.pdf's column came back "marks the  end
       // of a year's work", a gap twice as wide at every line it had broken.
       else if (!hard && !/\s$/u.test(ends) && !/^\s/u.test(line.spans[0]?.text ?? ''))
-        out.push(spaceAfter(prev));
+        out.push(spaceAfter(prev, line.spans[0]));
     }
     out.push(...line.spans);
   });
@@ -2168,11 +3597,41 @@ const SOFT_HYPHEN = '\u00ad';
 /** The hyphens that belong to the word they end. */
 const HYPHENS = new Set(['-', '\u2010', '\u2011']);
 
+/** The dashes, en and em, that belong to the words either side where closed up to them. */
+const DASHES = new Set(['\u2013', '\u2014']);
+
 /** How many lines' worth of indent still reads as a first line, not a placement. */
 const INDENT_LINES = 3;
 
 /** Where in the run of line starts the column's own left edge is looked for. */
 const COLUMN_LEFT_QUANTILE = 0.15;
+
+/**
+ * Whether a line opens a list item: it begins with a bullet set apart from the
+ * words it marks, or with a label — "[19]", "3." — standing out left of the
+ * line over it. Where the item before it ends on a line that runs to the
+ * measure, or nearly, nothing else says it ended: comments.pdf's "• We explain
+ * how to speculatively generate…" came back run into the item over it, its
+ * bullet in the middle of a line, and its reference "[19] M. Zaleski…" into
+ * "[18]". A label that does not stand out is a line of prose that begins
+ * with one — a citation, a figure.
+ *
+ * @param prev The line over it.
+ * @param line A line of the column.
+ */
+function opensItem(prev: Line, line: Line): boolean {
+  if (BULLET_LEAD.test(line.text)) return true;
+  return LABEL_LEAD.test(line.text) && prev.x - line.x >= line.fontSize * HANGING_EM;
+}
+
+/** A bullet and the white after it, at the head of a line. */
+const BULLET_LEAD = /^[\u2022\u2023\u2043\u2219\u25aa\u25ab\u25cb\u25cf\u25e6\u25a0\u25a1]\s/u;
+
+/** A reference's or a step's label, "[19]" or "3.", and the white after it. */
+const LABEL_LEAD = /^(?:\[\d{1,4}\]|\d{1,3}\.)\s/u;
+
+/** How far, in ems, a label stands out left of the line over it to hang. */
+const HANGING_EM = 1;
 
 /**
  * §17.3.1.12 `w:ind` — how far a paragraph is set in from its column, and where
@@ -2461,7 +3920,7 @@ function compareOrder(a: ReadonlyArray<number>, b: ReadonlyArray<number>): numbe
  * @returns The runs to lift off each page and the band to put them in, or
  *          `undefined` where the document repeats nothing.
  */
-function runningFoot(
+export function runningFoot(
   pageRuns: ReadonlyArray<ReadonlyArray<TextRun>>,
   shown: ReadonlyArray<{ height: number }>,
   where: 'head' | 'foot',
@@ -2484,9 +3943,19 @@ function runningFoot(
   const found = feet.filter((f) => f !== undefined);
   if (found.length < 2 || found.length < pageRuns.length * FOOT_SHARE) return undefined;
   // The same place on every page: a foot that wanders is a last paragraph.
-  const ys = found.map((f) => f.y);
-  const mid = median(ys);
-  if (ys.some((y) => Math.abs(y - mid) > FOOT_DRIFT)) return undefined;
+  // …its line nearest the text, that is, which is where the text stops: a
+  // book may sign one side of its spreads with more than the other.
+  // freeculture.pdf sets its folio forty-eight points up every page and its
+  // URL under it on the left-hand ones; asked where each foot ENDS, the two
+  // sides disagreed, and the book's feet were read into the text of every
+  // page. A foot reaching further out than the others is the margin's all
+  // the same.
+  const inner = (f: { runs: ReadonlyArray<TextRun> }): number =>
+    where === 'foot' ? Math.max(...f.runs.map((r) => r.y)) : Math.min(...f.runs.map((r) => r.y));
+  const mid = median(found.map(inner));
+  if (found.some((f) => (where === 'foot' ? inner(f) - mid : mid - inner(f)) > FOOT_DRIFT)) {
+    return undefined;
+  }
   // Whether the foot says something DIFFERENT on each page, which is what a
   // page number is. ZapfDingbats.pdf signs every sheet "© RenderX 2000", and
   // read as a number the year came out as the page: "© RenderX 1".
@@ -2503,7 +3972,141 @@ function runningFoot(
   };
 }
 
+/**
+ * §17.10.1, §17.15.1.36 — the running feet of a book's two sides, where they
+ * differ. A book signs its left-hand pages one way and its right-hand ones
+ * another, its folio at the outer edge of each: freeculture.pdf sets "6 FREE
+ * CULTURE" at the left of its even pages with the URL it is published at
+ * under it, and "INTRODUCTION 5" at the right of its odd ones. Read as one
+ * foot, every page was signed the way its first was.
+ *
+ * The side is the page number's, as Word takes it, printing the even foot on
+ * the pages it numbers even; the sides differ where their numbers stand on
+ * opposite halves of the page. A side's foot says what most of that side's
+ * feet say, and its number: the chapter a page is in is not named alike in
+ * any two chapters, and set once it would name every page after the first.
+ *
+ * @param foot      The running foot, a page's runs to each page.
+ * @param numbering The numbers its pages print.
+ * @param middle    The middle of each page, across.
+ * @returns Each side's runs and the numeral they print, or `undefined` where
+ *          the two sides are signed alike.
+ */
+function sidesOf(
+  foot: { readonly lift: ReadonlyArray<ReadonlySet<TextRun>> },
+  numbering: PageNumbering,
+  middle: ReadonlyArray<number>,
+):
+  | {
+      even: { runs: ReadonlyArray<TextRun>; numeral: string; page: number };
+      odd: { runs: ReadonlyArray<TextRun>; numeral: string; page: number };
+    }
+  | undefined {
+  interface Signed {
+    runs: ReadonlyArray<TextRun>;
+    numeral: TextRun;
+    left: boolean;
+    page: number;
+  }
+  const bySide: [Array<Signed>, Array<Signed>] = [[], []];
+  foot.lift.forEach((set, i) => {
+    const number = numbering.numbers[i];
+    if (set.size === 0 || number === undefined) return;
+    const runs = [...set];
+    const numeral = runs.find((r) => r.text.trim() === number.text);
+    if (numeral === undefined) return;
+    bySide[number.value % 2]!.push({
+      runs,
+      numeral,
+      left: (numeral.x + numeral.endX) / 2 < (middle[i] ?? 0),
+      page: i,
+    });
+  });
+  const [even, odd] = bySide;
+  if (even.length < LEAST_SIDE_FEET || odd.length < LEAST_SIDE_FEET) return undefined;
+  const leftOf = (side: ReadonlyArray<Signed>): boolean =>
+    side.filter((f) => f.left).length * 2 > side.length;
+  if (leftOf(even) === leftOf(odd)) return undefined;
+  const wordsOf = (runs: ReadonlyArray<TextRun>): Array<string> =>
+    runs.flatMap((r) => r.text.split(/\s+/u)).filter((w) => w !== '');
+  const sideOf = (
+    side: ReadonlyArray<Signed>,
+  ): { runs: Array<TextRun>; numeral: string; page: number } => {
+    const counts = new Map<string, number>();
+    for (const f of side) {
+      for (const w of new Set(wordsOf(f.runs.filter((r) => r !== f.numeral)))) {
+        counts.set(w, (counts.get(w) ?? 0) + 1);
+      }
+    }
+    const said = (r: TextRun): boolean =>
+      wordsOf([r]).every((w) => (counts.get(w) ?? 0) >= side.length * SIDE_SHARE);
+    // The foot that says the most of it, where the side's number stands.
+    const kept = (f: Signed): Array<TextRun> => f.runs.filter((r) => r === f.numeral || said(r));
+    const best = side
+      .filter((f) => f.left === leftOf(side))
+      .reduce((a, b) => (kept(b).length > kept(a).length ? b : a));
+    return { runs: kept(best), numeral: best.numeral.text.trim(), page: best.page };
+  };
+  return { even: sideOf(even), odd: sideOf(odd) };
+}
+
+/** How many feet each side must show before a book is taken to sign its sides apart. */
+const LEAST_SIDE_FEET = 2;
+
+/** How many of a side's feet, as a share of them, must say a word before its foot does. */
+const SIDE_SHARE = 0.6;
+
 /** How many of a document's pages must carry the foot before it is running. */
+/**
+ * §17.6.12 — how a document's pages are numbered, read off the band that
+ * prints their numbers (see ./page-numbers).
+ *
+ * @param band The running head or foot whose numbers change from page to page.
+ * @returns The numbering, or undefined where no band numbers the pages.
+ */
+export function numberingOf(
+  band: { readonly lift: ReadonlyArray<ReadonlySet<TextRun>> } | undefined,
+): PageNumbering | undefined {
+  if (!band) return undefined;
+  return pageNumberingOf(band.lift.map((set) => (set.size > 0 ? bandText([...set]) : undefined)));
+}
+
+/** A band's text on one page, with a word space wherever the page shows one. */
+function bandText(runs: ReadonlyArray<TextRun>): string {
+  return groupIntoLines(runs, false, stepsBetweenWords(runs))
+    .map((line) => line.text)
+    .join(' ');
+}
+
+/**
+ * The numbering a section opening at `page` states: the numerals of the
+ * sequence the page is counted in, and the number the sequence starts at where
+ * it starts there.
+ *
+ * @param numbering The document's numbering.
+ * @param page      The section's first page.
+ * @returns The section's `pageNumberFormat` and `pageNumberStart`, as needed.
+ */
+export function numberedFrom(
+  numbering: PageNumbering | undefined,
+  page: number,
+): Pick<SectionProperties, 'pageNumberFormat' | 'pageNumberStart'> {
+  const run = numbering ? runOf(numbering.runs, page) : undefined;
+  if (!run) return {};
+  return {
+    ...(run.format !== 'decimal' ? { pageNumberFormat: run.format } : {}),
+    ...(run.from === page && (page > 0 || run.start !== 1) ? { pageNumberStart: run.start } : {}),
+  };
+}
+
+/** A document of one section, numbered from its first page. */
+function numberedAs(
+  section: SectionProperties | undefined,
+  numbering: PageNumbering | undefined,
+): SectionProperties | undefined {
+  return section ? { ...section, ...numberedFrom(numbering, 0) } : section;
+}
+
 const FOOT_SHARE = 0.6;
 
 /** How far, in points, a running foot may drift from page to page. */
@@ -2626,11 +4229,19 @@ const FOOT_CHARS = 90;
  * the number of the page it is drawn on, which is what lets ONE band serve
  * every page. The run is cut around it and the middle becomes the field.
  *
- * @param run The footer's run.
+ * @param run     The footer's run.
+ * @param numeral The page's number as this band prints it, where it is known.
  * @returns The run, or the two or three it is cut into.
  */
-function pageNumbered(run: Run): Array<Run> {
-  const found = /(^|\s)(\d{1,4})(\s|$)/u.exec(run.text);
+function pageNumbered(run: Run, numeral?: string): Array<Run> {
+  // The numeral the page's number is printed as — the one that changes from
+  // page to page, which may be roman (see ./page-numbers) — or the first run
+  // of digits where the bands said nothing more.
+  const pattern =
+    numeral !== undefined
+      ? new RegExp(`(^|\\s)(${numeral})(\\s|$)`, 'u')
+      : /(^|\s)(\d{1,4})(\s|$)/u;
+  const found = pattern.exec(run.text);
   if (!found || run.field !== undefined) return [run];
   const at = found.index + found[1]!.length;
   const number = found[2]!;
@@ -2684,12 +4295,14 @@ function pageNumbered(run: Run): Array<Run> {
  * @param stepped  Whether the page steps between its words.
  * @param measure  The measure it was set across, for its alignment.
  * @param numbered Whether a number in it is the page's own.
+ * @param numeral  That number as this band prints it, where it is known.
  */
-function footerBand(
+export function footerBand(
   runs: ReadonlyArray<TextRun>,
   stepped: boolean,
   measure: { left: number; right: number } | undefined,
   numbered: boolean,
+  numeral?: string,
 ): Array<BodyElement> {
   const fontSize = median(runs.map((r) => r.fontSizePt).filter((s) => s > 0)) || 10;
   const lines = rowsOf(runs, fontSize)
@@ -2704,7 +4317,9 @@ function footerBand(
       kind: 'paragraph',
       paragraph: {
         ...el.paragraph,
-        runs: numbered ? el.paragraph.runs.flatMap((run) => pageNumbered(run)) : el.paragraph.runs,
+        runs: numbered
+          ? el.paragraph.runs.flatMap((run) => pageNumbered(run, numeral))
+          : el.paragraph.runs,
       },
     };
   });
@@ -2761,7 +4376,7 @@ function bandLine(
       only.x - measure.left >= width * BAND_RIGHT_SHARE;
     const alignment = flushRight ? 'right' : alignmentOf(lines.slice(0, 1), measure).alignment;
     const spans = lines.flatMap((line, i) =>
-      i === 0 ? line.spans : [spaceAfter(lines[i - 1]!.spans.at(-1)), ...line.spans],
+      i === 0 ? line.spans : [spaceAfter(lines[i - 1]!.spans.at(-1), line.spans[0]), ...line.spans],
     );
     return { spans, properties: alignment ? { alignment } : {} };
   }
@@ -2902,14 +4517,24 @@ function proseColumns(
     for (const x of xs) most = Math.max(most, xs.filter((y) => Math.abs(y - x) <= FLUSH_PT).length);
     return most;
   };
-  return edgesIn.every((lines) => {
+  return edgesIn.every((lines, i) => {
     if (lines.length < MIN_PROSE_LINES) return false;
     // Prose is set flush LEFT and comes out ragged right: line after line
     // starts in the same place and ends wherever its last word ends. A column
     // of figures is the other way round — an invoice's amounts agree on their
     // right edge and on nothing else — and that is not a column to re-set a
     // document in.
-    return agreeing(lines.map((l) => l.right)) <= agreeing(lines.map((l) => l.left));
+    // …or it is JUSTIFIED, and flush on both sides: every full line ends
+    // where the column does, and only a paragraph's first line starts
+    // anywhere else. Its lines fill the column, which a column of amounts
+    // never does. comments.pdf's pages agree on more right edges than left
+    // ones, and five of its fourteen were read straight across both columns.
+    const [lo, hi] = regions[i]!;
+    const full = lines.filter((l) => l.right - l.left >= (hi - lo) * FULL_LINE_SHARE).length;
+    return (
+      agreeing(lines.map((l) => l.right)) <= agreeing(lines.map((l) => l.left)) ||
+      full >= lines.length * FILLED_SHARE
+    );
   });
 }
 
@@ -3122,92 +4747,219 @@ function tabbedRows(
         to: Math.max(...cells.map((c) => c!.to)),
       };
     });
-    // §17.3.1.13 — a column whose cells END together and start apart is set
-    // against its right edge: the "Qty", "Tax" and "Amount" of an item table,
-    // figures and headings alike. Set from the left the "1" stood under the Q
-    // of "Qty", eight points from the figure the page puts under its y.
-    const flush = inks.map((ink, k) => {
-      if (k === 0 || ink === undefined) return false;
-      const tos = rows.map((r) => r.pieces![k]!.to);
-      const froms = rows.map((r) => r.pieces![k]!.from);
-      const even = Math.max(...tos) - Math.min(...tos);
-      return (
-        even <= FLUSH_SLACK_PT && Math.max(...froms) - Math.min(...froms) > even + FLUSH_SLACK_PT
+    // …and the HEADINGS set over the columns, where the line above the rows
+    // stands over them: comments.pdf's Figure 13 heads its figures and leaves
+    // the column of names bare, one stop short of every row under it, and the
+    // headings came back as a line of their own above the table.
+    // Close over the rows, and over half their columns at the least: a line
+    // of an address with two pieces over a table of five heads nothing.
+    const above = i > 0 && !out.has(i - 1) ? paras[i - 1] : undefined;
+    const close =
+      above !== undefined && above.top - rows[0]!.top <= rows[0]!.lineHeight * HEADING_LINES;
+    const columnsFor = (heading: Heading | undefined) => {
+      // §17.3.1.13 — a column whose cells END together and start apart is set
+      // against its right edge: the "Qty", "Tax" and "Amount" of an item table,
+      // figures and headings alike. Set from the left the "1" stood under the Q
+      // of "Qty", eight points from the figure the page puts under its y.
+      const flush = inks.map((ink, k) => {
+        if (k === 0 || ink === undefined) return false;
+        const tos = rows.map((r) => r.pieces![k]!.to);
+        const froms = rows.map((r) => r.pieces![k]!.from);
+        const even = Math.max(...tos) - Math.min(...tos);
+        if (even > FLUSH_SLACK_PT) return false;
+        if (Math.max(...froms) - Math.min(...froms) > even + FLUSH_SLACK_PT) return true;
+        // Cells all as wide as each other say nothing of the side they are set
+        // against, and the heading over them does: Figure 13's "Flushes" ends
+        // where its column of noughts ends, and begins a word further left.
+        const head = heading?.over[k];
+        return (
+          head !== undefined &&
+          Math.abs(head.to - Math.max(...tos)) <= FLUSH_SLACK_PT &&
+          Math.min(...froms) - head.from > FLUSH_SLACK_PT
+        );
+      });
+      // What each column has to hold: its figures, and the heading over them.
+      // Cut to the figures, "Traces/Tree" came back "Traces/" over "Tree".
+      const holds = inks.map((ink, k): Extent | undefined => {
+        const head = heading?.over[k];
+        return ink !== undefined && head !== undefined
+          ? { from: Math.min(ink.from, head.from), to: Math.max(ink.to, head.to) }
+          : ink;
+      });
+      // Where each column begins. One set from its left begins at its stop; one
+      // set against its right has no stop to begin at, and begins halfway across
+      // the white before it — a cell only as wide as the page's figure wraps the
+      // figure the moment the face it is re-set in runs a little wider.
+      const edges = [0, ...bounds, width];
+      for (let k = 1; k < bounds.length + 1; k++) {
+        const before = holds[k - 1];
+        const own = holds[k];
+        if (!flush[k] || before === undefined || own === undefined) continue;
+        const mid = (before.to + own.from) / 2;
+        if (mid > edges[k - 1]! && mid < own.from) edges[k] = mid;
+      }
+      // §17.4.65 — and the first begins where its words do: comments.pdf centres
+      // Figure 13 on the page, its names seventeen points in from the margin.
+      const lead = holds[0]?.from ?? 0;
+      if (lead > FLUSH_SLACK_PT && lead < edges[1]!) edges[0] = lead;
+      const flushRight = flush.map((right, k) =>
+        right ? Math.max(0, edges[k + 1]! - inks[k]!.to) : undefined,
       );
-    });
-    // Where each column begins. One set from its left begins at its stop; one
-    // set against its right has no stop to begin at, and begins halfway across
-    // the white before it — a cell only as wide as the page's figure wraps the
-    // figure the moment the face it is re-set in runs a little wider.
-    const edges = [0, ...bounds, width];
-    for (let k = 1; k < bounds.length + 1; k++) {
-      const before = inks[k - 1];
-      const own = inks[k];
-      if (!flush[k] || before === undefined || own === undefined) continue;
-      const mid = (before.to + own.from) / 2;
-      if (mid > edges[k - 1]! && mid < own.from) edges[k] = mid;
-    }
-    const flushRight = flush.map((right, k) =>
-      right ? Math.max(0, edges[k + 1]! - inks[k]!.to) : undefined,
-    );
+      // …and a heading the columns cannot hold is no heading of theirs: a
+      // form's "Bankverbindung:" heads a label and its value together, and
+      // set over the labels alone it broke in two.
+      const held =
+        heading?.over.every(
+          (head, k) =>
+            head === undefined ||
+            edges[k + 1]! - edges[k]! - (flushRight[k] ?? 0) >=
+              head.to - head.from - FLUSH_SLACK_PT,
+        ) ?? true;
+      return { holds, edges, flushRight, held };
+    };
+    const offered = above && close ? headingOver(above, inks) : undefined;
+    const withHeading = offered ? columnsFor(offered) : undefined;
+    const heading = withHeading?.held === true ? offered : undefined;
+    const { holds, edges, flushRight } =
+      heading && withHeading ? withHeading : columnsFor(undefined);
     const grid = edges.slice(0, -1).map((from, k) => pt(Math.max(edges[k + 1]! - from, 1)));
-    out.set(i, {
-      kind: 'table',
-      table: {
-        // §17.4.63/§17.4.72 — as wide as the measure, each cell as wide as its
-        // column: the widths the grid gives, stated where a reader looks first.
-        properties: {
-          defaultCellMargins: { left: pt(0), right: pt(0) },
-          layout: 'fixed',
-          widthType: 'dxa',
-          widthPt: pt(grid.reduce((sum, w) => sum + w, 0)),
-        },
-        grid,
-        rows: rows.map((row, r) => {
-          // The row stands as far from the next as the page stood it, and the
-          // white BEFORE the table is the first row's own: a table has no
-          // spacing of its own to carry it, and glued to the block above it the
-          // invoice's item table came up against the address over it.
-          const prev = rows[r - 1];
-          // The white a row keeps from the one above it, less the boxes the two
-          // lines stand in — the same measure a paragraph's spacing is read by.
-          // Stated as the ROW's height instead, LibreOffice set the rows solid
-          // and an invoice's heading sat on the item under it.
-          const pitch = prev
-            ? prev.top -
-              row.top -
-              (1 - BASELINE_AT) * prev.lineHeight -
-              BASELINE_AT * row.lineHeight
-            : 0;
-          const opening = r === 0 ? row.spacingBefore : pitch > 0 ? pitch : undefined;
-          return {
-            properties: {},
-            cells: splitAtTabs(row.spans).map((cell, k) => {
-              const inset = flushRight[k];
-              const own = grid[k];
-              return {
-                properties: own !== undefined ? { width: own } : {},
-                content: [
-                  paragraphFromRuns(cell, undefined, {
-                    ...(opening !== undefined ? { spacingBefore: pt(opening) } : {}),
-                    spacingLine: pt(row.lineHeight),
-                    spacingLineRule: 'exact',
-                    ...(inset !== undefined
-                      ? { alignment: 'right' as const, indentRight: pt(inset) }
-                      : {}),
-                  }),
-                ],
-              };
-            }),
-          };
-        }),
+    const tableRows = above && heading ? [{ ...above, spans: heading.spans }, ...rows] : rows;
+    const table: Table = {
+      // §17.4.63/§17.4.72 — as wide as its columns, each cell as wide as its
+      // column: the widths the grid gives, stated where a reader looks first.
+      properties: {
+        defaultCellMargins: { left: pt(0), right: pt(0) },
+        layout: 'fixed',
+        widthType: 'dxa',
+        widthPt: pt(grid.reduce((sum, w) => sum + w, 0)),
+        ...(edges[0]! > 0 ? { indentPt: pt(edges[0]!) } : {}),
       },
+      grid,
+      rows: tableRows.map((row, r) => {
+        // The row stands as far from the next as the page stood it, and the
+        // white BEFORE the table is the first row's own: a table has no
+        // spacing of its own to carry it, and glued to the block above it the
+        // invoice's item table came up against the address over it.
+        const prev = tableRows[r - 1];
+        // The white a row keeps from the one above it, less the boxes the two
+        // lines stand in — the same measure a paragraph's spacing is read by.
+        // Stated as the ROW's height instead, LibreOffice set the rows solid
+        // and an invoice's heading sat on the item under it.
+        const pitch = prev
+          ? prev.top - row.top - (1 - BASELINE_AT) * prev.lineHeight - BASELINE_AT * row.lineHeight
+          : 0;
+        const opening = r === 0 ? row.spacingBefore : pitch > 0 ? pitch : undefined;
+        return {
+          properties: {},
+          cells: splitAtTabs(row.spans).map((cell, k) => {
+            const inset = flushRight[k];
+            const own = grid[k];
+            return {
+              properties: own !== undefined ? { width: own } : {},
+              content: [
+                paragraphFromRuns(cell, undefined, {
+                  ...(opening !== undefined ? { spacingBefore: pt(opening) } : {}),
+                  spacingLine: pt(row.lineHeight),
+                  spacingLineRule: 'exact',
+                  ...(inset !== undefined
+                    ? { alignment: 'right' as const, indentRight: pt(inset) }
+                    : {}),
+                }),
+              ],
+            };
+          }),
+        };
+      }),
+    };
+    const ink = holds.filter((h): h is Extent => h !== undefined);
+    tableReads.set(table, {
+      rows: tableRows.map((row) => ({ top: row.top, lineHeight: row.lineHeight })),
+      from: measure.left + Math.min(...ink.map((h) => h.from)),
+      to: measure.left + Math.max(...ink.map((h) => h.to)),
+      left: measure.left,
     });
+    out.set(heading ? i - 1 : i, { kind: 'table', table });
+    if (heading) out.set(i, null);
     for (let k = i + 1; k < to; k++) out.set(k, null);
     i = to;
   }
   return out;
 }
+
+/**
+ * A line's cells as a heading row over a table's columns: each cell over the
+ * column whose figures it overlaps most, left to right, and an empty cell over
+ * a column it leaves bare. `undefined` where the line is no such row.
+ *
+ * @param line The line above the table, with the cells it was set out in.
+ * @param inks The ink of each of the table's columns.
+ * @returns The line's spans with a tab between every two columns, and the ink
+ *          of the heading over each column.
+ */
+function headingOver(
+  line: { spans: Array<TextSpan>; pieces?: Array<Extent> },
+  inks: ReadonlyArray<Extent | undefined>,
+): Heading | undefined {
+  const cells = splitAtTabs(line.spans);
+  const pieces = line.pieces ?? [];
+  if (
+    cells.length < 2 ||
+    pieces.length !== cells.length ||
+    cells.length > inks.length ||
+    cells.length * 2 < inks.length
+  ) {
+    return undefined;
+  }
+  const columns: Array<number> = [];
+  for (const piece of pieces) {
+    let best = -1;
+    let most = 0;
+    inks.forEach((ink, k) => {
+      if (ink === undefined) return;
+      const overlap = Math.min(piece.to, ink.to) - Math.max(piece.from, ink.from);
+      if (overlap > most) {
+        most = overlap;
+        best = k;
+      }
+    });
+    if (best <= (columns[columns.length - 1] ?? -1)) return undefined;
+    columns.push(best);
+  }
+  return {
+    spans: inks.flatMap((_, k): Array<TextSpan> => {
+      const own = columns.indexOf(k);
+      return [...(k > 0 ? [{ text: '\t' }] : []), ...(own >= 0 ? cells[own]! : [])];
+    }),
+    over: inks.map((_, k) => {
+      const own = columns.indexOf(k);
+      return own >= 0 ? pieces[own] : undefined;
+    }),
+  };
+}
+
+/** A line set over a table's columns as its heading row (see `headingOver`). */
+type Heading = { spans: Array<TextSpan>; over: Array<Extent | undefined> };
+
+/**
+ * Where a table read off the page stood on it (see `tabbedRows`): each row's
+ * baseline and the box its line stands in, top to bottom, and how far across
+ * the page its words reach — which is what a rule drawn between two of its
+ * rows is measured against (see `ruleBorders`).
+ */
+const tableReads = new WeakMap<Table, TableRead>();
+
+/** Where a table read off the page stood on it (see {@link tableReads}). */
+type TableRead = {
+  rows: ReadonlyArray<{ top: number; lineHeight: number }>;
+  /** How far across the page its words reach. */
+  from: number;
+  to: number;
+  /** Where on the page the measure its indent is stated from begins. */
+  left: number;
+};
+
+/** How many of its rows' lines a heading may stand over a table and head it. */
+const HEADING_LINES = 3;
 
 /** How far apart the ends of a column's cells may stand and still be flush. */
 const FLUSH_SLACK_PT = 2;
@@ -3243,19 +4995,28 @@ function splitAtTabs(spans: ReadonlyArray<TextSpan>): Array<Array<TextSpan>> {
  * the rule introduces; where nothing follows closely enough, the block above
  * takes it as a bottom one.
  *
+ * A rule drawn down one column is a border of a block in that column, and one
+ * drawn across the columns of a block across them: comments.pdf rules off
+ * Figure 9's caption in the right column, and taken by the nearest line under
+ * it on the page, the rule came back over "Every time the trace recorder
+ * emits…" in the left column, and none over the caption.
+ *
  * @param vectors The page's painted paths.
  * @param blocks  The blocks read off the page so far, which the rule joins.
  * @param width   The page's width, which a rule is long relative to.
+ * @param colOf   The column an x across the page stands in.
  * @returns The rules that became borders, and so must not be drawn again.
  */
 function ruleBorders(
   vectors: ReadonlyArray<PdfVector>,
-  blocks: Array<{ band: number; col: number; top: number; el: BodyElement }>,
+  blocks: Array<Block>,
   width: number,
+  colOf: (x: number) => number = () => 0,
 ): ReadonlySet<PdfVector> {
   const given = new Set<PdfVector>();
   const paragraphs = blocks.filter((b) => b.el.kind === 'paragraph');
-  if (paragraphs.length === 0) return given;
+  const tables = blocks.filter((b) => b.el.kind === 'table');
+  if (paragraphs.length === 0 && tables.length === 0) return given;
   // A rule drawn in PIECES is one rule. An invoice draws the rule under its
   // headings cell by cell — five bars on one baseline, one under each column —
   // and measured apart only the widest was long enough to be a rule: it became
@@ -3265,10 +5026,35 @@ function ruleBorders(
     const v = band.pieces[0]!;
     if (band.to - band.from < width * RULE_SHARE) continue;
     const y = (v.minY + v.maxY) / 2;
+    const border = {
+      style: 'single' as const,
+      width: pt(Math.max(v.lineWidth ?? v.maxY - v.minY, RULE_MIN_PT)),
+      colorHex: v.strokeHex ?? v.fillHex ?? '000000',
+    };
+    // A rule between two rows of a table, across it, is the top edge of the
+    // lower row's cells (§17.4.39): Figure 13's rule under its headings stayed
+    // where the page drew it, and the table, set a little lower, ran its
+    // headings through it. Only where it stands ON the edge: an invoice's
+    // rule under its headings stands in the white between them and the item,
+    // and moved onto the item's edge it rose nine points.
+    const seat = seatOf(tables, band, y);
+    if (seat !== undefined && seat.block.el.kind === 'table') {
+      seat.block.el = {
+        kind: 'table',
+        table: ruledRow(seat.block.el.table, seat.row, border, band),
+      };
+      for (const piece of band.pieces) given.add(piece);
+      continue;
+    }
+    if (paragraphs.length === 0) continue;
+    // The column the rule is drawn in, or across them.
+    const first = colOf(band.from + RULE_INSET_PT);
+    const col = first === colOf(band.to - RULE_INSET_PT) ? first : SPANNING_COLUMN;
+    const own = paragraphs.filter((b) => b.col === col);
     // The block the rule introduces: the nearest one under it. Failing that,
     // the one it closes off above.
-    const below = paragraphs.filter((b) => b.top < y).sort((a, b) => b.top - a.top)[0];
-    const above = paragraphs.filter((b) => b.top >= y).sort((a, b) => a.top - b.top)[0];
+    const below = own.filter((b) => b.top < y).sort((a, b) => b.top - a.top)[0];
+    const above = own.filter((b) => b.top >= y).sort((a, b) => a.top - b.top)[0];
     const side =
       below !== undefined && y - below.top <= RULE_REACH_PT
         ? ({ block: below, edge: 'top' } as const)
@@ -3276,11 +5062,6 @@ function ruleBorders(
           ? ({ block: above, edge: 'bottom' } as const)
           : undefined;
     if (!side || side.block.el.kind !== 'paragraph') continue;
-    const border = {
-      style: 'single' as const,
-      width: pt(Math.max(v.lineWidth ?? v.maxY - v.minY, RULE_MIN_PT)),
-      colorHex: v.strokeHex ?? v.fillHex ?? '000000',
-    };
     const { paragraph } = side.block.el;
     // A rule takes the room it is drawn in (§17.3.1.24): stood over a line,
     // it pushes the line down by its own width, and five rules over five
@@ -3315,8 +5096,442 @@ function ruleBorders(
   return given;
 }
 
+/**
+ * §17.3.1.33 — the white a block across the page leaves over the columns
+ * under it, as the space after its last paragraph. Each column reads its own
+ * lines from nothing (see `addColumn`), so the white went nowhere, and
+ * comments.pdf's Figure 13 caption came down onto the text under it. As the
+ * space before each column's first paragraph Word and LibreOffice drop it at
+ * the head of the second column, which then stands higher than the first.
+ *
+ * @param blocks A page's blocks, as read; each block across the page with
+ *               columns under it is given its white.
+ */
+function spaceUnderSpans(blocks: Array<Block>): void {
+  for (const span of blocks) {
+    if (span.col !== SPANNING_COLUMN || span.foot === undefined || span.el.kind !== 'paragraph') {
+      continue;
+    }
+    // The columns under it, as far as the next block across the page — every
+    // line across the page is a band of its own, so they are found by where
+    // they stand, not by band.
+    const next = blocks
+      .filter((b) => b.col === SPANNING_COLUMN && b.top < span.top)
+      .reduce((high, b) => Math.max(high, b.top), -Infinity);
+    // The head of each: the box of its first line.
+    const heads = blocks
+      .filter((b) => b.col !== SPANNING_COLUMN && b.top < span.top && b.top > next)
+      .map((b) => b.top + BASELINE_AT * (leadingLine(b.el) ?? 0));
+    if (heads.length === 0) continue;
+    const white = span.foot - Math.max(...heads);
+    if (white <= SPACING_NOISE_PT) continue;
+    const { paragraph } = span.el;
+    span.el = {
+      kind: 'paragraph',
+      paragraph: {
+        ...paragraph,
+        properties: { ...paragraph.properties, spacingAfter: pt(white) },
+      },
+    };
+  }
+}
+
+/**
+ * Where each column of a page's last stretch of columns — under the last block
+ * across the page — ends: the foot of its lowest paragraph, up the page.
+ *
+ * @param blocks The page's blocks.
+ * @returns The feet, one a column, or nothing where fewer than two columns hold text.
+ */
+function lastColumnFeet(blocks: ReadonlyArray<Block>): Array<number> | undefined {
+  const across = blocks
+    .filter((b) => b.col === SPANNING_COLUMN)
+    .reduce((low, b) => Math.min(low, b.top), Infinity);
+  const feet = new Map<number, number>();
+  for (const b of blocks) {
+    if (b.col === SPANNING_COLUMN || b.foot === undefined || b.top >= across) continue;
+    feet.set(b.col, Math.min(feet.get(b.col) ?? Infinity, b.foot));
+  }
+  return feet.size >= 2 ? [...feet.values()] : undefined;
+}
+
+/**
+ * Whether a page's last columns are set BALANCED: they end within a couple of
+ * lines of each other, and well above the foot of the text.
+ *
+ * @param feet  Where each column ends, up the page.
+ * @param floor Where the text ends at its lowest, up the page.
+ * @param size  The body's type size.
+ */
+function balancedEnd(feet: ReadonlyArray<number>, floor: number, size: number): boolean {
+  const line = size * NATURAL_LINE_EM;
+  const deepest = Math.min(...feet);
+  return (
+    Math.max(...feet) - deepest <= line * BALANCED_LINES && deepest - floor >= line * SHORT_LINES
+  );
+}
+
+/** How many lines apart the ends of balanced columns may stand. */
+const BALANCED_LINES = 4;
+
+/** How many lines short of the foot a page's columns stop to be set short. */
+const SHORT_LINES = 3;
+
+/** Whether an element is a drawing anchored to the page, which takes no room in the flow. */
+function floating(el: BodyElement | undefined): boolean {
+  return (
+    (el?.kind === 'shape' && el.shape.float !== undefined) ||
+    (el?.kind === 'image' && el.image.float !== undefined)
+  );
+}
+
+/** A block of a page's reading, as `ruleBorders` is handed it. */
+type Block = {
+  band: number;
+  col: number;
+  top: number;
+  el: BodyElement;
+  /** Where the box of a paragraph's last line ends, down the page. */
+  foot?: number;
+};
+
+/**
+ * A table with a rule over one of its rows: the top edge of each of the row's
+ * cells (§17.4.39), the rule taking its room out of the white the row keeps
+ * over it as a paragraph's does (see `ruleBorders`).
+ */
+function ruledRow(
+  table: Table,
+  at: number,
+  border: { style: 'single'; width: Pt; colorHex: string },
+  rule: { from: number; to: number },
+): Table {
+  const ruled: Table = {
+    ...table,
+    rows: table.rows.map((row, r) =>
+      r !== at
+        ? row
+        : {
+            ...row,
+            cells: row.cells.map((cell) => ({
+              properties: {
+                ...cell.properties,
+                borders: { ...cell.properties.borders, top: border },
+              },
+              content: cell.content.map((block, k) => {
+                const before =
+                  block.kind === 'paragraph' && k === 0
+                    ? block.paragraph.properties.spacingBefore
+                    : undefined;
+                return before === undefined || block.kind !== 'paragraph'
+                  ? block
+                  : {
+                      ...block,
+                      paragraph: {
+                        ...block.paragraph,
+                        properties: {
+                          ...block.paragraph.properties,
+                          spacingBefore: pt(Math.max(0, before - border.width)),
+                        },
+                      },
+                    };
+              }),
+            })),
+          },
+    ),
+  };
+  const read = tableReads.get(table);
+  if (!read) return ruled;
+  const fitted = fittedToRule(ruled, read, rule);
+  tableReads.set(fitted, read);
+  return fitted;
+}
+
+/**
+ * §17.4.63 — a table as wide as the rule drawn across it.
+ *
+ * A table read off a page begins where its words do, and its last column runs
+ * to the measure; a rule drawn across it is its own edge, standing a little
+ * past its words on either side. comments.pdf rules Figure 13 from six points
+ * left of its names to six right of its last figures, and written as the
+ * edge of the row under its headings, the rule ran on twenty points past the
+ * table, to the margin. The table now spans what the rule does: its first
+ * column reaches out to where the rule begins, its words held where they
+ * stood, and its last column ends where the rule ends.
+ *
+ * Only a rule that reaches past the words on both sides is the table's edge.
+ *
+ * @param table The table, its rule written as a row's border.
+ * @param read  Where it stood on the page.
+ * @param rule  The rule, across the page.
+ */
+function fittedToRule(table: Table, read: TableRead, rule: { from: number; to: number }): Table {
+  const last = table.grid.length - 1;
+  if (last < 0 || rule.from > read.from || rule.to < read.to) return table;
+  const left = read.left + (table.properties.indentPt ?? 0);
+  const right = left + table.grid.reduce((sum, w) => sum + w, 0);
+  // How far the table's edges move to the rule's: out on the left, in on the
+  // right, and the other way where the rule stands the other side.
+  const out = left - rule.from;
+  const inward = right - rule.to;
+  if (Math.abs(out) < FIT_NOISE_PT && Math.abs(inward) < FIT_NOISE_PT) return table;
+  const grid = table.grid.map((w, k) => {
+    const wider = k === 0 ? w + out : w;
+    return pt(Math.max(1, k === last ? wider - inward : wider));
+  });
+  /** A cell's paragraphs, its words held where the page set them. */
+  const held = (content: ReadonlyArray<BodyElement>, k: number): Array<BodyElement> =>
+    content.map((block) => {
+      if (block.kind !== 'paragraph') return block;
+      const { indentLeft, indentRight } = block.paragraph.properties;
+      const properties = {
+        ...block.paragraph.properties,
+        ...(k === 0 && Math.abs(out) >= FIT_NOISE_PT
+          ? { indentLeft: pt(Math.max(0, (indentLeft ?? 0) + out)) }
+          : {}),
+        ...(k === last && Math.abs(inward) >= FIT_NOISE_PT && indentRight !== undefined
+          ? { indentRight: pt(Math.max(0, indentRight - inward)) }
+          : {}),
+      };
+      return { ...block, paragraph: { ...block.paragraph, properties } };
+    });
+  return {
+    ...table,
+    properties: {
+      ...table.properties,
+      widthPt: pt(grid.reduce((sum, w) => sum + w, 0)),
+      indentPt: pt((table.properties.indentPt ?? 0) - out),
+    },
+    grid,
+    rows: table.rows.map((row) => ({
+      ...row,
+      cells: row.cells.map((cell, k) =>
+        k !== 0 && k !== last
+          ? cell
+          : {
+              properties: { ...cell.properties, width: grid[k]! },
+              content: held(cell.content, k),
+            },
+      ),
+    })),
+  };
+}
+
+/** A fit smaller than this moves nothing a reader sees. */
+const FIT_NOISE_PT = 0.5;
+
+/**
+ * The table row a rule is drawn on the top edge of: a row after the first,
+ * the rule standing where its line's box meets the box of the line above it,
+ * and reaching across the table's words. `undefined` where the rule is no
+ * such row's.
+ *
+ * @param tables The page's tables, as blocks.
+ * @param band   The rule, across the page.
+ * @param y      Its height on the page.
+ */
+function seatOf(
+  tables: ReadonlyArray<Block>,
+  band: { from: number; to: number },
+  y: number,
+): { block: Block; row: number } | undefined {
+  for (const block of tables) {
+    const read = block.el.kind === 'table' ? tableReads.get(block.el.table) : undefined;
+    if (!read) continue;
+    if (band.from > read.from + RULE_SEAT_PT || band.to < read.to - RULE_SEAT_PT) continue;
+    for (let r = 1; r < read.rows.length; r++) {
+      const row = read.rows[r]!;
+      const prev = read.rows[r - 1]!;
+      const edge = row.top + BASELINE_AT * row.lineHeight;
+      const over = prev.top - (1 - BASELINE_AT) * prev.lineHeight;
+      if (y > row.top && y < prev.top && y - edge <= RULE_SEAT_PT && over - y <= RULE_SEAT_PT) {
+        return { block, row: r };
+      }
+    }
+  }
+  return undefined;
+}
+
+/**
+ * How far off the edge between two rows a rule may stand and still be that
+ * edge — a point or two either way, which the white a row keeps does not
+ * notice.
+ */
+const RULE_SEAT_PT = 3;
+
 /** How far from a paragraph a rule may stand and still belong to it. */
 const RULE_REACH_PT = 14;
+
+/** How far in from its ends a rule is looked at to say which column it stands in. */
+const RULE_INSET_PT = 2;
+
+/**
+ * §17.3.1.31 — the box a paragraph's one line is set on: the box itself, and
+ * the indents and borders that make the paragraph's shading stand where it
+ * does.
+ */
+type Shade = {
+  box: PdfVector;
+  /** How far the box reaches over the line's box, and under it. */
+  over: number;
+  under: number;
+  indentLeft: number;
+  indentFirstLine: number;
+  indentRight: number;
+};
+
+/** A paragraph as {@link groupIntoParagraphs} reads it, with the box it is set on. */
+type ShadedParagraph = ReturnType<typeof groupIntoParagraphs>[number] & { shade?: Shade };
+
+/**
+ * §17.3.1.31 — the paragraphs a page sets on a box it fills, each given the box
+ * as its shading.
+ *
+ * canvas.pdf heads each section with its name in white on a dark bar, and each
+ * table with "Attributes" or "Methods" on a grey one. Drawn where the page drew
+ * them, the bars stayed on the sheet while the words were set again: headings
+ * slid off their bars, white on white, and the bars struck through the tables
+ * under them. As a paragraph's shading the bar goes where the paragraph goes.
+ *
+ * A paragraph's shading fills its line's box across its indents, and the box
+ * a page draws stands out over and under the line: that is a border of its
+ * own colour over the line, and one under it (§17.3.1.24), as thick as the box
+ * stands out. The room the borders take comes out of the white the page left
+ * over the paragraph and under it — and where there is none to take, the box
+ * reaches no further than the line's box does.
+ *
+ * A box is a paragraph's only where it holds the paragraph's one line and no
+ * other, stands out by less than a line over it and under it, and is no wider
+ * than the column: a panel drawn behind a block of text is drawn where the
+ * page drew it. And only a box of a colour: white is the paper's, and
+ * bug1815476.pdf backs a whole form with white boxes as wide as the sheet —
+ * taken for shading, "A N E X O" stood off centre by as much as the box
+ * reached past the column.
+ *
+ * @param paras   A region's paragraphs, top to bottom.
+ * @param boxes   The page's filled boxes (see {@link solidBox}).
+ * @param measure The column the paragraphs are set in.
+ * @returns The paragraphs, and how far under the last one its box reaches.
+ */
+function onBoxes(
+  paras: ReadonlyArray<ReturnType<typeof groupIntoParagraphs>[number]>,
+  boxes: ReadonlyArray<PdfVector>,
+  measure: { left: number; right: number } | undefined,
+): { paras: Array<ShadedParagraph>; under: number } {
+  const out: Array<ShadedParagraph> = paras.map((para) => ({ ...para }));
+  if (boxes.length === 0 || measure === undefined) return { paras: out, under: 0 };
+  let under = 0;
+  out.forEach((para, k) => {
+    if (para.lineCount !== 1 || (para.stops?.length ?? 0) > 0) return;
+    const lineTop = para.top + BASELINE_AT * para.lineHeight;
+    const lineFoot = para.bottom - (1 - BASELINE_AT) * para.lineHeight;
+    // …and no wider than the column it is set in, by more than an em or two
+    // either side: a box drawn behind half the sheet is a panel, or the paper.
+    const reach = para.fontSize * BAR_REACH_EM;
+    const box = boxes.find(
+      (b) =>
+        b.minX >= measure.left - reach &&
+        b.maxX <= measure.right + reach &&
+        b.minX <= para.left + FLUSH_PT &&
+        b.maxX >= para.right - FLUSH_PT &&
+        b.maxY >= lineTop - FLUSH_PT &&
+        b.maxY - lineTop <= para.lineHeight &&
+        b.minY <= lineFoot + FLUSH_PT &&
+        lineFoot - b.minY <= para.lineHeight &&
+        // …and no other paragraph set on it.
+        paras.every((o, n) => n === k || o.bottom > b.maxY || o.top < b.minY),
+    );
+    if (box === undefined) return;
+    const next = out[k + 1];
+    const over = Math.min(Math.max(0, box.maxY - lineTop), para.spacingBefore ?? 0, MOST_BORDER_PT);
+    const below = Math.min(
+      Math.max(0, lineFoot - box.minY),
+      next !== undefined ? (next.spacingBefore ?? 0) : Infinity,
+      MOST_BORDER_PT,
+    );
+    // The box's left edge is the paragraph's, measured from the column's edge
+    // as every indent is — not from the paragraph's own indent, which a line
+    // set a few points in drops — and its line starts in from it.
+    const inset = para.alignment === undefined ? Math.max(0, para.left - box.minX) : 0;
+    const shade: Shade = {
+      box,
+      over: over > SPACING_NOISE_PT ? over : 0,
+      under: below > SPACING_NOISE_PT ? below : 0,
+      indentLeft: box.minX - measure.left,
+      indentFirstLine: inset,
+      indentRight: measure.right - box.maxX,
+    };
+    para.shade = shade;
+    if (para.spacingBefore !== undefined) para.spacingBefore -= shade.over;
+    if (next?.spacingBefore !== undefined) next.spacingBefore -= shade.under;
+    if (k === out.length - 1) under = shade.under;
+  });
+  return { paras: out, under };
+}
+
+/**
+ * The paragraph properties a {@link Shade} sets: the box's colour behind the
+ * line, a border of it as thick as the box stands out over the line and under
+ * it, and the indents that put its edges where the page drew them.
+ */
+function shadeProperties(shade: Shade): ParagraphProperties {
+  const colorHex = shade.box.fillHex ?? 'FFFFFF';
+  const edge = (width: number): Border | undefined =>
+    width > 0 ? { style: 'single', width: pt(width), colorHex } : undefined;
+  const top = edge(shade.over);
+  const bottom = edge(shade.under);
+  const noted = (value: number): Pt | undefined =>
+    Math.abs(value) > SPACING_NOISE_PT ? pt(value) : undefined;
+  const indentLeft = noted(shade.indentLeft);
+  const indentFirstLine = noted(shade.indentFirstLine);
+  const indentRight = noted(shade.indentRight);
+  return {
+    shading: { colorHex },
+    ...(top || bottom
+      ? { borders: { ...(top ? { top } : {}), ...(bottom ? { bottom } : {}) } }
+      : {}),
+    ...(indentLeft !== undefined ? { indentLeft } : {}),
+    ...(indentFirstLine !== undefined ? { indentFirstLine } : {}),
+    ...(indentRight !== undefined ? { indentRight } : {}),
+  };
+}
+
+/**
+ * §17.3.4 — the thickest border a single line may be, twelve points: a box
+ * standing out further than that from its line is not a bar behind it.
+ */
+const MOST_BORDER_PT = 12;
+
+/** How far past its column, in ems of its line, a bar behind a line may reach. */
+const BAR_REACH_EM = 2;
+
+/** How light, in each of its channels, a fill is the paper's rather than a colour. */
+const PAPER_LEVEL = 0xfa;
+
+/**
+ * Whether a painted path is a box filled in one opaque colour, square to the
+ * page: a bar a heading is set on, a panel. A shape, a gradient, a stroked
+ * frame or a glyph is none, and nor is a box of the paper's own white.
+ *
+ * @param v The painted path.
+ */
+function solidBox(v: PdfVector): boolean {
+  if (v.fillHex === undefined || v.gradient !== undefined || v.glyph === true) return false;
+  const channels = [0, 2, 4].map((k) => parseInt(v.fillHex!.slice(k, k + 2), 16));
+  if (channels.every((c) => c >= PAPER_LEVEL)) return false;
+  if ((v.alpha ?? 1) < 1 || v.darkens === true) return false;
+  if (v.strokeHex !== undefined && v.strokeHex !== v.fillHex) return false;
+  if (v.segs.filter((s) => s.op === 'move').length !== 1) return false;
+  const points = v.segs.filter((s) => s.op !== 'close');
+  if (points.length < 4 || points.length > 5) return false;
+  const at = (value: number, edge: number): boolean => Math.abs(value - edge) <= FLUSH_PT;
+  return points.every(
+    (s) =>
+      s.op !== 'cubic' &&
+      (at(s.x, v.minX) || at(s.x, v.maxX)) &&
+      (at(s.y, v.minY) || at(s.y, v.maxY)),
+  );
+}
 
 /** The thinnest a border may be drawn and still be seen. */
 const RULE_MIN_PT = 0.5;
@@ -3391,6 +5606,9 @@ const FLUSH_PT = 1;
 
 /** And how many lines it takes before a region is a column at all. */
 const MIN_PROSE_LINES = 6;
+
+/** How many of a column's lines fill it when it is justified prose. */
+const FILLED_SHARE = 0.5;
 
 /**
  * §17.4.38 — the page's rows as the TABLE they are.

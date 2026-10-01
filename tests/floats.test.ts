@@ -91,6 +91,45 @@ describe('floating drawings (wp:anchor, §20.4.2.3)', () => {
     );
   });
 
+  it('behindDoc puts a drawing behind the text only where the text does not wrap round it', () => {
+    // Word's own wrap format for behindDoc="1" beside wrapTight or wrapSquare
+    // is plain "tight" or "square", and "behind" only beside wrapNone: sunk
+    // behind the text, tdf60351.docx's cover lost its top half under its
+    // paragraph's white shading.
+    const behindWith = (wrap: string): boolean | undefined => {
+      const pos = PAGE_POS.replace('<wp:wrapNone/>', wrap);
+      const { doc } = readDocx(buildDocxFromBody(anchoredShape(pos, 'behindDoc="1"') + TEXT));
+      const el = doc.body[0]!;
+      if (el.kind !== 'shape') throw new Error('expected shape');
+      return el.shape.float?.behind;
+    };
+    expect(behindWith('<wp:wrapNone/>')).toBe(true);
+    expect(behindWith('<wp:wrapSquare wrapText="bothSides"/>')).toBeFalsy();
+    expect(
+      behindWith(
+        '<wp:wrapTight wrapText="bothSides"><wp:wrapPolygon edited="0"><wp:start x="0" y="0"/>' +
+          '<wp:lineTo x="21600" y="0"/><wp:lineTo x="21600" y="21600"/><wp:lineTo x="0" y="21600"/>' +
+          '<wp:lineTo x="0" y="0"/></wp:wrapPolygon></wp:wrapTight>',
+      ),
+    ).toBeFalsy();
+  });
+
+  it('goes to the next page with a paragraph that breaks to it (§17.3.1.21)', () => {
+    // Word stands the picture on its paragraph's own page; placed before the
+    // paragraph's break, it stayed at the foot of the page before.
+    const pos =
+      '<wp:positionH relativeFrom="margin"><wp:posOffset>0</wp:posOffset></wp:positionH>' +
+      '<wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV>' +
+      '<wp:wrapSquare wrapText="bothSides"/>';
+    const breaking = anchoredShape(pos)
+      .replace('<w:p>', '<w:p><w:pPr><w:pageBreakBefore/></w:pPr>')
+      .replace('</w:p>', '<w:r><w:t>two</w:t></w:r></w:p>');
+    const laid = layoutOf(buildDocxFromBody('<w:p><w:r><w:t>one</w:t></w:r></w:p>' + breaking));
+    expect(laid.pages).toHaveLength(2);
+    expect(laid.pages[0]!.commands.some((c) => c.type === 'shape')).toBe(false);
+    expect(laid.pages[1]!.commands.some((c) => c.type === 'shape')).toBe(true);
+  });
+
   it('margin-relative vertical offsets hang off the top margin', () => {
     const pos =
       '<wp:positionH relativeFrom="margin"><wp:align>right</wp:align></wp:positionH>' +
@@ -214,6 +253,67 @@ describe('floating drawings (wp:anchor, §20.4.2.3)', () => {
   });
 });
 
+describe('the text beside a float (§20.4.2.3 distL/distR)', () => {
+  // A 144pt box against the right margin of the fixture's Letter page with 1"
+  // margins: its left edge stands at 72 + 468 - 144.
+  const FLOAT_LEFT = 72 + 468 - 144;
+  const RIGHT_BOX =
+    '<wp:positionH relativeFrom="margin"><wp:align>right</wp:align></wp:positionH>' +
+    '<wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV>' +
+    '<wp:wrapSquare wrapText="bothSides"/>';
+  const words = Array.from({ length: 120 }, (_, i) => `w${String(i)}`).join(' ');
+  const justified = (pPr = ''): string =>
+    `<w:p><w:pPr>${pPr}<w:jc w:val="both"/></w:pPr><w:r><w:t>${words}</w:t></w:r></w:p>`;
+
+  /** Where the paragraph's first four lines end — all beside the 72pt box; a justified line runs to its measure. */
+  function rightEnds(body: string): Array<number> {
+    const lines = layoutOf(buildDocxFromBody(body)).pages[0]!.commands.filter(
+      (c) => c.type === 'line',
+    ) as unknown as Array<{
+      originX: number;
+      line: { availableWidthPt: number; tokens: ReadonlyArray<{ kind: string; text?: string }> };
+    }>;
+    const worded = lines.filter((l) =>
+      l.line.tokens.some((t) => t.kind === 'text' && (t.text ?? '').trim() !== ''),
+    );
+    expect(worded.length).toBeGreaterThan(4);
+    return worded.slice(0, 4).map((l) => l.originX + l.line.availableWidthPt);
+  }
+
+  it('ends a justified line at the float’s own stand-off and nowhere short of it', () => {
+    // Word: 0.15, 9.35 and 17.7pt short of a picture 0, 9 and 18pt off.
+    for (const end of rightEnds(anchoredShape(RIGHT_BOX) + justified())) {
+      expect(end).toBeCloseTo(FLOAT_LEFT, 3);
+    }
+    for (const end of rightEnds(anchoredShape(RIGHT_BOX, 'distL="114300"') + justified())) {
+      expect(end).toBeCloseTo(FLOAT_LEFT - 9, 3);
+    }
+  });
+
+  it('gives an indented first line the room its indent leaves, not the float’s whole gap', () => {
+    // tdf60351.docx's first line, indented 18pt, ran 18pt into the picture.
+    const ends = rightEnds(
+      anchoredShape(RIGHT_BOX, 'distL="114300"') + justified('<w:ind w:firstLine="360"/>'),
+    );
+    for (const end of ends) expect(end).toBeCloseTo(FLOAT_LEFT - 9, 3);
+  });
+
+  it('keeps 9pt either side of a VML shape whose style states no distance', () => {
+    // Word's own wrap format for such a shape reads 0, 0, 9, 9.
+    const vml =
+      '<w:p><w:r><w:pict><v:rect xmlns:v="urn:schemas-microsoft-com:vml" ' +
+      'xmlns:w10="urn:schemas-microsoft-com:office:word" style="position:absolute;' +
+      'margin-left:0;margin-top:0;width:144pt;height:144pt;z-index:1;' +
+      'mso-position-horizontal:right;mso-position-horizontal-relative:margin;' +
+      'mso-position-vertical-relative:text" fillcolor="#3366aa" stroked="f">' +
+      '<w10:wrap type="square"/></v:rect></w:pict></w:r></w:p>';
+    const { doc } = readDocx(buildDocxFromBody(vml + TEXT));
+    const shape = doc.body.find((el) => el.kind === 'shape');
+    const dist = shape?.kind === 'shape' ? shape.shape.float?.wrapDist : undefined;
+    expect(dist).toEqual({ topPt: 0, bottomPt: 0, leftPt: 9, rightPt: 9 });
+  });
+});
+
 // A one-cell table whose only paragraph carries an anchored shape (§20.4.2.4).
 const cellFloat = (posAndWrap: string, attrs = '') =>
   `<w:tbl>
@@ -232,9 +332,14 @@ const shapeX = (laid: ReturnType<typeof layoutOf>): number => {
 };
 
 describe('a drawing anchored inside a table cell (§20.4.2.4)', () => {
-  // The table starts at the left margin (72pt) and the cell keeps Word's
-  // default 5.4pt of padding, so a cell-relative offset lands 77.4pt further
-  // right than the same offset read against the page.
+  // The table starts at the left margin (72pt) — Word 2013's placement; an
+  // older document's table stands out by its cell margin (see
+  // table-compat-outdent.test.ts) — and the cell keeps Word's default 5.4pt
+  // of padding, so a cell-relative offset lands 77.4pt further right than
+  // the same offset read against the page.
+  const WORD_2013 =
+    '<w:compat><w:compatSetting w:name="compatibilityMode" ' +
+    'w:uri="http://schemas.microsoft.com/office/word" w:val="15"/></w:compat>';
   const AT_100 =
     '<wp:positionH relativeFrom="page"><wp:posOffset>1270000</wp:posOffset></wp:positionH>' +
     '<wp:positionV relativeFrom="page"><wp:posOffset>635000</wp:posOffset></wp:positionV>' +
@@ -246,7 +351,8 @@ describe('a drawing anchored inside a table cell (§20.4.2.4)', () => {
   });
 
   it('measures its position in the CELL, which is what layoutInCell means', () => {
-    expect(shapeX(layoutOf(buildDocxFromBody(cellFloat(AT_100))))).toBeCloseTo(177.4, 0);
+    const docx = buildDocxFromBody(cellFloat(AT_100), { settingsXml: WORD_2013 });
+    expect(shapeX(layoutOf(docx))).toBeCloseTo(177.4, 0);
   });
 
   it('…and reaches past the table to the page when layoutInCell is off', () => {
@@ -536,7 +642,7 @@ describe('a shadow under a picture fill', () => {
     // The state that carries a shadow's alpha has to be named in the PICTURE
     // pass as it is in the shape pass. Left out, tdf128596's 50% black under a
     // nearly transparent tile came out solid.
-    const pdf = await Ream.parse(shadowed(true)).convert('pdf');
+    const pdf = await Ream.parse(shadowed(true)).convert('pdf', { fonts: FONTS });
     const s = Buffer.from(pdf).toString('latin1');
     // An /ExtGState carrying the per-layer alpha exists…
     expect(/\/ca 0?\.\d+/u.test(s)).toBe(true);

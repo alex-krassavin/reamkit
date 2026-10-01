@@ -23,7 +23,7 @@ import type {
   ShapeFill,
   StyleSheet,
 } from '@/core/document-model';
-import type { FontRegistry } from '@/core/font';
+import type { FontRegistry, GlyphSeg } from '@/core/font';
 import type { ResourceStore } from '@/core/ir/resources';
 
 /**
@@ -34,6 +34,57 @@ export interface FaceFamily {
   readonly family: string;
   /** §17.8.3.10 `w:family` — the kind of face, for a reader that has to substitute. */
   readonly generic: 'roman' | 'swiss' | 'modern';
+}
+
+/**
+ * The outlines a face drew a document's characters with — what a writer needs
+ * to EMBED the face, so a reader that lacks it sets the text in the face the
+ * source was set in instead of a substitute (ECMA-376 §17.8.1).
+ */
+export interface FaceOutlines {
+  /** Each character (one code point) the document shows in the face → its glyph. */
+  readonly glyphs: ReadonlyMap<string, FaceGlyph>;
+  /**
+   * The pairs the source KERNED the face by: two characters → the adjustment
+   * to the first one's advance, in thousandths of an em (negative tightens).
+   */
+  readonly kerning?: ReadonlyMap<string, number>;
+  /**
+   * The ligatures the source drew in the face: the letters one glyph stands
+   * for ("fi", "ffl") → that glyph.
+   */
+  readonly ligatures?: ReadonlyMap<string, FaceGlyph>;
+  /**
+   * OS/2 `fsType` — the embedding the face's licence allows, as its program
+   * states it; absent where the program states nothing.
+   */
+  readonly fsType?: number;
+  /** The style the face IS, which is the slot a family embeds it in. */
+  readonly bold: boolean;
+  readonly italic: boolean;
+  /** The program's own name for the face, without a subset tag. */
+  readonly postScriptName: string;
+  /**
+   * The line to set the face in, above and below the baseline, in thousandths
+   * of an em — `descent` negative. A reader that reconstructs a page gives the
+   * line it measured the page against, so a paragraph set in the face's single
+   * spacing lands where the page put it.
+   */
+  readonly ascent: number;
+  readonly descent: number;
+  readonly capHeight?: number;
+  readonly xHeight?: number;
+  /** Degrees counterclockwise from the vertical; a face slanted right is negative. */
+  readonly italicAngle: number;
+  readonly fixedPitch: boolean;
+}
+
+/** One glyph of a {@link FaceOutlines}: what it draws and how far it advances. */
+export interface FaceGlyph {
+  /** Its contours in a one-unit em, y up, filled by the nonzero rule; empty when blank. */
+  readonly outline: ReadonlyArray<GlyphSeg>;
+  /** How far the pen moves after it, in thousandths of an em. */
+  readonly advance: number;
 }
 
 /**
@@ -85,6 +136,11 @@ export interface FlowDoc {
    * to another program names the family, which is the name that program knows.
    */
   readonly faceFamilies?: ReadonlyMap<string, FaceFamily>;
+  /**
+   * The outlines of the faces a run names, keyed as {@link faceFamilies} is —
+   * for a writer that embeds them (see {@link FaceOutlines}).
+   */
+  readonly faceOutlines?: ReadonlyMap<string, FaceOutlines>;
   /** Document metadata from docProps/core.xml. */
   readonly info?: DocumentInfo;
   /** Document natural language hint (BCP-47), e.g. for tagged-PDF /Lang. */
@@ -111,4 +167,20 @@ export interface FlowDoc {
    * @w:gutter` reserves belongs to the TOP margin rather than the left.
    */
   readonly gutterAtTop?: boolean;
+  /**
+   * [MS-DOCX] `w:compatSetting` `compatibilityMode` — the version of Word
+   * whose layout the document asks for: 15 is Word 2013's, which every Word
+   * since sets a new document by. Word opens a document that states none in
+   * Compatibility Mode, and forms there none of the OpenType ligatures its
+   * faces carry.
+   */
+  readonly compatibilityMode?: number;
+  /**
+   * The application whose rules the document is set by: `'word'` for one Word
+   * sets — lines as tall as the faces on them make them (§17.3.1.33), table
+   * rows as tall as their borders make them (§17.4.38); see the layout's
+   * `TypesetBy`. Absent, the layout's flat 1.2× lines and borders that take no
+   * room.
+   */
+  readonly typesetBy?: 'word';
 }

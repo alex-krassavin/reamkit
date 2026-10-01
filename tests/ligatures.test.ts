@@ -7,6 +7,8 @@
 // went out silently — while the ligatures the face COULD draw went into
 // `/ToUnicode` as U+F001/U+F002, so our own page could not be searched.
 
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 
 import { buildDocx } from './fixtures/build-docx';
@@ -14,9 +16,16 @@ import { Ream } from '@/core/converter/ream';
 import { PdfFile } from '@/pdf-reader/document';
 import { extractPageText } from '@/pdf-reader/text';
 
+// The face a document that names no font is given — the file the CDN serves,
+// read from disk so no test waits on it. Not Roboto: what these tests turn on
+// is which code points the face carries, and Arimo has no U+FB00, answers to
+// U+FB01/U+FB02 and to their private-use twins U+F001/U+F002, and draws `ℎ`.
+// Roboto has U+FB00 and lacks `ℎ`.
+const ARIMO = { regular: new Uint8Array(readFileSync('tests/fixtures/fonts/Arimo-Regular.ttf')) };
+
 /** Everything the page says, in order. */
 async function textOf(source: Uint8Array): Promise<string> {
-  const pdf = await Ream.parse(source).convert('pdf');
+  const pdf = await Ream.parse(source).convert('pdf', { fonts: ARIMO });
   const file = PdfFile.parse(pdf);
   let out = '';
   for (const page of file.pages()) for (const run of extractPageText(file, page)) out += run.text;

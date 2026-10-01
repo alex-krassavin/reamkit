@@ -13,6 +13,7 @@ import type {
   HeaderFooterReference,
   HeaderFooterType,
   InlineImage,
+  NumberingFormat,
   PageMargins,
   PageSize,
   Paragraph,
@@ -57,6 +58,7 @@ import {
 import { poElementToFlat } from '@/word/po-to-flat';
 import { parseRunProperties } from '@/word/run-properties';
 import { parseBorders, parseTable } from '@/word/table-parser';
+import { FORMATS } from '@/word/numbering-parser';
 
 const decoder = new TextDecoder('utf-8');
 
@@ -181,8 +183,8 @@ export interface ParseContext {
   readonly openCommentRanges?: Set<string>;
   /**
    * §17.3.1.1/§17.3.1.3 — what `w:beforeAutospacing`/`w:afterAutospacing`
-   * resolve to for THIS document: 14pt when it states no compatibility mode,
-   * and nothing (the default) for every Word 2007-or-later one.
+   * resolve to: HTML's 14pt for a Word document, nothing (the default) where
+   * the caller gives none.
    */
   readonly autoSpacingPt?: number;
 }
@@ -427,11 +429,13 @@ function parseSectPrNode(sectPr: PoNode): SectionProperties {
   let margins: PageMargins | undefined;
   let titlePg = false;
   let pageNumberStart: number | undefined;
+  let pageNumberFormat: NumberingFormat | undefined;
   let lineNumbering: SectionProperties['lineNumbering'];
   let columns: SectionColumns | undefined;
   let sectionStart: 'continuous' | 'nextPage' | 'oddPage' | 'evenPage' | undefined;
   let pageBorders: SectionProperties['pageBorders'];
   let gridLinePitchPt: Pt | undefined;
+  let textDirection: SectionProperties['textDirection'];
   const headers: Array<HeaderFooterReference> = [];
   const footers: Array<HeaderFooterReference> = [];
 
@@ -494,6 +498,12 @@ function parseSectPrNode(sectPr: PoNode): SectionProperties {
       // fdo44689_start_page_0.docx asks for 0 and its footer printed 1.
       const start = poIntAttr(child, 'start');
       if (start !== undefined) pageNumberStart = start;
+      // …and the numerals it prints them in: a thesis numbers its front
+      // matter i, ii, iii before the body starts again at 1.
+      const fmt = poAttr(child, 'fmt');
+      if (fmt !== undefined && FORMATS.has(fmt as NumberingFormat) && fmt !== 'decimal') {
+        pageNumberFormat = fmt as NumberingFormat;
+      }
     } else if (poIs(child, 'w:cols')) {
       columns = parseColumns(child);
     } else if (poIs(child, 'w:pgBorders')) {
@@ -523,6 +533,11 @@ function parseSectPrNode(sectPr: PoNode): SectionProperties {
       const val = poAttr(child, 'val');
       sectionStart =
         val === 'continuous' || val === 'oddPage' || val === 'evenPage' ? val : 'nextPage';
+    } else if (poIs(child, 'w:textDirection')) {
+      // §17.6.20 — the section's lines run down the sheet, each to the left
+      // of the one before. `lrTb`, the default, says nothing.
+      const val = poAttr(child, 'val');
+      if (val === 'tbRl' || val === 'btLr') textDirection = val;
     }
   }
 
@@ -533,11 +548,13 @@ function parseSectPrNode(sectPr: PoNode): SectionProperties {
     footers,
     ...(titlePg ? { titlePg: true } : {}),
     ...(pageNumberStart !== undefined ? { pageNumberStart } : {}),
+    ...(pageNumberFormat !== undefined ? { pageNumberFormat } : {}),
     ...(lineNumbering ? { lineNumbering } : {}),
     ...(columns ? { columns } : {}),
     ...(sectionStart ? { sectionStart } : {}),
     ...(pageBorders ? { pageBorders } : {}),
     ...(gridLinePitchPt !== undefined ? { gridLinePitchPt } : {}),
+    ...(textDirection ? { textDirection } : {}),
   };
 }
 

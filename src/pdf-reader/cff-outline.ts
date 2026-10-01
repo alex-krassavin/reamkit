@@ -14,6 +14,7 @@
 // The outline comes back in a ONE-UNIT em, like the TrueType reader's, so both
 // place the same way.
 
+import { standardEncodingTable } from './encodings';
 import type { OutlineSource } from './glyf-outline';
 import type { PathSeg } from './content';
 
@@ -92,6 +93,100 @@ export function cffCidToGid(program: Uint8Array): Map<number, number> | undefine
   }
 }
 
+/**
+ * How far the pen moves after a name-keyed CFF program's `space`, in
+ * thousandths of an em — the width a writer gives the space a page never
+ * showed, which is the one it was typeset with.
+ *
+ * @param program The raw CFF bytes.
+ * @returns The advance, or `undefined` where the program has no `space` or its
+ *          width cannot be read off the charstring.
+ */
+export function cffSpaceAdvance(program: Uint8Array): number | undefined {
+  try {
+    const font = parseCff(program);
+    const gid = font?.nameToGid?.get('space');
+    if (!font || gid === undefined) return undefined;
+    const width = glyphWidth(font, gid);
+    return width === undefined ? undefined : width * font.scale * 1000;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * TN 5177 §4.1 — a glyph's width: `nominalWidthX` plus the operand a
+ * charstring puts before its first stack-clearing operator, or
+ * `defaultWidthX` where it puts none. Whether one is there is a matter of
+ * COUNT — one more than the operator takes.
+ */
+function glyphWidth(font: CffFont, gid: number): number | undefined {
+  const code = font.charStrings[gid];
+  if (!code) return undefined;
+  const { defaultWidth, nominalWidth } = font.widthsOf(gid);
+  const stack: Array<number> = [];
+  for (let i = 0; i < code.length; ) {
+    const b = code[i++]!;
+    if (b === 28) {
+      stack.push(((code[i]! << 24) | (code[i + 1]! << 16)) >> 16);
+      i += 2;
+    } else if (b >= 32 && b <= 246) stack.push(b - 139);
+    else if (b >= 247 && b <= 250) stack.push((b - 247) * 256 + code[i++]! + 108);
+    else if (b >= 251 && b <= 254) stack.push(-(b - 251) * 256 - code[i++]! - 108);
+    else if (b === 255) {
+      stack.push(
+        ((code[i]! << 24) | (code[i + 1]! << 16) | (code[i + 2]! << 8) | code[i + 3]!) / 65536,
+      );
+      i += 4;
+    } else {
+      const takes =
+        b === 21 ? 2 : b === 22 || b === 4 ? 1 : b === 14 ? (stack.length >= 4 ? 4 : 0) : -1;
+      // The stems and the masks take any even number, so the width is the odd one out.
+      const even = b === 1 || b === 3 || b === 18 || b === 23 || b === 19 || b === 20;
+      if (even) return stack.length % 2 === 1 ? nominalWidth + stack[0]! : defaultWidth;
+      if (takes < 0) return undefined; // a subroutine or anything else: not ours to guess
+      return stack.length > takes ? nominalWidth + stack[0]! : defaultWidth;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * The embedding a CFF program's licence allows: CFF has no OS/2 table, and
+ * Adobe writes the OS/2 `fsType` into the Top DICT's `PostScript` string
+ * instead (TN 5176 §9, key 12 21) as `/FSType 8 def`.
+ *
+ * @param program The raw CFF bytes.
+ * @returns The value, or `undefined` where the program states none.
+ */
+export function cffFsType(program: Uint8Array): number | undefined {
+  try {
+    const names = readIndex(program, program[2] ?? 4);
+    const tops = names ? readIndex(program, names.end) : undefined;
+    const strings = tops ? readIndex(program, tops.end) : undefined;
+    const top = tops?.items[0];
+    if (!top || !strings) return undefined;
+    const sid = parseDict(top).get(1221)?.[0];
+    if (sid === undefined || sid < STANDARD_STRINGS.length) return undefined;
+    const own = strings.items[sid - STANDARD_STRINGS.length];
+    return own ? postScriptFsType(new TextDecoder('latin1').decode(own)) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The `/FSType n def` a PostScript font program writes where an OpenType one
+ * has its OS/2 field (Adobe TN 5176 §9; a Type 1 font's `FontInfo` alike).
+ *
+ * @param text The PostScript to search.
+ * @returns The value, or `undefined` where the text states none.
+ */
+export function postScriptFsType(text: string): number | undefined {
+  const m = /\/FSType\s+(\d+)\s+def/u.exec(text);
+  return m ? Number(m[1]) : undefined;
+}
+
 /** The `CFF ` table of an OpenType wrapper, where the program is one. */
 export function openTypeCff(program: Uint8Array): Uint8Array | undefined {
   if (program.length < 12) return undefined;
@@ -128,6 +223,18 @@ interface CffFont {
   readonly scale: number;
   readonly cidToGid?: Map<number, number>;
   readonly nameToGid?: Map<string, number>;
+  /**
+   * TN 5176 §15 — the Private DICT's `defaultWidthX` and `nominalWidthX` in
+   * force for one glyph: a charstring states its width, if at all, relative
+   * to the second.
+   */
+  readonly widthsOf: (gid: number) => PrivateWidths;
+}
+
+/** TN 5176 §15 — the widths a Private DICT states (keys 20 and 21), 0 where unstated. */
+interface PrivateWidths {
+  readonly defaultWidth: number;
+  readonly nominalWidth: number;
 }
 
 function parseCff(program: Uint8Array): CffFont | undefined {
@@ -153,36 +260,48 @@ function parseCff(program: Uint8Array): CffFont | undefined {
   const matrix = top.get(1207);
   const scale = matrix && matrix.length >= 4 ? (matrix[0] ?? 0.001) : 0.001;
 
-  const privateSubrs = (dict: ReadonlyMap<number, Array<number>>): ReadonlyArray<Uint8Array> => {
+  const privateOf = (
+    dict: ReadonlyMap<number, Array<number>>,
+  ): { subrs: ReadonlyArray<Uint8Array>; widths: PrivateWidths } => {
+    const none = { subrs: [], widths: { defaultWidth: 0, nominalWidth: 0 } };
     const priv = dict.get(18);
-    if (!priv || priv.length < 2) return [];
+    if (!priv || priv.length < 2) return none;
     const size = priv[0]!;
     const offset = priv[1]!;
-    if (offset < 0 || offset + size > program.length) return [];
+    if (offset < 0 || offset + size > program.length) return none;
     const inner = parseDict(program.subarray(offset, offset + size));
+    const widths = {
+      defaultWidth: inner.get(20)?.[0] ?? 0,
+      nominalWidth: inner.get(21)?.[0] ?? 0,
+    };
     const subrsAt = inner.get(19)?.[0];
-    if (subrsAt === undefined) return [];
-    return readIndex(program, offset + subrsAt)?.items ?? [];
+    if (subrsAt === undefined) return { subrs: [], widths };
+    return { subrs: readIndex(program, offset + subrsAt)?.items ?? [], widths };
   };
 
   // TN 5176 §10 — a CID-keyed font has no single Private DICT: an FDSelect says
   // which of the FDArray's dictionaries each glyph belongs to.
   const isCid = top.has(1230);
   let localSubrs: (gid: number) => ReadonlyArray<Uint8Array>;
+  let widthsOf: (gid: number) => PrivateWidths;
   if (isCid) {
     const fdArrayAt = top.get(1236)?.[0];
     const fdSelectAt = top.get(1237)?.[0];
     const fds = fdArrayAt !== undefined ? (readIndex(program, fdArrayAt)?.items ?? []) : [];
-    const subrsPerFd = fds.map((fd) => privateSubrs(parseDict(fd)));
+    const privatePerFd = fds.map((fd) => privateOf(parseDict(fd)));
     const select =
       fdSelectAt !== undefined
         ? readFdSelect(program, fdSelectAt, charStrings.items.length)
         : undefined;
-    localSubrs = (gid: number): ReadonlyArray<Uint8Array> =>
-      subrsPerFd[select ? (select[gid] ?? 0) : 0] ?? [];
+    const privateFor = (gid: number): ReturnType<typeof privateOf> | undefined =>
+      privatePerFd[select ? (select[gid] ?? 0) : 0];
+    localSubrs = (gid: number): ReadonlyArray<Uint8Array> => privateFor(gid)?.subrs ?? [];
+    widthsOf = (gid: number): PrivateWidths =>
+      privateFor(gid)?.widths ?? { defaultWidth: 0, nominalWidth: 0 };
   } else {
-    const only = privateSubrs(top);
-    localSubrs = (): ReadonlyArray<Uint8Array> => only;
+    const only = privateOf(top);
+    localSubrs = (): ReadonlyArray<Uint8Array> => only.subrs;
+    widthsOf = (): PrivateWidths => only.widths;
   }
 
   // TN 5176 §13 — the charset lists one SID per glyph. In a CID-keyed font
@@ -204,6 +323,7 @@ function parseCff(program: Uint8Array): CffFont | undefined {
     scale,
     ...(cidToGid ? { cidToGid } : {}),
     ...(nameToGid ? { nameToGid } : {}),
+    widthsOf,
   };
 }
 
@@ -786,10 +906,14 @@ function bias(subrs: ReadonlyArray<Uint8Array>): number {
 const MAX_CALL_DEPTH = 10;
 const MAX_STEPS = 65536;
 
-// TN 5177 — run one Type 2 charstring, collecting what it draws.
-function runGlyph(font: CffFont, gid: number): Array<PathSeg> | undefined {
+// TN 5177 — run one Type 2 charstring, collecting what it draws. A `part` is
+// the base or the accent of a `seac`, which may not be one itself.
+function runGlyph(font: CffFont, gid: number, part = false): Array<PathSeg> | undefined {
   const program = font.charStrings[gid];
   if (!program) return undefined;
+  // TN 5177 Appendix C — the deprecated `seac` form of `endchar`, where this
+  // glyph is another two: `adx ady bchar achar`.
+  let seac: { adx: number; ady: number; bchar: number; achar: number } | undefined;
   const local = font.localSubrs(gid);
   const localBias = bias(local);
   const globalBias = bias(font.globalSubrs);
@@ -996,7 +1120,11 @@ function runGlyph(font: CffFont, gid: number): Array<PathSeg> | undefined {
           return true;
         case 14: // endchar
           // `endchar` takes nothing, or four for the deprecated `seac` form.
-          takeWidth(stack.length > 4 ? 4 : 0);
+          takeWidth(stack.length >= 4 ? 4 : 0);
+          if (stack.length >= 4) {
+            const [adx = 0, ady = 0, bchar = 0, achar = 0] = stack;
+            seac = { adx, ady, bchar, achar };
+          }
           if (open) out.push({ op: 'close' });
           open = false;
           return false;
@@ -1036,8 +1164,40 @@ function runGlyph(font: CffFont, gid: number): Array<PathSeg> | undefined {
   run(program, 0);
   // A charstring that ends without `endchar` leaves its last contour open.
   if (out.length > 0 && out[out.length - 1]?.op !== 'close') out.push({ op: 'close' });
-  if (out.length === 0) return undefined;
-  return out.map((seg) => scaleSeg(seg, font.scale));
+  const own = out.map((seg) => scaleSeg(seg, font.scale));
+  if (seac && !part) {
+    // TN 5177 Appendix C — the base and the accent are the glyphs StandardEncoding
+    // names at `bchar` and `achar`; the accent's origin stands at `(adx, ady)`
+    // from the base's. An é drawn as nothing is a word with a hole in it.
+    const at = seac;
+    const glyphOf = (code: number): Array<PathSeg> => {
+      const name = standardEncodingTable().get(code);
+      const gid = name !== undefined ? font.nameToGid?.get(name) : undefined;
+      return gid !== undefined ? (runGlyph(font, gid, true) ?? []) : [];
+    };
+    own.push(
+      ...glyphOf(at.bchar),
+      ...glyphOf(at.achar).map((seg) => shiftSeg(seg, at.adx * font.scale, at.ady * font.scale)),
+    );
+  }
+  return own.length > 0 ? own : undefined;
+}
+
+/** A segment moved by `(dx, dy)`: where a `seac` puts its accent. */
+function shiftSeg(seg: PathSeg, dx: number, dy: number): PathSeg {
+  if (seg.op === 'close') return seg;
+  if (seg.op === 'cubic') {
+    return {
+      op: 'cubic',
+      x1: seg.x1 + dx,
+      y1: seg.y1 + dy,
+      x2: seg.x2 + dx,
+      y2: seg.y2 + dy,
+      x: seg.x + dx,
+      y: seg.y + dy,
+    };
+  }
+  return { op: seg.op, x: seg.x + dx, y: seg.y + dy };
 }
 
 // The arithmetic escapes (`12 x`) a charstring may use. Only the ones that
@@ -1145,16 +1305,22 @@ function flexCurves(
     push([n(0), n(2), n(4)], [n(1), n(3), n(5)]);
     push([n(6), n(8), n(10)], [n(7), n(9), n(11)]);
   } else if (op === 34) {
-    // hflex: the pair stays on one line, y returning to where it began
+    // hflex — dx1 dx2 dy2 dx3 dx4 dx5 dx6: the first curve dx1 0, dx2 dy2,
+    // dx3 0; the second dx4 0, dx5 -dy2, dx6 0, back on the line it began on.
+    // Read as dx4, dx6 and nothing, the second curve lost dx5, and every
+    // point after it stood that far left: freeculture.pdf's Caslon draws the
+    // foot of its "1" with one, and the figure stood 136 units left in its
+    // cell, a gap after every 1 it sets.
     const startY = y;
     push([n(0), n(1), n(3)], [0, n(2), 0]);
-    push([n(4), n(6), 0], [0, startY - y, 0]);
+    push([n(4), n(5), n(6)], [0, startY - y, 0]);
     y = startY;
   } else if (op === 36) {
-    // hflex1
+    // hflex1 — dx1 dy1 dx2 dy2 dx3 dx4 dx5 dy5 dx6: the second curve dx4 0,
+    // dx5 dy5, then dx6 and back down to the line the pair began on.
     const startY = y;
     push([n(0), n(2), n(4)], [n(1), n(3), 0]);
-    push([n(5), n(7), n(8)], [0, n(6), startY - (y + n(6))]);
+    push([n(5), n(6), n(8)], [0, n(7), startY - (y + n(7))]);
     y = startY;
   } else if (op === 37) {
     // flex1 — the last point returns to the start on whichever axis moved less

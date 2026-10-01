@@ -8,6 +8,7 @@ import type {
   CellShading,
   FontFamilyMap,
   FrameProperties,
+  Ligatures,
   NumberingReference,
   RunProperties,
   TabStop,
@@ -48,6 +49,12 @@ export interface ResolvedRunProperties {
   readonly shadingColorHex?: string;
   /** §17.3.2.35 — extra space between the run's characters, in points. */
   readonly letterSpacingPt?: Pt;
+  /** §17.3.2.43 — the share of its own width each character is set at. */
+  readonly widthScale?: number;
+  /** §17.3.2.19 — the run is kerned at this size and above (0: not at all). */
+  readonly kerningMinPt?: Pt;
+  /** [MS-DOCX] `w14:ligatures` — the face's ligatures the run is set with. */
+  readonly ligatures?: Ligatures;
   /** §21.1.2.3.9 — a line drawn round the glyphs themselves. */
   readonly textOutline?: TextOutline;
 }
@@ -59,6 +66,12 @@ export interface ResolvedRunProperties {
 export interface ResolvedParagraphProperties {
   readonly alignment: Alignment;
   readonly spacingBefore: Pt;
+  /**
+   * §17.3.1.3 `w:beforeAutospacing` — present, and equal to
+   * {@link spacingBefore}, where the space before is the automatic (HTML) one:
+   * Word does not give it to the document's first paragraph.
+   */
+  readonly spacingBeforeAuto?: Pt;
   readonly spacingAfter: Pt;
   readonly spacingLine: Pt;
   readonly spacingLineRule: 'auto' | 'exact' | 'atLeast';
@@ -66,6 +79,12 @@ export interface ResolvedParagraphProperties {
   readonly indentRight: Pt;
   readonly indentFirstLine: Pt;
   readonly pageBreakBefore: boolean;
+  /** §17.3.1.14 — on the same page as the start of the next paragraph. */
+  readonly keepNext: boolean;
+  /** §17.3.1.15 — every line on one page. */
+  readonly keepLines: boolean;
+  /** §17.3.1.44 — no first or last line left alone on a page. */
+  readonly widowControl: boolean;
   /** §17.3.1.9 — drop the space between this paragraph and a same-styled neighbour. */
   readonly contextualSpacing: boolean;
   /** §17.3.1.37 — the paragraph's tab stops, in ascending position order. */
@@ -141,6 +160,11 @@ export const DEFAULT_RESOLVED_PARAGRAPH: ResolvedParagraphProperties = {
   indentRight: twipsToPt(0),
   indentFirstLine: twipsToPt(0),
   pageBreakBefore: false,
+  keepNext: false,
+  keepLines: false,
+  // §17.3.1.44 — on where nothing says otherwise: Word's Normal states no
+  // `w:widowControl` and keeps a paragraph's lines in twos across a page.
+  widowControl: true,
   contextualSpacing: false,
   tabs: [],
   bidi: false,

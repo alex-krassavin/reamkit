@@ -7,6 +7,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
+import type { BodyElement } from '@/core/document-model';
 import { Ream } from '@/core/converter/ream';
 import { PdfFile } from '@/pdf-reader/document';
 import { reconstructTaggedPdf } from '@/pdf-reader/tagged';
@@ -44,7 +45,127 @@ const paragraphTexts = (flow: { body: ReadonlyArray<{ kind: string }> }): Array<
         .trim(),
     );
 
+/**
+ * The same PDF with every page turned by `/Rotate 90`, written as an
+ * incremental update (§7.5.6): a new revision of each page object and a
+ * cross-reference section that points at it, the way an editor turns a page.
+ */
+function turnedPages(pdf: Uint8Array): Uint8Array {
+  // Byte for byte: TextDecoder's 'latin1' is windows-1252, which rewrites
+  // 0x80–0x9F and would corrupt every compressed stream on the way back.
+  const text = Array.from(pdf, (b) => String.fromCharCode(b)).join('');
+  const size = /\/Size (\d+)/u.exec(text)![1]!;
+  const root = /\/Root (\d+ \d+ R)/u.exec(text)![1]!;
+  const prev = /startxref\s+(\d+)\s+%%EOF\s*$/u.exec(text)![1]!;
+  let out = text;
+  const entries: Array<string> = [];
+  for (const m of text.matchAll(/(\d+) 0 obj\s*<<\/Type \/Page ([^]*?)>>\s*endobj/gu)) {
+    const offset = out.length;
+    out += `${m[1]!} 0 obj\n<</Type /Page ${m[2]!} /Rotate 90>>\nendobj\n`;
+    entries.push(`${m[1]!} 1\n${String(offset).padStart(10, '0')} 00000 n \n`);
+  }
+  const xref = out.length;
+  out +=
+    `xref\n${entries.join('')}trailer\n<</Size ${size} /Root ${root} /Prev ${prev}>>\n` +
+    `startxref\n${String(xref)}\n%%EOF\n`;
+  return Uint8Array.from(out, (c) => c.charCodeAt(0));
+}
+
+const pageBreaksIn = (flow: { body: ReadonlyArray<BodyElement> }): number =>
+  flow.body.filter((b) => b.kind === 'paragraph' && b.paragraph.properties.pageBreakBefore === true)
+    .length;
+
+/**
+ * The same PDF with its /Document element naming its children in reverse, as
+ * an incremental update (§7.5.6): a tree that opens its page away from the top.
+ */
+function lowFirst(pdf: Uint8Array): Uint8Array {
+  const text = Array.from(pdf, (b) => String.fromCharCode(b)).join('');
+  const size = /\/Size (\d+)/u.exec(text)![1]!;
+  const root = /\/Root (\d+ \d+ R)/u.exec(text)![1]!;
+  const prev = /startxref\s+(\d+)\s+%%EOF\s*$/u.exec(text)![1]!;
+  const doc = /(\d+) 0 obj\s*<<\/Type \/StructElem \/S \/Document ([^]*?)\/K \[([^\]]*)\]>>/u.exec(
+    text,
+  )!;
+  const kids = doc[3]!
+    .trim()
+    .split(/(?<=R)\s+/u)
+    .reverse()
+    .join(' ');
+  const offset = text.length;
+  let out = `${text}${doc[1]!} 0 obj\n<</Type /StructElem /S /Document ${doc[2]!}/K [${kids}]>>\nendobj\n`;
+  const xref = out.length;
+  out +=
+    `xref\n${doc[1]!} 1\n${String(offset).padStart(10, '0')} 00000 n \ntrailer\n` +
+    `<</Size ${size} /Root ${root} /Prev ${prev}>>\nstartxref\n${String(xref)}\n%%EOF\n`;
+  return Uint8Array.from(out, (c) => c.charCodeAt(0));
+}
+
+describe('the pages a tagged document is set on (§14.8)', () => {
+  it('opens a page of its own where the source page ended short', async () => {
+    // bug793632.pdf is four pages of a line each — three of front matter and
+    // the first of the body. A tree names the lines and not the pages, and
+    // read as one flow they came back as one page.
+    const brk = '<w:p><w:r><w:br w:type="page"/></w:r></w:p>';
+    const flow = await taggedFlow(
+      para('Page one.') + brk + para('Page two.') + brk + para('Page three.'),
+    );
+    expect(paragraphTexts(flow).filter((t) => t.length > 0)).toEqual([
+      'Page one.',
+      'Page two.',
+      'Page three.',
+    ]);
+    expect(pageBreaksIn(flow)).toBe(2);
+  });
+
+  it('spaces a page’s first element down only where it is the page’s first line', async () => {
+    // A tree may open a page anywhere on it: chrome-text-selection-markedContent.pdf
+    // names the guidance box at the foot of its sidebar first, and spaced down
+    // to where that box stands, the whole report began at the foot of its
+    // sheet. Here the tree is re-ordered to name the LOWER paragraph first.
+    const pdf = await Ream.parse(
+      buildDocxFromBody(
+        para('Top line') +
+          '<w:p><w:pPr><w:spacing w:before="6000"/></w:pPr><w:r><w:t>Low line</w:t></w:r></w:p>',
+      ),
+    ).convert('pdf', { fonts: FONTS, tagged: true });
+    const flow = reconstructTaggedPdf(PdfFile.parse(lowFirst(pdf)))?.doc;
+    const first = flow?.body.find((b) => b.kind === 'paragraph' && b.paragraph.runs.length > 0);
+    if (first?.kind !== 'paragraph') throw new Error('expected a paragraph');
+    expect(first.paragraph.runs.map((r) => r.text).join('')).toBe('Low line');
+    expect(first.paragraph.properties.spacingBefore ?? 0).toBe(0);
+  });
+
+  it('lets the words of a page they filled run on, as the paper broke them', async () => {
+    // A page the words filled was broken by the paper, and re-set they break
+    // wherever the new setting puts them: bug1997343.pdf's two-column first
+    // page read as one column ran on past a page, and broken again where the
+    // source page broke, a sheet of it stood alone.
+    const long = Array.from({ length: 60 }, (_, i) =>
+      para(`Line ${String(i + 1)} of a page the words fill to its foot.`),
+    ).join('');
+    const flow = await taggedFlow(long);
+    expect(paragraphTexts(flow)).toContain('Line 60 of a page the words fill to its foot.');
+    expect(pageBreaksIn(flow)).toBe(0);
+  });
+});
+
 describe('tagged-PDF reconstruction (E-PDF EP3)', () => {
+  it('turns the words with pages the turn leaves running down their sheets (§17.6.20)', async () => {
+    // Every viewer shows a portrait page turned by /Rotate 90 as a landscape
+    // sheet with its words running down it — and so is the document read back.
+    const pdf = await Ream.parse(buildDocxFromBody(para('Turned with its page.'))).convert('pdf', {
+      fonts: FONTS,
+      tagged: true,
+    });
+    const flow = reconstructTaggedPdf(PdfFile.parse(turnedPages(pdf)))?.doc;
+    expect(flow?.section?.textDirection).toBe('tbRl');
+    expect(flow?.section?.pageSize?.orientation).toBe('landscape');
+    expect(paragraphTexts(flow!)).toContain('Turned with its page.');
+    // …and the same document unturned reads across its sheet, as before.
+    expect(reconstructTaggedPdf(PdfFile.parse(pdf))?.doc.section?.textDirection).toBeUndefined();
+  });
+
   it('measures the margins the source set instead of leaving them at zero', async () => {
     // A tagged reading re-sets the words exactly as an untagged one does, and
     // needs the same margins. Without them every tagged PDF came back with its

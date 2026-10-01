@@ -132,7 +132,16 @@ export function formatLevelMarker(
   });
 }
 
-function formatCounter(format: NumberingFormat, n: number): string {
+/**
+ * A counter in the numerals a §17.18.59 format names: `lowerRoman` 4 is "iv".
+ * A format with no numeral for the number — a letter or a roman zero — gives
+ * the empty string.
+ *
+ * @param format The number format.
+ * @param n      The counter's value.
+ * @returns The counter as that format writes it.
+ */
+export function formatCounter(format: NumberingFormat, n: number): string {
   // §17.9.25 lets a level start at zero, and a digit format prints it. A
   // letter or a numeral has no zero, so those stay blank.
   if (n < 0) return '';

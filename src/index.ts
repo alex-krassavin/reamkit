@@ -37,7 +37,7 @@ export type { PdfEncryptOptions, PdfPermissions } from '@/pdf';
 
 // --- Fonts (needed to build the `fonts` option, plus advanced font handling) ---
 export { FontRegistry, parseTtf, subsetTtf } from '@/core/font';
-export type { FontBytesByVariant, FontVariant, ParsedTtf } from '@/core/font';
+export type { FontBytesByVariant, FontVariant, GlyphSeg, ParsedTtf } from '@/core/font';
 
 // --- Hyphenation (opt-in; pass the result via options.hyphenator) ---
 export {
@@ -76,7 +76,7 @@ export {
   inchToPt,
   mmToPt,
 } from '@/core/ir';
-export type { FaceFamily, FlowDoc } from '@/core/ir/flow';
+export type { FaceFamily, FaceGlyph, FaceOutlines, FlowDoc } from '@/core/ir/flow';
 export type {
   DocumentReader,
   DocumentWriter,

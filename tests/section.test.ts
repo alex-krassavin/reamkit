@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { buildDocxFromBody } from './fixtures/build-docx';
 import { countShown, showPattern } from './fixtures/pdf-show';
 import { readDocx } from '@/word/docx-reader';
+import { writeDocx } from '@/word/docx-writer';
 import { eighthPtToPt, emuToPt, halfPtToPt, twipsToPt } from '@/core/ir';
 
 import { convertDocxToPdfSync } from '@/core/converter';
@@ -170,6 +171,28 @@ describe('a section that opens on an odd or even sheet (§17.6.22)', () => {
   it('writes the type back out, so a round trip keeps it', () => {
     const flow = readDocx(threeSections('oddPage')).doc;
     expect(flow.sections[1]?.properties.sectionStart).toBe('oddPage');
+  });
+});
+
+describe('a section whose lines run down the sheet (§17.6.20)', () => {
+  const turned = (direction: string): string =>
+    '<w:p><w:r><w:t>DOWN</w:t></w:r></w:p>' +
+    '<w:sectPr><w:pgSz w:w="15840" w:h="12240" w:orient="landscape"/>' +
+    `<w:textDirection w:val="${direction}"/></w:sectPr>`;
+
+  it('reads the direction the section states, and says nothing for the default', () => {
+    expect(sectionOf(turned('tbRl')).textDirection).toBe('tbRl');
+    expect(sectionOf(turned('btLr')).textDirection).toBe('btLr');
+    expect(sectionOf(turned('lrTb')).textDirection).toBeUndefined();
+  });
+
+  it('writes the direction back out, so a round trip keeps it', () => {
+    // Dropped on the way out, a page a viewer shows turned came back from
+    // the .docx with its words flat across the sheet.
+    const written = writeDocx(readDocx(buildDocxFromBody(turned('tbRl'))).doc).bytes;
+    const xml = new TextDecoder().decode(OpcPackage.open(written).getMainDocument().data);
+    expect(xml).toMatch(/<w:sectPr>.*<w:textDirection w:val="tbRl"\/>.*<\/w:sectPr>/su);
+    expect(readDocx(written).doc.sections.at(-1)?.properties.textDirection).toBe('tbRl');
   });
 });
 

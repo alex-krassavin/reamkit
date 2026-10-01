@@ -195,6 +195,19 @@ describe('doc reader (DOC-1)', () => {
     expect(props?.spacingAfter).toBe(6);
   });
 
+  it('reads widow control from the PAPX, on where it says nothing', () => {
+    // [MS-DOC] sprmPFWidowControl — Word's Normal sets it, and a paragraph that
+    // turns it off says so with a zero.
+    const doc = readDoc(
+      buildDoc([{ text: 'Off\rOn\r', compressed: false }], {
+        paraRuns: [{ length: 4, widowControl: false }, { length: 3 }],
+      }),
+    ).doc;
+    const [off, on] = paragraphs(doc);
+    expect(off?.paragraph.properties.widowControl).toBe(false);
+    expect(on?.paragraph.properties.widowControl).toBe(true);
+  });
+
   it('applies CHPX run formatting and PAPX paragraph formatting together', () => {
     const doc = readDoc(
       buildDoc([{ text: 'Title\r', compressed: false }], {

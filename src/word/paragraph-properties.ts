@@ -21,10 +21,11 @@ const ALIGNMENTS = new Set<Alignment>(['left', 'right', 'center', 'both', 'distr
 const LINE_RULES = new Set<'auto' | 'exact' | 'atLeast'>(['auto', 'exact', 'atLeast']);
 
 /**
- * §17.3.1.1/§17.3.1.3 — the gap `w:*Autospacing` asks the consumer for. Word's
- * own automatic value is HTML's 14pt, and only a document old enough to state
- * no `w:compatSetting compatibilityMode` still gets it: from Word 2007 on the
- * automatic value is nothing at all, which is what both references leave.
+ * §17.3.1.1/§17.3.1.3 — the gap `w:*Autospacing` asks the consumer for:
+ * HTML's 14pt, in every compatibility mode. Word for Mac stands two such
+ * paragraphs 14.02pt apart in modes 14, 15 and none alike; LibreOffice leaves
+ * nothing for a document that states a mode, which is where the earlier
+ * reading of "nothing from Word 2007 on" came from.
  */
 export const HTML_AUTO_SPACING_PT = 14;
 
@@ -104,8 +105,8 @@ function parseFramePr(node: unknown): FrameProperties | undefined {
  * @param pPr The `w:pPr` element in flat (fast-xml-parser) shape, or anything
  *   non-element (yielding an empty result).
  * @param autoSpacingPt What `w:beforeAutospacing`/`w:afterAutospacing` resolve
- *   to — {@link HTML_AUTO_SPACING_PT} for a document that states no
- *   compatibility mode, and 0 (the default) for every Word 2007-or-later one.
+ *   to — {@link HTML_AUTO_SPACING_PT} for a Word document, 0 (the default)
+ *   where the caller has no automatic spacing to give.
  * @returns The extracted properties; an empty object when `pPr` is absent.
  */
 export function parseParagraphProperties(
@@ -223,6 +224,23 @@ export function parseParagraphProperties(
   if ('w:pageBreakBefore' in el) {
     const v = parseToggle(el['w:pageBreakBefore']);
     if (v !== undefined) out.pageBreakBefore = v;
+  }
+
+  // §17.3.1.14/15 — `w:keepNext`, `w:keepLines`: Word's own headings set both.
+  if ('w:keepNext' in el) {
+    const v = parseToggle(el['w:keepNext']);
+    if (v !== undefined) out.keepNext = v;
+  }
+  if ('w:keepLines' in el) {
+    const v = parseToggle(el['w:keepLines']);
+    if (v !== undefined) out.keepLines = v;
+  }
+
+  // §17.3.1.44 — `w:widowControl`, and `w:val="0"` is how a style turns off
+  // what Word applies to every paragraph that does not say.
+  if ('w:widowControl' in el) {
+    const v = parseToggle(el['w:widowControl']);
+    if (v !== undefined) out.widowControl = v;
   }
 
   // ECMA-376 §17.3.1.6 — w:bidi is a toggle setting the paragraph base

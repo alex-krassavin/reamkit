@@ -5,21 +5,21 @@
 
 import { describe, expect, it } from 'vitest';
 
+import type { BodyElement } from '@/core/document-model';
 import type { PdfValue } from '@/pdf/objects';
 import { Ream } from '@/core/converter/ream';
 import { PdfFile } from '@/pdf-reader/document';
 import { reconstructByLayout } from '@/pdf-reader/layout';
+import { standardWidth } from '@/pdf-reader/standard-widths';
 import { dict, name, stream } from '@/pdf/objects';
 import { PdfDocument } from '@/pdf/writer';
 
 const ROWS = 18;
 
-/** A one-page PDF of `ops`, drawn in Helvetica on a letter sheet. */
-function onePage(ops: ReadonlyArray<string>): Uint8Array {
+/** A one-page PDF of `ops`, drawn in Helvetica (or `face`) on a letter sheet. */
+function onePage(ops: ReadonlyArray<string>, face = 'Helvetica'): Uint8Array {
   const doc = new PdfDocument();
-  const font = doc.add(
-    dict({ Type: name('Font'), Subtype: name('Type1'), BaseFont: name('Helvetica') }),
-  );
+  const font = doc.add(dict({ Type: name('Font'), Subtype: name('Type1'), BaseFont: name(face) }));
   const content = doc.add(stream({}, new TextEncoder().encode(ops.join('\n'))));
   const pagesMap = dict({ Type: name('Pages'), Kids: [], Count: 1 });
   const pagesRef = doc.add(pagesMap);
@@ -135,6 +135,81 @@ describe('two-column reconstruction (E-PDF EP17)', () => {
     expect(tokens.slice(0, ROWS)).toEqual(column('L'));
     expect(tokens.slice(ROWS, ROWS * 2)).toEqual(column('M'));
     expect(tokens.slice(ROWS * 2)).toEqual(column('R'));
+  });
+
+  it('reads a page set in two columns of TABLES by its two columns', () => {
+    // A table's columns stand apart line after line as a page's do. canvas.pdf
+    // sets two columns of Name, Type and Default tables under headings that
+    // run across them, and read at every gap its sheets came back in five
+    // columns a word wide each, on seven pages where it has two.
+    const ops = ['BT /F1 9 Tf'];
+    for (const [side, x] of [
+      ['L', 40],
+      ['R', 320],
+    ] as const) {
+      let y = 740;
+      for (let s = 0; s < 4; s++) {
+        const head = `${side}h${String(s)} a heading over the table under it`;
+        ops.push(`1 0 0 1 ${String(x)} ${String(y)} Tm (${head}) Tj`);
+        for (let r = 0; r < 5; r++) {
+          y -= 12;
+          const n = `${String(s)}${String(r)}`;
+          ops.push(`1 0 0 1 ${String(x)} ${String(y)} Tm (${side}n${n}) Tj`);
+          ops.push(`1 0 0 1 ${String(x + 70)} ${String(y)} Tm (${side}t${n}) Tj`);
+          ops.push(`1 0 0 1 ${String(x + 140)} ${String(y)} Tm (${side}v${n}) Tj`);
+        }
+        y -= 24;
+      }
+    }
+    ops.push('ET');
+    const textIn = (els: ReadonlyArray<BodyElement>): string =>
+      els
+        .map((el) =>
+          el.kind === 'paragraph'
+            ? el.paragraph.runs.map((r) => r.text).join('')
+            : el.kind === 'table'
+              ? el.table.rows.flatMap((row) => row.cells.map((c) => textIn(c.content))).join(' ')
+              : '',
+        )
+        .join(' ');
+    const tokens = textIn(Ream.parse(onePage(ops)).flow.body).match(/[LR][hntv]\d+/gu) ?? [];
+    expect(tokens).toHaveLength(2 * 4 * 16);
+    // Every token of the left column before any of the right…
+    const right = tokens.findIndex((t) => t.startsWith('R'));
+    expect(tokens.slice(0, right).every((t) => t.startsWith('L'))).toBe(true);
+    expect(tokens.slice(right).every((t) => t.startsWith('R'))).toBe(true);
+    // …and a row's cells read across it, as the page sets them.
+    expect(tokens.slice(0, 7)).toEqual(['Lh0', 'Ln00', 'Lt00', 'Lv00', 'Ln01', 'Lt01', 'Lv01']);
+  });
+
+  it('reads a JUSTIFIED page in its columns', () => {
+    // Every full line of a justified column ends where the column does, and
+    // only a paragraph's first line starts anywhere but its edge: the right
+    // edges agree more than the left ones, which is what a column of amounts
+    // looks like. comments.pdf's pages came back read straight across both
+    // columns, a line of one and a line of the other.
+    const line = (tag: string, first: boolean): string =>
+      `${tag} ${'set in the column and filling it '.repeat(3)}`.slice(0, first ? 42 : 44);
+    const ops = ['BT /F1 9 Tf'];
+    for (let k = 0; k < 30; k++) {
+      const first = k % 5 === 0;
+      const y = String(720 - k * 11);
+      const n = String(k + 1).padStart(2, '0');
+      // 44 characters of 9pt Courier fill the 237.6 points of each column.
+      ops.push(`1 0 0 1 ${String(54 + (first ? 10.8 : 0))} ${y} Tm (${line(`L${n}`, first)}) Tj`);
+      ops.push(`1 0 0 1 ${String(317 + (first ? 10.8 : 0))} ${y} Tm (${line(`R${n}`, first)}) Tj`);
+    }
+    ops.push('ET');
+    const tokens =
+      Ream.parse(onePage(ops, 'Courier'))
+        .flow.body.map((el) =>
+          el.kind === 'paragraph' ? el.paragraph.runs.map((r) => r.text).join('') : '',
+        )
+        .join(' ')
+        .match(/[LR]\d\d/gu) ?? [];
+    const column = (letter: string): Array<string> =>
+      Array.from({ length: 30 }, (_, i) => `${letter}${String(i + 1).padStart(2, '0')}`);
+    expect(tokens).toEqual([...column('L'), ...column('R')]);
   });
 
   it('reads a page RULED into columns by its rows, not by its columns', () => {
@@ -303,6 +378,266 @@ describe('two-column reconstruction (E-PDF EP17)', () => {
     ops.push('ET');
     const tokens = bodyTokens(onePage(ops));
     expect(tokens[tokens.length - 1]).toBe('FOOTER');
+  });
+
+  it('reads an index down its columns, entries run on into the gutter and all', () => {
+    // freeculture.pdf sets its index two columns to the page, six points apart
+    // at their widest, under a heading centred over both. Entries that ran
+    // past the middle of the white between them were read as lines across the
+    // page — "167–Apple Corporation" one line — and the heading, standing
+    // wholly right of that middle, as the head of the right column.
+    const size = 8;
+    const width = (text: string): number =>
+      ([...text].reduce((w, c) => w + (standardWidth('Helvetica', c.charCodeAt(0), c) ?? 0), 0) *
+        size) /
+      1000;
+    // An entry that runs on to within seven points of the right column.
+    const long = (head: string): string => {
+      let text = head;
+      while (72 + width(`${text}1`) < 243) text += '1';
+      return text;
+    };
+    const ops = ['BT /F1 15 Tf 1 0 0 1 215 740 Tm (INDEX) Tj', `/F1 ${String(size)} Tf`];
+    for (let k = 0; k < 30; k++) {
+      const y = 700 - k * 10;
+      const n = String(k + 1).padStart(2, '0');
+      const left =
+        k % 6 === 3 || k >= 25 ? long(`L${n} an entry that runs on, `) : `L${n} entry, 12`;
+      ops.push(`1 0 0 1 72 ${String(y)} Tm (${left}) Tj`);
+      // The right column is the shorter: the last lines of the left one stand alone.
+      const right = `R${n} an entry in the right column, ${String(34 + k)}${k % 3 === 0 ? ', 35' : ''}`;
+      if (k < 24) ops.push(`1 0 0 1 250 ${String(y)} Tm (${right}) Tj`);
+    }
+    ops.push('ET');
+    const text = Ream.parse(onePage(ops))
+      .flow.body.map((el) =>
+        el.kind === 'paragraph' ? el.paragraph.runs.map((r) => r.text).join('') : '',
+      )
+      .join(' ');
+    const column = (letter: string, rows: number): Array<string> =>
+      Array.from({ length: rows }, (_, i) => `${letter}${String(i + 1).padStart(2, '0')}`);
+    expect(text.match(/INDEX|[LR]\d\d/gu)).toEqual([
+      'INDEX',
+      ...column('L', 30),
+      ...column('R', 24),
+    ]);
+  });
+
+  it("sets a ragged column's gutter as the white its longest lines leave, not where most end", () => {
+    // freeculture.pdf's index sets its entries ragged, and its gutter was
+    // measured from where most of them end: set that far apart, its columns
+    // came back a third narrower than the page's, and the thirteen pages of
+    // the index ran to twenty-seven.
+    const size = 8;
+    const width = (text: string): number =>
+      ([...text].reduce((w, c) => w + (standardWidth('Helvetica', c.charCodeAt(0), c) ?? 0), 0) *
+        size) /
+      1000;
+    const long = (head: string): string => {
+      let text = head;
+      while (72 + width(`${text}1`) < 305) text += '1';
+      return text;
+    };
+    const ops = [`BT /F1 ${String(size)} Tf`];
+    for (let k = 0; k < 30; k++) {
+      const y = 700 - k * 10;
+      const n = String(k + 1).padStart(2, '0');
+      const left =
+        k % 5 === 2
+          ? long(`L${n} an entry that runs on, `)
+          : `L${n} ${'an entry '.repeat(1 + (k % 4))}12`;
+      ops.push(`1 0 0 1 72 ${String(y)} Tm (${left}) Tj`);
+      ops.push(
+        `1 0 0 1 320 ${String(y)} Tm (R${n} an entry in the right-hand column, ${String(34 + k)}) Tj`,
+      );
+    }
+    ops.push('ET');
+    const longest = 72 + width(long('L03 an entry that runs on, '));
+    const columns = Ream.parse(onePage(ops)).flow.sections.find(
+      (section) => section.properties.columns,
+    )?.properties.columns;
+    expect(columns?.count).toBe(2);
+    expect(columns?.spacePt).toBeCloseTo(320 - longest, 1);
+  });
+
+  it('measures a gutter past a line the page set over its measure', () => {
+    // TeX leaves a line over its measure where it can break a paragraph no
+    // better, and it stands out into the gutter alone: comments.pdf's, ten
+    // points past the edge of its column, was taken for where the column
+    // ends, and every justified line of it stopped short.
+    const size = 8;
+    const width = (text: string): number =>
+      ([...text].reduce((w, c) => w + (standardWidth('Helvetica', c.charCodeAt(0), c) ?? 0), 0) *
+        size) /
+      1000;
+    const line = (n: string): string => `L${n} ${'x'.repeat(48)}`;
+    const ops = [`BT /F1 ${String(size)} Tf`];
+    for (let k = 0; k < 30; k++) {
+      const y = 700 - k * 10;
+      const n = String(k + 1).padStart(2, '0');
+      ops.push(`1 0 0 1 72 ${String(y)} Tm (${line(n)}${k === 12 ? 'xx' : ''}) Tj`);
+      ops.push(
+        `1 0 0 1 300 ${String(y)} Tm (R${n} an entry in the right-hand column, ${String(34 + k)}) Tj`,
+      );
+    }
+    ops.push('ET');
+    const columns = Ream.parse(onePage(ops)).flow.sections.find(
+      (section) => section.properties.columns,
+    )?.properties.columns;
+    expect(columns?.count).toBe(2);
+    expect(columns?.spacePt).toBeCloseTo(300 - (72 + width(line('01'))), 1);
+  });
+
+  it('reads a line with a word space over a point as running across it', () => {
+    // A column of long lines spaces its words anywhere, and now and then a
+    // few of them over the same point: freeculture.pdf's index spaced four
+    // entries over one point seventy points short of its right column, and a
+    // gutter was voted there — every entry longer than that was cut in two.
+    const size = 8;
+    const width = (text: string): number =>
+      ([...text].reduce((w, c) => w + (standardWidth('Helvetica', c.charCodeAt(0), c) ?? 0), 0) *
+        size) /
+      1000;
+    const ops = [`BT /F1 ${String(size)} Tf`];
+    for (let k = 0; k < 30; k++) {
+      const y = 700 - k * 10;
+      const n = String(k + 1).padStart(2, '0');
+      if (k < 14) ops.push(`1 0 0 1 72 ${String(y)} Tm (L${n} short, 12) Tj`);
+      else if (k % 4 !== 3) {
+        ops.push(
+          `1 0 0 1 72 ${String(y)} Tm (L${n} a long entry, 12, 34, 56, 78, 90, 123, 456) Tj`,
+        );
+      } else {
+        // The same entry set in two runs, the space between them stepped.
+        const head = `L${n} a long entry, 12, 34,`;
+        ops.push(`1 0 0 1 72 ${String(y)} Tm (${head}) Tj`);
+        ops.push(
+          `1 0 0 1 ${String(72 + width(head) + 2.2)} ${String(y)} Tm (56, 78, 90, 123, 456) Tj`,
+        );
+      }
+      ops.push(
+        `1 0 0 1 320 ${String(y)} Tm (R${n} an entry in the right-hand column, ${String(34 + k)}) Tj`,
+      );
+    }
+    ops.push('ET');
+    const text = Ream.parse(onePage(ops))
+      .flow.body.map((el) =>
+        el.kind === 'paragraph' ? el.paragraph.runs.map((r) => r.text).join('') : '',
+      )
+      .join(' ');
+    const column = (letter: string, rows: number): Array<string> =>
+      Array.from({ length: rows }, (_, i) => `${letter}${String(i + 1).padStart(2, '0')}`);
+    expect(text.match(/[LR]\d\d/gu)).toEqual([...column('L', 30), ...column('R', 30)]);
+    expect(text).toContain('L16 a long entry, 12, 34, 56, 78, 90, 123, 456');
+  });
+
+  it('reads an index whose entries hang, a line apiece where the page ends them', () => {
+    // freeculture.pdf sets "democracy:" at the edge, its sub-entries a level
+    // in, and the lines that carry an entry on a level further in again.
+    // Read by the measure alone, a line back at the edge after one carried
+    // on was taken for the second line of a paragraph set in.
+    const ops = ['BT /F1 8 Tf'];
+    const lines: Array<[number, string]> = [
+      [72, 'democracy:'],
+      [82, 'digital sharing within, 184'],
+      [82, 'media concentration and, 166'],
+      [82, 'in technologies of expression, 33, 35, 36, 37, 38, 39, 40, 41,'],
+      [92, '42, 43, 44-45'],
+      [72, 'Democratic Party, 249'],
+      [72, 'derivative works, 329n'],
+      [82, 'historical shift in copyright coverage of, 136, 137, 138, 139,'],
+      [92, '170-72'],
+      [72, 'developing countries, foreign patent costs in, 63, 64, 65, 66,'],
+      [92, '257-61, 313n'],
+      [72, 'Diamond Multimedia Systems, 323n'],
+    ];
+    lines.forEach(([x, text], k) =>
+      ops.push(`1 0 0 1 ${String(x)} ${String(700 - k * 10)} Tm (${text}) Tj`),
+    );
+    ops.push('ET');
+    const paragraphs = Ream.parse(onePage(ops)).flow.body.flatMap((el) =>
+      el.kind === 'paragraph' ? [el.paragraph.runs.map((r) => r.text).join('')] : [],
+    );
+    expect(paragraphs.map((p) => p.replace(/\s+/gu, ' '))).toEqual([
+      'democracy:',
+      'digital sharing within, 184',
+      'media concentration and, 166',
+      'in technologies of expression, 33, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44-45',
+      'Democratic Party, 249',
+      'derivative works, 329n',
+      'historical shift in copyright coverage of, 136, 137, 138, 139, 170-72',
+      'developing countries, foreign patent costs in, 63, 64, 65, 66, 257-61, 313n',
+      'Diamond Multimedia Systems, 323n',
+    ]);
+  });
+
+  it('reads a page of prose with a quotation set in as prose, not as an index', () => {
+    // freeculture.pdf sets its quotations in from the edge, reached from a
+    // full line of the paragraph they break, as an index's entries go on; read
+    // as hanging, a page of its prose came back a paragraph to every line.
+    const full = 'the argument runs on from one line to the next as prose does';
+    const ops = ['BT /F1 10 Tf'];
+    const lines: Array<[number, string]> = [
+      ...Array.from({ length: 5 }, (): [number, string] => [72, full]),
+      [72, 'and ends here.'],
+      ...Array.from({ length: 4 }, (): [number, string] => [72, full]),
+      [92, 'a quotation set in from the edge of the column, as long'],
+      [92, 'as the lines of the prose are, or nearly so, runs on'],
+      [92, 'and ends.'],
+      ...Array.from({ length: 4 }, (): [number, string] => [72, full]),
+      [72, 'the end.'],
+    ];
+    lines.forEach(([x, text], k) =>
+      ops.push(`1 0 0 1 ${String(x)} ${String(700 - k * 12)} Tm (${text}) Tj`),
+    );
+    ops.push('ET');
+    const paragraphs = Ream.parse(onePage(ops)).flow.body.flatMap((el) =>
+      el.kind === 'paragraph' ? [el.paragraph.runs.map((r) => r.text).join('')] : [],
+    );
+    expect(paragraphs[0]?.replace(/\s+/gu, ' ')).toBe(
+      `${Array(5).fill(full).join(' ')} and ends here.`,
+    );
+  });
+
+  it('carries an entry on at the level its lines go on at, however short the line before', () => {
+    // freeculture.pdf breaks "RPI, see Rensselaer Polytechnic" a third of
+    // the column short, for want of room for "Institute", and carries it on a
+    // level in: taken for an entry ended short, it came back two.
+    const ops = ['BT /F1 8 Tf'];
+    const lines: Array<[number, string]> = [
+      [72, 'Rensselaer Polytechnic Institute (RPI), 48, 49, 50, 51, 185,'],
+      [92, '200, 206'],
+      [72, 'Rhapsody, 191'],
+      [72, 'Rise of the Creative Class, The (Florida), 21'],
+      [72, 'Roberts, Richard, 309n, 310n, 311n, 312n, 313n, 314n, 315n,'],
+      [92, '316n'],
+      [72, 'Rogers, Fred, 111'],
+      [72, 'RPI, see Rensselaer Polytechnic'],
+      [92, 'Institute'],
+      [72, 'Rubin, Jed, 44'],
+      [72, 'Russia, commercial piracy in, 63, 64, 65, 66, 67, 68, 69, 70,'],
+      [92, '71, 302'],
+      [72, 'Safire, William, 128, 129, 130, 131, 132, 133, 134, 135, 136,'],
+      [92, '137, 138'],
+    ];
+    lines.forEach(([x, text], k) =>
+      ops.push(`1 0 0 1 ${String(x)} ${String(700 - k * 10)} Tm (${text}) Tj`),
+    );
+    ops.push('ET');
+    const paragraphs = Ream.parse(onePage(ops)).flow.body.flatMap((el) =>
+      el.kind === 'paragraph' ? [el.paragraph.runs.map((r) => r.text).join('')] : [],
+    );
+    expect(paragraphs.map((p) => p.replace(/\s+/gu, ' '))).toEqual([
+      'Rensselaer Polytechnic Institute (RPI), 48, 49, 50, 51, 185, 200, 206',
+      'Rhapsody, 191',
+      'Rise of the Creative Class, The (Florida), 21',
+      'Roberts, Richard, 309n, 310n, 311n, 312n, 313n, 314n, 315n, 316n',
+      'Rogers, Fred, 111',
+      'RPI, see Rensselaer Polytechnic Institute',
+      'Rubin, Jed, 44',
+      'Russia, commercial piracy in, 63, 64, 65, 66, 67, 68, 69, 70, 71, 302',
+      'Safire, William, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138',
+    ]);
   });
 
   it('reads an invoice ACROSS, not down: figures against the right margin are not a column', () => {

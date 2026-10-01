@@ -116,6 +116,23 @@ export function embeddedDocFontProvider(embedded: ReadonlyMap<string, FontRegist
  * Open CDN substitutes (Arimo / Tinos / Cousine / Carlito / Caladea — the
  * LibreOffice metric-compatible mapping).
  * Always answers; the chain reports it as a substitution.
+ *
+ * A family's set is shared by every request for it, those made while the
+ * download is in flight included, and a whole set is downloaded once per
+ * provider. A set whose regular face cannot be downloaded rejects `resolve`
+ * with {@link fetchFontSet}'s error rather than answering {@link NO_FONT}: this
+ * is the chain's last resort, and a chain that answers none sends the
+ * conversion to the auto-download path, which records no substitution. The
+ * failed set is not kept, so the next request asks the network again.
+ *
+ * Nor is a set kept that came without a bold or italic face. The requests that
+ * waited on it fall back to the faces it has, and the next request assembles
+ * the set anew: a face the network lost is asked for again, and one the CDN
+ * answered with an HTTP error is not, since the download cache beneath
+ * {@link fetchFontSet} remembers it as missing.
+ *
+ * @param options An injectable `fetch` (defaults to the global one).
+ * @returns The `'remote'` provider.
  */
 export function remoteFontProvider(options: { readonly fetch?: FetchLike } = {}): FontProvider {
   const cache = new Map<FamilyKey, Promise<FontBytesByVariant>>();
@@ -128,7 +145,28 @@ export function remoteFontProvider(options: { readonly fetch?: FetchLike } = {})
         set = fetchFontSet({ family, ...(options.fetch ? { fetch: options.fetch } : {}) });
         cache.set(family, set);
       }
-      const fonts = await set;
+      let fonts: FontBytesByVariant;
+      try {
+        fonts = await set;
+      } catch (error) {
+        // The regular face never came: offline, an HTTP error, a dropped
+        // connection. Kept, the failed set answered every later request for the
+        // family with the same error and never asked again, for as long as the
+        // provider lived, and a server builds its chain once. So it is
+        // forgotten, unless a newer download already stands in its place.
+        if (cache.get(family) === set) cache.delete(family);
+        throw error;
+      }
+      // A bold or italic face that did not come is just missing from the set,
+      // whether the network lost it or the CDN never had it. Kept, the set
+      // answered every later request for that face with another, for as long as
+      // the provider lived. So it is forgotten too, unless a newer download
+      // already stands in its place. The next request assembles the set anew
+      // from the download cache, which asks the network again only for a lost
+      // face: one the CDN answered with an error, it remembers as missing.
+      const partial =
+        fonts.bold === undefined || fonts.italic === undefined || fonts.boldItalic === undefined;
+      if (partial && cache.get(family) === set) cache.delete(family);
       // The shared cascade restores boldItalic→bold/italic degradation here —
       // fetchFontSet is best-effort, so a face can legitimately be missing.
       const picked = pickVariant((x) => fonts[x] !== undefined, req.bold, req.italic) ?? 'regular';

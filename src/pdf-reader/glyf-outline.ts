@@ -172,6 +172,150 @@ export function postGlyphNames(program: Uint8Array): Map<string, number> | undef
   return out.size > 0 ? out : undefined;
 }
 
+/**
+ * OS/2 `fsType` — the embedding a TrueType or OpenType program's licence allows
+ * (ISO/IEC 14496-22, OS/2 table).
+ *
+ * @param program The raw sfnt bytes.
+ * @returns The field, or `undefined` where the program carries no OS/2 table —
+ *          a subsetter may drop it, and then the program states nothing.
+ */
+export function sfntFsType(program: Uint8Array): number | undefined {
+  let tables: Map<string, { offset: number; length: number }>;
+  try {
+    tables = sfntTables(program);
+  } catch {
+    return undefined;
+  }
+  const os2 = tables.get('OS/2');
+  if (!os2 || os2.length < 10 || os2.offset + 10 > program.length) return undefined;
+  const view = new DataView(program.buffer, program.byteOffset, program.byteLength);
+  return view.getUint16(os2.offset + 8);
+}
+
+/**
+ * How far the pen moves after an sfnt program's space, in thousandths of an em:
+ * the glyph its `cmap` (or its `post` names) gives U+0020, measured in `hmtx`.
+ * A subset keeps the metrics of glyphs it dropped the outlines of, and the
+ * width a page's words were set apart by is the one a writer should give the
+ * space the page never showed.
+ *
+ * @param program The raw sfnt bytes.
+ * @returns The advance, or `undefined` where the program says nothing of a space.
+ */
+export function sfntSpaceAdvance(program: Uint8Array): number | undefined {
+  let tables: Map<string, { offset: number; length: number }>;
+  try {
+    tables = sfntTables(program);
+  } catch {
+    return undefined;
+  }
+  const head = tables.get('head');
+  const hhea = tables.get('hhea');
+  const hmtx = tables.get('hmtx');
+  if (!head || !hhea || !hmtx) return undefined;
+  const view = new DataView(program.buffer, program.byteOffset, program.byteLength);
+  const cmaps = cmapSubtables(program);
+  const viaCmap = [
+    cmaps.get('3,1')?.(0x20),
+    cmaps.get('0,3')?.(0x20),
+    cmaps.get('3,0')?.(0xf020),
+    cmaps.get('3,0')?.(0x20),
+    cmaps.get('1,0')?.(0x20),
+  ].find((gid) => gid !== undefined && gid > 0);
+  const gid = viaCmap ?? postGlyphNames(program)?.get('space');
+  if (gid === undefined || gid <= 0) return undefined;
+  const unitsPerEm = safeUint16(view, head.offset + 18) || 1000;
+  const metrics = safeUint16(view, hhea.offset + 34);
+  if (metrics === 0) return undefined;
+  const at = hmtx.offset + Math.min(gid, metrics - 1) * 4;
+  if (at + 2 > hmtx.offset + hmtx.length) return undefined;
+  const advance = safeUint16(view, at);
+  return advance > 0 ? (advance / unitsPerEm) * 1000 : undefined;
+}
+
+/**
+ * Every `cmap` subtable an sfnt program carries, keyed `platform,encoding` —
+ * `3,1` for Windows Unicode, `3,0` for Windows symbol, `1,0` for Mac Roman.
+ *
+ * A simple TrueType font reaches its glyphs through whichever of these it has,
+ * and which one decides what a code is looked up AS (§9.6.6.4): a character, a
+ * symbol code, a Mac Roman byte.
+ *
+ * @param program The raw sfnt bytes.
+ * @returns Subtable → code-to-glyph lookup (0 where it maps nothing). Formats
+ *          0, 4, 6 and 12 are read; any other is left out.
+ */
+export function cmapSubtables(program: Uint8Array): Map<string, (code: number) => number> {
+  const out = new Map<string, (code: number) => number>();
+  let tables: Map<string, { offset: number; length: number }>;
+  try {
+    tables = sfntTables(program);
+  } catch {
+    return out;
+  }
+  const cmap = tables.get('cmap');
+  if (!cmap) return out;
+  const view = new DataView(program.buffer, program.byteOffset, program.byteLength);
+  const count = safeUint16(view, cmap.offset + 2);
+  for (let i = 0; i < count; i++) {
+    const at = cmap.offset + 4 + i * 8;
+    const key = `${safeUint16(view, at)},${safeUint16(view, at + 2)}`;
+    if (out.has(key)) continue;
+    const lookup = cmapLookup(view, cmap.offset + safeUint32(view, at + 4));
+    if (lookup) out.set(key, lookup);
+  }
+  return out;
+}
+
+/** One `cmap` subtable as a lookup, for the formats a simple font's program uses. */
+function cmapLookup(view: DataView, at: number): ((code: number) => number) | undefined {
+  const format = safeUint16(view, at);
+  if (format === 0) {
+    return (code) => (code >= 0 && code < 256 ? safeUint8(view, at + 6 + code) : 0);
+  }
+  if (format === 6) {
+    const first = safeUint16(view, at + 6);
+    const entries = safeUint16(view, at + 8);
+    return (code) =>
+      code >= first && code < first + entries ? safeUint16(view, at + 10 + (code - first) * 2) : 0;
+  }
+  if (format === 4) {
+    const segments = safeUint16(view, at + 6) >> 1;
+    const ends = at + 14;
+    const starts = ends + segments * 2 + 2;
+    const deltas = starts + segments * 2;
+    const ranges = deltas + segments * 2;
+    return (code) => {
+      if (code < 0 || code > 0xffff) return 0;
+      for (let s = 0; s < segments; s++) {
+        if (safeUint16(view, ends + s * 2) < code) continue;
+        const start = safeUint16(view, starts + s * 2);
+        if (start > code) return 0;
+        const delta = safeUint16(view, deltas + s * 2);
+        const range = safeUint16(view, ranges + s * 2);
+        if (range === 0) return (code + delta) & 0xffff;
+        const gid = safeUint16(view, ranges + s * 2 + range + (code - start) * 2);
+        return gid === 0 ? 0 : (gid + delta) & 0xffff;
+      }
+      return 0;
+    };
+  }
+  if (format === 12) {
+    const groups = safeUint32(view, at + 12);
+    return (code) => {
+      for (let g = 0; g < groups; g++) {
+        const entry = at + 16 + g * 12;
+        const start = safeUint32(view, entry);
+        const end = safeUint32(view, entry + 4);
+        if (code >= start && code <= end) return safeUint32(view, entry + 8) + (code - start);
+      }
+      return 0;
+    };
+  }
+  return undefined;
+}
+
 /** `post` version 2.0 — the only one that states names of its own. */
 const POST_NAMED = 0x0002_0000;
 

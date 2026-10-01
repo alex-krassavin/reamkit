@@ -75,6 +75,40 @@ describe('docx writer (E-DOCX D2 skeleton)', () => {
     expect(r1.verticalAlign).toBe('superscript');
   });
 
+  it('writes a line spaced in lines back in 240ths of a line, as it was read (§17.3.1.33)', () => {
+    // Word's own Normal sets its lines 1.08 apart (259); written as twelfths
+    // of a point it came back 0.65 of a line (155), each line over the last.
+    for (const [line, rule] of [
+      [259, 'auto'],
+      [360, 'auto'],
+      [300, 'exact'],
+    ] as const) {
+      const body = `<w:p><w:pPr><w:spacing w:line="${line}" w:lineRule="${rule}"/></w:pPr><w:r><w:t>x</w:t></w:r></w:p>`;
+      const written = writeDocx(readDocx(buildDocxFromBody(body)).doc).bytes;
+      expect(decode(OpcPackage.open(written).getMainDocument().data)).toContain(
+        `<w:spacing w:line="${line}" w:lineRule="${rule}"/>`,
+      );
+    }
+  });
+
+  it('writes a line break back as w:br, not as a newline inside w:t (§17.3.3.1)', () => {
+    // Inside `w:t` a newline is whitespace: read and written again, an
+    // address's lines ran together.
+    const body =
+      '<w:p><w:r><w:t>One street</w:t><w:br/><w:t>Two town</w:t></w:r></w:p>' +
+      '<w:p><w:r><w:t>Left</w:t></w:r><w:r><w:br w:type="column"/></w:r><w:r><w:t>Right</w:t></w:r></w:p>';
+    const written = writeDocx(readDocx(buildDocxFromBody(body)).doc).bytes;
+    const xml = decode(OpcPackage.open(written).getMainDocument().data);
+    expect(xml).toContain(
+      '<w:t xml:space="preserve">One street</w:t><w:br/><w:t xml:space="preserve">Two town</w:t>',
+    );
+    expect(xml).toContain('<w:br w:type="column"/>');
+    expect(xml).not.toMatch(/<w:t[^>]*>[^<]*\n/u);
+    const again = readDocx(written).doc.body[0];
+    if (again?.kind !== 'paragraph') throw new Error('a paragraph');
+    expect(again.paragraph.runs.map((r) => r.text).join('')).toBe('One street\nTwo town');
+  });
+
   it('omits default-valued properties (no rPr/pPr noise for plain text)', () => {
     const { doc: flow } = readDocx(buildDocxFromBody('<w:p><w:r><w:t>plain</w:t></w:r></w:p>'));
     const xml = new TextDecoder().decode(
@@ -948,7 +982,14 @@ describe('an attribute is written only where the schema admits its value', () =>
 });
 
 describe('what a reader can actually draw', () => {
-  const shapeDoc = (pathWidth: number, pathHeight: number): FlowDoc =>
+  const shapeDoc = (
+    pathWidth: number,
+    pathHeight: number,
+    commands: ReadonlyArray<{ cmd: string; x: number; y: number }> = [
+      { cmd: 'move', x: 0, y: 0 },
+      { cmd: 'line', x: pathWidth, y: pathHeight },
+    ],
+  ): FlowDoc =>
     ({
       body: [
         {
@@ -958,14 +999,7 @@ describe('what a reader can actually draw', () => {
             height: 1,
             geometry: {
               kind: 'custom',
-              custom: {
-                pathWidth,
-                pathHeight,
-                commands: [
-                  { cmd: 'move', x: 0, y: 0 },
-                  { cmd: 'line', x: pathWidth, y: pathHeight },
-                ],
-              },
+              custom: { pathWidth, pathHeight, commands },
             },
             fill: { kind: 'none' },
             line: { width: 1, colorHex: 'FF0000', fill: 'solid' },
@@ -987,6 +1021,22 @@ describe('what a reader can actually draw', () => {
       OpcPackage.open(writeDocx(shapeDoc(0, 570)).bytes).getMainDocument().data,
     );
     expect(upright).toContain('<a:path w="1" h="570">');
+  });
+
+  it('states a path however many points it runs through', () => {
+    // comments.pdf's chart labels are drawn in the glyphs traced for them, a
+    // chart's letters one path of twenty thousand curves: its coordinates,
+    // spread into one call to find the largest, overran the stack.
+    const commands = Array.from({ length: 200_000 }, (_, k) => ({
+      cmd: k === 0 ? 'move' : 'line',
+      x: (k % 1000) / 7,
+      y: Math.floor(k / 1000) / 7,
+    }));
+    const xml = decode(
+      OpcPackage.open(writeDocx(shapeDoc(1000 / 7, 200 / 7, commands)).bytes).getMainDocument()
+        .data,
+    );
+    expect(xml.match(/<a:lnTo>/gu)).toHaveLength(199_999);
   });
 
   it('writes run properties in the order CT_RPr states them (§17.3.2.28)', () => {
@@ -1020,14 +1070,17 @@ describe('what a reader can actually draw', () => {
       '<w:outlineLvl w:val="1"/></w:pPr>' +
       '<w:r><w:rPr><w:b/><w:color w:val="FF0000"/><w:sz w:val="28"/></w:rPr>' +
       '<w:t>a line the page set out</w:t></w:r></w:p>' +
-      '<w:tbl><w:tblPr><w:tblW w:w="5000" w:type="dxa"/><w:tblLayout w:type="fixed"/>' +
+      '<w:tbl><w:tblPr><w:tblW w:w="5000" w:type="dxa"/><w:tblInd w:w="360" w:type="dxa"/>' +
+      '<w:tblLayout w:type="fixed"/>' +
       '<w:tblCellMar><w:left w:w="0" w:type="dxa"/></w:tblCellMar></w:tblPr>' +
       '<w:tblGrid><w:gridCol w:w="2500"/><w:gridCol w:w="2500"/></w:tblGrid>' +
       '<w:tr><w:trPr><w:trHeight w:val="300"/></w:trPr>' +
       '<w:tc><w:tcPr><w:tcW w:w="2500" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>a</w:t></w:r></w:p></w:tc>' +
       '<w:tc><w:tcPr><w:tcW w:w="2500" w:type="dxa"/></w:tcPr><w:p><w:r><w:t>b</w:t></w:r></w:p></w:tc>' +
       '</w:tr></w:tbl>' +
-      '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/></w:sectPr>';
+      '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgNumType w:fmt="lowerRoman" w:start="3"/>' +
+      '<w:titlePg/>' +
+      '<w:textDirection w:val="tbRl"/></w:sectPr>';
     const { doc: flow } = readDocx(buildDocxFromBody(source));
     const xml = decode(OpcPackage.open(writeDocx(flow).bytes).getMainDocument().data);
     // §17.3.1.26, §17.3.2.28, §17.6.17, §17.4.60, §17.4.82, §17.4.70 — the
@@ -1076,8 +1129,10 @@ describe('what a reader can actually draw', () => {
         'w:type',
         'w:pgSz',
         'w:pgMar',
+        'w:pgNumType',
         'w:cols',
         'w:titlePg',
+        'w:textDirection',
         'w:bidi',
         'w:docGrid',
       ],
@@ -1127,6 +1182,102 @@ describe('what a reader can actually draw', () => {
         expect(ranks, `${parent}: ${kids.join(' ')}`).toEqual([...ranks].sort((a, b) => a - b));
       }
     }
+    // §17.4.65 — the table's indent, which the model read and the writer
+    // dropped: a table set in from its margin came back against it.
+    expect(xml).toContain('<w:tblInd w:w="360" w:type="dxa"/>');
+  });
+});
+
+describe('the defaults a property stated nowhere takes (§17.7.5)', () => {
+  it("are stated in a styles part, so a reader does not take its own template's", () => {
+    // Without one, Word set every paragraph in its template's Normal: 8pt
+    // after each, lines 1.08 apart, and the model's own 11pt runs in 12.
+    const written = writeDocx(
+      readDocx(buildDocxFromBody('<w:p><w:r><w:t>Body</w:t></w:r></w:p>')).doc,
+    ).bytes;
+    const pkg = OpcPackage.open(written);
+    const styles = decode(pkg.getPart('word/styles.xml')!);
+    expect(styles).toContain(
+      '<w:rPrDefault><w:rPr><w:sz w:val="22"/><w:szCs w:val="22"/></w:rPr></w:rPrDefault>',
+    );
+    expect(styles).toContain(
+      '<w:pPrDefault><w:pPr><w:widowControl/><w:spacing w:before="0" w:after="0" w:line="240" w:lineRule="auto"/></w:pPr></w:pPrDefault>',
+    );
+    expect(styles).toContain('<w:style w:type="paragraph" w:default="1" w:styleId="Normal">');
+    expect(decode(pkg.getPart('word/_rels/document.xml.rels')!)).toContain(
+      'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles"',
+    );
+  });
+});
+
+describe('widow control (§17.3.1.44)', () => {
+  it('is on where nothing says otherwise, and stays off where a paragraph or its style says so', () => {
+    const source = buildDocxFromBody(
+      '<w:p><w:r><w:t>Plain</w:t></w:r></w:p>' +
+        '<w:p><w:pPr><w:widowControl w:val="0"/></w:pPr><w:r><w:t>Off</w:t></w:r></w:p>' +
+        '<w:p><w:pPr><w:pStyle w:val="Loose"/></w:pPr><w:r><w:t>Styled</w:t></w:r></w:p>',
+      {
+        stylesXml:
+          '<w:style w:type="paragraph" w:styleId="Loose"><w:name w:val="Loose"/>' +
+          '<w:pPr><w:widowControl w:val="0"/></w:pPr></w:style>',
+      },
+    );
+    const widows = (doc: FlowDoc): Array<boolean | undefined> =>
+      doc.body.map((el) =>
+        el.kind === 'paragraph' ? el.paragraph.properties.widowControl : undefined,
+      );
+    const flow = readDocx(source).doc;
+    expect(widows(flow)).toEqual([true, false, false]);
+    const written = writeDocx(flow).bytes;
+    const body = decode(OpcPackage.open(written).getMainDocument().data);
+    expect(body.match(/<w:widowControl w:val="0"\/>/gu)).toHaveLength(2);
+    expect(widows(readDocx(written).doc)).toEqual([true, false, false]);
+  });
+});
+
+describe('the settings a document is set by (§17.15.1)', () => {
+  it('writes them back, so a round trip keeps them', () => {
+    // 20 of the corpus's .docx turn on headers of their own for the even
+    // pages; written without a settings part, every page printed the odd
+    // pages' header once saved.
+    const source = buildDocxFromBody(
+      '<w:p><w:r><w:t>Body</w:t></w:r></w:p><w:sectPr><w:pgSz w:w="11906" w:h="16838"/></w:sectPr>',
+      {
+        settingsXml:
+          '<w:gutterAtTop/><w:evenAndOddHeaders/><w:compat><w:doNotExpandShiftReturn/></w:compat>',
+      },
+    );
+    const written = writeDocx(readDocx(source).doc).bytes;
+    const settings = OpcPackage.open(written).getPart('word/settings.xml');
+    expect(settings).toBeDefined();
+    expect(decode(settings!)).toMatch(
+      /<w:gutterAtTop\/><w:evenAndOddHeaders\/><w:compat><w:doNotExpandShiftReturn\/><\/w:compat>/u,
+    );
+    const again = readDocx(written).doc;
+    expect(again.sections.every((s) => s.properties.evenAndOddHeaders === true)).toBe(true);
+    expect(again.gutterAtTop).toBe(true);
+    expect(again.doNotExpandShiftReturn).toBe(true);
+  });
+
+  it('keeps the version of Word the document is laid out for, last in w:compat', () => {
+    // [MS-DOCX] compatibilityMode — written without it, a Word 2013 document
+    // opened again in Compatibility Mode: laid out as Word 2007 laid it out.
+    const mode =
+      '<w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/>';
+    const source = buildDocxFromBody('<w:p><w:r><w:t>Body</w:t></w:r></w:p>', {
+      settingsXml: `<w:compat><w:doNotExpandShiftReturn/>${mode}</w:compat>`,
+    });
+    const written = writeDocx(readDocx(source).doc).bytes;
+    const settings = OpcPackage.open(written).getPart('word/settings.xml');
+    expect(decode(settings!)).toContain(`<w:compat><w:doNotExpandShiftReturn/>${mode}</w:compat>`);
+    expect(readDocx(written).doc.compatibilityMode).toBe(15);
+  });
+
+  it('writes no settings part where the document states none', () => {
+    const written = writeDocx(
+      readDocx(buildDocxFromBody('<w:p><w:r><w:t>Body</w:t></w:r></w:p>')).doc,
+    ).bytes;
+    expect(OpcPackage.open(written).getPart('word/settings.xml')).toBeUndefined();
   });
 });
 
@@ -1203,6 +1354,22 @@ describe('a document written for another program to read', () => {
     const xml = bodyOf(writeDocx(doc).bytes);
     expect(xml).toContain('<w:between w:val="single" w:sz="6" w:color="EBEBEB"/>');
     expect(xml).not.toContain('w:insideH');
+  });
+
+  it("writes a paragraph's shading, and how far its rules stand off it (§17.3.1.31)", () => {
+    const para =
+      '<w:p><w:pPr><w:pBdr><w:top w:val="single" w:sz="4" w:space="6" w:color="404040"/></w:pBdr>' +
+      '<w:shd w:val="clear" w:color="auto" w:fill="404040"/></w:pPr>' +
+      '<w:r><w:rPr><w:color w:val="FFFFFF"/></w:rPr><w:t>Canvas element</w:t></w:r></w:p>';
+    const { doc } = readDocx(buildDocxFromBody(para));
+    const xml = bodyOf(writeDocx(doc).bytes);
+    expect(xml).toContain('<w:shd w:val="clear" w:color="auto" w:fill="404040"/>');
+    expect(xml).toContain('<w:top w:val="single" w:sz="4" w:space="6" w:color="404040"/>');
+    // …and it reads back as it was written.
+    const back = readDocx(writeDocx(doc).bytes).doc.body[0];
+    expect(back?.kind === 'paragraph' && back.paragraph.properties.shading).toEqual({
+      colorHex: '404040',
+    });
   });
 
   it('writes a foot whose run names no face at all', () => {

@@ -39,6 +39,15 @@ export interface ContentFont {
   /** Glyph advance for one code, in 1000-unit text space. */
   width: (code: number) => number;
   /**
+   * §9.6.2.1 — the advance of the face's SPACE as the file states it, in
+   * 1000-unit text space: the code its encoding names `space`. Absent where
+   * the font states none — not the fallback {@link width} gives a code with no
+   * width of its own.
+   */
+  readonly spaceWidth?: number;
+  /** §9.8.2 — every glyph of the face is as wide as the next: a typewriter's. */
+  readonly fixedPitch?: boolean;
+  /**
    * §9.4.4 / §9.7.4.3 — the face sets its text DOWN the page, not across, and
    * the pen advances by the vertical displacement `w1` rather than by `w0`.
    * A `…-V` CMap asks for this; `/DW2`'s default `[880 -1000]` is one em down.
@@ -64,6 +73,44 @@ export interface ContentFont {
    * this is the last resort before a blank page.
    */
   readonly outline?: GlyphOutline;
+  /**
+   * §9.9 — the face's embedded program, for a writer that embeds the face:
+   * the outline EVERY code draws, the program's licence, the descriptor's
+   * metrics. Only a face whose program this reads has one.
+   */
+  readonly program?: FaceProgram;
+}
+
+/**
+ * §9.9 — what a writer that embeds a face needs from its program: the outline
+ * each code draws, what the licence allows, and the metrics the descriptor
+ * states (§9.8.1).
+ */
+export interface FaceProgram {
+  /**
+   * The contours a code draws, in a one-unit em — empty for a glyph the program
+   * holds that draws nothing, `undefined` where it holds none for the code.
+   */
+  readonly glyph: (code: number) => ReadonlyArray<PathSeg> | undefined;
+  /**
+   * OS/2 `fsType` — or the `/FSType` a CFF or Type 1 program writes in its
+   * place — where the program states one.
+   */
+  readonly fsType?: number;
+  /**
+   * How far the program's own space advances, in thousandths of an em — the
+   * width a writer gives a space the page never showed as a glyph.
+   */
+  readonly spaceAdvance?: number;
+  /** The program's PostScript name: the `/BaseFont` less its subset tag. */
+  readonly postScriptName: string;
+  /** §9.8.1 `/CapHeight` and `/XHeight`, in thousandths of an em, where stated. */
+  readonly capHeight?: number;
+  readonly xHeight?: number;
+  /** §9.8.1 `/ItalicAngle`, in degrees counterclockwise from the vertical. */
+  readonly italicAngle: number;
+  /** §9.8.2 `/Flags` bit 1 — every glyph has the same width. */
+  readonly fixedPitch: boolean;
 }
 
 /** §9.6.6 — the outlines of a face read by glyph index, and their glyph space. */
@@ -126,6 +173,8 @@ export interface TextRun {
    * Absent where the face states no width for it.
    */
   readonly spaceWidthPt?: number;
+  /** §9.8.2 — the face sets every glyph as wide as the next (see `ContentFont`). */
+  readonly fixedPitch?: boolean;
   /** §9.8.1 — the face the glyphs were shown in is a bold one. */
   readonly bold?: boolean;
   /**
@@ -364,6 +413,11 @@ export interface InterpretResult {
    * there is something to draw.
    */
   readonly outlines: Array<VectorPlacement>;
+  /**
+   * §9.4.3 — the codes each font with a readable program showed where the
+   * page paints them: the glyphs a writer embedding the face has to carry.
+   */
+  readonly shown: ReadonlyMap<ContentFont, ReadonlySet<number>>;
 }
 
 /**
@@ -608,6 +662,7 @@ export function interpretContent(
   const glyphs: Array<Type3Call> = []; // §9.6.5 Type 3 glyph procedures
   const painted: Array<ShadingPaint> = []; // §8.7.4.3 `sh` — regions, not paths
   const outlines: Array<VectorPlacement> = []; // §9.6.6 glyphs with no character
+  const codesShown = new Map<ContentFont, Set<number>>(); // §9.9 codes painted, per program
   const lexer = new Lexer(bytes);
   const stack: Array<TextState> = [];
   let state = initialState();
@@ -789,6 +844,13 @@ export function interpretContent(
       ? state.font.splitCodes(bytes)
       : splitCodes(bytes, state.font.bytesPerCode);
     for (const code of codes) advanceGlyph(code);
+    // §9.3.6 — modes 3 and 7 paint nothing: a scanned page's words are shown
+    // that way in a face with no ink in it at all.
+    if (state.font.program && visible() && state.renderMode !== 3 && state.renderMode !== 7) {
+      let set = codesShown.get(state.font);
+      if (!set) codesShown.set(state.font, (set = new Set()));
+      for (const code of codes) set.add(code);
+    }
     return state.font.decode(codes);
   };
 
@@ -822,6 +884,7 @@ export function interpretContent(
         ((state.font.width(0x20) / 1000) * state.fontSize + state.charSpacing + state.wordSpacing) *
         scaleX,
       fontKey: state.fontKey,
+      ...(state.font.fixedPitch === true ? { fixedPitch: true } : {}),
       ...(state.font.name !== undefined ? { fontName: state.font.name } : {}),
       ...(state.font.type3 ? { type3: true } : {}),
       ...(state.renderMode === 3 || state.renderMode === 7 ? { invisible: true } : {}),
@@ -1255,7 +1318,7 @@ export function interpretContent(
         break;
     }
   }
-  return { texts: runs, images, vectors, glyphs, shadings: painted, outlines };
+  return { texts: runs, images, vectors, glyphs, shadings: painted, outlines, shown: codesShown };
 }
 
 /** One path segment through a matrix — the glyph's own space onto the page. */

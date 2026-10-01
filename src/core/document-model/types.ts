@@ -30,6 +30,29 @@ export type UnderlineStyle =
 export type VerticalAlign = 'baseline' | 'superscript' | 'subscript';
 
 /**
+ * [MS-DOCX] ST_Ligatures — which of a face's OpenType ligatures a run is set
+ * with (`w14:ligatures`): the standard ones (`liga`), the contextual (`clig`),
+ * the historical (`hlig`) and the discretionary (`dlig`), alone or together.
+ */
+export type Ligatures =
+  | 'none'
+  | 'standard'
+  | 'contextual'
+  | 'historical'
+  | 'discretional'
+  | 'standardContextual'
+  | 'standardHistorical'
+  | 'contextualHistorical'
+  | 'standardDiscretional'
+  | 'contextualDiscretional'
+  | 'historicalDiscretional'
+  | 'standardContextualHistorical'
+  | 'standardContextualDiscretional'
+  | 'standardHistoricalDiscretional'
+  | 'contextualHistoricalDiscretional'
+  | 'all';
+
+/**
  * The four script slots of `w:rFonts` (§17.3.2.26). A character picks its font
  * from the slot its Unicode range maps to (ASCII, high-ANSI, complex-script,
  * East-Asian).
@@ -87,6 +110,21 @@ export interface RunProperties {
    * (negative tightens). Word states it in twentieths of a point.
    */
   readonly letterSpacingPt?: Pt;
+  /**
+   * §17.3.2.43 `w:w` — each character set at this share of its own width
+   * (1 is as the face sets it), the glyph itself narrowed or widened.
+   */
+  readonly widthScale?: number;
+  /**
+   * §17.3.2.19 `w:kern` — the run's glyph pairs are KERNED, at this size and
+   * above (0 turns kerning off). Word kerns nothing a run does not ask for.
+   */
+  readonly kerningMinPt?: Pt;
+  /**
+   * [MS-DOCX] `w14:ligatures` — the face's ligatures the run is set with.
+   * Word forms none at all in a document it opens in compatibility mode.
+   */
+  readonly ligatures?: Ligatures;
   /**
    * §21.1.2.3.9 `a:rPr/a:ln` — a line drawn round the glyphs themselves, which
    * DrawingML puts on a run and ISO 32000-1 §9.3.6 calls a text rendering mode
@@ -248,6 +286,24 @@ export interface ParagraphProperties {
    * starts on a fresh page even if there is room on the current one.
    */
   readonly pageBreakBefore?: boolean;
+  /**
+   * ECMA-376 Part 1 §17.3.1.14 — `w:keepNext`. The paragraph stands on the
+   * same page as the start of the one after it: a heading is not left at the
+   * foot of a page with its text on the next.
+   */
+  readonly keepNext?: boolean;
+  /**
+   * ECMA-376 Part 1 §17.3.1.15 — `w:keepLines`. The paragraph's lines stand on
+   * one page, wherever one page holds them all.
+   */
+  readonly keepLines?: boolean;
+  /**
+   * ECMA-376 Part 1 §17.3.1.44 — `w:widowControl`. When on, a page or column
+   * break that would leave the paragraph's first line alone at the foot of one
+   * page, or its last line alone at the head of the next, is moved so that
+   * neither stands alone. Word applies it wherever nothing says otherwise.
+   */
+  readonly widowControl?: boolean;
   /**
    * ECMA-376 §17.3.1.6 — `w:bidi`. Sets the paragraph's base direction to RTL,
    * so the BiDi paragraph embedding level is 1 and default alignment is right.
@@ -1334,6 +1390,13 @@ export interface ShapeTextBody {
   readonly insetBottom?: Pt;
   readonly anchor?: 't' | 'ctr' | 'b'; // vertical anchor
   /**
+   * §20.1.2.1.1 `a:bodyPr @wrap="none"` — the lines run as far as their words
+   * do, whatever the box's width. A label placed where a page set it is sized
+   * to the words it was measured from, and set in a face a little wider it
+   * broke inside its one word.
+   */
+  readonly noWrap?: boolean;
+  /**
    * §20.1.10.83 ST_TextVerticalType (`a:bodyPr @vert`) — text set along the
    * box's long axis rather than across it. `vert` reads top-to-bottom (turned a
    * quarter clockwise), `vert270` bottom-to-top.
@@ -1705,6 +1768,12 @@ export interface SectionProperties {
    * printed with. Absent ⇒ the count carries on from the section before.
    */
   readonly pageNumberStart?: number;
+  /**
+   * §17.6.12 `w:pgNumType w:fmt` — how a PAGE field prints the section's page
+   * numbers (§17.18.59): `lowerRoman` numbers a book's front matter i, ii,
+   * iii before its body starts again at 1. Absent ⇒ decimal.
+   */
+  readonly pageNumberFormat?: NumberingFormat;
   /** §17.6.8 `w:lnNumType` — line numbers printed in the margin beside the text. */
   readonly lineNumbering?: {
     /** Print every `countBy`-th line (default 1). */
@@ -1741,6 +1810,17 @@ export interface SectionProperties {
    * distinguished from `nextPage`.)
    */
   readonly sectionStart?: 'continuous' | 'nextPage' | 'oddPage' | 'evenPage';
+  /**
+   * §17.6.20 `w:textDirection` — which way the section's lines run. `tbRl`
+   * sets each line top to bottom and the next one to the left of it: the
+   * text turned a quarter clockwise on the sheet, which is how a viewer shows
+   * a page turned by `/Rotate 90` whose words stood upright in its box. Word
+   * lays a section out that way for `btLr` as well, so the layout reads both
+   * alike. Only the body's text turns: the headers, the footers and every
+   * drawing anchored to the page keep the sheet's own axes. Absent ⇒ left to
+   * right, top to bottom.
+   */
+  readonly textDirection?: 'tbRl' | 'btLr';
   /**
    * §17.6.5 `w:docGrid` — the line grid a `lines`/`linesAndChars` section rules
    * its text onto, as the pitch in points. Every line of the section's text is

@@ -296,6 +296,21 @@ describe('annotation appearances (§12.5.5)', () => {
     expect(vectors[0]!.maxX).toBeCloseTo(90, 1);
   });
 
+  it('keeps a curve its /BBox holds, however far past the box its handles stand', () => {
+    // comments.pdf signs its sixth page with a stamp its box meets exactly.
+    // Measured by the handles of its curves, the signature was a path round
+    // its clip, and it came back as the clip: a black bar the width of the text.
+    const file = PdfFile.parse(widgetOnlyPdf('0 g 2 10 m 2 23 38 23 38 10 c 38 -3 2 -3 2 10 c f'));
+    const [mark] = collectPageVectors(file, file.pages()[0]!).vectors;
+    expect(mark?.segs.filter((s) => s.op === 'cubic')).toHaveLength(2);
+  });
+
+  it('keeps a path that reaches past its /BBox by a sliver', () => {
+    const file = PdfFile.parse(widgetOnlyPdf('0 g 0 0 m 40.3 0 l 40.3 20 l 0 20 l f'));
+    const [mark] = collectPageVectors(file, file.pages()[0]!).vectors;
+    expect(mark?.maxX).toBeCloseTo(90.3, 1);
+  });
+
   it('paints no annotation the file marks hidden', () => {
     const hidden = new TextDecoder()
       .decode(widgetOnlyPdf())
