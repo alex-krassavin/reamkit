@@ -200,6 +200,38 @@ describe('the chart-space frame (§21.2.2.198)', () => {
   });
 });
 
+describe('a chart title longer than the chart is wide', () => {
+  it('wraps at its spaces, each line within four fifths of the width', () => {
+    const title = 'Ranking of Washington Counties on Days per Patient (ALOS) in 2015';
+    for (const chart of [
+      { ...barChart('bar'), title },
+      { ...barChart('col'), title },
+      { ...barChart('col'), type: 'pie' as const, title },
+    ]) {
+      const scene = buildChartScene(chart, W, H, measure)!;
+      const lines = scene.labels.filter((l) => title.includes(l.text) && l.sizePt > 10);
+      expect(lines.length).toBeGreaterThan(1);
+      expect(lines.map((l) => l.text).join(' ')).toBe(title);
+      for (const l of lines) expect(measure(l.text, l.sizePt)).toBeLessThanOrEqual(W * 0.8);
+      // Top line first, each below the one before.
+      for (let i = 1; i < lines.length; i++) expect(lines[i]!.y).toBeLessThan(lines[i - 1]!.y);
+    }
+  });
+
+  it('pushes the plot down by the lines it takes', () => {
+    const short = buildBarScene(barChart('col'), W, H, measure);
+    const long = buildBarScene(
+      { ...barChart('col'), title: 'A title far too long to stand on a single line of this chart' },
+      W,
+      H,
+      measure,
+    );
+    const top = (s: ChartScene): number =>
+      Math.max(...s.rects.filter((r) => r.fillHex === '4472C4').map((r) => r.y + r.h));
+    expect(top(long)).toBeLessThan(top(short));
+  });
+});
+
 describe('a value axis the author fixed (§21.2.2.157)', () => {
   it('draws to the declared max, not to the data', () => {
     // Every value here is 0. Left to the data the axis would run 0…1; the
@@ -247,6 +279,26 @@ describe('buildBarScene', () => {
     const scene = buildBarScene(barChart('bar'), W, H, measure);
     expect(scene.rects).toHaveLength(8);
     expect(inBounds(scene.rects)).toBe(true);
+  });
+
+  it("keeps a bar chart's category names and its last value inside the frame", () => {
+    // The names stand right-aligned left of the plot, so the left of it is
+    // sized by them, not by the value ticks that run along the foot; and the
+    // last tick's label, centred under the plot's end, is given room too.
+    const named: Chart = {
+      ...barChart('bar'),
+      categories: ['Grays Harbor', 'Walla Walla', 'Pend Oreille'],
+      hasLegend: false,
+    };
+    const scene = buildBarScene(named, W, H, measure);
+    for (const name of named.categories) {
+      const label = scene.labels.find((l) => l.text === name)!;
+      expect(label.align).toBe('right');
+      expect(label.x - measure(name, label.sizePt)).toBeGreaterThanOrEqual(0);
+    }
+    const ticks = scene.labels.filter((l) => /^\d+$/.test(l.text));
+    const last = ticks.reduce((a, b) => (b.x > a.x ? b : a));
+    expect(last.x + measure(last.text, last.sizePt) / 2).toBeLessThanOrEqual(W);
   });
 
   it('runs the categories the other way when the axis says maxMin', () => {

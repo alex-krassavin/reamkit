@@ -303,15 +303,55 @@ interface FrameOpts {
 // each builder is the z-order of the emitted PDF operators, so callers invoke
 // them at exactly the points the inlined code used to occupy.
 
-function pushChartTitle(labels: Array<ChartLabel>, chart: Chart, wPt: number, hPt: number): void {
-  if (!chart.title) return;
-  labels.push({
-    text: chart.title,
-    x: wPt / 2,
-    y: hPt - 4 - CHART_TITLE_PT,
-    sizePt: CHART_TITLE_PT,
-    colorHex: TITLE_COLOR,
-    align: 'center',
+/**
+ * The chart title's lines. A title longer than the chart is wide wraps at its
+ * spaces, as Excel's and Calc's do, rather than running out past both sides
+ * of the frame: dataValidationTableRange.xlsx's "Ranking of Washington
+ * Counties on Days per Patient (ALOS) in 2015" crossed the cells beside its
+ * chart. A line holds at most four fifths of the chart's width.
+ *
+ * @param chart   The chart.
+ * @param wPt     The chart's width.
+ * @param measure The text measurer.
+ * @returns The lines, top first; none for a chart without a title.
+ */
+function titleLines(chart: Chart, wPt: number, measure: MeasureText): Array<string> {
+  if (!chart.title) return [];
+  const room = wPt * 0.8;
+  const lines: Array<string> = [];
+  let line = '';
+  for (const word of chart.title.split(/\s+/).filter((w) => w.length > 0)) {
+    const longer = line ? `${line} ${word}` : word;
+    if (line && measure(longer, CHART_TITLE_PT) > room) {
+      lines.push(line);
+      line = word;
+    } else {
+      line = longer;
+    }
+  }
+  if (line) lines.push(line);
+  return lines;
+}
+
+/** The band a title of `lines` takes at the top of the chart. */
+const titleHeight = (lines: ReadonlyArray<string>): number =>
+  lines.length === 0 ? 0 : CHART_TITLE_PT * (1.6 + 1.2 * (lines.length - 1));
+
+function pushChartTitle(
+  labels: Array<ChartLabel>,
+  lines: ReadonlyArray<string>,
+  wPt: number,
+  hPt: number,
+): void {
+  lines.forEach((text, i) => {
+    labels.push({
+      text,
+      x: wPt / 2,
+      y: hPt - 4 - CHART_TITLE_PT * (1 + 1.2 * i),
+      sizePt: CHART_TITLE_PT,
+      colorHex: TITLE_COLOR,
+      align: 'center',
+    });
   });
 }
 
@@ -495,8 +535,8 @@ function buildFrame(
       : undefined;
   const tickVals2 = scale2 ? ticks(scale2) : [];
 
-  let top = 4;
-  if (chart.title) top += CHART_TITLE_PT * 1.6;
+  const title = titleLines(chart, wPt, measure);
+  const top = 4 + titleHeight(title);
   const legend = buildLegendBlock(chart, wPt, hPt, measure);
   const tick2W =
     scale2 && !horizontal
@@ -504,15 +544,30 @@ function buildFrame(
         4 +
         (chart.secondaryValAxisTitle ? CHART_LABEL_PT * 1.5 : 0)
       : 0;
-  const plotRight = wPt - 4 - legend.rightWidth - tick2W;
+  // A bar chart's value labels stand centred under their ticks along the
+  // foot, so the last one reaches half its width past the plot's end: room is
+  // kept for it inside the frame, or "80" is cut in two by the frame's edge.
+  const lastTick = tickVals[tickVals.length - 1];
+  const lastTickHalf =
+    horizontal && lastTick !== undefined ? measure(fmtVal(lastTick), CHART_LABEL_PT) / 2 : 0;
+  const plotRight = wPt - 4 - legend.rightWidth - tick2W - lastTickHalf;
 
+  // The left of the plot holds the axis that stands upright, the foot of it
+  // the one that lies along — the value axis in a column chart, the category
+  // axis in a bar chart, each with its labels and its title. Sizing the left
+  // by the value ticks whatever the direction ran a bar chart's category names
+  // out past the frame (dataValidationTableRange.xlsx's "Grays Harbor" beside
+  // ticks no wider than "80"). A name is given at most two fifths of the width.
   const tickLabelW = Math.max(0, ...tickVals.map((v) => measure(fmtVal(v), CHART_LABEL_PT))) + 4;
-  const catLabelH = CHART_LABEL_PT * 1.6;
-  const catTitleH = chart.catAxisTitle ? CHART_LABEL_PT * 1.5 : 0;
-
-  const valTitleW = chart.valAxisTitle ? CHART_LABEL_PT * 1.5 : 0;
-  const x0 = 4 + valTitleW + tickLabelW;
-  const y0 = 4 + legend.bottomHeight + catTitleH + catLabelH;
+  const catLabelW = Math.min(
+    wPt * 0.4,
+    Math.max(0, ...chart.categories.map((t) => measure(t, CHART_LABEL_PT))) + 6,
+  );
+  const axisTitleBand = CHART_LABEL_PT * 1.5;
+  const leftTitle = horizontal ? chart.catAxisTitle : chart.valAxisTitle;
+  const footTitle = horizontal ? chart.valAxisTitle : chart.catAxisTitle;
+  const x0 = 4 + (leftTitle ? axisTitleBand : 0) + (horizontal ? catLabelW : tickLabelW);
+  const y0 = 4 + legend.bottomHeight + (footTitle ? axisTitleBand : 0) + CHART_LABEL_PT * 1.6;
   const plotW = Math.max(1, plotRight - x0);
   const plotH = Math.max(1, hPt - top - y0);
 
@@ -543,13 +598,12 @@ function buildFrame(
         }
       : undefined;
 
-  pushChartTitle(labels, chart, wPt, hPt);
-  // Axis titles. A value-axis title reads bottom-to-top, in the gutter outside
-  // its own tick labels; the category-axis title sits centred below the
-  // category labels.
-  if (chart.valAxisTitle) {
+  pushChartTitle(labels, title, wPt, hPt);
+  // Axis titles. The upright axis's title reads bottom-to-top, in the gutter
+  // outside its own labels; the lying one's sits centred below its labels.
+  if (leftTitle) {
     labels.push({
-      text: chart.valAxisTitle,
+      text: leftTitle,
       x: 4 + CHART_LABEL_PT * 0.9,
       y: y0 + plotH / 2,
       sizePt: CHART_LABEL_PT,
@@ -558,9 +612,9 @@ function buildFrame(
       rotationDeg: 90,
     });
   }
-  if (chart.catAxisTitle) {
+  if (footTitle) {
     labels.push({
-      text: chart.catAxisTitle,
+      text: footTitle,
       x: x0 + plotW / 2,
       y: legend.bottomHeight + 2,
       sizePt: CHART_LABEL_PT,
@@ -1093,8 +1147,8 @@ export function buildScatterScene(
   const xTicks = ticks(xScale);
   const yTicks = ticks(yScale);
 
-  let top = 4;
-  if (chart.title) top += CHART_TITLE_PT * 1.6;
+  const title = titleLines(chart, wPt, measure);
+  const top = 4 + titleHeight(title);
   const legend = buildLegendBlock(chart, wPt, hPt, measure);
   const tickLabelW =
     Math.max(0, ...yTicks.map((v) => measure(formatTick(v, yScale.step), CHART_LABEL_PT))) + 4;
@@ -1105,7 +1159,7 @@ export function buildScatterScene(
   const xAt = (v: number): number => x0 + ((v - xScale.min) / (xScale.max - xScale.min)) * plotW;
   const yAt = (v: number): number => y0 + ((v - yScale.min) / (yScale.max - yScale.min)) * plotH;
 
-  pushChartTitle(labels, chart, wPt, hPt);
+  pushChartTitle(labels, title, wPt, hPt);
   pushGridTicks(
     gridlines,
     labels,
@@ -1311,8 +1365,8 @@ export function buildPieScene(
   const total = values.reduce((a, b) => a + b, 0);
   if (!series || total <= 0) return { rects, polylines: [], wedges, labels };
 
-  let top = 4;
-  if (chart.title) top += CHART_TITLE_PT * 1.6;
+  const title = titleLines(chart, wPt, measure);
+  const top = 4 + titleHeight(title);
   // Pie legend lists categories (each in its slice colour). A pie written
   // without `<c:cat>` has none, and its legend came out empty — the same case
   // the category axis already answers with the point indices, which is what
@@ -1383,16 +1437,7 @@ export function buildPieScene(
     wedges.push({ cx, cy, r: holeR, startRad: 0, sweepRad: -2 * Math.PI, fillHex: 'FFFFFF' });
   }
 
-  if (chart.title) {
-    labels.push({
-      text: chart.title,
-      x: wPt / 2,
-      y: hPt - 4 - CHART_TITLE_PT,
-      sizePt: CHART_TITLE_PT,
-      colorHex: TITLE_COLOR,
-      align: 'center',
-    });
-  }
+  pushChartTitle(labels, title, wPt, hPt);
   legend.emit(rects, labels);
   return { rects, polylines: [], wedges, labels };
 }
