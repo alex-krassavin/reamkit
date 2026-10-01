@@ -137,4 +137,15 @@ describe('slicers — render (E-SHEET SV2)', () => {
     expect(pdf.length).toBeGreaterThan(1000);
     expect(new TextDecoder().decode(pdf.subarray(0, 5))).toBe('%PDF-');
   });
+
+  it('gives a style name with no number in it the first accent, however long', () => {
+    // The XML parser takes no tag much past a hundred thousand characters, so
+    // the name stays short enough here for `SlicerStyle[A-Za-z]*?(\d+)` to have
+    // been tolerable; the scan that replaced it reads it once all the same.
+    const plain = firstSlicer(regionXlsx({ styleName: 'SlicerStyle' }))?.headerHex;
+    expect(firstSlicer(regionXlsx({ styleName: 'SlicerStyle'.repeat(10_000) }))?.headerHex).toBe(
+      plain,
+    );
+    expect(firstSlicer(regionXlsx({ styleName: 'SlicerStyleDark4' }))?.headerHex).not.toBe(plain);
+  });
 });

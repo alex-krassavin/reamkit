@@ -65,6 +65,17 @@ describe('legacy VML "Print object" (E-SHEET W8)', () => {
     expect(drawing.boxes.get('1025')?.widthPt).toBeCloseTo(106.5, 2);
   });
 
+  it('reads a length with a long run of blanks inside in time linear in it', () => {
+    // The two `\s*` round an empty unit split the run every way between them.
+    const xml = new TextDecoder()
+      .decode(vml(''))
+      .replace('width:106.5pt', `width:0${' '.repeat(100_000)}!`);
+    const start = performance.now();
+    const drawing = parseVmlDrawing(enc(xml));
+    expect(performance.now() - start).toBeLessThan(1000);
+    expect(drawing.boxes.get('1025')).toBeUndefined();
+  });
+
   it('drops one that clears it, and names the shape so its <control> goes too', () => {
     const drawing = parseVmlDrawing(vml('<x:PrintObject>False</x:PrintObject>'));
     expect(drawing.controls).toHaveLength(0);

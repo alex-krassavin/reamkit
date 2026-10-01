@@ -190,6 +190,29 @@ describe('formula engine — function library (W9)', () => {
     expect(ev('SUMIF(A1:A4,">3")=14', c)).toBe(true);
   });
 
+  it('reads a wildcard criteria piece by piece: ?, *, ~ and case', () => {
+    const c = makeCtx({ A1: 'Apple pie', A2: 'apricot', A3: 'a*b', A4: 'axb', A5: 'ab' });
+    expect(ev('COUNTIF(A1:A5,"a*")=5', c)).toBe(true);
+    expect(ev('COUNTIF(A1:A5,"A?R*")=1', c)).toBe(true);
+    expect(ev('COUNTIF(A1:A5,"a*b")=3', c)).toBe(true);
+    expect(ev('COUNTIF(A1:A5,"a~*b")=1', c)).toBe(true);
+    expect(ev('COUNTIF(A1:A5,"*p*i*e")=1', c)).toBe(true);
+    expect(ev('COUNTIF(A1:A5,"<>a?b")=3', c)).toBe(true);
+    expect(ev('MATCH("*COT",A1:A5,0)=2', c)).toBe(true);
+    expect(ev('VLOOKUP("?x*",A1:A5,1,FALSE)="axb"', c)).toBe(true);
+  });
+
+  it('matches a criteria of many stars against a long cell in time linear in it', () => {
+    // As one expression, `^.*a.*a.*a.*a.*a.*b$` backtracked through every way
+    // of placing its stars: a hundred letters took seconds, and every star more
+    // multiplied that by the length again.
+    const c = makeCtx({ A1: 'a'.repeat(100), B1: 'a'.repeat(1_000_000) });
+    const start = performance.now();
+    expect(ev('COUNTIF(A1,"*a*a*a*a*a*b")=0', c)).toBe(true);
+    expect(ev('COUNTIF(B1,"*a*a*a*a*a*")=1', c)).toBe(true);
+    expect(performance.now() - start).toBeLessThan(1000);
+  });
+
   it('text: LEN / LEFT / RIGHT / MID / SEARCH / EXACT / CONCATENATE / VALUE', () => {
     expect(ev('LEN(B1)=5', ctx)).toBe(true);
     expect(ev('LEFT(B1,2)="He"', ctx)).toBe(true);

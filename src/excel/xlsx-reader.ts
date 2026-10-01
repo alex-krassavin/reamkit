@@ -1190,6 +1190,28 @@ function resolveTableSlicerItems(
   return out;
 }
 
+// The number in a slicer style's name — `SlicerStyleLight3` → `3` — as
+// `/SlicerStyle[A-Za-z]*?(\d+)/i` finds it: after the first `SlicerStyle`, in
+// any case, whose letters end at a digit. Every `SlicerStyle` inside one run of
+// letters ends where the run does, so a run that ends elsewhere is passed over
+// whole; searched for as it was, each read the rest of the run again.
+function slicerStyleNumber(name: string): string | undefined {
+  const prefix = /SlicerStyle/gi;
+  const isLetter = (i: number): boolean => /[A-Za-z]/.test(name[i] ?? '');
+  const isDigit = (i: number): boolean => /\d/.test(name[i] ?? '');
+  for (let found = prefix.exec(name); found; found = prefix.exec(name)) {
+    let end = prefix.lastIndex;
+    while (isLetter(end)) end++;
+    if (isDigit(end)) {
+      let digits = end;
+      while (isDigit(digits)) digits++;
+      return name.slice(end, digits);
+    }
+    prefix.lastIndex = end;
+  }
+  return undefined;
+}
+
 // SlicerStyle{Light|Dark|Other}{N} → an accent for the header + selected buttons
 // (the same accent-column heuristic as table/pivot styles; the slicer gallery's
 // exact numbering differs, refined later). White text reads on the accent; a
@@ -1198,8 +1220,8 @@ function resolveSlicerStyle(
   styleName: string | undefined,
   palette: ReadonlyMap<string, string>,
 ): { headerHex: string; headerTextHex: string; selectedHex: string; selectedTextHex: string } {
-  const m = styleName ? /SlicerStyle[A-Za-z]*?(\d+)/i.exec(styleName) : null;
-  const column = m ? (Number(m[1]) - 1) % 7 : 1;
+  const number = styleName ? slicerStyleNumber(styleName) : undefined;
+  const column = number !== undefined ? (Number(number) - 1) % 7 : 1;
   const base = column === 0 ? '7F7F7F' : (palette.get(`accent${column}`) ?? '4472C4');
   return { headerHex: base, headerTextHex: 'FFFFFF', selectedHex: base, selectedTextHex: 'FFFFFF' };
 }
