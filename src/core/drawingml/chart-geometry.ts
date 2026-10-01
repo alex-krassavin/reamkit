@@ -1708,7 +1708,7 @@ export function buildPieScene(
     // A label the author typed wins over the one we would compute — see
     // ChartSeries.pointLabels. It is drawn whatever the slice's size, because
     // the author put it there on purpose.
-    const custom = series.pointLabels?.find((l) => l.idx === i)?.text;
+    const custom = atPoint(series.pointLabels, i)?.text;
     if (custom !== undefined || chart.showValues || pct >= 5) {
       labels.push({
         text: custom ?? own,
@@ -1732,7 +1732,33 @@ export function buildPieScene(
 }
 
 function pointColor(series: ChartSeries, idx: number): string | undefined {
-  return series.pointColors?.find((p) => p.idx === idx)?.colorHex;
+  return atPoint(series.pointColors, idx)?.colorHex;
+}
+
+/** Each override list's entries by point index, built on first use. */
+const overridesByPoint = new WeakMap<
+  ReadonlyArray<{ readonly idx: number }>,
+  ReadonlyMap<number, { readonly idx: number }>
+>();
+
+/**
+ * The first of `overrides` for the point at `idx` — looked up, not searched
+ * for: a series that overrides many of its points, searched through for every
+ * one of them, took the square of their number.
+ */
+function atPoint<T extends { readonly idx: number }>(
+  overrides: ReadonlyArray<T> | undefined,
+  idx: number,
+): T | undefined {
+  if (!overrides) return undefined;
+  let byPoint = overridesByPoint.get(overrides);
+  if (!byPoint) {
+    const index = new Map<number, T>();
+    for (const o of overrides) if (!index.has(o.idx)) index.set(o.idx, o);
+    overridesByPoint.set(overrides, index);
+    byPoint = index;
+  }
+  return byPoint.get(idx) as T | undefined;
 }
 
 // ─── legend ─────────────────────────────────────────────────────────────────

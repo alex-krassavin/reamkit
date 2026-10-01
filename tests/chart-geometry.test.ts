@@ -568,6 +568,56 @@ describe('an axis over values a file can choose', () => {
   });
 });
 
+describe('a series that overrides many of its points', () => {
+  it("finds each point's own colour and label in time linear in them", () => {
+    // §21.2.2.52 c:dPt, §21.2.2.47 c:dLbl — every point's override was searched
+    // for through the whole list: 100 000 of them took four seconds a chart.
+    const n = 100_000;
+    const values = Array.from({ length: n }, () => 1);
+    const pointColors = Array.from({ length: n }, (_, idx) => ({
+      idx,
+      colorHex: idx % 2 === 1 ? 'FF0000' : '00FF00',
+    }));
+    const pointLabels = Array.from({ length: n }, (_, idx) => ({ idx, text: `p${String(idx)}` }));
+    const timed = <T>(f: () => T): { result: T; ms: number } => {
+      const start = performance.now();
+      const result = f();
+      return { result, ms: performance.now() - start };
+    };
+    const bars = timed(() =>
+      buildBarScene(
+        {
+          type: 'bar',
+          barDir: 'col',
+          hasLegend: false,
+          categories: [],
+          series: [{ name: 'S', values, pointColors }],
+        },
+        W,
+        H,
+        measure,
+      ),
+    );
+    expect(bars.ms).toBeLessThan(1000);
+    expect(bars.result.rects.filter((r) => r.fillHex === 'FF0000')).toHaveLength(n / 2);
+    const pie = timed(() =>
+      buildPieScene(
+        {
+          type: 'pie',
+          hasLegend: false,
+          categories: [],
+          series: [{ name: 'S', values, pointLabels }],
+        },
+        W,
+        H,
+        measure,
+      ),
+    );
+    expect(pie.ms).toBeLessThan(1000);
+    expect(pie.result.labels.filter((l) => l.text.startsWith('p'))).toHaveLength(n);
+  });
+});
+
 describe('buildBarScene', () => {
   it('emits one bar per (series, category) plus legend swatches, in bounds', () => {
     const scene = buildBarScene(barChart('col'), W, H, measure);

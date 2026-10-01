@@ -48,7 +48,7 @@ import {
   parseXlsxStyles,
 } from '@/excel';
 import { bytesInclude, packageHasPart } from '@/core/bytes';
-import { parseChart, withChartColorStyle } from '@/core/drawingml/chart-parser';
+import { parseChart, pointsPerSeries, withChartColorStyle } from '@/core/drawingml/chart-parser';
 import { OFFICE_2023_THEME_PALETTE, makeColorResolver } from '@/core/drawingml/colors';
 import {
   parseTheme,
@@ -674,6 +674,11 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
  * them, and a reference naming a sheet this workbook does not have resolves to
  * nothing rather than to zeros.
  *
+ * A reference reads no more cells than the series' share of the chart's points
+ * ({@link pointsPerSeries}), and finds each in an index of its sheet. The range
+ * is the file's to name and unbounded — `B2:B99999999999` — and every cell of
+ * it was searched for through the whole sheet.
+ *
  * @param chart         The parsed chart.
  * @param sheets        Every sheet in the workbook, by tab order.
  * @param styles        The style table (for a referenced cell's number format).
@@ -688,14 +693,33 @@ function withWorkbookData(
   sharedStrings: ReadonlyArray<string>,
   date1904: boolean,
 ): Chart {
+  const most = pointsPerSeries(chart.series.length);
+  const indexes = new Map<ParsedWorksheet, Map<string, WorksheetCell>>();
+  const cellAt = (
+    grid: ParsedWorksheet,
+    row: number,
+    column: number,
+  ): WorksheetCell | undefined => {
+    let index = indexes.get(grid);
+    if (!index) {
+      index = new Map();
+      // The first of two cells at one address, as a search would find it.
+      for (const cell of grid.cells) {
+        const key = `${String(cell.row)}:${String(cell.column)}`;
+        if (!index.has(key)) index.set(key, cell);
+      }
+      indexes.set(grid, index);
+    }
+    return index.get(`${String(row)}:${String(column)}`);
+  };
   const cellsOf = (ref: string | undefined): Array<string> | undefined => {
     if (ref === undefined) return undefined;
     const area = resolveChartRef(ref, sheets);
     if (!area) return undefined;
     const out: Array<string> = [];
-    for (let row = area.startRow; row <= area.endRow; row++) {
-      for (let col = area.startColumn; col <= area.endColumn; col++) {
-        const cell = area.grid.cells.find((c) => c.row === row && c.column === col);
+    for (let row = area.startRow; row <= area.endRow && out.length < most; row++) {
+      for (let col = area.startColumn; col <= area.endColumn && out.length < most; col++) {
+        const cell = cellAt(area.grid, row, col);
         out.push(cell ? resolveCellText(cell, sharedStrings, styles, date1904) : '');
       }
     }
