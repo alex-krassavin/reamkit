@@ -6,6 +6,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { applyTint } from '@/excel/tint';
+import { workbookColorHex } from '@/excel/styles-parser';
 
 describe('applyTint (§18.8.19)', () => {
   it('gives the shades Excel picks, lighter and darker', () => {
@@ -40,6 +41,25 @@ describe('applyTint (§18.8.19)', () => {
     expect(applyTint('ED7D31', 0.79998168889431442)).toBe('FCE4D6');
     expect(applyTint('FFFFFF', -0.249977111117893)).toBe('BFBFBF');
     expect(applyTint('000000', 0.499984740745262)).toBe('808080');
+  });
+
+  it("gives what Excel's own PDF paints, on the 2023 theme and off the picker", () => {
+    // Measured 2026-10-01: Excel's PDF of a probe filling cells with theme and
+    // rgb colours under tints of its own and others.
+    expect(applyTint('156082', 0.8)).toBe('C0E6F5');
+    expect(applyTint('156082', 0.6)).toBe('83CCEB');
+    expect(applyTint('156082', 0.4)).toBe('44B3E1');
+    expect(applyTint('0E2841', 0.3)).toBe('2467AA');
+    expect(applyTint('E97132', 0.7)).toBe('F9D3BF');
+    expect(applyTint('A02B93', -0.37)).toBe('651B5E');
+    expect(applyTint('FFFFFF', -0.75)).toBe('404040');
+    expect(applyTint('E8E8E8', -0.9)).toBe('161616');
+  });
+
+  it('tints an rgb colour as it does a theme slot', () => {
+    const colors = { indexed: [] };
+    expect(workbookColorHex({ '@_rgb': 'FF4472C4', '@_tint': '0.8' }, colors)).toBe('D9E1F2');
+    expect(workbookColorHex({ '@_rgb': 'FF7F7F7F', '@_tint': '-0.5' }, colors)).toBe('404040');
   });
 
   it('leaves a colour alone at no tint, or none it can read', () => {

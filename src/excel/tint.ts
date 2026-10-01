@@ -8,7 +8,11 @@
 // colour picker offers for the Office 2013–2022 theme, to the digit — 4472C4
 // lighter 80% is D9E1F2, where floating-point HSL makes DAE3F3 — and the tint
 // Excel writes for a shade (0.79998168889431442, its 80% in 32767ths) rounds
-// back to the tenth of a percent it was picked as.
+// back to the tenth of a percent it was picked as. Excel's own PDF of a grid
+// of 23 colours under 21 tints (theme and `rgb` alike, 2026-10-01) agrees in
+// 471 cells of 483; the twelve it does not are all one tint, 0.123, which
+// Excel rounds to the nearest luminance where every other tint it was given
+// floors. It writes no such tint itself.
 
 /** The top of the HLS scale. */
 const HLS_MAX = 240;

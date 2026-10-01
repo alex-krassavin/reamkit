@@ -525,8 +525,8 @@ function averageGradientColor(
 }
 
 /**
- * A `<color>` of this workbook as 6-hex: its `rgb`, its `indexed` entry, or its
- * `theme` slot with the `tint` applied (§18.8.3).
+ * A `<color>` of this workbook as 6-hex: its `rgb`, its `indexed` entry or its
+ * `theme` slot, with the `tint` applied (§18.8.3).
  *
  * @param node   The `<color>` element, parsed.
  * @param colors What the workbook's colours point at.
@@ -541,6 +541,14 @@ function colorOf(
   colors: WorkbookColors,
 ): string | undefined {
   if (!node) return undefined;
+  const base = baseColorOf(node, colors);
+  // §18.8.19 — the tint is "applied to the RGB value of the color", however the
+  // colour is named: Excel lightens `rgb="FF4472C4" tint="0.8"` to D9E1F2 as
+  // it does the theme slot of that colour. We tinted theme colours only.
+  return base === undefined ? undefined : applyTint(base, Number(strAttr(node, 'tint') ?? '0'));
+}
+
+function baseColorOf(node: Record<string, unknown>, colors: WorkbookColors): string | undefined {
   const rgb = strAttr(node, 'rgb');
   if (rgb) {
     // Excel stores ARGB; strip leading alpha if 8 hex digits
@@ -555,8 +563,7 @@ function colorOf(
   const themeIdx = strAttr(node, 'theme');
   if (themeIdx !== undefined && colors.theme) {
     const slot = THEME_SLOTS[Number(themeIdx)];
-    const base = slot ? colors.theme.get(slot) : undefined;
-    if (base) return applyTint(base, Number(strAttr(node, 'tint') ?? '0'));
+    return slot ? colors.theme.get(slot) : undefined;
   }
   return undefined;
 }
