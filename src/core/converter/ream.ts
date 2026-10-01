@@ -28,6 +28,7 @@ import type { StreamFilters } from '@/pdf-reader/document';
 import type { SignatureOptions, StyledRenderOptions } from '@/pdf';
 import { DEFAULT_READERS, resolveFontsViaChain, toFlowDoc } from '@/core/converter/facade';
 import { flowRenderOptions } from '@/core/converter/project';
+import { layoutSheetImages } from '@/core/converter/sheet-images';
 import { FontRegistry, createFontMeasure } from '@/core/font';
 import { fetchFontSet, fetchScriptFont, resolveFamilyKey } from '@/core/fonts';
 import { scriptsInFlow } from '@/core/fonts/scripts';
@@ -359,27 +360,14 @@ export class Ream {
     // re-projects the grid against the face it is about to render with;
     // otherwise every column is laid out to one font's digit and filled with
     // another's, and the text that does not fit is clipped away.
-    const paginated = this.sheet
-      ? projectSheetDoc(this.sheet, {
-          ...(options.now ? { now: options.now } : {}),
-          ...(options.fileName ? { fileName: options.fileName } : {}),
-          digitWidthPt: createFontMeasure(registry.resolveByStyle(false, false).parsed).textWidthPt(
-            '0',
-            DEFAULT_WORKBOOK_FONT_PT,
-          ),
-        })
-      : flow;
-
-    if (to === 'svg') {
-      const laid = layoutStyledDocument(paginated.body, {
-        registry,
-        ...flowRenderOptions(paginated),
-      });
-      const svg = writeSvg(laid);
-      losses.push(...svg.losses);
-      this.enforceStrict(options, losses);
-      return { bytes: svg.bytes, losses };
-    }
+    const sheetOptions = {
+      ...(options.now ? { now: options.now } : {}),
+      ...(options.fileName ? { fileName: options.fileName } : {}),
+      digitWidthPt: createFontMeasure(registry.resolveByStyle(false, false).parsed).textWidthPt(
+        '0',
+        DEFAULT_WORKBOOK_FONT_PT,
+      ),
+    };
 
     const {
       fonts: _a,
@@ -400,6 +388,28 @@ export class Ream {
     void _d;
     void _e;
     void _f;
+
+    if (to === 'svg') {
+      // A workbook is drawn as images of its sheets — each whole on a page of
+      // its own, as its window shows it — not as the pages it prints on. Laid
+      // out in the faces the PDF would be, each family in its own, and with
+      // the caller's layout options: given only the one registry, every run
+      // of every family was measured in the same face.
+      const faces = { registry, ...(registriesByFamily ? { registriesByFamily } : {}) };
+      const laid = this.sheet
+        ? layoutSheetImages(this.sheet, faces, sheetOptions, renderOptions)
+        : layoutStyledDocument(flow.body, {
+            ...faces,
+            ...flowRenderOptions(flow),
+            ...renderOptions,
+          });
+      const svg = writeSvg(laid);
+      losses.push(...svg.losses);
+      this.enforceStrict(options, losses);
+      return { bytes: svg.bytes, losses };
+    }
+
+    const paginated = this.sheet ? projectSheetDoc(this.sheet, sheetOptions) : flow;
 
     // Caller overrides spread over the document's own metadata.
     const info = paginated.info || callerInfo ? { ...paginated.info, ...callerInfo } : undefined;

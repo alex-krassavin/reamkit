@@ -8026,6 +8026,25 @@ function layoutTableCell(
     leftNeighborBorders,
     aboveNeighborBorders,
   );
+  // A worksheet's gridlines on a screen (TableProperties.gridlines): the edges
+  // no border claims, round a cell no fill covers, and none inside a merge.
+  // Each edge is ruled once — on the cell below it or to its right, and the
+  // table's own bottom and right edges on the cells that bound it.
+  const grid = tableProps.gridlines;
+  const ruled =
+    grid && !cell.properties.shading?.colorHex
+      ? {
+          ...(borders.top || mergeRole === 'middle' || mergeRole === 'end' ? {} : { top: grid }),
+          ...(borders.left ? {} : { left: grid }),
+          ...(borders.bottom ||
+          rowIdx !== rowCount - 1 ||
+          mergeRole === 'start' ||
+          mergeRole === 'middle'
+            ? {}
+            : { bottom: grid }),
+          ...(borders.right || colEnd !== colCount - 1 ? {} : { right: grid }),
+        }
+      : undefined;
   // A turned cell is as tall as its longest line is long, and its stack of
   // lines runs across the width instead.
   const alongPt = turned ? lines.reduce((a, l) => Math.max(a, l.contentWidthPt), 0) : 0;
@@ -8038,7 +8057,7 @@ function layoutTableCell(
     padRightPt,
     padBottomPt,
     padLeftPt,
-    borders,
+    borders: ruled ? { ...ruled, ...borders } : borders,
     ...(cell.properties.shading?.colorHex
       ? { shadingColorHex: cell.properties.shading.colorHex }
       : {}),

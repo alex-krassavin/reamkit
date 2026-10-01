@@ -764,6 +764,11 @@ interface PrintModelOptions {
   // headings and no centring on the paper. The caller leaves the print area
   // and the repeated titles out as well. See ProjectSheetOptions.screen.
   readonly screen?: boolean;
+  // With `screen`: the sheet as an IMAGE of its used range rather than a
+  // window onto it — text overflowing the last used column is cut at that
+  // column's edge instead of given columns to run on into, as LibreOffice's
+  // whole-sheet export cuts it. A window scrolls; a picture has an edge.
+  readonly image?: boolean;
   // ECMA-376 §18.2.5 — _xlnm.Print_Area: render only this range (clipped to the
   // used range). Absent ⇒ the whole used range.
   readonly printArea?: CellRange;
@@ -1049,6 +1054,7 @@ export function worksheetToBody(
     date1904,
     charTwipsUnit,
     print.screen === true,
+    print.image === true,
   );
 
   // Print area (when defined) overrides the rendered window: Excel prints only
@@ -2779,7 +2785,8 @@ export function cellPaintsSomething(cell: WorksheetCell | undefined, styles: Xls
 /**
  * How many empty columns past the used range the last column's text needs to
  * run into, bounded by the printable width (Excel stops at the page edge too)
- * — or, on a `screen`, which has no edge, only by the column cap.
+ * — or, on a `screen`, which has no edge, only by the column cap; an `image`
+ * of the sheet gives it none, its edge being the used range's.
  *
  * Only the last used column can want them — anywhere else the grid already has
  * neighbours. Zero for the overwhelming majority of sheets, which keeps their
@@ -2793,7 +2800,9 @@ function overflowColumnsPastUsedRange(
   date1904: boolean,
   charTwipsUnit: number,
   screen: boolean,
+  image: boolean,
 ): number {
+  if (image) return 0;
   const defaultTwips = defaultColumnTwips(worksheet, charTwipsUnit, DEFAULT_COL_CHARS);
   // The columns past the used range are not necessarily default-width: a `<col>`
   // range routinely covers far more columns than hold anything. Sizing the

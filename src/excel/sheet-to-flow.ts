@@ -118,7 +118,35 @@ export interface ProjectSheetOptions {
    * left out. A flowed target that shows the workbook, HTML, asks for this.
    */
   readonly screen?: boolean;
+  /**
+   * With {@link screen}: each sheet on a page of its own with room for all of
+   * it — no paper and no margins but a sliver — for a target that draws a
+   * sheet as an image of itself and then cuts the page down to what was drawn
+   * on it (`fitPagesToContent`). The SVG target asks for this.
+   */
+  readonly wholeSheetPages?: boolean;
 }
+
+/**
+ * A page with room for any sheet, and the sliver of margin a sheet drawn as an
+ * image keeps round itself, so that the rules on its outer edges are not cut
+ * in half.
+ */
+const WHOLE_SHEET_PAGE_PT = 1_000_000;
+const WHOLE_SHEET_MARGIN_PT = 2;
+const WHOLE_SHEET_SECTION: SectionProperties = {
+  pageSize: { width: pt(WHOLE_SHEET_PAGE_PT), height: pt(WHOLE_SHEET_PAGE_PT) },
+  margins: {
+    top: pt(WHOLE_SHEET_MARGIN_PT),
+    right: pt(WHOLE_SHEET_MARGIN_PT),
+    bottom: pt(WHOLE_SHEET_MARGIN_PT),
+    left: pt(WHOLE_SHEET_MARGIN_PT),
+    header: pt(0),
+    footer: pt(0),
+  },
+  headers: [],
+  footers: [],
+};
 
 /**
  * Project a {@link SheetDoc} into a {@link FlowDoc} (E-SHEET SA2): each grid sheet
@@ -204,6 +232,7 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
     const titleRows = screen ? undefined : resolvePrintTitleRows(sheet.definedNames, sheetIdx);
     const gridBody = worksheetToBody(ws.grid, sheet.sharedStrings, sheet.styles, sheet.date1904, {
       ...(screen ? { screen } : {}),
+      ...(screen && options.wholeSheetPages === true ? { image: true } : {}),
       ...(printArea ? { printArea } : {}),
       ...(titleRows ? { titleRows } : {}),
       // The grid a window draws is the view's; the one paper gets is the print
@@ -233,7 +262,9 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
     // Each sheet's header/footer band and page geometry are its own — and a
     // screen has no page for a header or footer to be printed on.
     const sheetSection = screen
-      ? sectionFromWorksheet(ws.grid)
+      ? options.wholeSheetPages === true
+        ? WHOLE_SHEET_SECTION
+        : sectionFromWorksheet(ws.grid)
       : withHeaderFooter(
           sectionFromWorksheet(ws.grid),
           ws,
