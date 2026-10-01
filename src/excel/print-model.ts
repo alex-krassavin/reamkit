@@ -52,6 +52,7 @@ import type {
   XlsxPageSetup,
   XlsxStyles,
 } from '@/excel';
+import type { ExcelTable, TableStyleElementType } from '@/core/spreadsheet-model';
 import type { CellConditionalFormatter, CfOverride } from '@/excel/conditional-format';
 import type { SheetHyperlink, SheetSlicer } from '@/core/ir/sheet';
 import type { Loss } from '@/core/ir/loss';
@@ -1553,6 +1554,8 @@ function gridBody(
   // text colour. Empty when the sheet has no table parts. Applied below the
   // cell's own fill and below conditional formatting.
   const tableFormatByCell = buildTableFormatLookup(worksheet);
+  // The Normal style's text colour: a cell still in it takes a table's.
+  const normalColorHex = styles.fonts[0]?.colorHex;
 
   // §18.3.1.33 data-validation `list` cells (E-SHEET SV1): the ranges whose cells
   // should paint an in-cell dropdown affordance. Empty (the dropdown block is
@@ -1726,11 +1729,24 @@ function gridBody(
       // formatting (E-SHEET SC3).
       const tableFmt = tableFormatByCell.get(key(absR, absC));
       if (!shading && tableFmt?.shading) shading = tableFmt.shading;
-      if (tableFmt?.fontColorHex) runProps = { ...runProps, colorHex: tableFmt.fontColorHex };
+      // The style's colour sits under the cell's own: a cell in the Normal
+      // style's colour takes the table's (white on a dark header), one the
+      // author coloured keeps it.
+      if (
+        tableFmt?.fontColorHex &&
+        (runProps.colorHex === undefined || runProps.colorHex === normalColorHex)
+      ) {
+        runProps = { ...runProps, colorHex: tableFmt.fontColorHex };
+      }
+      if (tableFmt?.bold && !runProps.bold) runProps = { ...runProps, bold: true };
       // §18.3.1.63's scale reduces the printed image, rules included: 56274.xlsx
       // prints at 66%, where a `thin` edge is 0.495pt and we stroked the full
       // 0.75 — half again too heavy, and doubled in device pixels.
       let borders = xf ? scaleBorders(bordersFromXf(xf, styles), printScale) : undefined;
+      // …and the table's rules under the cell's own, edge by edge.
+      if (tableFmt?.borders) {
+        borders = { ...scaleBorders(mapXlsxBorder(tableFmt.borders), printScale), ...borders };
+      }
       let dataBar: CellDataBar | undefined;
       let icon: CellIcon | undefined;
       const sparkline = sparklineByCell.get(key(absR, absC));
@@ -2895,6 +2911,160 @@ function collectSeriesValues(
 interface TableCellFormat {
   readonly shading?: CellShading;
   readonly fontColorHex?: string;
+  /** §18.8.40 — the table style sets the cell's text bold (a header, a total). */
+  readonly bold?: boolean;
+  /** §18.8.40 — the edges the table style rules round the cell. */
+  readonly borders?: XlsxBorder;
+}
+
+/** §18.8.41 — the order a table style's regions apply in: a later one wins. */
+const TABLE_STYLE_ORDER: ReadonlyArray<TableStyleElementType> = [
+  'wholeTable',
+  'firstColumnStripe',
+  'secondColumnStripe',
+  'firstRowStripe',
+  'secondRowStripe',
+  'lastColumn',
+  'firstColumn',
+  'headerRow',
+  'totalRow',
+  'firstHeaderCell',
+  'lastHeaderCell',
+  'firstTotalCell',
+  'lastTotalCell',
+];
+
+/** A rectangle of a table a style region covers, rows and columns inclusive. */
+interface TableRegion {
+  readonly top: number;
+  readonly bottom: number;
+  readonly left: number;
+  readonly right: number;
+}
+
+/**
+ * §18.8.40 — what a table's style makes of each of its cells. Each region
+ * the style formats is laid over the table in the order §18.8.41 gives —
+ * the whole table, its column and row stripes, its last and first columns,
+ * its header and total rows, their corner cells — and a later region's fill,
+ * weight, colour and edges win over an earlier one's. A region's `left`,
+ * `right`, `top` and `bottom` rule its own outer edges, its `vertical` and
+ * `horizontal` the lines between its cells. Stripes run through the data rows
+ * only, in bands of their own size, the first band at the first data row;
+ * the first and last columns, and the stripes, only where the table turns them
+ * on.
+ *
+ * @param t   The table, its style resolved.
+ * @param out Where each cell's format goes, by absolute key.
+ */
+function styledTableFormats(t: ExcelTable, out: Map<string, TableCellFormat>): void {
+  const style = t.style;
+  if (!style) return;
+  const { startRow: r0, endRow: r1, startColumn: c0, endColumn: c1 } = t.ref;
+  const dataTop = r0 + t.headerRowCount;
+  const dataBottom = r1 - (t.totalsRowCount ?? 0);
+  const bands = (
+    from: number,
+    to: number,
+    first: number,
+    second: number,
+    which: 0 | 1,
+  ): Array<[number, number]> => {
+    const spans: Array<[number, number]> = [];
+    let at = from;
+    for (let i = 0; at <= to; i++) {
+      const size = i % 2 === 0 ? first : second;
+      if (i % 2 === which) spans.push([at, Math.min(to, at + size - 1)]);
+      at += size;
+    }
+    return spans;
+  };
+  const rowSize = [style.firstRowStripe?.size ?? 1, style.secondRowStripe?.size ?? 1] as const;
+  const colSize = [
+    style.firstColumnStripe?.size ?? 1,
+    style.secondColumnStripe?.size ?? 1,
+  ] as const;
+  const regionsOf = (type: TableStyleElementType): Array<TableRegion> => {
+    const whole = { top: r0, bottom: r1, left: c0, right: c1 };
+    switch (type) {
+      case 'wholeTable':
+        return [whole];
+      case 'firstRowStripe':
+      case 'secondRowStripe':
+        return t.showRowStripes && dataBottom >= dataTop
+          ? bands(
+              dataTop,
+              dataBottom,
+              rowSize[0],
+              rowSize[1],
+              type === 'firstRowStripe' ? 0 : 1,
+            ).map(([top, bottom]) => ({ top, bottom, left: c0, right: c1 }))
+          : [];
+      case 'firstColumnStripe':
+      case 'secondColumnStripe':
+        return t.showColumnStripes && dataBottom >= dataTop
+          ? bands(c0, c1, colSize[0], colSize[1], type === 'firstColumnStripe' ? 0 : 1).map(
+              ([left, right]) => ({ top: dataTop, bottom: dataBottom, left, right }),
+            )
+          : [];
+      case 'lastColumn':
+        return t.showLastColumn ? [{ ...whole, left: c1 }] : [];
+      case 'firstColumn':
+        return t.showFirstColumn ? [{ ...whole, right: c0 }] : [];
+      case 'headerRow':
+        return t.headerRowCount > 0 ? [{ ...whole, bottom: dataTop - 1 }] : [];
+      case 'totalRow':
+        return dataBottom < r1 ? [{ ...whole, top: dataBottom + 1 }] : [];
+      case 'firstHeaderCell':
+        return t.headerRowCount > 0 && t.showFirstColumn
+          ? [{ top: r0, bottom: dataTop - 1, left: c0, right: c0 }]
+          : [];
+      case 'lastHeaderCell':
+        return t.headerRowCount > 0 && t.showLastColumn
+          ? [{ top: r0, bottom: dataTop - 1, left: c1, right: c1 }]
+          : [];
+      case 'firstTotalCell':
+        return dataBottom < r1 && t.showFirstColumn
+          ? [{ top: dataBottom + 1, bottom: r1, left: c0, right: c0 }]
+          : [];
+      case 'lastTotalCell':
+        return dataBottom < r1 && t.showLastColumn
+          ? [{ top: dataBottom + 1, bottom: r1, left: c1, right: c1 }]
+          : [];
+    }
+  };
+  for (const type of TABLE_STYLE_ORDER) {
+    const dxf = style[type]?.dxf;
+    if (!dxf) continue;
+    // A dxf states a solid fill's colour as its background; `none` is no fill.
+    const fill =
+      dxf.fill?.patternType === 'none' ? undefined : (dxf.fill?.bgColorHex ?? dxf.fill?.fgColorHex);
+    const b = dxf.border;
+    for (const region of regionsOf(type)) {
+      for (let r = region.top; r <= region.bottom; r++) {
+        for (let c = region.left; c <= region.right; c++) {
+          const k = key(r, c);
+          const was = out.get(k);
+          const edges: { -readonly [K in keyof XlsxBorder]: XlsxBorder[K] } = { ...was?.borders };
+          const top = r === region.top ? b?.top : b?.horizontal;
+          const bottom = r === region.bottom ? b?.bottom : b?.horizontal;
+          const left = c === region.left ? b?.left : b?.vertical;
+          const right = c === region.right ? b?.right : b?.vertical;
+          if (top) edges.top = top;
+          if (bottom) edges.bottom = bottom;
+          if (left) edges.left = left;
+          if (right) edges.right = right;
+          out.set(k, {
+            ...was,
+            ...(fill !== undefined ? { shading: { colorHex: fill } } : {}),
+            ...(dxf.font?.colorHex !== undefined ? { fontColorHex: dxf.font.colorHex } : {}),
+            ...(dxf.font?.bold !== undefined ? { bold: dxf.font.bold } : {}),
+            ...(Object.keys(edges).length > 0 ? { borders: edges } : {}),
+          });
+        }
+      }
+    }
+  }
 }
 
 // A pivot rowItem @t that marks a total row — 'grand' (grand total) or any
@@ -2945,7 +3115,12 @@ function buildTableFormatLookup(worksheet: ParsedWorksheet): Map<string, TableCe
       for (let c = ref.startColumn; c <= ref.endColumn; c++) out.set(key(r, c), fmt);
     }
   };
-  for (const t of worksheet.tables ?? []) band(t.ref, t.headerRowCount, t);
+  // A table whose style is known takes it region by region; one that names a
+  // style neither Excel nor the workbook defines is left as before.
+  for (const t of worksheet.tables ?? []) {
+    if (t.style) styledTableFormats(t, out);
+    else band(t.ref, t.headerRowCount, t);
+  }
   for (const p of worksheet.pivotTables ?? [])
     band(p.ref, p.firstDataRow, p, (off) => isPivotTotal(p.rowItemTypes?.[off]));
   // Overlay grand-total / subtotal COLUMNS with the header emphasis (E-PIVOT

@@ -16,6 +16,7 @@ import { XMLParser } from 'fast-xml-parser';
 
 import type {
   Dxf,
+  TableStyleElementType,
   XlsxBorder,
   XlsxBorderEdge,
   XlsxBorderStyleName,
@@ -25,6 +26,7 @@ import type {
   XlsxFont,
   XlsxHorizontalAlign,
   XlsxStyles,
+  XlsxTableStyle,
   XlsxVerticalAlign,
 } from '@/core/spreadsheet-model';
 import { resolveAlternateContent } from '@/core/opc/alternate-content';
@@ -104,6 +106,7 @@ export function parseXlsxStyles(data: Uint8Array, theme?: ThemePalette): XlsxSty
     indexed: parseIndexedColors(root),
   };
   const dxfs = parseDxfs(root, colors);
+  const tableStyles = parseTableStyles(root);
   return {
     numFmts: parseNumFmts(root),
     fonts: parseFonts(root, colors),
@@ -111,7 +114,53 @@ export function parseXlsxStyles(data: Uint8Array, theme?: ThemePalette): XlsxSty
     borders: parseBorders(root, colors),
     cellXfs: parseCellXfs(root),
     ...(dxfs.length > 0 ? { dxfs } : {}),
+    ...(tableStyles.size > 0 ? { tableStyles } : {}),
   };
+}
+
+const TABLE_STYLE_TYPES: ReadonlySet<string> = new Set<TableStyleElementType>([
+  'wholeTable',
+  'firstColumnStripe',
+  'secondColumnStripe',
+  'firstRowStripe',
+  'secondRowStripe',
+  'lastColumn',
+  'firstColumn',
+  'headerRow',
+  'totalRow',
+  'firstHeaderCell',
+  'lastHeaderCell',
+  'firstTotalCell',
+  'lastTotalCell',
+]);
+
+// §18.8.42 <tableStyles> — the table styles the workbook defines itself: each
+// region names a dxf (zero-based) in the workbook's <dxfs>. A PivotTable
+// style's regions that a table has no use for are left out.
+function parseTableStyles(root: Record<string, unknown>): Map<string, XlsxTableStyle> {
+  const out = new Map<string, XlsxTableStyle>();
+  for (const raw of asArray(asObject(root['tableStyles'])?.['tableStyle'])) {
+    const style = asObject(raw);
+    const name = style ? strAttr(style, 'name') : undefined;
+    if (!style || name === undefined) continue;
+    const elements: Array<XlsxTableStyle['elements'][number]> = [];
+    for (const el of asArray(style['tableStyleElement'])) {
+      const node = asObject(el);
+      const type = node ? strAttr(node, 'type') : undefined;
+      const dxfId = node ? numAttr(node, 'dxfId') : undefined;
+      if (!node || type === undefined || !TABLE_STYLE_TYPES.has(type) || dxfId === undefined) {
+        continue;
+      }
+      const size = numAttr(node, 'size');
+      elements.push({
+        type: type as TableStyleElementType,
+        dxfId,
+        ...(size !== undefined && size > 1 ? { size } : {}),
+      });
+    }
+    out.set(name, { elements });
+  }
+  return out;
 }
 
 // §18.8.10 <dxfs> — differential formats a conditional-format rule applies on
@@ -172,7 +221,8 @@ export function parseDxf(item: unknown, colors: WorkbookColors): Dxf {
     const borderObj = asObject(obj['border']);
     if (borderObj) {
       const border: Mutable<XlsxBorder> = {};
-      for (const side of ['top', 'right', 'bottom', 'left'] as const) {
+      // …and the lines between the cells it covers, which a table style uses.
+      for (const side of ['top', 'right', 'bottom', 'left', 'vertical', 'horizontal'] as const) {
         const edge = parseBorderEdge(asObject(borderObj[side]), colors);
         if (edge) border[side] = edge;
       }

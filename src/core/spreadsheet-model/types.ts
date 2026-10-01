@@ -272,6 +272,45 @@ export interface SheetPane {
 }
 
 /**
+ * §18.18.77 ST_TableStyleType — the regions of a table a table style formats,
+ * in the order they apply (§18.8.41): a later region's format wins where both
+ * say something.
+ */
+export type TableStyleElementType =
+  | 'wholeTable'
+  | 'firstColumnStripe'
+  | 'secondColumnStripe'
+  | 'firstRowStripe'
+  | 'secondRowStripe'
+  | 'lastColumn'
+  | 'firstColumn'
+  | 'headerRow'
+  | 'totalRow'
+  | 'firstHeaderCell'
+  | 'lastHeaderCell'
+  | 'firstTotalCell'
+  | 'lastTotalCell';
+
+/** §18.8.40 — one region's format in a table style: its dxf, and a stripe's band size. */
+export interface TableStyleRegion {
+  readonly dxf: Dxf;
+  /** §18.8.41 `size` — rows (or columns) in one band of a stripe; default 1. */
+  readonly size?: number;
+}
+
+/** §18.8.40 — a table style, region by region, its colours resolved. */
+export type TableStyleFormat = Partial<Record<TableStyleElementType, TableStyleRegion>>;
+
+/** §18.8.40 `<tableStyle>` — a style a workbook defines itself: each region's dxf. */
+export interface XlsxTableStyle {
+  readonly elements: ReadonlyArray<{
+    readonly type: TableStyleElementType;
+    readonly dxfId: number;
+    readonly size?: number;
+  }>;
+}
+
+/**
  * ECMA-376 §18.5.1.2 `<table>` — a structured table over a cell range with a
  * banded style. The raw parse carries the range, header rows and style flags;
  * the reader resolves the named style to header / band fill colours against the
@@ -301,6 +340,12 @@ export interface ExcelTable {
   readonly headerHex?: string;
   readonly bandHex?: string;
   readonly headerTextHex?: string;
+  /**
+   * §18.8.40 — the style the table names, region by region: one Excel builds
+   * in (TableStyleMedium2) or one the workbook defines, its colours resolved
+   * against the workbook's theme.
+   */
+  readonly style?: TableStyleFormat;
 }
 
 /**
@@ -411,6 +456,13 @@ export interface XlsxBorder {
   readonly diagonal?: XlsxBorderEdge;
   readonly diagonalUp?: boolean;
   readonly diagonalDown?: boolean;
+  /**
+   * §18.8.4 `<vertical>`/`<horizontal>` — the lines BETWEEN the cells of a range
+   * a differential format covers: a table style's rules between its columns
+   * and between its rows. A cell's own border has no use for them.
+   */
+  readonly vertical?: XlsxBorderEdge;
+  readonly horizontal?: XlsxBorderEdge;
 }
 
 /** §18.18.40 ST_HorizontalAlignment — `<alignment horizontal>`. */
@@ -481,6 +533,11 @@ export interface XlsxStyles {
    * rules (E-SHEET SC1); only the properties a dxf sets override the base.
    */
   readonly dxfs?: ReadonlyArray<Dxf>;
+  /**
+   * §18.8.42 `<tableStyles>` — the table styles the workbook defines itself,
+   * by name; their regions point into {@link XlsxStyles.dxfs}.
+   */
+  readonly tableStyles?: ReadonlyMap<string, XlsxTableStyle>;
 }
 
 /** §18.8.14 `<dxf>` — a differential (override) format a `cfRule` applies on match. */

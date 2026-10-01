@@ -81,6 +81,8 @@ import {
 
 import { projectSheetDoc } from '@/excel/sheet-to-flow';
 import { columnUnitTwips, resolveCellText } from '@/excel/print-model';
+import { resolveTableStyleFormat } from '@/excel/table-style';
+import { INDEXED_COLORS } from '@/core/indexed-colors';
 
 const WORKBOOK_PART = 'xl/workbook.xml';
 const SHARED_STRINGS_PART = 'xl/sharedStrings.xml';
@@ -346,7 +348,9 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
         const part = rel ? pkg.resolveRelatedPart(resolved.path, rel) : undefined;
         const full = part ? parseTablePartFull(part.data) : undefined;
         if (!full) continue;
-        resolvedTables.push(resolveTableStyle(full.table, palette));
+        resolvedTables.push(
+          withTableStyle(resolveTableStyle(full.table, palette), styles, themePalette),
+        );
         // Index the table by id so a slicer can resolve its column (E-SHEET SV2).
         if (full.id !== undefined) {
           tableIndex.set(full.id, {
@@ -1013,6 +1017,21 @@ function resolveTableStyle(t: ExcelTable, palette: ReadonlyMap<string, string>):
   }
   // medium / dark: a solid accent header with white text.
   return { ...t, headerHex: base, bandHex: lighten(base, 0.8), headerTextHex: 'FFFFFF' };
+}
+
+// §18.8.40 — the style a table names, region by region, in the workbook's own
+// colours: what its header, its stripes, its totals and its rules look like.
+function withTableStyle(
+  t: ExcelTable,
+  styles: XlsxStyles,
+  theme: ReadonlyMap<string, string> | undefined,
+): ExcelTable {
+  if (t.styleName === undefined) return t;
+  const style = resolveTableStyleFormat(t.styleName, styles, {
+    ...(theme ? { theme } : {}),
+    indexed: INDEXED_COLORS,
+  });
+  return style ? { ...t, style } : t;
 }
 
 // Resolve a pivot's named built-in style to header / band colours. Pivot styles
