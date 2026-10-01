@@ -20,7 +20,7 @@ import { toBool } from '@/excel/formula/value';
 export type { EvalContext } from '@/excel/formula/context';
 export type { Shift } from '@/excel/formula/eval';
 export type { Scalar, FValue, Rect, FErr } from '@/excel/formula/value';
-export { num, str, bool, err, BLANK } from '@/excel/formula/value';
+export { num, str, bool, err, BLANK, toNumber } from '@/excel/formula/value';
 export { serialFromDate, serialToParts, timePeriodMatches } from '@/excel/formula/dates';
 export { NO_SHIFT, evaluate } from '@/excel/formula/eval';
 

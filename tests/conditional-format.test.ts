@@ -57,6 +57,36 @@ describe('conditional formatting — cellIs (E-SHEET SC1)', () => {
     expect(textOf(bar(' showValue="0"'))).toEqual(['', '']);
   });
 
+  it('tops a bar at the number a defined name holds', () => {
+    // §18.3.1.11 — a `num` stop's val may be a formula as well as a number, a
+    // defined name among them. With no number for the stop the whole bar was
+    // dropped, its "bar only" with it, and the figure was printed where the
+    // gauge belongs.
+    const stylesXml = `
+      <fonts count="1"><font><sz val="11"/></font></fonts>
+      <fills count="1"><fill><patternFill patternType="none"/></fill></fills>
+      <borders count="1"><border/></borders>
+      <cellXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellXfs>
+      <dxfs count="0"/>`;
+    const cf =
+      `<conditionalFormatting sqref="A1"><cfRule type="dataBar" priority="1">` +
+      `<dataBar showValue="0"><cfvo type="num" val="0"/><cfvo type="num" val="Income"/>` +
+      `<color rgb="FF638EC6"/></dataBar></cfRule></conditionalFormatting>`;
+    const flow = Ream.parse(
+      buildXlsx({
+        rows: [[25], [100]],
+        stylesXml,
+        conditionalFormattingXml: cf,
+        definedNames: [{ name: 'Income', value: 'Sheet1!$A$2' }],
+      }),
+    ).flow;
+    const table = flow.body.find((el) => el.kind === 'table');
+    if (table?.kind !== 'table') throw new Error('expected a table');
+    const cell = table.table.rows[0]!.cells[0]!;
+    expect(cell.properties.dataBar?.fraction).toBeCloseTo(0.25);
+    expect(cell.content).toEqual([]);
+  });
+
   it("renders the value in the rule's own number format", () => {
     // §18.8.9 — a dxf may carry a `<numFmt>`, which changes what the cell SAYS
     // and not just how it looks. Every one of new_cond_format_test.xlsx's
@@ -233,7 +263,8 @@ describe('conditional formatting — colorScale (E-SHEET SC1b)', () => {
     // §18.3.1.11 — colorscale.xlsx sets its third scale's top stop to
     // `2*A1+2`. Dropped as unresolvable, the whole rule went with it and the
     // column printed with no colour where both references paint the gradient.
-    const cf = `<conditionalFormatting sqref="A1:A3">${colorScale(1, ['num:0', 'formula:2*A1+2'], 'FF0000', '00FF00')}</conditionalFormatting>`;
+    // That one is evaluated now; a function nobody knows still is not.
+    const cf = `<conditionalFormatting sqref="A1:A3">${colorScale(1, ['num:0', 'formula:NOSUCH(A1)'], 'FF0000', '00FF00')}</conditionalFormatting>`;
     const flow = Ream.parse(
       buildXlsx({ rows: [[0], [5], [10]], stylesXml: PLAIN_STYLES, conditionalFormattingXml: cf }),
     ).flow;
@@ -241,6 +272,17 @@ describe('conditional formatting — colorScale (E-SHEET SC1b)', () => {
     expect(shadingAt(flow, 0)).toBe('FF0000');
     expect(shadingAt(flow, 1)).toBe('808000');
     expect(shadingAt(flow, 2)).toBe('00FF00');
+  });
+
+  it('evaluates a stop that is a formula', () => {
+    // `2*A1+2` over A1 = 4 tops the scale at 10, the range's own maximum
+    // being only 5.
+    const cf = `<conditionalFormatting sqref="A1:A3">${colorScale(1, ['num:0', 'formula:2*A1+2'], 'FF0000', '00FF00')}</conditionalFormatting>`;
+    const flow = Ream.parse(
+      buildXlsx({ rows: [[4], [5], [0]], stylesXml: PLAIN_STYLES, conditionalFormattingXml: cf }),
+    ).flow;
+    expect(shadingAt(flow, 1)).toBe('808000'); // 5 of 10
+    expect(shadingAt(flow, 2)).toBe('FF0000');
   });
 
   it('interpolates a 3-stop min/percentile/max gradient', () => {

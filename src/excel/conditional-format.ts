@@ -47,6 +47,7 @@ import {
   serialFromDate,
   str,
   timePeriodMatches,
+  toNumber,
 } from '@/excel/formula';
 
 type Rgb = readonly [number, number, number];
@@ -200,18 +201,67 @@ export function buildConditionalFormatter(
 ): CellConditionalFormatter | undefined {
   if (!conditionalFormats || conditionalFormats.length === 0) return undefined;
   const dxfs = styles.dxfs ?? [];
+
+  // W9: an `expression` rule can apply to a cell with no value of its own (it may
+  // reference neighbours), so when one is present we cannot take the empty-cell
+  // shortcut. The evaluator context (grid lookup) is built only then — or when a
+  // stop of a scale, bar or icon set is a formula (§18.3.1.11: a `num` stop's
+  // `val` may be a defined name or a cell as well as a number) — keeping every
+  // other sheet's path byte-identical. `nowSerial` is the injected day.
+  const hasExpr = conditionalFormats.some((cf) => cf.rules.some((r) => r.type === 'expression'));
+  const formulaStops = conditionalFormats.some((cf) =>
+    cf.rules.some(
+      (r) =>
+        (r.type === 'colorScale' || r.type === 'dataBar' || r.type === 'iconSet') &&
+        r.cfvos.some((c) => c.val !== undefined && !Number.isFinite(Number(c.val))),
+    ),
+  );
+  const nowSerial = now !== undefined ? serialFromDate(now, date1904) : undefined;
+  // The cross-sheet / defined-name layer is built only for an expression rule
+  // or a formula stop that has the workbook wired in.
+  const cross =
+    (hasExpr || formulaStops) && sheetGrids
+      ? {
+          sheets: [...sheetGrids].map(([name, ws]) => ({ name, cells: ws.cells })),
+          ...(currentSheet !== undefined ? { currentSheet } : {}),
+          definedNames: definedNames ?? [],
+        }
+      : undefined;
+  const ctx =
+    hasExpr || formulaStops
+      ? buildEvalContext(cells, resolveText, nowSerial, date1904, cross)
+      : undefined;
+  // A formula stop's number: what it evaluates to, where that is a number — a
+  // defined name that holds a cell, an expression over the sheet's cells. With
+  // no number for a stop the whole rule was dropped, a bar's "bar only" with
+  // it, and the figure printed where the gauge belongs. (A name that is itself
+  // a formula has none yet, nor does a reference into a table by its columns:
+  // simple-monthly-budget.xlsx tops its bar at `SUM(tblIncome[Amount])`.)
+  const stop: StopValue | undefined = ctx
+    ? (formula) => {
+        const compiled = compileFormula(formula.startsWith('=') ? formula.slice(1) : formula);
+        if (!compiled) return undefined;
+        const n = toNumber(evaluate(compiled.ast, ctx, NO_SHIFT), ctx);
+        return typeof n === 'number' && Number.isFinite(n) ? n : undefined;
+      }
+    : undefined;
+
   const flat: Array<FlatRule> = [];
   for (const cf of conditionalFormats) {
     for (const rule of cf.rules) {
       if (rule.type === 'colorScale') {
-        flat.push({ ranges: cf.ranges, rule, scale: resolveColorScale(rule, cf.ranges, cells) });
+        flat.push({
+          ranges: cf.ranges,
+          rule,
+          scale: resolveColorScale(rule, cf.ranges, cells, stop),
+        });
       } else if (rule.type === 'dataBar') {
-        flat.push({ ranges: cf.ranges, rule, bar: resolveDataBar(rule, cf.ranges, cells) });
+        flat.push({ ranges: cf.ranges, rule, bar: resolveDataBar(rule, cf.ranges, cells, stop) });
       } else if (rule.type === 'iconSet') {
         flat.push({
           ranges: cf.ranges,
           rule,
-          iconThresholds: resolveIconThresholds(rule, cf.ranges, cells),
+          iconThresholds: resolveIconThresholds(rule, cf.ranges, cells, stop),
         });
       } else if (rule.type === 'top10') {
         flat.push({ ranges: cf.ranges, rule, threshold: resolveTop10(rule, cf.ranges, cells) });
@@ -247,26 +297,6 @@ export function buildConditionalFormatter(
   // text format (fill/font) is claimed by the first applicable cellIs/colorScale;
   // a dataBar fills its own slot independently, so a bar can sit over a fill.
   flat.sort((a, b) => a.rule.priority - b.rule.priority);
-
-  // W9: an `expression` rule can apply to a cell with no value of its own (it may
-  // reference neighbours), so when one is present we cannot take the empty-cell
-  // shortcut. The evaluator context (grid lookup) is built only then, keeping
-  // every existing sheet's path byte-identical. `nowSerial` is the injected day.
-  const hasExpr = flat.some((f) => f.rule.type === 'expression');
-  const nowSerial = now !== undefined ? serialFromDate(now, date1904) : undefined;
-  // The cross-sheet / defined-name layer is built only for an expression rule
-  // that has the workbook wired in — keeping the common path byte-identical.
-  const cross =
-    hasExpr && sheetGrids
-      ? {
-          sheets: [...sheetGrids].map(([name, ws]) => ({ name, cells: ws.cells })),
-          ...(currentSheet !== undefined ? { currentSheet } : {}),
-          definedNames: definedNames ?? [],
-        }
-      : undefined;
-  const ctx = hasExpr
-    ? buildEvalContext(cells, resolveText, nowSerial, date1904, cross)
-    : undefined;
 
   return (row, col, value, text, blank) => {
     // A cell with neither a comparable number nor any text matches nothing — skip
@@ -705,6 +735,7 @@ function resolveColorScale(
   rule: CfRuleColorScale,
   ranges: ReadonlyArray<MergedRange>,
   cells: ReadonlyArray<WorksheetCell>,
+  stop?: StopValue,
 ): ResolvedColorScale | undefined {
   const vals = collectRangeValues(cells, ranges);
   if (vals.length === 0) return undefined;
@@ -714,7 +745,7 @@ function resolveColorScale(
 
   const thresholds: Array<number> = [];
   for (const [i, cfvo] of rule.cfvos.entries()) {
-    const t = resolveCfvo(cfvo, vmin, vmax, sorted, i === rule.cfvos.length - 1);
+    const t = resolveCfvo(cfvo, vmin, vmax, sorted, i === rule.cfvos.length - 1, stop);
     if (t === undefined) return undefined;
     thresholds.push(t);
   }
@@ -733,8 +764,12 @@ function resolveColorScale(
   return { thresholds, colors };
 }
 
+/** A formula stop's number, where it evaluates to one (see buildConditionalFormatter). */
+type StopValue = (formula: string) => number | undefined;
+
 // §18.3.1.11 — a cfvo stop's numeric threshold given the range's extent + sorted
-// values. min/max take the extent; num/formula a literal; percent positions
+// values. min/max take the extent; num/formula a literal — or, where `val` is a
+// formula rather than a number, what it evaluates to; percent positions
 // linearly in [min,max]; percentile interpolates the value distribution.
 function resolveCfvo(
   cfvo: Cfvo,
@@ -742,7 +777,14 @@ function resolveCfvo(
   vmax: number,
   sorted: ReadonlyArray<number>,
   isLast = false,
+  stop?: StopValue,
 ): number | undefined {
+  // The stop's own number: its `val` as written, or evaluated.
+  const given = (): number | undefined => {
+    const n = Number(cfvo.val);
+    if (Number.isFinite(n)) return n;
+    return cfvo.val !== undefined ? stop?.(cfvo.val) : undefined;
+  };
   switch (cfvo.type) {
     case 'min':
     case 'autoMin':
@@ -751,24 +793,22 @@ function resolveCfvo(
     case 'autoMax':
       return vmax;
     case 'num':
-      return Number.isFinite(Number(cfvo.val)) ? Number(cfvo.val) : undefined;
+      return given();
     // §18.3.1.11 — a `formula` stop is an expression, and one we cannot
     // evaluate is not a reason to drop the whole rule: the stop falls back to
     // the end of the extent it stands for, which is what a reader with no
     // answer paints. colorscale.xlsx sets its third scale's top stop to
     // `2*A1+2` and the column came out with no colour at all where both
     // references paint the full gradient.
-    case 'formula': {
-      const n = Number(cfvo.val);
-      return Number.isFinite(n) ? n : isLast ? vmax : vmin;
-    }
+    case 'formula':
+      return given() ?? (isLast ? vmax : vmin);
     case 'percent': {
-      const p = Number(cfvo.val);
-      return Number.isFinite(p) ? vmin + (vmax - vmin) * (p / 100) : undefined;
+      const p = given();
+      return p !== undefined ? vmin + (vmax - vmin) * (p / 100) : undefined;
     }
     case 'percentile': {
-      const p = Number(cfvo.val);
-      return Number.isFinite(p) ? percentile(sorted, p) : undefined;
+      const p = given();
+      return p !== undefined ? percentile(sorted, p) : undefined;
     }
   }
 }
@@ -829,14 +869,15 @@ function resolveDataBar(
   rule: CfRuleDataBar,
   ranges: ReadonlyArray<MergedRange>,
   cells: ReadonlyArray<WorksheetCell>,
+  stop?: StopValue,
 ): ResolvedDataBar | undefined {
   const vals = collectRangeValues(cells, ranges);
   if (vals.length === 0) return undefined;
   const sorted = [...vals].sort((a, b) => a - b);
   const vmin = sorted[0]!;
   const vmax = sorted[sorted.length - 1]!;
-  const lower = resolveCfvo(rule.cfvos[0]!, vmin, vmax, sorted);
-  const upper = resolveCfvo(rule.cfvos[1]!, vmin, vmax, sorted, true);
+  const lower = resolveCfvo(rule.cfvos[0]!, vmin, vmax, sorted, false, stop);
+  const upper = resolveCfvo(rule.cfvos[1]!, vmin, vmax, sorted, true, stop);
   if (lower === undefined || upper === undefined) return undefined;
   return {
     lower,
@@ -892,6 +933,7 @@ function resolveIconThresholds(
   rule: CfRuleIconSet,
   ranges: ReadonlyArray<MergedRange>,
   cells: ReadonlyArray<WorksheetCell>,
+  stop?: StopValue,
 ): Array<number> | undefined {
   const vals = collectRangeValues(cells, ranges);
   if (vals.length === 0) return undefined;
@@ -900,7 +942,7 @@ function resolveIconThresholds(
   const vmax = sorted[sorted.length - 1]!;
   const out: Array<number> = [];
   for (const cfvo of rule.cfvos) {
-    const t = resolveCfvo(cfvo, vmin, vmax, sorted);
+    const t = resolveCfvo(cfvo, vmin, vmax, sorted, false, stop);
     if (t === undefined) return undefined;
     out.push(t);
   }
