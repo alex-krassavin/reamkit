@@ -9,6 +9,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import { buildXlsx } from './fixtures/build-xlsx';
+import { sheetDrawings } from './fixtures/sheet-drawings';
 import { readXlsxToSheetDoc } from '@/excel/xlsx-reader';
 import { projectSheetDoc } from '@/excel/sheet-to-flow';
 import { Ream } from '@/core/converter/ream';
@@ -125,9 +126,9 @@ describe('sheet shapes — resolve (E-SHEET W2)', () => {
 });
 
 describe('sheet shapes — projection (E-SHEET W2)', () => {
-  it('projects the shape as a shape block after the grid', () => {
+  it('projects the shape as a shape block over the grid', () => {
     const body = Ream.parse(shapeXlsx()).flow.body;
-    const shape = body.find((el) => el.kind === 'shape');
+    const shape = sheetDrawings(body).find((el) => el.kind === 'shape');
     if (shape?.kind !== 'shape') throw new Error('expected a shape block');
     expect(shape.shape.fill).toMatchObject({ kind: 'solid', colorHex: '4472C4' });
   });
@@ -186,7 +187,9 @@ describe('a drawing that does not print with the sheet (§20.5.2.3)', () => {
     ${clientData}
   </xdr:twoCellAnchor>`;
   const shapesOf = (doc: ReturnType<typeof readXlsxToSheetDoc>, screen: boolean): number =>
-    projectSheetDoc(doc, screen ? { screen } : {}).body.filter((el) => el.kind === 'shape').length;
+    sheetDrawings(projectSheetDoc(doc, screen ? { screen } : {}).body).filter(
+      (el) => el.kind === 'shape',
+    ).length;
 
   it('shows on a screen and stays off paper', () => {
     const doc = readXlsxToSheetDoc(

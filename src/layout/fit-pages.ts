@@ -25,8 +25,10 @@ function fitPage(page: LaidOutPage, pad: number): LaidOutPage {
   let bottom = 0;
   for (const item of page.commands) {
     const reach = reachOf(item);
-    right = Math.max(right, reach.right);
-    bottom = Math.max(bottom, reach.bottom);
+    // An item cut off by a window paints no further than the window does.
+    const w = item.window;
+    right = Math.max(right, w ? Math.min(reach.right, w.x + w.width) : reach.right);
+    bottom = Math.max(bottom, w ? Math.min(reach.bottom, w.y + w.height) : reach.bottom);
   }
   return {
     ...page,

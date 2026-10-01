@@ -9,6 +9,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import { buildXlsx } from './fixtures/build-xlsx';
+import { sheetDrawings } from './fixtures/sheet-drawings';
 import type { Loss } from '@/core/ir/loss';
 import type { BodyElement, ShapeBlock } from '@/core/document-model';
 import { parseLegacyComments, parsePersons, parseThreadedComments } from '@/excel/comments-parser';
@@ -113,7 +114,7 @@ describe('shown notes (E-SHEET W7)', () => {
     });
 
   const shapesOf = (body: ReadonlyArray<BodyElement>): Array<ShapeBlock> =>
-    body.flatMap((el) => (el.kind === 'shape' ? [el.shape] : []));
+    sheetDrawings(body).flatMap((el) => (el.kind === 'shape' ? [el.shape] : []));
 
   it("reads a note shape's paint, the system colours older files name included", () => {
     const vml = (fill: string, visible: string): Uint8Array =>

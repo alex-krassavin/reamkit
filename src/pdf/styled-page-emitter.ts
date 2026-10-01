@@ -33,7 +33,7 @@ import type { VectorShape } from '@/core/vector';
 import type { BuildOptions, PdfDocument } from '@/pdf/writer';
 import type { PdfEncryptOptions } from '@/pdf/encryption';
 import { preparePdfEncryption } from '@/pdf/encryption';
-import { paintPlan } from '@/layout/page-doc';
+import { pageLayers, paintPlan } from '@/layout/page-doc';
 import { A4_HEIGHT, A4_WIDTH } from '@/layout/styled-layout';
 import {
   BORDER_DASHES,
@@ -821,29 +821,43 @@ function dashPatternFor(style: BorderStyle | undefined): string {
 }
 
 /**
- * A page's content stream in its layers: its own items, then — when some of
- * them stand IN FRONT of its text (PageItemBase.over) — those, painted again
- * pass by pass over what the first layer left, their own text last. Each layer
- * is a balanced stream of its own, so the two simply follow one another.
+ * A page's content stream in its layers (pageLayers): its own items, then —
+ * when some of them stand IN FRONT of its text (PageItemBase.over) — those,
+ * painted again pass by pass over what the first layer left, their own text
+ * last; and each group seen through a window of its own (PageItemBase.window)
+ * inside a clip to it. Each layer is a balanced stream of its own, so they
+ * simply follow one another.
  */
 function emitPageLayers(
   page: LaidOutPage,
   ...rest: DropFirst<Parameters<typeof emitPageContent>>
 ): { content: Uint8Array; links: Array<LinkRegion> } {
-  if (!page.commands.some((c) => c.over === true)) return emitPageContent(page, ...rest);
-  const base = emitPageContent(
-    { ...page, commands: page.commands.filter((c) => c.over !== true) },
-    ...rest,
+  const layers = pageLayers(page.commands);
+  if (layers.length === 1 && !layers[0]!.window) return emitPageContent(page, ...rest);
+  const parts: Array<Uint8Array> = [];
+  const links: Array<LinkRegion> = [];
+  for (const layer of layers) {
+    const emitted = emitPageContent({ ...page, commands: layer.items }, ...rest);
+    links.push(...emitted.links);
+    const w = layer.window;
+    if (!w) {
+      parts.push(emitted.content);
+      continue;
+    }
+    if (emitted.content.length === 0) continue;
+    const rect = [w.x, page.height - w.y - w.height, w.width, w.height].map(formatNumber);
+    parts.push(encoder.encode(`q ${rect.join(' ')} re W n`), emitted.content, encoder.encode('Q'));
+  }
+  const content = new Uint8Array(
+    parts.reduce((sum, p) => sum + p.length, 0) + Math.max(0, parts.length - 1),
   );
-  const front = emitPageContent(
-    { ...page, commands: page.commands.filter((c) => c.over === true) },
-    ...rest,
-  );
-  const content = new Uint8Array(base.content.length + 1 + front.content.length);
-  content.set(base.content, 0);
-  content[base.content.length] = 0x0a;
-  content.set(front.content, base.content.length + 1);
-  return { content, links: [...base.links, ...front.links] };
+  let at = 0;
+  parts.forEach((p, i) => {
+    if (i > 0) content[at++] = 0x0a;
+    content.set(p, at);
+    at += p.length;
+  });
+  return { content, links };
 }
 
 type DropFirst<T extends ReadonlyArray<unknown>> = T extends readonly [unknown, ...infer R]

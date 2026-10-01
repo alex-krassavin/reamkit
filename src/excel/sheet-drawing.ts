@@ -328,7 +328,12 @@ export function makeColWidthPt(ws: ParsedWorksheet): (col: number) => number {
   return (col: number): number => {
     for (const c of ws.columns) {
       if (col >= c.min - 1 && col <= c.max - 1) {
-        return widthPt(c.widthChars);
+        // §18.3.1.13 `hidden` — a hidden column takes no room, so what is
+        // anchored past it moves up to the column after, and what spans it
+        // closes over it: Excel's probe draws a shape from B to E as wide as
+        // B and D with C hidden between them. Counted at its width, every
+        // drawing beyond stood a column's width right of its cells.
+        return c.hidden ? 0 : widthPt(c.widthChars);
       }
     }
     // §18.3.1.81 `<sheetFormatPr defaultColWidth>` governs every column no
@@ -362,7 +367,8 @@ export function makeColWidthPt(ws: ParsedWorksheet): (col: number) => number {
 export function makeRowHeightPt(ws: ParsedWorksheet): (row: number) => number {
   return (row: number): number => {
     for (const r of ws.rowHeights) {
-      if (r.row === row) return r.heightPt;
+      // …and a hidden row likewise, whatever height it keeps for when it shows.
+      if (r.row === row) return r.hidden === true ? 0 : r.heightPt;
     }
     // §18.3.1.81 `defaultRowHeight` likewise: bnc762542.xlsx declares 12.75pt
     // and we measured its anchored box against 15, which alone made the shape

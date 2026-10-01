@@ -21,7 +21,7 @@ import { FEATURES } from '@/core/ir';
 import { toBase64 } from '@/core/bytes';
 import { gradientSvgDef } from '@/core/drawingml/shape-render';
 import { BORDER_DASHES, washVeil } from '@/layout/line-paint';
-import { paintPlan } from '@/layout/page-doc';
+import { pageLayers, paintPlan } from '@/layout/page-doc';
 import { SvgGlyphs, emitSvgLine } from '@/svg/svg-text';
 
 const PAGE_GAP = 12;
@@ -93,23 +93,24 @@ export const svgWriter: DocumentWriter<LaidOutDocument> = {
   write: (doc, opts) => writeSvg(doc, opts ?? {}),
 };
 
-// A page in its layers: its own items, then the ones that stand IN FRONT of
-// its text (PageItemBase.over), every pass again over what the first left.
+// A page in its layers (pageLayers): its own items, then the ones that stand
+// IN FRONT of its text (PageItemBase.over), every pass again over what the
+// first left — and each group seen through a window of its own inside a clip.
 function emitPage(out: Array<string>, page: LaidOutPage, ctx: SvgLineCtx): void {
-  if (!page.commands.some((c) => c.over === true)) {
-    emitLayer(out, page.commands, ctx);
-    return;
+  for (const layer of pageLayers(page.commands)) {
+    const w = layer.window;
+    if (!w) {
+      emitLayer(out, layer.items, ctx);
+      continue;
+    }
+    const id = `win${String(ctx.ids.n++)}`;
+    out.push(
+      `<clipPath id="${id}"><rect x="${fmt(w.x)}" y="${fmt(w.y)}" width="${fmt(w.width)}" height="${fmt(w.height)}"/></clipPath>`,
+      `<g clip-path="url(#${id})">`,
+    );
+    emitLayer(out, layer.items, ctx);
+    out.push('</g>');
   }
-  emitLayer(
-    out,
-    page.commands.filter((c) => c.over !== true),
-    ctx,
-  );
-  emitLayer(
-    out,
-    page.commands.filter((c) => c.over === true),
-    ctx,
-  );
 }
 
 function emitLayer(out: Array<string>, commands: ReadonlyArray<PageItem>, ctx: SvgLineCtx): void {

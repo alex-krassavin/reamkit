@@ -8,6 +8,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import { buildXls, msoDrawingGroupRec, msoDrawingRec, numberRec } from './fixtures/build-xls';
+import { sheetDrawings } from './fixtures/sheet-drawings';
 import { parseBlipStore, parseSheetPictures } from '@/excel/xls/escher';
 import { readXlsToSheetDoc } from '@/excel/xls/biff-reader';
 import { projectSheetDoc } from '@/excel/sheet-to-flow';
@@ -56,7 +57,7 @@ describe('xls embedded images — end to end (XLS-5)', () => {
 
   it('projects the picture as an image block after the grid', () => {
     const flow = projectSheetDoc(readXlsToSheetDoc(imageXls()));
-    expect(flow.body.some((el) => el.kind === 'image')).toBe(true);
+    expect(sheetDrawings(flow.body).some((el) => el.kind === 'image')).toBe(true);
   });
 
   it('adds no images to a sheet without a drawing (byte-zero)', () => {

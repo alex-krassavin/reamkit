@@ -29,6 +29,7 @@ import type {
   SectionProperties,
   Table,
   TableCell,
+  TableOverlay,
   TableProperties,
   TableRow,
 } from '@/core/document-model';
@@ -54,6 +55,7 @@ import type {
 import type { CellConditionalFormatter, CfOverride } from '@/excel/conditional-format';
 import type { SheetHyperlink, SheetSlicer } from '@/core/ir/sheet';
 import type { Loss } from '@/core/ir/loss';
+import type { DrawingBox } from '@/excel/column-bands';
 import { FEATURES } from '@/core/ir/features';
 import { eighthPtToPt, halfPtToPt, pt, twipsToPt } from '@/core/ir';
 import { firstStrongDirection } from '@/core/bidi';
@@ -123,6 +125,69 @@ const TWIPS_PER_PIXEL = 15;
  */
 export function columnTwips(chars: number, charTwips: number): number {
   return columnTwipsOf(chars, charTwips);
+}
+
+/**
+ * How far the first `count` rows (or columns) of a sheet reach, in twips: each
+ * the default unless the sheet gives it a size of its own.
+ *
+ * @param count        How many tracks, from the first.
+ * @param defaultTwips The size of a track the sheet says nothing about.
+ * @param sized        The tracks it does size, by 0-based index.
+ * @returns Their total.
+ */
+/**
+ * §20.5 — the part of the sheet a printed table shows, for the drawings over
+ * it (TableOverlay); empty until the drawings are put in. Nothing on a screen,
+ * which draws them over the whole sheet as it is.
+ *
+ * @param sheetLeftPt Where the table's first column stands on the sheet.
+ * @param columns     The widths of the sheet's columns it prints.
+ * @param leftPt      Where those begin in the table — past a row-number column.
+ * @returns The frame to spread into the table, or nothing.
+ */
+function sheetFrame(
+  sheetLeftPt: number | undefined,
+  columns: ReadonlyArray<number>,
+  leftPt: number,
+): { overlay?: TableOverlay } {
+  if (sheetLeftPt === undefined) return {};
+  return {
+    overlay: {
+      sheetLeftPt: pt(sheetLeftPt),
+      widthPt: pt(columns.reduce((sum, w) => sum + w, 0)),
+      leftPt: pt(leftPt),
+      drawings: [],
+    },
+  };
+}
+
+/** The drawings' boxes at the print scale. */
+function scaledBoxes(
+  boxes: ReadonlyArray<DrawingBox> | undefined,
+  scale: number,
+): Array<DrawingBox> {
+  return (boxes ?? []).map((b) => ({
+    xPt: b.xPt * scale,
+    yPt: b.yPt * scale,
+    widthPt: b.widthPt * scale,
+    heightPt: b.heightPt * scale,
+  }));
+}
+
+function tracksBeforeTwips(
+  count: number,
+  defaultTwips: number,
+  sized: ReadonlyArray<{ readonly index: number; readonly twips: number }>,
+): number {
+  let total = count * defaultTwips;
+  const seen = new Set<number>();
+  for (const t of sized) {
+    if (t.index >= count || seen.has(t.index)) continue;
+    seen.add(t.index);
+    total += t.twips - defaultTwips;
+  }
+  return total;
 }
 
 /**
@@ -840,6 +905,10 @@ interface PrintModelOptions {
   // nothing to shrink (bnc762542.xlsx), where the reference shrinks to about
   // four fifths.
   readonly drawingExtentPt?: { readonly widthPt: number; readonly heightPt: number };
+  // Where each of the sheet's printed drawings lies, unscaled, in the sheet's
+  // own frame: a band keeps the rows a drawing in it covers, whatever its
+  // cells hold, or the drawing would be cut off with them (TableOverlay).
+  readonly drawingBoxesPt?: ReadonlyArray<DrawingBox>;
   // Sink for projection losses. The defence-in-depth caps below are correct —
   // a pathological sheet must not exhaust memory — but a cap that fires without
   // saying so is precisely the silent wrongness LossReport exists to prevent.
@@ -1002,25 +1071,25 @@ function gridBody(
     // printed rows 19 to 24 round it, their gridlines and row numbers with
     // them, where our grid stopped at 18. Bounded like the paint reach below,
     // so a drawing parked thousands of rows down cannot materialise them all.
-    //
-    // Only where those rows SHOW, though: on a screen, and on paper that prints
-    // gridlines or headings. Excel cuts a drawing at a page break and prints
-    // the rest on the next page; we draw it whole on the page it starts on, so
-    // rows that hold nothing but its tail are a blank page — the chart of
-    // simple-monthly-budget.xlsx reaches 6pt into its 24th row, which made one.
-    const rowsShow =
-      print.screen === true || print.gridLines || worksheet.printOptions?.headings === true;
+    // On paper a drawing is cut off where the printed rows end (TableOverlay),
+    // so the rows under it are what prints it at all — down to the row its
+    // bottom edge stands on, even when it ends exactly on that row's top: Excel
+    // prints a page for a chart that runs 6pt past a page break, and one for
+    // the half of its frame's line that falls past it when it ends on the break.
     const wantRowTwips = Math.round(print.drawingExtentPt.heightPt * TWIPS_PER_POINT);
     const defRowTwips = Math.round(
       (worksheet.defaultRowHeightPt ?? defaultRowHeightPtFor(print.defaultFontPt)) *
         TWIPS_PER_POINT,
     );
     const heightAt = new Map(
-      worksheet.rowHeights.map((h) => [h.row, Math.round(h.heightPt * TWIPS_PER_POINT)]),
+      worksheet.rowHeights.map((h) => [
+        h.row,
+        h.hidden ? 0 : Math.round(h.heightPt * TWIPS_PER_POINT),
+      ]),
     );
     const rowReach = usedRow + PAINT_REACH_ROWS;
     let down = 0;
-    for (let row = 0; rowsShow && row <= rowReach && down < wantRowTwips; row++) {
+    for (let row = 0; row <= rowReach && down <= wantRowTwips; row++) {
       down += heightAt.get(row) ?? defRowTwips;
       if (row > usedRow) usedRow = row;
     }
@@ -1361,6 +1430,38 @@ function gridBody(
       );
   const scaled = printScale < 0.999;
   if (print.scaleSink) print.scaleSink.value = printScale;
+  // §20.5 — where the grid stands on its sheet, for the drawings over it
+  // (TableOverlay): every row and column before the window counted, a hidden
+  // one at nothing, at the print scale. Paper only — a window draws its
+  // drawings over the whole sheet as it is.
+  let sheetTopTwips = print.screen
+    ? undefined
+    : tracksBeforeTwips(
+        rowStart,
+        defaultRowTwips,
+        worksheet.rowHeights.map((h) => ({
+          index: h.row,
+          twips: h.hidden ? 0 : Math.round(h.heightPt * TWIPS_PER_POINT),
+        })),
+      ) * printScale;
+  const sheetLeftPt = print.screen
+    ? undefined
+    : twipsToPt(
+        Math.round(
+          tracksBeforeTwips(
+            colStart,
+            defaultColTwips,
+            worksheet.columns.flatMap((col) => {
+              const twips = col.hidden ? 0 : columnTwips(col.widthChars, charTwipsUnit);
+              const out: Array<{ index: number; twips: number }> = [];
+              for (let abs = col.min - 1; abs <= Math.min(col.max - 1, colStart - 1); abs++) {
+                out.push({ index: abs, twips });
+              }
+              return out;
+            }),
+          ) * printScale,
+        ),
+      );
 
   // Manual <rowBreaks>: each brk id is the 0-based row that starts a new page →
   // force a page break before that (absolute) row.
@@ -2026,7 +2127,11 @@ function gridBody(
     };
     if (isTitleRow && titleRowIndex < 0) titleRowIndex = rows.length;
     rowNumbers.push(absR + 1);
-    rows.push({ properties: rowProps, cells });
+    if (sheetTopTwips === undefined) rows.push({ properties: rowProps, cells });
+    else {
+      rows.push({ properties: { ...rowProps, sheetTopPt: twipsToPt(sheetTopTwips) }, cells });
+      sheetTopTwips += rowHeightTwips ?? defaultRowTwips;
+    }
   }
 
   // Gridlines: Excel/Calc do NOT print cell gridlines unless <printOptions
@@ -2146,7 +2251,12 @@ function gridBody(
         tableProperties,
         titleRowIndex,
         Math.round((print.drawingExtentPt?.widthPt ?? 0) * TWIPS_PER_POINT * printScale),
-        headings ? { colStart, rowNumbers, lettersPt: headings.dyPt } : undefined,
+        headings
+          ? { columns: visibleCols.map((c) => c + colStart), rowNumbers, lettersPt: headings.dyPt }
+          : undefined,
+        sheetLeftPt !== undefined
+          ? { sheetLeftPt, drawings: scaledBoxes(print.drawingBoxesPt, printScale) }
+          : undefined,
       );
       reportHeadings();
       return banded;
@@ -2169,12 +2279,16 @@ function gridBody(
   if (titleRowIndex > 0 && titleRowIndex < rows.length) {
     const titleStart = titleRowIndex;
     const grid = bandWidths.map((w) => twipsToPt(w));
+    const overlay = sheetFrame(sheetLeftPt, grid, 0);
     return [
       {
         kind: 'table',
-        table: { properties: tableProperties, grid, rows: rows.slice(0, titleStart) },
+        table: { properties: tableProperties, grid, rows: rows.slice(0, titleStart), ...overlay },
       },
-      { kind: 'table', table: { properties: tableProperties, grid, rows: rows.slice(titleStart) } },
+      {
+        kind: 'table',
+        table: { properties: tableProperties, grid, rows: rows.slice(titleStart), ...overlay },
+      },
     ];
   }
 
@@ -2182,7 +2296,13 @@ function gridBody(
   // them. NumberFormatTests.xlsx does, and both references print the letters
   // across the top and the numbers down the side.
   const headed = headings
-    ? withHeadingBand(rows, bandWidths, colStart, rowNumbers, headings.dyPt)
+    ? withHeadingBand(
+        rows,
+        bandWidths,
+        visibleCols.map((c) => c + colStart),
+        rowNumbers,
+        headings.dyPt,
+      )
     : undefined;
   if (headed) reportHeadings();
   const table: Table = {
@@ -2195,6 +2315,11 @@ function gridBody(
     // `scale="47"`, so its 1100pt of columns has to come down to ~517pt.
     grid: (headed?.widths ?? bandWidths).map((w: number) => twipsToPt(w)),
     rows: headed?.rows ?? rows,
+    ...sheetFrame(
+      sheetLeftPt,
+      bandWidths.map((w) => twipsToPt(w)),
+      headed ? twipsToPt(HEADING_COL_TWIPS) : 0,
+    ),
   };
 
   return [{ kind: 'table', table }];
@@ -3256,6 +3381,21 @@ function mirrorTable(table: Table, screen: boolean): Table {
     },
     grid: [...table.grid].reverse(),
     rows: table.rows.map((row) => ({ ...row, cells: [...row.cells].reverse().map(mirrorCell) })),
+    // The sheet's columns stand the other way round, and a printed row-number
+    // column with them, at the right.
+    ...(table.overlay
+      ? {
+          overlay: {
+            ...table.overlay,
+            leftPt: pt(
+              table.grid.reduce((sum, w) => sum + w, 0) -
+                table.overlay.leftPt -
+                table.overlay.widthPt,
+            ),
+            mirrored: true,
+          },
+        }
+      : {}),
   };
 }
 

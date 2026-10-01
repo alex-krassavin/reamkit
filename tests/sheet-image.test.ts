@@ -8,6 +8,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import { buildXlsx } from './fixtures/build-xlsx';
+import { sheetDrawings } from './fixtures/sheet-drawings';
 import { readXlsx, readXlsxToSheetDoc } from '@/excel/xlsx-reader';
 import { Ream } from '@/core/converter/ream';
 import { convertXlsxToPdfSync } from '@/core/converter';
@@ -43,7 +44,7 @@ describe('sheet pictures — resolve (E-SHEET W1)', () => {
 describe('sheet pictures — projection (E-SHEET W1)', () => {
   it('projects the picture as an image block carrying the resource', () => {
     const flow = Ream.parse(imageXlsx()).flow;
-    const image = flow.body.find((el) => el.kind === 'image');
+    const image = sheetDrawings(flow.body).find((el) => el.kind === 'image');
     if (image?.kind !== 'image') throw new Error('expected an image block');
     expect(image.image.resource).toBeDefined();
     expect(flow.resources.get(image.image.resource!)).toEqual(PNG_1x1);

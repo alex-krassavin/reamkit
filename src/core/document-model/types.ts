@@ -1052,6 +1052,13 @@ export interface RowProperties {
    * header row `w:firstRow="1"` so it is painted like the first.
    */
   readonly conditional?: RowConditionalFormat;
+  /**
+   * Where a spreadsheet row's top stands on its sheet, measured down from the
+   * sheet's first row in the frame its table's drawings are placed in (see
+   * {@link TableOverlay}). A row the sheet does not have — the printed column
+   * letters — carries none.
+   */
+  readonly sheetTopPt?: Pt;
 }
 
 /** §17.4.7 — the row-level conditional-format flags a `w:cnfStyle` declares. */
@@ -1142,6 +1149,33 @@ export interface Table {
   readonly properties: TableProperties;
   readonly grid: ReadonlyArray<Pt>;
   readonly rows: ReadonlyArray<TableRow>;
+  /** The drawings that lie over a spreadsheet grid and print with it. */
+  readonly overlay?: TableOverlay;
+}
+
+/**
+ * §20.5 — a spreadsheet's drawings over the part of the sheet one table
+ * prints. A drawing is anchored to cells, not to paper: each page the table
+ * spans shows the part of every drawing that lies over the rows and columns it
+ * prints, and cuts it off where they end — a chart across a page break is
+ * printed in two pieces, a drawing in the repeated title rows on every page,
+ * and what runs out of the print area not at all. Excel prints a sheet so.
+ */
+export interface TableOverlay {
+  /** Where the sheet's columns this table prints begin, in the drawings' frame. */
+  readonly sheetLeftPt: Pt;
+  /** How wide those columns run. */
+  readonly widthPt: Pt;
+  /** Where they stand in the table, from its left edge (past a printed row-number column). */
+  readonly leftPt: Pt;
+  /** §18.3.1.87 — the sheet reads from the right: its first column stands at the right. */
+  readonly mirrored?: boolean;
+  /**
+   * The drawings, out-of-flow floats placed in the sheet's own frame: `posH`
+   * from the sheet's left edge, `posV` from its top, the frame of
+   * {@link RowProperties.sheetTopPt}.
+   */
+  readonly drawings: ReadonlyArray<BodyElement>;
 }
 
 /**

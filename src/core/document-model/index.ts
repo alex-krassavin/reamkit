@@ -96,6 +96,7 @@ export type {
   Table,
   TableCell,
   TableLook,
+  TableOverlay,
   TableProperties,
   TableStyleCondition,
   TableStyleConditionType,

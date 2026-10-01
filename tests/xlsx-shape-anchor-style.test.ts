@@ -7,6 +7,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { buildXlsx } from './fixtures/build-xlsx';
+import { sheetDrawings } from './fixtures/sheet-drawings';
 import type { ShapeBlock } from '@/core/document-model';
 import { Ream } from '@/core/converter/ream';
 import { parseSheetShapes } from '@/excel/sheet-shape-parser';
@@ -29,7 +30,7 @@ function shapeOf(sheetShape: {
   rawAnchorXml?: string;
 }): ShapeBlock | undefined {
   const { flow } = Ream.parse(buildXlsx({ rows: [['a']], sheetShape }));
-  const el = flow.body.find((b) => b.kind === 'shape');
+  const el = sheetDrawings(flow.body).find((b) => b.kind === 'shape');
   return el?.kind === 'shape' ? el.shape : undefined;
 }
 

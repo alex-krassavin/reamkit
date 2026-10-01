@@ -17,15 +17,16 @@
     ]
   },
   "ream": {
-    "pages": 2,
+    "pages": 3,
     "pageSizes": [
       {
         "widthPt": 595,
         "heightPt": 842
       }
     ],
-    "chars": 300,
+    "chars": 349,
     "firstLines": [
+      "SF 132 APPORTIONMENT AND REAPPORTIONMENT SCHEDULE",
       "SF 132 APPORTIONMENT AND REAPPORTIONMENT SCHEDULE",
       "SF 132 APPORTIONMENT AND REAPPORTIONMENT SCHEDULE"
     ]

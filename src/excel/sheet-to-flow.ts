@@ -28,6 +28,7 @@ import type {
   SheetDoc,
   SheetFormControl,
 } from '@/core/ir/sheet';
+import type { DrawingBox } from '@/excel/column-bands';
 
 import { pt } from '@/core/ir';
 import { EMPTY_STYLE_SHEET, resolveBodyStyles } from '@/core/style-cascade';
@@ -236,6 +237,13 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
     // its notes `asDisplayed`.
     const notesShown = screen || ws.grid.pageSetup?.cellComments === 'asDisplayed';
     const drawingExtentPt = drawingReachPt(ws, notesShown, screen);
+    // W8/W10: a control that knows where it belongs is DRAWN there, as the
+    // widget it is — the ones with no geometry in the file are listed after the
+    // grid instead (formControlBlocks / activeXBlocks below).
+    const controlBlocks = controlShapeBlocks(ws.formControls, ws.activeXControls);
+    const noteBlocks = notesShown
+      ? (ws.comments ?? []).flatMap((comment) => noteShapes(comment, ws.grid.rightToLeft === true))
+      : [];
     // A print area and the titles repeated on every page are what PRINTS; the
     // window shows the whole sheet, once.
     const printArea = screen ? undefined : resolvePrintArea(sheet.definedNames, sheetIdx);
@@ -271,6 +279,7 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
       bandSink,
       headingSink,
       ...(drawingExtentPt ? { drawingExtentPt } : {}),
+      ...(screen ? {} : { drawingBoxesPt: drawingBoxes(ws, [...controlBlocks, ...noteBlocks]) }),
     });
 
     // Each sheet's header/footer band and page geometry are its own — and a
@@ -316,21 +325,14 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
       body.push({ kind: 'paragraph', paragraph: PAGE_BREAK_PARAGRAPH });
     }
 
-    // The sheet's drawings go in BEFORE its grid. They are out-of-flow floats,
-    // so they consume no space and the grid still starts at the top — but a
-    // float lands on whatever page the layout has reached when it meets the
-    // block, and a wide sheet's grid is several pages of column bands. Emitted
-    // after them, every chart on the sheet ended up on the LAST of those pages:
-    // chart_hyperlink.xlsx anchors two charts under its data in the first band
-    // and we printed them alone on the second page.
-    //
-    // First page of the sheet, then — which is where a drawing anchored in the
-    // first band belongs, and that is nearly all of them. One anchored in a
-    // later band still lands too early; putting each drawing on its own band's
-    // page needs the band boundaries the grid projection keeps to itself.
-
-    // Collected rather than pushed: a drawing anchored in a later column band
-    // has to go in beside THAT band's table, not ahead of the whole grid.
+    // The sheet's drawings, collected rather than pushed. On paper they go
+    // down the pages with the grid, each table carrying the ones over the
+    // columns it prints (intoOverlays below): a float placed in the body lands
+    // on whatever page the layout has reached when it meets it, and a chart
+    // anchored under the first page's rows was cut off at that page's foot.
+    // A window, and a sheet with no grid, keep them in the body ahead of the
+    // grid — out-of-flow floats, which take no room — and a drawing anchored
+    // in a later column band goes in beside that band's table.
     const drawings: Array<BodyElement> = [];
 
     // §20.5: the sheet's chart frames render as blocks after its grid,
@@ -371,23 +373,9 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
     // what the anchor's tracks were measured in.
     for (const [i, shape] of (ws.shapes ?? []).entries()) {
       if (!screen && ws.screenOnlyShapes?.has(i)) continue;
-      drawings.push({
-        kind: 'shape',
-        shape: screen
-          ? shape
-          : centreShape(
-              scaleShape(shape, scaleSink.value),
-              ws.grid,
-              drawingExtentPt,
-              scaleSink.value,
-            ),
-      });
+      drawings.push({ kind: 'shape', shape: screen ? shape : scaleShape(shape, scaleSink.value) });
     }
 
-    // W8/W10: a control that knows where it belongs is DRAWN there, as the
-    // widget it is — the ones with no geometry in the file are listed after the
-    // grid instead (formControlBlocks / activeXBlocks below).
-    const controlBlocks = controlShapeBlocks(ws.formControls, ws.activeXControls);
     // A sheet whose drawings run wider than the page paginates ACROSS them, the
     // way a wide grid paginates across its columns ("down, then over"). With no
     // grid there are no column bands to follow, so the drawings are banded on
@@ -413,39 +401,40 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
       for (const shape of drawingBands[band]!) {
         drawings.push({
           kind: 'shape',
-          shape: screen
-            ? shape
-            : centreShape(
-                scaleShape(shape, scaleSink.value),
-                ws.grid,
-                drawingExtentPt,
-                scaleSink.value,
-              ),
+          shape: screen ? shape : scaleShape(shape, scaleSink.value),
         });
       }
     }
 
-    if (notesShown) {
-      for (const comment of ws.comments ?? []) {
-        for (const shape of noteShapes(comment, ws.grid.rightToLeft === true)) {
-          drawings.push({
-            kind: 'shape',
-            shape: screen
-              ? shape
-              : centreShape(
-                  scaleShape(shape, scaleSink.value),
-                  ws.grid,
-                  drawingExtentPt,
-                  scaleSink.value,
-                ),
-          });
-        }
-      }
+    for (const shape of noteBlocks) {
+      drawings.push({ kind: 'shape', shape: screen ? shape : scaleShape(shape, scaleSink.value) });
     }
 
+    // On paper the drawings go down the pages with the grid: each table takes
+    // the ones over the columns it prints (TableOverlay), and every page shows
+    // the part over its own rows, cut off where they end. A drawing over none
+    // of the grid's columns lies outside what prints — unless no print area
+    // says so, when only a sheet with no grid to carry it is left, and it
+    // stands at its anchor as before.
+    const { grid, loose } = screen
+      ? { grid: gridBody, loose: drawings }
+      : intoOverlays(gridBody, drawings, printArea !== undefined);
+    // `<printOptions horizontalCentered/verticalCentered>` centres what is
+    // printed; a table carries its own drawings with it, and a loose shape is
+    // moved by itself.
+    const centred = screen
+      ? loose
+      : loose.map((el) =>
+          el.kind === 'shape'
+            ? {
+                ...el,
+                shape: centreShape(el.shape, ws.grid, drawingExtentPt, scaleSink.value),
+              }
+            : el,
+        );
     // A grid printed with its headings stands that much right and down of
     // where the anchors were measured from, and its drawings with it.
-    const placed = withDrawingsByBand(drawings, gridBody, bandSink.lefts).map((el) =>
+    const placed = withDrawingsByBand(centred, grid, bandSink.lefts).map((el) =>
       headingSink.dxPt > 0 || headingSink.dyPt > 0
         ? nudgeFloat(el, headingSink.dxPt, headingSink.dyPt)
         : el,
@@ -1059,6 +1048,71 @@ function withDrawingsByBand(
     if (el.kind === 'table') out.push(...byBand[seen++]!);
   }
   return out;
+}
+
+/**
+ * §20.5 — each printed table of a sheet takes the drawings over the columns it
+ * prints, into its overlay (TableOverlay): the layout then shows every page
+ * the part of them over its own rows. A table none of them lies over keeps no
+ * overlay.
+ *
+ * @param grid       The sheet's grid, its tables framed by the print model.
+ * @param drawings   The sheet's drawings at the print scale, in the sheet's frame.
+ * @param printArea  Whether a print area bounds what prints.
+ * @returns The grid with the drawings in it, and those over none of its
+ *   columns that still print — none, when a print area leaves them out.
+ */
+function intoOverlays(
+  grid: ReadonlyArray<BodyElement>,
+  drawings: ReadonlyArray<BodyElement>,
+  printArea: boolean,
+): { grid: Array<BodyElement>; loose: Array<BodyElement> } {
+  if (!grid.some((el) => el.kind === 'table' && el.table.overlay)) {
+    return { grid: [...grid], loose: [...drawings] };
+  }
+  const taken = new Set<BodyElement>();
+  const framed = grid.map((el): BodyElement => {
+    if (el.kind !== 'table' || !el.table.overlay) return el;
+    const o = el.table.overlay;
+    const over = drawings.filter((d) => {
+      const x = floatLeftPt(d);
+      const w = floatWidthPt(d) ?? 0;
+      return x !== undefined && x < o.sheetLeftPt + o.widthPt && x + w > o.sheetLeftPt;
+    });
+    for (const d of over) taken.add(d);
+    if (over.length === 0) {
+      const { overlay: _none, ...table } = el.table;
+      return { kind: 'table', table };
+    }
+    return { kind: 'table', table: { ...el.table, overlay: { ...o, drawings: over } } };
+  });
+  return {
+    grid: framed,
+    loose: drawings.filter((d) => !taken.has(d) && (!printArea || floatLeftPt(d) === undefined)),
+  };
+}
+
+/**
+ * Where each of the sheet's printed drawings lies, unscaled, in the sheet's
+ * own frame — what a band keeps its rows under (PrintModelOptions
+ * .drawingBoxesPt).
+ *
+ * @param ws     The sheet.
+ * @param shapes The controls and shown notes drawn as shapes, besides its own.
+ * @returns The boxes.
+ */
+function drawingBoxes(ws: Sheet, shapes: ReadonlyArray<ShapeBlock>): Array<DrawingBox> {
+  const boxes: Array<DrawingBox> = [];
+  const add = (xPt: number | undefined, yPt: number | undefined, w: number, h: number): void => {
+    if (xPt !== undefined && yPt !== undefined) boxes.push({ xPt, yPt, widthPt: w, heightPt: h });
+  };
+  for (const c of ws.charts ?? []) if (!c.screenOnly) add(c.xPt, c.yPt, c.widthPt, c.heightPt);
+  for (const p of ws.images ?? []) if (!p.screenOnly) add(p.xPt, p.yPt, p.widthPt, p.heightPt);
+  for (const [i, shape] of [...(ws.shapes ?? []), ...shapes].entries()) {
+    if (i < (ws.shapes ?? []).length && ws.screenOnlyShapes?.has(i)) continue;
+    add(shape.float?.posH?.offsetPt, shape.float?.posV?.offsetPt, shape.width, shape.height);
+  }
+  return boxes;
 }
 
 /**

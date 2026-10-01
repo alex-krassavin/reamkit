@@ -16,6 +16,7 @@ import { describe, expect, it } from 'vitest';
 
 import { buildTinyPng } from './fixtures/build-png';
 import { buildXlsx } from './fixtures/build-xlsx';
+import { sheetDrawings } from './fixtures/sheet-drawings';
 import { FontRegistry } from '@/core/font';
 import { Ream } from '@/core/converter/ream';
 import { flowRenderOptions } from '@/core/converter/project';
@@ -513,7 +514,7 @@ describe('grid geometry', () => {
         },
       }),
     );
-    const image = doc.flow.body.find((el) => el.kind === 'image');
+    const image = sheetDrawings(doc.flow.body).find((el) => el.kind === 'image');
     // Two columns of the sheet's own default: 2 × 60pt, the same 60 the grid
     // above puts between the two cells.
     expect(image?.image.width).toBeCloseTo(120, 1);
@@ -1356,10 +1357,16 @@ describe('the cell cut reaches every writer', () => {
 });
 
 describe('drawings on a printed sheet', () => {
-  const shapeOf = (doc: ReturnType<typeof readXlsxToSheetDoc>) => {
-    const el = projectSheetDoc(doc).body.find((b) => b.kind === 'shape');
-    if (el?.kind !== 'shape') throw new Error('no shape');
-    return el.shape;
+  /** The first drawn shape item over the page's text: its left and its bottom, y-down. */
+  const shapeAt = (xlsx: Uint8Array): { x: number; bottom: number } => {
+    const flow = Ream.parse(xlsx).flow;
+    const laid = layoutStyledDocument(flow.body, {
+      registry: FontRegistry.fromBytes(FONTS),
+      ...flowRenderOptions(flow),
+    });
+    const item = laid.pages[0]!.commands.find((c) => c.type === 'shape' && c.over === true);
+    if (item?.type !== 'shape') throw new Error('no shape drawn');
+    return { x: item.shape.transform[4], bottom: item.shape.transform[5] };
   };
   const rowsOf = (doc: ReturnType<typeof readXlsxToSheetDoc>): number => {
     const el = projectSheetDoc(doc).body.find((b) => b.kind === 'table');
@@ -1370,33 +1377,31 @@ describe('drawings on a printed sheet', () => {
   it('move with the grid when the headings print: past the row numbers, below the letters', () => {
     // §18.3.1.70 — the row-number column (460 twips) stands in front of the
     // grid and the letters row (a row of the sheet's own height) over it.
-    const book = (headings: boolean) =>
-      readXlsxToSheetDoc(
-        buildXlsx({
-          rows: [['a']],
-          printOptions: { headings },
-          sheetShape: { anchor: { from: [1, 1], to: [3, 4] } },
-        }),
-      );
-    const plain = shapeOf(book(false));
-    const headed = shapeOf(book(true));
-    expect(headed.float!.posH!.offsetPt! - plain.float!.posH!.offsetPt!).toBeCloseTo(23);
-    expect(headed.float!.posV!.offsetPt! - plain.float!.posV!.offsetPt!).toBeCloseTo(15);
+    const book = (headings: boolean): Uint8Array =>
+      buildXlsx({
+        rows: [['a']],
+        printOptions: { headings },
+        sheetShape: { anchor: { from: [1, 1], to: [3, 4] } },
+      });
+    const plain = shapeAt(book(false));
+    const headed = shapeAt(book(true));
+    expect(headed.x - plain.x).toBeCloseTo(23);
+    expect(headed.bottom - plain.bottom).toBeCloseTo(15);
   });
 
-  it('print the rows they reach when the rows show, and add none that would print blank', () => {
-    // Excel's print range runs down to a drawing under the last value; with
-    // its gridlines on, those rows are on the page. Without them they hold
-    // nothing we draw — the drawing is drawn whole on its first page.
+  it('print the rows they reach, whether those rows show or not', () => {
+    // Excel's print range runs down to a drawing under the last value, and a
+    // drawing is cut off where the printed rows end (TableOverlay): without
+    // the rows under it, the part of it below the last value would be lost.
     const book = (gridLines: boolean) =>
       readXlsxToSheetDoc(
         buildXlsx({
           rows: [['a']],
           printOptions: { gridLines },
-          sheetShape: { anchor: { from: [1, 5], to: [3, 9] } },
+          sheetShape: { anchor: { from: [1, 5], to: [3, 8] } },
         }),
       );
-    expect(rowsOf(book(true))).toBeGreaterThanOrEqual(9);
-    expect(rowsOf(book(false))).toBe(1);
+    expect(rowsOf(book(true))).toBe(9);
+    expect(rowsOf(book(false))).toBe(9);
   });
 });

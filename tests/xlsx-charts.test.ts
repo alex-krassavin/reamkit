@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import { buildXlsx } from './fixtures/build-xlsx';
+import { sheetDrawings } from './fixtures/sheet-drawings';
 import { Ream } from '@/core/converter/ream';
 import { FontRegistry } from '@/core/font';
 import { flowRenderOptions } from '@/core/converter/project';
@@ -48,22 +49,18 @@ describe('charts on xlsx sheets (§20.5 SpreadsheetDrawingML)', () => {
     const xlsx = buildXlsx({ rows: ROWS, sheetChart: { chartXml: BAR_CHART } });
     const flow = Ream.parse(xlsx).flow;
     expect(flow.charts?.size).toBe(1);
-    const chartBlock = flow.body.find((el) => el.kind === 'chart');
+    const chartBlock = sheetDrawings(flow.body).find((el) => el.kind === 'chart');
     expect(chartBlock).toBeDefined();
     if (chartBlock?.kind !== 'chart') throw new Error('unreachable');
     expect(chartBlock.chart.chartRelId).toBe('xl/charts/chart1.xml');
     // twoCellAnchor B2..H17: 6 default columns × 48pt, 15 default rows × 15pt.
     expect(chartBlock.chart.width).toBeCloseTo(6 * 48, 0);
     expect(chartBlock.chart.height).toBeCloseTo(15 * 15, 0);
-    // The chart block comes BEFORE the sheet's table. It is an out-of-flow
-    // float, so it consumes no space and the grid still starts at the top — but
-    // a float lands on whatever page the layout has reached when it meets the
-    // block, and a wide sheet's grid is several pages of column bands. Emitted
-    // after them, a chart anchored beside the data landed on the LAST of those
-    // pages (chart_hyperlink.xlsx).
-    const tableIdx = flow.body.findIndex((el) => el.kind === 'table');
-    const chartIdx = flow.body.findIndex((el) => el.kind === 'chart');
-    expect(chartIdx).toBeLessThan(tableIdx);
+    // On paper the chart rides the sheet's table (TableOverlay): it is printed
+    // on the page its rows are, wherever the grid's pages break.
+    const table = flow.body.find((el) => el.kind === 'table');
+    if (table?.kind !== 'table') throw new Error('no table');
+    expect(table.table.overlay?.drawings).toContain(chartBlock);
   });
 
   it('renders chart geometry into the PDF page commands', () => {
@@ -109,6 +106,6 @@ describe('charts on xlsx sheets (§20.5 SpreadsheetDrawingML)', () => {
     const xlsx = buildXlsx({ rows: ROWS });
     const flow = Ream.parse(xlsx).flow;
     expect(flow.charts).toBeUndefined();
-    expect(flow.body.some((el) => el.kind === 'chart')).toBe(false);
+    expect(sheetDrawings(flow.body).some((el) => el.kind === 'chart')).toBe(false);
   });
 });

@@ -269,6 +269,9 @@ interface WriteState {
   readonly facesUsed: Set<string>;
   // Every z-order the document's floats state, by rank (see `relativeHeight`).
   readonly zRanks: ReadonlyMap<number, number>;
+  // The drawings over a spreadsheet grid already written, each once
+  // (TableOverlay) — one lying across two column bands is in both tables.
+  readonly overlaid: Set<BodyElement>;
 }
 
 // Per-PART relationship scope (OPC §9.3 — rIds are scoped to their owning
@@ -317,6 +320,7 @@ export function writeDocx(flow: FlowDoc): WriteResult {
     ...(flow.faceOutlines ? { faceOutlines: flow.faceOutlines } : {}),
     facesUsed: new Set(),
     zRanks: zRanksOf(flow),
+    overlaid: new Set(),
   };
   const docScope = newScope();
   const extraParts: Array<OpcPart> = [];
@@ -675,6 +679,7 @@ function zRanksOf(flow: FlowDoc): Map<number, number> {
       if (z !== undefined && Number.isFinite(z)) seen.add(z);
       if (el.kind === 'table') {
         for (const row of el.table.rows) for (const cell of row.cells) visit(cell.content);
+        visit(el.table.overlay?.drawings ?? []);
       }
     }
   };
@@ -1060,6 +1065,13 @@ function emitBlock(
   }
   if (el.kind === 'table') {
     out.push(tableXml(el.table, losses, state, scope));
+    // The drawings over a spreadsheet grid float after it, where they stand on
+    // the sheet (TableOverlay) — before the section closes.
+    for (const drawing of el.table.overlay?.drawings ?? []) {
+      if (state.overlaid.has(drawing)) continue;
+      state.overlaid.add(drawing);
+      emitBlock(out, drawing, losses, state, scope);
+    }
     if (closingSectPr) out.push(`<w:p><w:pPr>${closingSectPr}</w:pPr></w:p>`);
     return;
   }

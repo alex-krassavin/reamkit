@@ -55,6 +55,7 @@ import type {
   TabStop,
   Table,
   TableCell,
+  TableOverlay,
   TableProperties,
   TableRow,
 } from '@/core/document-model';
@@ -83,6 +84,7 @@ import type {
   Line,
   MetafileDrawing,
   PageItem,
+  PageWindow,
   ResolvedMathItem,
   SyntheticFace,
   TextToken,
@@ -96,6 +98,7 @@ import type { StructNode, StructType } from '@/pdf/struct-tree';
 
 import type { MetaPicture } from '@/core/metafile/picture';
 import type { Sheet } from '@/layout/turned-section';
+import { pageItemBounds } from '@/layout/page-doc';
 import { ResourceStore, halfPtToPt, pt } from '@/core/ir';
 import { headingLevelOf } from '@/core/outline';
 import { createFontMeasure, hasSubstitutable, shapeText, substituteLetters } from '@/core/font';
@@ -857,6 +860,28 @@ interface RowLayout {
    * {@link withBorderBands}). The borders are drawn down the middle of it.
    */
   readonly borderBands?: { readonly topPt: number; readonly bottomPt: number };
+  /**
+   * Where the row's top stands on its sheet (RowProperties.sheetTopPt), which
+   * is what places the drawings over a spreadsheet grid (TableBlock.overlay).
+   */
+  readonly sheetTopPt?: number;
+}
+
+/** A drawing that floats out of the flow, laid out. */
+type DrawingLaidOut = ImageBlockLaidOut | ShapeBlockLaidOut | ChartBlockLaidOut;
+
+/** The drawings over a spreadsheet grid (TableOverlay), laid out. */
+interface OverlayLaidOut {
+  readonly sheetLeftPt: number;
+  readonly widthPt: number;
+  readonly leftPt: number;
+  readonly mirrored: boolean;
+  /** Each drawing, its top-left corner in the sheet's own frame. */
+  readonly drawings: ReadonlyArray<{
+    readonly block: DrawingLaidOut;
+    readonly xPt: number;
+    readonly yPt: number;
+  }>;
 }
 
 interface TableBlock {
@@ -871,6 +896,8 @@ interface TableBlock {
   // Horizontal offset from the left margin for a center/right-aligned table
   // narrower than the content width (0 for the default left alignment).
   readonly xOffsetPt: number;
+  /** §20.5 — the drawings over a spreadsheet grid, printed with it. */
+  readonly overlay?: OverlayLaidOut;
 }
 
 /**
@@ -3467,7 +3494,11 @@ function layoutChartBlock(
 ): ChartBlockLaidOut {
   let widthPt: number = block.width;
   let heightPt: number = block.height;
-  if (widthPt > contentWidth && widthPt > 0) {
+  // A chart in the flow cannot be wider than the column, but an anchored one
+  // is not in the column at all — as for a picture (layoutImageBlock). A
+  // sheet's chart 813pt wide runs across three column bands, and shrunk to
+  // the column it reached into only the first two.
+  if (widthPt > contentWidth && widthPt > 0 && !isOutOfFlowFloat(block.float)) {
     const scale = contentWidth / widthPt;
     widthPt = contentWidth;
     heightPt *= scale;
@@ -3892,6 +3923,8 @@ function collectImageResources(
         for (const row of el.table.rows) {
           for (const cell of row.cells) visit(cell.content);
         }
+        // …and the drawings over a spreadsheet grid (TableOverlay).
+        visit(el.table.overlay?.drawings ?? []);
       } else if (el.kind === 'shape') {
         // §20.5.2.17 — including every member of a group, however deep, and the
         // picture a shape may be FILLED with (§20.1.8.14). Missed, the picture
@@ -4373,40 +4406,73 @@ function emitCellFloat(cf: CellFloat, ctx: CellAnchorCtx, frame: FloatFrame): vo
   if (!float) return;
   const x = floatXIn(frame, float, cf.block.widthPt);
   const topYUp = floatTopYUpIn(frame, float, cf.block.heightPt);
-  const sink = ctx.sink(float.behind === true, float.zOrder);
-  if (cf.block.kind === 'shape') {
-    emitShapeItems(cf.block, x, topYUp - cf.block.heightPt, sink, ctx.pageHeight, undefined);
-  } else {
-    const ins = cf.block.drawInset;
-    sink.push({
-      type: 'image',
-      x: pt(x + (ins?.dxPt ?? 0)),
-      y: pt(ctx.pageHeight - (topYUp - (ins?.dyTopPt ?? 0))),
-      width: pt(ins?.widthPt ?? cf.block.widthPt),
-      height: pt(ins?.heightPt ?? cf.block.heightPt),
-      imageResourceName: cf.block.resourceName,
-      ...(cf.block.crop ? { crop: cf.block.crop } : {}),
-      ...(cf.block.wash ? { wash: cf.block.wash } : {}),
-      ...(cf.block.alpha !== undefined ? { alpha: cf.block.alpha } : {}),
-      ...(cf.block.rotationDeg ? { rotationDeg: cf.block.rotationDeg } : {}),
-      ...(cf.block.flipH ? { flipH: true } : {}),
-      ...(cf.block.flipV ? { flipV: true } : {}),
-    });
-    if (cf.block.outline) {
-      sink.push(
-        ...pictureOutlineItems(
-          cf.block.outline,
-          x + (ins?.dxPt ?? 0),
-          ctx.pageHeight - (topYUp - (ins?.dyTopPt ?? 0)),
-          ins?.widthPt ?? cf.block.widthPt,
-          ins?.heightPt ?? cf.block.heightPt,
-          undefined,
-        ),
-      );
-    }
-  }
+  emitDrawing(
+    cf.block,
+    x,
+    topYUp,
+    ctx.sink(float.behind === true, float.zOrder),
+    ctx.pageHeight,
+    undefined,
+  );
   if (float.wrap !== 'none') {
     ctx.exclude(float, x, topYUp, cf.block.widthPt, cf.block.heightPt);
+  }
+}
+
+/**
+ * A drawing out of the flow — a picture, a shape or a chart — in the items it
+ * paints, its top-left corner at `(x, topYUp)` in the y-up cursor frame.
+ *
+ * @param block      The drawing, laid out.
+ * @param x          Its left edge on the page.
+ * @param topYUp     Its top, y-up.
+ * @param sink       Where its items go.
+ * @param pageHeight The page's height, for the flip into the page frame.
+ * @param figId      The tagged-PDF Figure its items belong to, if any.
+ */
+function emitDrawing(
+  block: DrawingLaidOut,
+  x: number,
+  topYUp: number,
+  sink: Array<PageItem>,
+  pageHeight: number,
+  figId: number | undefined,
+): void {
+  if (block.kind === 'shape') {
+    emitShapeItems(block, x, topYUp - block.heightPt, sink, pageHeight, figId);
+    return;
+  }
+  if (block.kind === 'chart') {
+    sink.push(...chartPageItems(block, x, topYUp - block.heightPt, pageHeight, figId));
+    return;
+  }
+  const ins = block.drawInset;
+  sink.push({
+    type: 'image',
+    x: pt(x + (ins?.dxPt ?? 0)),
+    y: pt(pageHeight - (topYUp - (ins?.dyTopPt ?? 0))),
+    width: pt(ins?.widthPt ?? block.widthPt),
+    height: pt(ins?.heightPt ?? block.heightPt),
+    imageResourceName: block.resourceName,
+    ...(block.crop ? { crop: block.crop } : {}),
+    ...(block.wash ? { wash: block.wash } : {}),
+    ...(block.alpha !== undefined ? { alpha: block.alpha } : {}),
+    ...(block.rotationDeg ? { rotationDeg: block.rotationDeg } : {}),
+    ...(block.flipH ? { flipH: true } : {}),
+    ...(block.flipV ? { flipV: true } : {}),
+    ...(figId !== undefined ? { structId: figId } : {}),
+  });
+  if (block.outline) {
+    sink.push(
+      ...pictureOutlineItems(
+        block.outline,
+        x + (ins?.dxPt ?? 0),
+        pageHeight - (topYUp - (ins?.dyTopPt ?? 0)),
+        ins?.widthPt ?? block.widthPt,
+        ins?.heightPt ?? block.heightPt,
+        figId,
+      ),
+    );
   }
 }
 
@@ -5381,6 +5447,9 @@ function collectFontResources(
             visit(cell.content);
           }
         }
+        // …and the drawings over a spreadsheet grid (TableOverlay): their text
+        // is set in glyphs the cells may never use.
+        visit(el.table.overlay?.drawings ?? []);
       } else if (el.kind === 'shape') {
         // §20.5.2.17 — including the text of every member of a group, however
         // deep. Missed, the group's captions were drawn with glyph ids the
@@ -7256,11 +7325,12 @@ function layoutTableBlock(
     aboveBordersByCol = nextAbove;
     const rp = table.rows[r]!.properties;
     rows.push(
-      rp.isHeader || rp.pageBreakBefore
+      rp.isHeader || rp.pageBreakBefore || rp.sheetTopPt !== undefined
         ? {
             ...rl,
             ...(rp.isHeader ? { isHeader: true } : {}),
             ...(rp.pageBreakBefore ? { breakBefore: true } : {}),
+            ...(rp.sheetTopPt !== undefined ? { sheetTopPt: rp.sheetTopPt } : {}),
           }
         : rl,
     );
@@ -7274,6 +7344,9 @@ function layoutTableBlock(
     (table.properties.indentPt ?? 0) +
     tableXOffset(table.properties.alignment, contentWidth, totalWidthPt) -
     legacyTableOutdent(table, rows, options);
+  const overlay = table.overlay
+    ? layoutOverlay(table.overlay, options, fontResources, imageResources, contentWidth)
+    : undefined;
   return {
     kind: 'table',
     ...(table.properties.float ? { float: table.properties.float } : {}),
@@ -7282,6 +7355,46 @@ function layoutTableBlock(
     totalWidthPt,
     colCount,
     xOffsetPt,
+    ...(overlay ? { overlay } : {}),
+  };
+}
+
+/**
+ * The drawings over a spreadsheet grid (TableOverlay), each laid out as the
+ * float it is and placed by its corner in the sheet's own frame.
+ *
+ * @param overlay        The drawings and the part of the sheet the table prints.
+ * @param options        The render options.
+ * @param fontResources  The fonts the drawings' text is set in.
+ * @param imageResources The pictures they show.
+ * @param contentWidth   The width between the margins.
+ * @returns The overlay laid out, or undefined when none of it draws.
+ */
+function layoutOverlay(
+  overlay: TableOverlay,
+  options: StyledRenderOptions,
+  fontResources: ReadonlyMap<string, FontResource>,
+  imageResources: ReadonlyMap<string, ImageResource> | undefined,
+  contentWidth: number,
+): OverlayLaidOut | undefined {
+  const drawings: Array<OverlayLaidOut['drawings'][number]> = [];
+  for (const el of overlay.drawings) {
+    if (el.kind !== 'image' && el.kind !== 'shape' && el.kind !== 'chart') continue;
+    const block = layoutBodyElement(el, options, fontResources, imageResources, contentWidth);
+    if (block.kind !== 'image' && block.kind !== 'shape' && block.kind !== 'chart') continue;
+    drawings.push({
+      block,
+      xPt: block.float?.posH?.offsetPt ?? 0,
+      yPt: block.float?.posV?.offsetPt ?? 0,
+    });
+  }
+  if (drawings.length === 0) return undefined;
+  return {
+    sheetLeftPt: overlay.sheetLeftPt,
+    widthPt: overlay.widthPt,
+    leftPt: overlay.leftPt,
+    mirrored: overlay.mirrored === true,
+    drawings,
   };
 }
 
@@ -9236,6 +9349,136 @@ class PageAssembler {
 }
 
 /**
+ * §20.5 — one spreadsheet table's drawings as its pages show them
+ * (TableBlock.overlay). The table lays its rows down page by page, and each
+ * stretch of sheet rows a page takes unbroken is a window onto the sheet:
+ * every drawing over that stretch is drawn where it stands relative to those
+ * rows and cut off at the window's edges. A chart across a page break so
+ * prints in two pieces, one on each page, and a drawing in the title rows on
+ * every page that repeats them — which is what Excel prints.
+ */
+class SheetView {
+  private runs: Array<{
+    sheetTop: number;
+    sheetBottom: number;
+    topYUp: number;
+    bottomYUp: number;
+  }> = [];
+  private readonly figures = new Map<number, number>();
+
+  /**
+   * @param overlay The table's drawings and the part of the sheet it prints.
+   * @param tableX  The table's left edge on the page.
+   * @param builder The tagged-PDF structure, when the document is tagged.
+   */
+  constructor(
+    private readonly overlay: OverlayLaidOut,
+    private readonly tableX: number,
+    private readonly builder: StructTreeBuilder | undefined,
+  ) {}
+
+  /**
+   * A row, or a piece of one, laid down on the page in hand.
+   *
+   * @param sheetTop Where its top stands on the sheet; undefined for a row the sheet does not have.
+   * @param topYUp   Where its top stands on the page, y-up.
+   * @param heightPt How tall it was laid out.
+   */
+  lay(sheetTop: number | undefined, topYUp: number, heightPt: number): void {
+    if (sheetTop === undefined) return;
+    const last = this.runs[this.runs.length - 1];
+    if (
+      last &&
+      Math.abs(last.bottomYUp - topYUp) < 0.01 &&
+      Math.abs(last.sheetBottom - sheetTop) < 0.5
+    ) {
+      last.sheetBottom = sheetTop + heightPt;
+      last.bottomYUp = topYUp - heightPt;
+      return;
+    }
+    this.runs.push({
+      sheetTop,
+      sheetBottom: sheetTop + heightPt,
+      topYUp,
+      bottomYUp: topYUp - heightPt,
+    });
+  }
+
+  /**
+   * Draw what the page's rows show of the drawings, and start over for the
+   * next page.
+   *
+   * @param asm The page assembler, still on the page the rows were laid on.
+   */
+  show(asm: PageAssembler): void {
+    const o = this.overlay;
+    const pageHeight = asm.ctx.pageHeight;
+    for (const run of this.runs) {
+      const window: PageWindow = {
+        x: pt(this.tableX + o.leftPt),
+        y: pt(pageHeight - run.topYUp),
+        width: pt(o.widthPt),
+        height: pt(run.topYUp - run.bottomYUp),
+      };
+      o.drawings.forEach((d, i) => {
+        const { block } = d;
+        // A drawing that only touches the window still shows in it: the
+        // outer half of its line falls inside. Excel prints a page for that
+        // half alone when a chart ends exactly on a page break.
+        if (d.yPt > run.sheetBottom || d.yPt + block.heightPt < run.sheetTop) return;
+        const left = d.xPt - o.sheetLeftPt;
+        if (left > o.widthPt || left + block.widthPt < 0) return;
+        const x = this.tableX + o.leftPt + (o.mirrored ? o.widthPt - left - block.widthPt : left);
+        const items: Array<PageItem> = [];
+        emitDrawing(block, x, run.topYUp - (d.yPt - run.sheetTop), items, pageHeight, undefined);
+        // Only what the window shows goes on the page: the rest of a chart cut
+        // by a page break is invisible here, and its words would still be
+        // found and copied from a page they are not on.
+        const shown = items.filter((item) => {
+          const box = pageItemBounds(item);
+          return (
+            box.x1 >= window.x &&
+            box.x0 <= window.x + window.width &&
+            box.y1 >= window.y &&
+            box.y0 <= window.y + window.height
+          );
+        });
+        if (shown.length === 0) return;
+        const figId = this.figure(i, block);
+        seenThrough(PageAssembler.zSink(asm.floatsFront, block.float?.zOrder), window).push(
+          ...(figId === undefined ? shown : shown.map((item) => ({ ...item, structId: figId }))),
+        );
+      });
+    }
+    this.runs = [];
+  }
+
+  /** The tagged-PDF Figure a drawing is, made once however many pages show it. */
+  private figure(i: number, block: DrawingLaidOut): number | undefined {
+    if (!this.builder) return undefined;
+    let id = this.figures.get(i);
+    if (id === undefined) {
+      const role =
+        block.kind === 'chart'
+          ? (block.figureRole ?? 'Chart')
+          : block.kind === 'image'
+            ? 'Image'
+            : 'Shape';
+      id = createFigure(this.builder, block.altText, role);
+      this.figures.set(i, id);
+    }
+    return id;
+  }
+}
+
+/** A sink that marks each item it takes as seen through `window` (PageItemBase.window). */
+const seenThrough = (target: Array<PageItem>, window: PageWindow): Array<PageItem> =>
+  ({
+    push: (...items: Array<PageItem>): number =>
+      target.push(...items.map((item) => ({ ...item, window }))),
+  }) as unknown as Array<PageItem>;
+
+/**
  * §17.3.1.14/15 — the height a paragraph needs in one column: all of its lines
  * where it keeps them together, and where it keeps with the next, the whole of
  * every paragraph in the chain it heads and as much of the block after as has
@@ -9905,6 +10148,9 @@ function paginateSections(
       // chunks (page splits), so its MCRs accumulate like a split paragraph.
       const tableNode = builder ? builder.create('Table', builder.root) : undefined;
       const tableX = asm.colLeft() + block.xOffsetPt;
+      // §20.5 — the drawings over a spreadsheet grid go down the pages with
+      // it (TableBlock.overlay), each page showing what lies over its rows.
+      const sheetView = block.overlay ? new SheetView(block.overlay, tableX, builder) : undefined;
       for (let ri = 0; ri < block.rows.length; ri++) {
         const row = block.rows[ri]!;
         const isLeadingHeader = ri < headerRows.length;
@@ -9941,6 +10187,8 @@ function paginateSections(
                 splitRowIntoChunks(row, page)
               : [row];
 
+        // How far down the row the chunk in hand starts, for the drawings.
+        let chunkOffsetPt = 0;
         for (let ci = 0; ci < chunks.length; ci++) {
           const chunk = chunks[ci]!;
           // A manual <rowBreaks> break (first chunk only) forces a new page even
@@ -9950,10 +10198,16 @@ function paginateSections(
           // exactly that, and measured by `current` alone the band after it
           // never broke — picture.xlsx's coin ran over three page-columns and
           // the last two landed on one page, side by side.
+          // A header row further down cannot break — it only repeats — but the
+          // table's FIRST row can, header or not: a spreadsheet band after the
+          // first starts on a page of its own, and with the headings printed
+          // its first row is the letters. Refused there, every band ran on
+          // under the one before it, mid-page.
           const forcedBreak =
-            ci === 0 && row.breakBefore && !isLeadingHeader && asm.pageHasContent();
+            ci === 0 && row.breakBefore && (ri === 0 || !isLeadingHeader) && asm.pageHasContent();
           const overflow = asm.cursorY - chunk.heightPt < asm.bottomLimit() && asm.colHasContent();
           if (forcedBreak || overflow) {
+            sheetView?.show(asm);
             if (forcedBreak) asm.flushPage();
             else asm.advanceColumn();
             // Re-emit the header rows on the fresh page (visual repetition →
@@ -9974,6 +10228,7 @@ function paginateSections(
                   colCount,
                   undefined,
                 );
+                sheetView?.lay(hr.sheetTopPt, asm.cursorY, hr.heightPt);
                 asm.cursorY -= hr.heightPt;
               }
             }
@@ -10001,6 +10256,12 @@ function paginateSections(
             mergedHeights,
             cellAnchorCtx(asm),
           );
+          sheetView?.lay(
+            row.sheetTopPt !== undefined ? row.sheetTopPt + chunkOffsetPt : undefined,
+            asm.cursorY,
+            chunk.heightPt,
+          );
+          chunkOffsetPt += chunk.heightPt;
           asm.cursorY -= chunk.heightPt;
           // Only the table's last row paints its bottom edge — every other
           // horizontal rule is the next row's top (see emitCellBorders). That
@@ -10022,6 +10283,7 @@ function paginateSections(
           }
         }
       }
+      sheetView?.show(asm);
     }
   }
 

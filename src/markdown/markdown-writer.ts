@@ -95,6 +95,7 @@ export function writeMarkdown(flow: FlowDoc, options: MarkdownWriteOptions = {})
     anchors: referencedAnchors(flow.body),
     notes: noteNumbers(flow),
     mediaNames: new Map<ResourceId, string>(),
+    drawn: new Set<BodyElement>(),
     ...(flow.numbering ? { numbering: flow.numbering } : {}),
   };
 
@@ -145,6 +146,8 @@ interface EmitCtx {
   readonly mediaNames: Map<ResourceId, string>;
   /** §17.11 note and §17.13.4 comment ids numbered by order of reference. */
   readonly notes: NoteNumbers;
+  /** The drawings over a spreadsheet grid already written, each once (TableOverlay). */
+  readonly drawn: Set<BodyElement>;
 }
 
 /** Footnote, endnote and comment ids numbered by where they are referenced. */
@@ -215,6 +218,13 @@ function emitBlock(out: Array<string>, el: BodyElement, ctx: EmitCtx): void {
   ctx.list.length = 0;
   if (el.kind === 'table') {
     emitTable(out, el.table, ctx);
+    // The drawings over a spreadsheet grid follow it — each once, however
+    // many of the sheet's column bands it lies across (TableOverlay).
+    for (const drawing of el.table.overlay?.drawings ?? []) {
+      if (ctx.drawn.has(drawing)) continue;
+      ctx.drawn.add(drawing);
+      emitBlock(out, drawing, ctx);
+    }
   } else if (el.kind === 'image') {
     const img = pictureMarkdown(el.image.resource, el.image.altText, ctx);
     if (img.length > 0) out.push(img);
@@ -492,6 +502,7 @@ function noteNumbers(flow: FlowDoc): NoteNumbers {
         }
       } else if (el.kind === 'table') {
         for (const row of el.table.rows) for (const cell of row.cells) visit(cell.content);
+        visit(el.table.overlay?.drawings ?? []);
       } else if (el.kind === 'shape') {
         visitShape(el.shape);
       }
@@ -626,6 +637,7 @@ function referencedAnchors(body: ReadonlyArray<BodyElement>): ReadonlySet<string
         for (const r of el.paragraph.runs) if (r.anchor !== undefined) out.add(r.anchor);
       } else if (el.kind === 'table') {
         for (const row of el.table.rows) for (const cell of row.cells) visit(cell.content);
+        visit(el.table.overlay?.drawings ?? []);
       } else if (el.kind === 'shape') {
         visitShape(el.shape);
       }

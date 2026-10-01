@@ -16,7 +16,7 @@
 // puts it back where Word does.
 
 import type { BodyElement, FloatAnchor } from '@/core/document-model';
-import type { PageItem } from './page-doc';
+import type { PageItem, PageWindow } from './page-doc';
 import { pt } from '@/core/ir';
 
 /** The sheet a turned section prints on, and the margins it states for it. */
@@ -43,12 +43,19 @@ const QUARTER_60K = 90 * 60000;
  * @returns The same item on the sheet, turned a quarter clockwise.
  */
 export function turnOntoSheet(item: PageItem, sheetWidth: number): PageItem {
-  const box = (x: number, y: number, w: number, h: number) => ({
-    x: pt(sheetWidth - y - h),
-    y: pt(x),
-    width: pt(h),
-    height: pt(w),
-  });
+  const turned = turnItem(item, sheetWidth);
+  // The window an item is seen through turns with it (PageItemBase.window).
+  const w = item.window;
+  return w ? { ...turned, window: turnBox(w.x, w.y, w.width, w.height, sheetWidth) } : turned;
+}
+
+/** A top-left-frame box of the frame, as it stands on the sheet once turned a quarter clockwise. */
+function turnBox(x: number, y: number, w: number, h: number, sheetWidth: number): PageWindow {
+  return { x: pt(sheetWidth - y - h), y: pt(x), width: pt(h), height: pt(w) };
+}
+
+function turnItem(item: PageItem, sheetWidth: number): PageItem {
+  const box = (x: number, y: number, w: number, h: number) => turnBox(x, y, w, h, sheetWidth);
   switch (item.type) {
     case 'line': {
       // The line turns about its own origin: counter-clockwise is how the

@@ -57,6 +57,8 @@ export function familiesInFlow(flow: FlowDoc): Set<FamilyKey> {
         for (const run of el.paragraph.runs) add(run.properties.fontFamily?.ascii);
       } else if (el.kind === 'table') {
         for (const row of el.table.rows) for (const cell of row.cells) visit(cell.content);
+        // …and the drawings over a spreadsheet grid (TableOverlay).
+        visit(el.table.overlay?.drawings ?? []);
       } else if (el.kind === 'shape') {
         shapeText(el.shape);
       }
