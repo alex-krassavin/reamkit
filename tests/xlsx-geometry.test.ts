@@ -481,15 +481,14 @@ describe('grid geometry', () => {
     // defaultColWidth is absent. Ignoring a sheet that asks for 10 left every
     // unlisted column at 8.43 and the whole grid narrow.
     //
-    // §18.3.1.81 pads it TWICE: `defaultColWidth` "includes margin padding and
-    // extra padding for gridlines" and `baseColWidth` explicitly does not, so
-    // deriving one from the other adds the 5px once, and rendering it adds the
-    // 5px again. 47668.xlsx declares baseColWidth="10" and caches its picture
-    // at 768pt over 12 columns plus 48pt — 60pt a column, not 56.25.
+    // §18.3.1.81: its digits and their 5px of padding, rounded UP to Excel's
+    // step of eight pixels. 47668.xlsx declares baseColWidth="10" and caches
+    // its picture at 768pt over 12 columns plus 48pt — 60pt a column, 80px,
+    // where 10 × 7 + 5 is 75; 20 digits are 145px and come out 152.
     const wide = placed(buildXlsx({ rows: [['A', 'B']], baseColWidthChars: 20 }));
     const narrow = placed(buildXlsx({ rows: [['A', 'B']] }));
     const pitch = (items: Array<PlacedText>): number => at(items, 'B').x - at(items, 'A').x;
-    expect(pitch(wide)).toBeCloseTo(20 * 5.25 + 3.75 * 2, 1);
+    expect(pitch(wide)).toBeCloseTo(152 * 0.75, 1);
     // baseColWidth 10 → 60pt, the number this file's own cached extent implies.
     expect(pitch(placed(buildXlsx({ rows: [['A', 'B']], baseColWidthChars: 10 })))).toBeCloseTo(
       60,
@@ -549,7 +548,9 @@ describe('grid geometry', () => {
       1,
     );
     expect(image.image.width).toBeCloseTo(table.table.grid[2]!, 1);
-    expect(table.table.grid[0]).toBeCloseTo(54.75, 1);
+    // 8 × 8 + 5 = 69px, up to 72: the default column at an 8px digit, as
+    // Japanese Excel's is in ＭＳ Ｐゴシック 11.
+    expect(table.table.grid[0]).toBeCloseTo(54, 1);
   });
 
   it('gives each sheet its own page geometry', () => {
@@ -1302,12 +1303,13 @@ describe('the column-width unit is the normal style font’s digit (§18.3.1.13)
     expect(pitchWith('Arial', 11)).toBeCloseTo(10 * 6.0, 1); // 80px
   });
 
-  it('is half the em for a CJK face, whose digits are half-width', () => {
-    // 12843-1.xls is twelve-point PMingLiU: 0.5 em is 8px where the fallback's
-    // 7px made its columns 14% narrow and its workbook forty-nine pages long
-    // against the reference's seventy-eight.
-    expect(pitchWith('新細明體', 12)).toBeCloseTo(10 * 6.0, 1); // 80px
-    expect(pitchWith('MS PGothic', 11)).toBeCloseTo(10 * 5.25, 1); // 7.33px → 7
+  it('is a pixel over half the em for a CJK face, whose digits are half-width', () => {
+    // 12843-1.xls is twelve-point PMingLiU: half its em is 8px, and Excel
+    // counts 9 — 45540_form_Footer.xlsx's 宋体 12 check box stands at the
+    // 238px Excel wrote beside its anchor only at 9. ＭＳ Ｐゴシック 11 is
+    // 7.33px, and 8, which is the 72px default column Japanese Excel draws.
+    expect(pitchWith('新細明體', 12)).toBeCloseTo(90 * 0.75, 1); // 10 × 9 + 5 → 90px
+    expect(pitchWith('MS PGothic', 11)).toBeCloseTo(80 * 0.75, 1); // 10 × 8 + 5 → 80px
   });
 
   it('keeps 7px for a face it cannot measure', () => {

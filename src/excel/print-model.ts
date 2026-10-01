@@ -192,43 +192,28 @@ function tracksBeforeTwips(
 }
 
 /**
- * §18.3.1.81 — the DEFAULT column, in twips, from whichever of the two the
- * sheet declares.
+ * §18.3.1.81 — the DEFAULT column, in twips: the sheet's `defaultColWidth`
+ * where it declares one — a stored width, padding included — and otherwise
+ * `baseColWidth` digits and their padding, rounded up to Excel's step of eight
+ * pixels. Padding a `baseColWidth` twice once stood in for that rounding: it
+ * gives 47668.xlsx's 80px as well, and nothing else.
  *
- * The two are not the same number. `defaultColWidth` "includes margin padding
- * and extra padding for gridlines"; `baseColWidth` is the bare character count
- * and explicitly excludes them, so deriving a default from it adds the padding
- * once to reach a defaultColWidth and once more to render it. 47668.xlsx says
- * `baseColWidth="10"` and caches its picture's extent at 9753600 EMU = 768pt
- * over 12 columns plus 48pt — 60pt, or 80px, a column. Padding it once gives
- * 75px and squeezed that picture by 6%. LibreOffice measures ~79px here, so
- * both references agree against us.
- *
- * @param worksheet     The sheet.
- * @param charTwips     The Maximum Digit Width, in twips.
- * @param fallbackChars The width to use when the sheet declares neither.
+ * @param worksheet The sheet.
+ * @param charTwips The Maximum Digit Width, in twips.
  * @returns The default column width in twips.
  */
-function defaultColumnTwips(
-  worksheet: ParsedWorksheet,
-  charTwips: number,
-  fallbackChars: number,
-): number {
+export function defaultColumnTwips(worksheet: ParsedWorksheet, charTwips: number): number {
   if (worksheet.defaultColWidthChars !== undefined) {
     return columnTwipsOf(worksheet.defaultColWidthChars, charTwips);
   }
-  if (worksheet.baseColWidthChars !== undefined) {
-    // TWICE, and the two are not the same padding. `columnTwipsOf` no longer
-    // adds one of its own — §18.3.1.13's stored width already carries it — so
-    // both are explicit here: one to turn a bare character count into a
-    // `defaultColWidth`, one to render it. The spec's prose would stop at one,
-    // but 47668.xlsx contradicts that from inside: Calibri 11, so a 7px digit,
-    // `baseColWidth="10"`, and a picture anchored across 12 columns plus 48pt
-    // whose cached `a:ext` is 9753600 EMU — 768pt, which is 60pt a column, not
-    // 56.25. Excel wrote that extent; the arithmetic is its own.
-    return columnTwipsOf(worksheet.baseColWidthChars, charTwips) + 2 * COL_PADDING_TWIPS;
-  }
-  return columnTwipsOf(fallbackChars, charTwips);
+  // `baseColWidth` digits (8 unless the sheet says otherwise) and the 5px of
+  // padding — rounded UP to a multiple of eight pixels, which is the step
+  // Excel's default column moves in. Calibri's 8 × 7 + 5 = 61px is the
+  // famous 64; 47668.xlsx's `baseColWidth="10"` is 75px and Excel's own
+  // cached extent beside it says 80; 55745.xlsx's 宋体 11 columns are 72px.
+  const base = worksheet.baseColWidthChars ?? DEFAULT_BASE_COL_CHARS;
+  const px = (base * charTwips + COL_PADDING_TWIPS) / TWIPS_PER_PIXEL;
+  return Math.ceil(px / 8) * 8 * TWIPS_PER_PIXEL;
 }
 
 function columnTwipsOf(chars: number, charTwips: number): number {
@@ -260,14 +245,8 @@ const EXCEL_CELL_INSET_PT = 1.5;
  */
 export const DEFAULT_COL_TWIPS = 960;
 
-/**
- * The width behind {@link DEFAULT_COL_TWIPS}, for a non-Calibri unit.
- *
- * In the STORED unit, which is what {@link columnTwips} reads: Excel's default
- * column is "8.43 characters" in its own interface and `width="9.140625"` in
- * every file that writes it out, because the stored form carries the padding.
- */
-export const DEFAULT_COL_CHARS = 9.140625;
+/** §18.3.1.81 `baseColWidth` — the digits a default column holds when the sheet does not say. */
+const DEFAULT_BASE_COL_CHARS = 8;
 
 /**
  * The column-width unit in twips: the Maximum Digit Width of the font the
@@ -282,14 +261,10 @@ export const DEFAULT_COL_CHARS = 9.140625;
  * are listed beside their originals because a file naming one is measured in
  * the other's unit by every reader that has to substitute.
  *
- * Every entry here is measured. The CJK defaults are deliberately absent: the
- * evidence says ＭＳ Ｐゴシック 11 is 8px — Japanese Excel's default column is
- * 72px, and §18.3.1.13's forward formula turns that into exactly the
- * `width="9"` 54524.xlsx writes for its default band — but I have no copy of
- * the face to measure, and fitting 0.55 to it moved 50299.xlsx from 16 pages
- * to 22 against LibreOffice's 17. A face we cannot measure keeps the old 7px.
+ * Every Latin entry here is measured. A third number, where there is one, is
+ * what Excel adds in whole pixels to the digit it measures (see the CJK entry).
  */
-const DIGIT_EM: ReadonlyArray<readonly [RegExp, number]> = [
+const DIGIT_EM: ReadonlyArray<readonly [RegExp, number, number?]> = [
   [/^(calibri|carlito)$/i, 1063 / 2048],
   [/^(arial|helvetica|liberation sans|arimo|arial unicode ms)$/i, 1139 / 2048],
   [/^(times new roman|liberation serif|tinos)$/i, 1024 / 2048],
@@ -299,15 +274,15 @@ const DIGIT_EM: ReadonlyArray<readonly [RegExp, number]> = [
   // face's is a little over a half. Unknown, they fell back to Excel's 7px and
   // 12843-1's twelve-point PMingLiU columns came out 14 % narrow.
   //
-  // What is LEFT of that file's gap is NOT ours, and measuring it settles a
-  // question worth not re-opening: 12843-1 prints on 55 pages here and 78 in
-  // LibreOffice, and LO's every column is 1.105–1.117× ours. Solving both
-  // sides' `px = chars × MDW + padding` off two columns gives LO an MDW of
-  // 8.92px where ours is 8 — 0.5575 em at 12pt, which is Arial's digit
-  // (1139/2048), and LO's own PDF says why: it embeds ArialUnicodeMS for
-  // 新細明體, a face it does not have. Excel measures the real PMingLiU's
-  // half-width digit. Ours is Excel's number; do not widen it to chase the
-  // reference.
+  // And Excel takes a pixel MORE than that half em, as three of its own files
+  // say. 45540_form_Footer.xlsx (宋体 12, a half em of 8px) keeps a check box
+  // anchored at column F + 3px with `margin-left:180.75pt` beside it — Excel's
+  // absolute answer — and columns A…E come to that 238px only at a digit of
+  // 9px; F…G confirm it. 55745.xlsx (宋体 11, 7.33px) puts six default columns
+  // at 432px: 72 apiece, 8 × 8 + 5 rounded up to eight pixels — a digit of 8.
+  // Japanese Excel's default column is 72px in ＭＳ Ｐゴシック 11 alike
+  // (54524.xlsx's `width="9"`). Truncated and one more: 8, 9 and 8. LibreOffice
+  // measures 12843-1's twelve-point PMingLiU at 8.92px, the same 9.
   [
     new RegExp(
       '^(' +
@@ -320,6 +295,7 @@ const DIGIT_EM: ReadonlyArray<readonly [RegExp, number]> = [
       'iu',
     ),
     1024 / 2048,
+    1,
   ],
 ];
 
@@ -379,11 +355,12 @@ function indentLevelTwips(styles: XlsxStyles): number {
  */
 function maximumDigitTwips(name: string, sizePt: number | undefined): number {
   const size = sizePt !== undefined && Number.isFinite(sizePt) && sizePt > 0 ? sizePt : 11;
-  const em = DIGIT_EM.find(([re]) => re.test(name.trim()))?.[1];
-  if (em === undefined) return TWIPS_PER_EXCEL_CHAR;
+  const face = DIGIT_EM.find(([re]) => re.test(name.trim()));
+  if (face === undefined) return TWIPS_PER_EXCEL_CHAR;
+  const [, em, extraPx = 0] = face;
   // Points to 96-DPI pixels, then down to whole pixels the way Excel's own
   // width formulas do — Calibri 11 is 7.61px and Excel's unit is 7.
-  const px = Math.trunc(em * size * (96 / 72));
+  const px = Math.trunc(em * size * (96 / 72)) + extraPx;
   return px > 0 ? px * TWIPS_PER_PIXEL : TWIPS_PER_EXCEL_CHAR;
 }
 
@@ -1071,7 +1048,7 @@ function gridBody(
   // cannot create a used range any more than a merge or a fill can.
   if (usedRow >= 0 && usedCol >= 0 && print.drawingExtentPt) {
     const wantTwips = Math.round(print.drawingExtentPt.widthPt * TWIPS_PER_POINT);
-    const defTwips = defaultColumnTwips(worksheet, charTwipsUnit, DEFAULT_COL_CHARS);
+    const defTwips = defaultColumnTwips(worksheet, charTwipsUnit);
     const widthAt = (abs: number): number => {
       for (const col of worksheet.columns) {
         if (abs < col.min - 1 || abs > col.max - 1) continue;
@@ -1152,7 +1129,7 @@ function gridBody(
     // and paginating them the ordinary way made three pages of colour where
     // LibreOffice prints one.
     const pageTwips = sheetContentWidthTwips(worksheet);
-    const defTwips = defaultColumnTwips(worksheet, charTwipsUnit, DEFAULT_COL_CHARS);
+    const defTwips = defaultColumnTwips(worksheet, charTwipsUnit);
     let acc = 0;
     let colLimit = 0;
     while (colLimit < PAINT_REACH_COLUMNS && acc < pageTwips) {
@@ -1371,7 +1348,7 @@ function gridBody(
   // defaultRowHeight, and ignored for the same reason.
   // defaultColWidth wins; failing that Excel derives the default column from
   // baseColWidth by the same characters + 5px formula; failing both, 8.43.
-  const defaultColTwips = defaultColumnTwips(worksheet, charTwipsUnit, DEFAULT_COL_CHARS);
+  const defaultColTwips = defaultColumnTwips(worksheet, charTwipsUnit);
   const columnWidths = new Array<number>(colCount).fill(defaultColTwips);
   // §18.3.1.13/§18.3.1.73 `hidden` — Excel and LibreOffice print neither a
   // hidden column nor a hidden row. Rendering them put a hidden currency column
@@ -3281,7 +3258,7 @@ function overflowColumnsPastUsedRange(
   image: boolean,
 ): number {
   if (image) return 0;
-  const defaultTwips = defaultColumnTwips(worksheet, charTwipsUnit, DEFAULT_COL_CHARS);
+  const defaultTwips = defaultColumnTwips(worksheet, charTwipsUnit);
   // The columns past the used range are not necessarily default-width: a `<col>`
   // range routinely covers far more columns than hold anything. Sizing the
   // budget by the default instead of by what the column will actually be made

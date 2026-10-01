@@ -18,15 +18,17 @@
     ]
   },
   "ream": {
-    "pages": 3,
+    "pages": 5,
     "pageSizes": [
       {
         "widthPt": 595,
         "heightPt": 842
       }
     ],
-    "chars": 3043,
+    "chars": 3204,
     "firstLines": [
+      "testdoc test phrase",
+      "testdoc test phrase",
       "testdoc test phrase",
       "testdoc test phrase",
       "testdoc test phrase"

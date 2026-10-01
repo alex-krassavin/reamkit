@@ -31,21 +31,27 @@
     ]
   },
   "ream": {
-    "pages": 16,
+    "pages": 22,
     "pageSizes": [
       {
         "widthPt": 595,
         "heightPt": 842
       }
     ],
-    "chars": 1526,
+    "chars": 1558,
     "firstLines": [
       "$R[]{A}1D",
+      "",
       "$R[]{A,breakNum=3}1D",
-      "$R[]{B,sheetLink=tru$R[]{B,sh $R[]{A,sh 1D",
+      "",
+      "$R[]{B,sheetLink=true} $R[]{B,shee$R[]{A,shee1D",
+      "",
       "$R[]{}1D",
+      "",
       "1D",
+      "",
       "1D",
+      "",
       "$R[]{A}",
       "1F",
       "1F",

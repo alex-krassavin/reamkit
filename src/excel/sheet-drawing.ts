@@ -10,11 +10,10 @@ import type { ParsedWorksheet } from '@/core/spreadsheet-model';
 
 import { emuToPt } from '@/core/ir';
 import {
-  COL_PADDING_TWIPS,
-  DEFAULT_COL_CHARS,
   DEFAULT_ROW_TWIPS,
   TWIPS_PER_EXCEL_CHAR,
   columnTwips,
+  defaultColumnTwips,
 } from '@/excel/print-model';
 
 const CHART_URI = 'http://schemas.openxmlformats.org/drawingml/2006/chart';
@@ -345,24 +344,13 @@ export function makeColWidthPt(
         return c.hidden ? 0 : widthPt(c.widthChars);
       }
     }
-    // §18.3.1.81 `<sheetFormatPr defaultColWidth>` governs every column no
-    // `<col>` covers — the same fallback the grid uses. Hardcoding Excel's
-    // 8.43 characters contradicted the file's own declaration and sized every
-    // shape anchor against a track the sheet does not have.
-    // §18.3.1.81 — `defaultColWidth` already includes the margin and gridline
-    // padding; `baseColWidth` explicitly does not, so a default derived from it
-    // takes the padding TWICE: once to become a `defaultColWidth`, once to
-    // render it. The anchor tracks have to agree with the grid's columns or a
-    // drawing lands beside the cell it is anchored to — and the grid has
-    // counted both since `defaultColumnTwips` was written. Counting one here
-    // sized 47668.xlsx's picture at 723pt where the file caches Excel's own
-    // answer beside it: `<a:ext cx="9753600">` is 768.
-    if (ws.defaultColWidthChars !== undefined) return widthPt(ws.defaultColWidthChars);
-    if (ws.baseColWidthChars !== undefined) {
-      return (columnTwips(ws.baseColWidthChars, unitTwips) + 2 * COL_PADDING_TWIPS) / TWIPS_PER_PT;
-    }
-    // Excel's 8.43 characters WITH the padding — 64px at a 7px digit.
-    return widthPt(DEFAULT_COL_CHARS);
+    // §18.3.1.81 — every column no `<col>` covers is the sheet's default, the
+    // same one the grid draws: the anchor tracks have to agree with the grid's
+    // columns or a drawing lands beside the cell it is anchored to. Hardcoding
+    // Excel's 8.43 characters contradicted the file's own declaration, and
+    // 47668.xlsx's picture came out 723pt wide where the file caches Excel's
+    // own answer beside it: `<a:ext cx="9753600">` is 768.
+    return defaultColumnTwips(ws, unitTwips) / TWIPS_PER_PT;
   };
 }
 
