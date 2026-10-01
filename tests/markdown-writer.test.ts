@@ -210,6 +210,23 @@ describe('markdown writer — lists', () => {
     expect(out).toBe('# 1. Introduction\n');
   });
 
+  it('numbers an item by the last figure of its marker, however long the rest', () => {
+    // `(\d+)\D*$` tried every digit of a long run as its start; the template
+    // is the file's own, and every item of the list read it.
+    const { doc } = readDocx(
+      buildDocxFromBody(item('a'), {
+        numberingXml: numbering([
+          { ilvl: 0, format: 'decimal', text: `${'9'.repeat(100_000)}.%1` },
+        ]),
+      }),
+    );
+    const start = performance.now();
+    const { bytes, losses } = writeMarkdown(doc);
+    expect(performance.now() - start).toBeLessThan(1000);
+    expect(decode(bytes)).toBe('1. a\n');
+    expect(losses.some((l) => l.detail.includes('flattened'))).toBe(true);
+  });
+
   it('reports a marker alphabet markdown cannot keep', () => {
     const { doc } = readDocx(
       buildDocxFromBody(item('a') + item('b'), {

@@ -446,11 +446,27 @@ function listBullet(
   }
   // §17.9.11 — a multi-level template ("%1.%2.") ends with THIS level's own
   // number; markdown has one number per item, so the parents' are lost.
-  const digits = /(\d+)\D*$/.exec(marker);
-  if (marker.replace(/\D+/g, '').length > (digits?.[1]?.length ?? 0)) {
+  const digits = lastNumber(marker);
+  if (marker.replace(/\D+/g, '').length > (digits?.length ?? 0)) {
     lose(ctx, 'degraded', FEATURES.lists, 'multi-level list marker flattened to one number');
   }
-  return `${digits ? Number(digits[1]) : counter}.`;
+  return `${digits !== undefined ? Number(digits) : counter}.`;
+}
+
+/**
+ * The last run of digits in a marker — what `/(\d+)\D*$/` matched, read back
+ * from the end: that expression tried every digit of a long run as its start.
+ * The template the marker comes from is the file's, so the run can be any
+ * length, and every item of the list reads it.
+ */
+function lastNumber(marker: string): string | undefined {
+  const isDigit = (i: number): boolean => /\d/.test(marker[i] ?? '');
+  let end = marker.length;
+  while (end > 0 && !isDigit(end - 1)) end--;
+  if (end === 0) return undefined;
+  let start = end - 1;
+  while (start > 0 && isDigit(start - 1)) start--;
+  return marker.slice(start, end);
 }
 
 function numberingLevel(
