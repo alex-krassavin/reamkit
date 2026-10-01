@@ -156,10 +156,13 @@ export function parseChart(
   // Categories are shared; take them from the first series that carries them.
   let categories: Array<string> = [];
   let categoriesRef: string | undefined;
+  let categoryGroups: Chart['categoryGroups'];
   for (const s of serNodes) {
     const cat = poChildren(s).find((c) => poIs(c, 'c:cat'));
     if (cat) {
-      categories = denseStrings(cat);
+      const levels = multiLevelCategories(cat);
+      categories = levels ? levels.categories : denseStrings(cat);
+      categoryGroups = levels?.groups;
       categoriesRef ??= refFormula(cat);
       break;
     }
@@ -272,6 +275,7 @@ export function parseChart(
     ...(Number.isFinite(gapPercent) && gapPercent >= 0 ? { gapPercent } : {}),
     categories,
     ...(categoriesRef ? { categoriesRef } : {}),
+    ...(categoryGroups && categoryGroups.length > 0 ? { categoryGroups } : {}),
     series,
     hasLegend: legend !== undefined,
     ...(isLegendPos(legendPos) ? { legendPos } : {}),
@@ -739,6 +743,44 @@ function denseStrings(container: PoNode): Array<string> {
   const arr = new Array<string>(denseLength(container, pts)).fill('');
   for (const p of pts) arr[p.idx] = p.v;
   return arr;
+}
+
+/**
+ * §21.2.2.115 `c:multiLvlStrCache` — categories labelled on several levels:
+ * the first `c:lvl` labels each category, every later one groups them, a
+ * group's label standing at the category it starts at. Read as one flat cache
+ * it read as none, and an xlsx chart fell back to the cells its reference
+ * names, both columns of them in turn: WithChartSheet.xlsx's six bars stood in
+ * the first six of sixteen slots under a jumble of years and measure names.
+ *
+ * @param cat The `c:cat` element.
+ * @returns The innermost labels and the outer levels' groups, or undefined
+ *   for a category axis of one level.
+ */
+function multiLevelCategories(
+  cat: PoNode,
+): { categories: Array<string>; groups: NonNullable<Chart['categoryGroups']> } | undefined {
+  const cache = poFindDescendant(cat, 'c:multiLvlStrCache');
+  if (!cache) return undefined;
+  const count = poIntAttr(poChildren(cache).find((c) => poIs(c, 'c:ptCount')) ?? cache, 'val') ?? 0;
+  const levels = poChildren(cache)
+    .filter((c) => poIs(c, 'c:lvl'))
+    .map((lvl) =>
+      poChildren(lvl)
+        .filter((pt) => poIs(pt, 'c:pt'))
+        .map((pt) => {
+          const v = poChildren(pt).find((c) => poIs(c, 'c:v'));
+          return { start: poIntAttr(pt, 'idx') ?? 0, label: v ? poText(v) : '' };
+        }),
+    );
+  const [inner, ...outer] = levels;
+  if (!inner) return undefined;
+  const categories = new Array<string>(Math.max(count, ...inner.map((p) => p.start + 1))).fill('');
+  for (const p of inner) categories[p.start] = p.label;
+  return {
+    categories,
+    groups: outer.map((level) => [...level].sort((a, b) => a.start - b.start)),
+  };
 }
 
 function isLegendPos(v: string | undefined): v is 'r' | 'l' | 't' | 'b' {

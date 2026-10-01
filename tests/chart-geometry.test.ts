@@ -200,6 +200,34 @@ describe('the chart-space frame (§21.2.2.198)', () => {
   });
 });
 
+describe('a category axis labelled on two levels (§21.2.2.115)', () => {
+  it('puts each group under the categories it spans, a row below their labels', () => {
+    const chart: Chart = {
+      ...barChart('col'),
+      title: '',
+      hasLegend: false,
+      categories: ['Cost', 'Revenue', 'Cost', 'Revenue'],
+      categoryGroups: [
+        [
+          { start: 0, label: '2005' },
+          { start: 2, label: '2006' },
+        ],
+      ],
+      series: [{ name: 'S1', values: [1, 2, 3, 4], colorHex: '4472C4' }],
+    };
+    const scene = buildBarScene(chart, W, H, measure);
+    const at = (text: string) => scene.labels.filter((l) => l.text === text);
+    const [cost1, cost2] = at('Cost').sort((a, b) => a.x - b.x);
+    const [rev1] = at('Revenue').sort((a, b) => a.x - b.x);
+    const [y2005] = at('2005');
+    const [y2006] = at('2006');
+    expect(y2005!.x).toBeCloseTo((cost1!.x + rev1!.x) / 2, 5);
+    expect(y2006!.x).toBeGreaterThan(cost2!.x);
+    expect(y2005!.y).toBeLessThan(cost1!.y);
+    expect(y2005!.y).toBeGreaterThanOrEqual(0);
+  });
+});
+
 describe('where the category axis crosses (§21.2.2.33, §21.2.2.207)', () => {
   // Values both sides of zero: the category axis lies on the zero line.
   const signed: Chart = {

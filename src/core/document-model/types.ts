@@ -1683,6 +1683,15 @@ export interface Chart {
   readonly categories: ReadonlyArray<string>; // c:cat (shared across series)
   /** §21.2.2.24 `c:cat/…/c:f` — where the categories live, when uncached. */
   readonly categoriesRef?: string;
+  /**
+   * §21.2.2.115 `c:multiLvlStrCache` — the outer levels of a category axis
+   * labelled on more than one: each level's groups, innermost level first,
+   * each group from the category it starts at to the next group's start.
+   * {@link Chart.categories} is the innermost level, one label per category.
+   */
+  readonly categoryGroups?: ReadonlyArray<
+    ReadonlyArray<{ readonly start: number; readonly label: string }>
+  >;
   readonly series: ReadonlyArray<ChartSeries>;
   readonly hasLegend: boolean;
   readonly legendPos?: 'r' | 'l' | 't' | 'b';

@@ -113,6 +113,28 @@ describe('parseChart', () => {
     expect(parseChart(enc.encode(BAR_CHART), defaultColorResolver)!.valAxisMax).toBeUndefined();
   });
 
+  it('reads a category axis labelled on two levels (§21.2.2.115)', () => {
+    // A pivot chart's categories: a measure under each bar, a year over each
+    // pair of them. The first level labels the categories, the second groups.
+    const cat =
+      '<c:cat><c:multiLvlStrRef><c:f>Sheet2!$A$4:$B$7</c:f><c:multiLvlStrCache><c:ptCount val="4"/>' +
+      '<c:lvl><c:pt idx="0"><c:v>Cost</c:v></c:pt><c:pt idx="1"><c:v>Revenue</c:v></c:pt>' +
+      '<c:pt idx="2"><c:v>Cost</c:v></c:pt><c:pt idx="3"><c:v>Revenue</c:v></c:pt></c:lvl>' +
+      '<c:lvl><c:pt idx="0"><c:v>2005</c:v></c:pt><c:pt idx="2"><c:v>2006</c:v></c:pt></c:lvl>' +
+      '</c:multiLvlStrCache></c:multiLvlStrRef></c:cat>';
+    const chart = parseChart(
+      enc.encode(BAR_CHART.replace(/<c:cat>[\s\S]*?<\/c:cat>/, cat)),
+      defaultColorResolver,
+    )!;
+    expect(chart.categories).toEqual(['Cost', 'Revenue', 'Cost', 'Revenue']);
+    expect(chart.categoryGroups).toEqual([
+      [
+        { start: 0, label: '2005' },
+        { start: 2, label: '2006' },
+      ],
+    ]);
+  });
+
   it('reads where the category axis crosses and where its labels stand (§21.2.2.33)', () => {
     const catAx = (inner: string): ReturnType<typeof parseChart> =>
       parseChart(

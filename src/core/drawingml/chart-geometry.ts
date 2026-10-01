@@ -579,6 +579,9 @@ function buildFrame(
     ...Array.from({ length: nCats }, (_, c) => measure(catText(c), CHART_LABEL_PT)),
   );
   const catBand = CHART_LABEL_PT * 1.6;
+  // §21.2.2.115 — the outer levels of a category axis labelled on several,
+  // each a row of its own under the categories' labels (a column chart's).
+  const groupLevels = horizontal ? [] : (chart.categoryGroups ?? []);
 
   const title = titleLines(chart, wPt, measure);
   const top = 4 + titleHeight(title) + (!horizontal && labelsAt === 'end' ? catBand : 0);
@@ -623,7 +626,8 @@ function buildFrame(
     4 +
     legend.bottomHeight +
     (footTitle ? axisTitleBand : 0) +
-    (horizontal || labelsAt === 'start' ? catBand : 0);
+    (horizontal || labelsAt === 'start' ? catBand : 0) +
+    (!horizontal && labelsAt === 'start' ? groupLevels.length * catBand : 0);
   const plotW = Math.max(1, plotRight - x0);
   const plotH = Math.max(1, hPt - top - y0);
 
@@ -785,6 +789,35 @@ function buildFrame(
         align: 'center',
       });
     }
+  }
+  // Each outer level's groups, centred under the categories they span, a
+  // rule between one group and the next running down through the rows.
+  if (labelsAt !== 'none' && labelsAt !== 'end') {
+    groupLevels.forEach((groups, level) => {
+      const rowY = y0 + across - CHART_LABEL_PT - (level + 1) * catBand;
+      groups.forEach((group, i) => {
+        const end = Math.min(nCats, groups[i + 1]?.start ?? nCats);
+        if (end <= group.start) return;
+        labels.push({
+          text: group.label,
+          x: x0 + ((group.start + end) / 2) * slot,
+          y: rowY,
+          sizePt: CHART_LABEL_PT,
+          colorHex: LABEL_COLOR,
+          align: 'center',
+        });
+        if (i > 0) {
+          polylines.push({
+            points: [
+              [x0 + group.start * slot, y0 + across],
+              [x0 + group.start * slot, rowY - CHART_LABEL_PT * 0.4],
+            ],
+            strokeHex: GRID_COLOR,
+            widthPt: 0.75,
+          });
+        }
+      });
+    });
   }
 
   pushAxisLines(
