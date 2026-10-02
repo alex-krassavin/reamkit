@@ -198,9 +198,14 @@ function goldPageOf(bytes: Uint8Array): (ours: number) => number {
   return (ours) => visible?.[ours] ?? ours;
 }
 
-/** Where each page of our SVG is, in CSS pixels — its `<g data-page>` boxes. */
+/**
+ * Where each page of our SVG is, in CSS pixels — the page's own background
+ * rectangle, its first child. The group's box is everything drawn in it, and a
+ * label run out past the page's left edge started the shot left of the page:
+ * Chrome then drew orderOfCNumFmtElements.xlsx at half size in a corner.
+ */
 const FIND_PAGES = `[...document.querySelectorAll('g[data-page]')].map((g) => {
-  const r = g.getBoundingClientRect();
+  const r = (g.querySelector(':scope > rect') ?? g).getBoundingClientRect();
   return { x: Math.floor(r.left + scrollX), y: Math.floor(r.top + scrollY), width: Math.ceil(r.width), height: Math.ceil(r.height) };
 })`;
 
