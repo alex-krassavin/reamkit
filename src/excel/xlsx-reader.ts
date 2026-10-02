@@ -208,14 +208,19 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
   const themeEffectStyles = buildThemeEffectStyles(pkg, workbookRels);
   // §21.2.2.216 — the text a chart leaves unsaid, as Excel sets it (chart-text):
   // in the theme's minor font, never the Normal style's. A workbook without a
-  // theme part has Calibri when its Normal font is Calibri, and Office 2023's
-  // Aptos Narrow when it is anything else.
+  // theme part has Calibri when its Normal font is a plain Calibri, and Office
+  // 2023's Aptos Narrow when it is anything else — a Calibri marked as the
+  // theme's minor font (`<scheme val="minor"/>`) included, which Excel sets in
+  // Aptos Narrow in the cells as well.
   const themeFonts = buildThemeFonts(pkg, workbookRels);
+  const normalFont = styles.fonts[0];
   const chartText: ChartTextDefaults = themeFonts
     ? { themeFonts, ...(themeFonts.minor.latin ? { family: themeFonts.minor.latin } : {}) }
     : {
         family:
-          styles.fonts[0]?.name?.trim().toLowerCase() === 'calibri' ? 'Calibri' : 'Aptos Narrow',
+          normalFont?.name?.trim().toLowerCase() === 'calibri' && normalFont.scheme === undefined
+            ? 'Calibri'
+            : 'Aptos Narrow',
       };
 
   const sheetsOut: Array<Sheet> = [];

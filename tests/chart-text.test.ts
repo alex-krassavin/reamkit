@@ -90,9 +90,9 @@ const theme = (minor: string, major: string): string =>
   '<a:fmtScheme name="T"><a:fillStyleLst/><a:lnStyleLst/><a:effectStyleLst/><a:bgFillStyleLst/></a:fmtScheme>' +
   '</a:themeElements></a:theme>';
 
-/** styles.xml content whose Normal font is `face`. */
-const normal = (face: string): string =>
-  `<fonts count="1"><font><sz val="11"/><name val="${face}"/></font></fonts>` +
+/** styles.xml content whose Normal font is `face`, marked as the theme's minor font or not. */
+const normal = (face: string, scheme = false): string =>
+  `<fonts count="1"><font><sz val="11"/><name val="${face}"/>${scheme ? '<scheme val="minor"/>' : ''}</font></fonts>` +
   '<fills count="1"><fill><patternFill patternType="none"/></fill></fills>' +
   '<borders count="1"><border/></borders>' +
   '<cellStyleXfs count="1"><xf/></cellStyleXfs><cellXfs count="1"><xf/></cellXfs>';
@@ -166,17 +166,20 @@ describe('a workbook chart takes its face from the theme, never the Normal font'
     expect(chartOf(xlsx).text?.catAxis?.family).toBe('Georgia');
   });
 
-  it('is set in Calibri without a theme when the Normal font is Calibri, else in Aptos Narrow', () => {
-    const face = (normalFace: string): string | undefined =>
+  it('is set in Calibri without a theme when the Normal font is a plain Calibri, else in Aptos Narrow', () => {
+    const face = (normalFace: string, scheme = false): string | undefined =>
       chartOf(
         buildXlsx({
           rows: [['x']],
-          stylesXml: normal(normalFace),
+          stylesXml: normal(normalFace, scheme),
           sheetChart: { chartXml: chartXml() },
         }),
       ).text?.catAxis?.family;
     expect(face('Calibri')).toBe('Calibri');
     expect(face('Verdana')).toBe('Aptos Narrow');
+    // A Calibri marked as the theme's minor font is the theme's — Office
+    // 2023's, without a theme part — and Excel sets it in Aptos Narrow.
+    expect(face('Calibri', true)).toBe('Aptos Narrow');
   });
 });
 
