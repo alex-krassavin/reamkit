@@ -420,7 +420,10 @@ yourself, or `{ images: 'drop' }` to omit them.
   digits and padding, rounded up to Excel's step of eight pixels (Calibri's 64px). A
   colour's `tint` is worked as Excel works it, in the Windows HLS model, on a theme,
   `rgb` or indexed colour alike; a workbook with no theme part takes the Office 2023
-  colours Excel starts from.
+  colours Excel starts from. A number is shown as Excel shows it: General fits the
+  column's room to at most 15 significant digits, rounded or in scientific notation,
+  and fills the cell with `#` when no way of writing it fits; a format gets as many
+  places as it asks, the digits past a double's fifteen written as zeros.
 - **On a screen — HTML and SVG — a workbook is what Excel's window shows**, not its
   printed pages: every visible tab, an empty one too; one grid a sheet, all of its
   columns at full size; no print area, repeated titles, page breaks, printed headings
@@ -666,8 +669,10 @@ yourself, or `{ images: 'drop' }` to omit them.
   is left to scale takes Excel's ends and step; the category axis lies where it
   crosses (`crosses`, `crossesAt`) with its labels where `tickLblPos` puts them, a
   reversed one keeps its values at its start, and a crowded one is thinned by the
-  labels it draws; categories on several levels (`c:multiLvlStrCache`) are labelled
-  in rows; a long title wraps; system colours (`sysClr`) are read and transformed.
+  labels it draws; no step cuts the value axis into more than 500 intervals, and its
+  labels are General in nine characters, as Excel writes them; categories on several
+  levels (`c:multiLvlStrCache`) are labelled in rows; a long title wraps; system
+  colours (`sysClr`) are read and transformed.
 - OfficeMath — fractions, scripts, radicals, n-ary operators, functions, limits,
   delimiters, matrices, accents; inline and display.
 
@@ -757,4 +762,7 @@ gated through veraPDF. A PDF read back as `.docx` is set beside its source page 
 bench of some four hundred files, and the documents a change is for are opened in
 Word and in LibreOffice and counted page for page against the source; a rule of
 Word's layout is measured in Word before it is written. Untrusted corpus files run
-inside a locked-down Docker sandbox.
+inside a locked-down Docker sandbox. CodeQL's `security-extended` queries scan every
+change; the expressions that read a document's own text were checked for
+backtracking a crafted file could make quadratic, and replaced where they had it,
+and a chart part's own counts are held to as many points as a sheet has rows.
