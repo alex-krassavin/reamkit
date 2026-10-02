@@ -510,6 +510,11 @@ function emitChartBlock(out: Array<string>, block: ChartBlock, ctx: EmitCtx): vo
   // graphics flip into SVG's y-down viewport, text is emitted outside the
   // flip so glyphs stay upright.
   svg.push(`<g transform="matrix(1 0 0 -1 0 ${fmt(h)})">`);
+  // The PDF's z-order: the chart's frame, its plot's own fill and rule, the
+  // gridlines, and the data over them all.
+  if (scene.background) svg.push(rectSvg(scene.background));
+  if (scene.plotBackground) svg.push(rectSvg(scene.plotBackground));
+  for (const g of scene.gridlines ?? []) svg.push(polylineSvg(g));
   for (const pg of scene.polygons ?? []) svg.push(polygonSvg(pg));
   for (const r of scene.rects) svg.push(rectSvg(r));
   for (const pl of scene.polylines) svg.push(polylineSvg(pl));

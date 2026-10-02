@@ -467,6 +467,32 @@ describe('html writer (FlowDoc adapter)', () => {
     expect(html).toContain('<g transform="matrix(1 0 0 -1 0 252)">');
   });
 
+  it("draws a chart's frame, plot fill and gridlines under its bars, as the PDF does", async () => {
+    // 2ecd0c1 and 52663e9 moved these off the scene's polylines and rects into
+    // layers of their own, and only the PDF learnt to draw them: the HTML of a
+    // ruled chart lost its frame, its plot's fill and every gridline.
+    const ruled = BAR_CHART.replace(
+      '</c:barChart></c:plotArea>',
+      '<c:axId val="1"/><c:axId val="2"/></c:barChart>' +
+        '<c:catAx><c:axId val="1"/><c:axPos val="b"/><c:crossAx val="2"/></c:catAx>' +
+        '<c:valAx><c:axId val="2"/><c:axPos val="l"/><c:majorGridlines><c:spPr><a:ln><a:solidFill><a:srgbClr val="C00000"/></a:solidFill></a:ln></c:spPr></c:majorGridlines><c:crossAx val="1"/></c:valAx>' +
+        '<c:spPr><a:solidFill><a:srgbClr val="F2F2F2"/></a:solidFill></c:spPr></c:plotArea>',
+    );
+    const docx = buildDocxFromBody(chartDrawing('rId7'), { charts: { rId7: ruled } });
+    const html = decode(await Ream.parse(docx).convert('html'));
+    const frame = html.indexOf(
+      '<rect x="0" y="0" width="432" height="252" fill="#FFFFFF" stroke="#D9D9D9"',
+    );
+    const plot = html.search(/<rect [^>]*fill="#F2F2F2"/);
+    const grid = html.indexOf('stroke="#C00000"');
+    const bar = html.search(/<rect [^>]*fill="#4472C4"/);
+    expect(frame).toBeGreaterThan(0);
+    expect(plot).toBeGreaterThan(frame);
+    expect(html.slice(grid - 200, grid)).toContain('<polyline');
+    expect(grid).toBeGreaterThan(plot);
+    expect(bar).toBeGreaterThan(grid);
+  });
+
   it('renders pie wedges as bezier paths', async () => {
     const docx = buildDocxFromBody(chartDrawing('rId6'), { charts: { rId6: PIE_CHART } });
     const html = decode(await Ream.parse(docx).convert('html'));
