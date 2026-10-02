@@ -409,7 +409,7 @@ describe('a value axis the author fixed (§21.2.2.157)', () => {
   });
 });
 
-describe('a step the author fixed (§21.2.2.98)', () => {
+describe('a step the author fixed (§21.2.2.103)', () => {
   /** The value axis's labels, bottom up, of a column chart of `values`. */
   const axisLabels = (
     axis: Partial<Chart>,
@@ -747,6 +747,52 @@ describe('buildBarScene', () => {
     expect(xs[1]! - xs[0]!).toBeCloseTo(bars[0]!.w, 6);
   });
 
+  it('stands a stack one bar wide, its gap a percentage of that width (§21.2.2.75)', () => {
+    // Excel's PDF: a stack at `gapWidth="150"` is 0.4 of its slot, as one bar is.
+    const widths = (gapPercent: number | undefined): Array<number> => {
+      const chart: Chart = {
+        ...barChart('col'),
+        grouping: 'stacked',
+        hasLegend: false,
+        ...(gapPercent === undefined ? {} : { gapPercent }),
+      };
+      const bars = buildBarScene(chart, W, H, measure).rects.filter((r) => r.fillHex === '4472C4');
+      const pitch = bars[1]!.x - bars[0]!.x;
+      return bars.map((b) => b.w / pitch);
+    };
+    for (const w of widths(undefined)) expect(w).toBeCloseTo(0.4, 6);
+    for (const w of widths(0)) expect(w).toBeCloseTo(1, 6);
+  });
+
+  it("spaces a cluster's bars by their overlap (§21.2.2.131)", () => {
+    // Excel's PDF: three series at `overlap="-27"`, `gapWidth="219"` — each bar
+    // a 5.73rd of its slot, the next 1.27 of a width on.
+    const three: Chart = {
+      ...barChart('col'),
+      hasLegend: false,
+      gapPercent: 219,
+      overlapPercent: -27,
+      series: [
+        { name: 'S1', values: [10, 20, 15], colorHex: '4472C4' },
+        { name: 'S2', values: [12, 18, 25], colorHex: 'ED7D31' },
+        { name: 'S3', values: [4, 14, 8], colorHex: 'A5A5A5' },
+      ],
+    };
+    const firstOf = (scene: ChartScene, hex: string) =>
+      scene.rects.filter((r) => r.fillHex === hex).sort((a, b) => a.x - b.x)[0]!;
+    const scene = buildBarScene(three, W, H, measure);
+    const [a, b, c] = ['4472C4', 'ED7D31', 'A5A5A5'].map((hex) => firstOf(scene, hex));
+    const slot =
+      firstOf({ ...scene, rects: scene.rects.filter((r) => r !== a) }, '4472C4').x - a!.x;
+    expect(a!.w / slot).toBeCloseTo(1 / 5.73, 6);
+    expect((b!.x - a!.x) / a!.w).toBeCloseTo(1.27, 6);
+    expect((c!.x - b!.x) / a!.w).toBeCloseTo(1.27, 6);
+    // …and `overlap="100"` lays the cluster's bars one on the next.
+    const piled = buildBarScene({ ...three, overlapPercent: 100 }, W, H, measure);
+    const xs = ['4472C4', 'ED7D31', 'A5A5A5'].map((hex) => firstOf(piled, hex).x);
+    expect(new Set(xs.map((x) => x.toFixed(6))).size).toBe(1);
+  });
+
   it('rescales the value axis to summed totals when stacked', () => {
     // Clustered tops out at the max single value (25). Stacked tops at the max
     // category sum (cat2 = 15+25 = 40).
@@ -813,7 +859,7 @@ describe('buildAreaScene', () => {
     const scene = buildAreaScene({ ...barChart('col'), type: 'area' }, W, H, measure);
     expect(scene.polygons).toHaveLength(2);
     expect(pointsInBounds(scene.polygons!)).toBe(true);
-    expect(scene.polygons!.every((p) => p.fillHex.length === 6)).toBe(true);
+    expect(scene.polygons!.every((p) => p.fillHex?.length === 6)).toBe(true);
   });
 
   it('stacks bands and pins the percent axis at 100%', () => {

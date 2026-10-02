@@ -213,10 +213,11 @@ own PDF: columns in the Normal font's digit as Excel counts it, a table in the
 style it names, a theme colour's tint to the digit, a sheet that reads from the
 right turned round, the notes it shows beside their cells, its drawings over
 the cells and cut where its pages are, a chart's axes scaled and crossed where
-Excel puts them. As HTML a workbook comes out as Excel's window shows it —
-every tab, its gridlines, a noted cell flagged with the note on hover — and as
-SVG as pictures of its sheets, each whole, its text drawn from the faces' own
-outlines.
+Excel puts them, its text in the face Excel sets it in, its 3-D bars and pies
+standing in three dimensions. As HTML a workbook comes out as Excel's window
+shows it — every tab, its gridlines, a noted cell flagged with the note on
+hover — and as SVG as pictures of its sheets, each whole, its text drawn from
+the faces' own outlines.
 
 **Reads PDF, too.** `Ream.parse` accepts a PDF and reconstructs a `FlowDoc` — a
 tagged PDF from its structure tree (headings, tables, lists, reading order), an

@@ -510,6 +510,12 @@ function emitChartBlock(out: Array<string>, block: ChartBlock, ctx: EmitCtx): vo
   // graphics flip into SVG's y-down viewport, text is emitted outside the
   // flip so glyphs stay upright.
   svg.push(`<g transform="matrix(1 0 0 -1 0 ${fmt(h)})">`);
+  // The PDF's z-order: the chart's frame, its plot's own fill and rule, a 3-D
+  // chart's walls, the gridlines, and the data over them all.
+  if (scene.background) svg.push(rectSvg(scene.background));
+  if (scene.plotBackground) svg.push(rectSvg(scene.plotBackground));
+  for (const w of scene.walls ?? []) svg.push(polygonSvg(w));
+  for (const g of scene.gridlines ?? []) svg.push(polylineSvg(g));
   for (const pg of scene.polygons ?? []) svg.push(polygonSvg(pg));
   for (const r of scene.rects) svg.push(rectSvg(r));
   for (const pl of scene.polylines) svg.push(polylineSvg(pl));
@@ -540,7 +546,8 @@ function polygonSvg(p: ChartPolygon): string {
   const stroke = p.strokeHex
     ? ` stroke="#${p.strokeHex}" stroke-width="${fmt(p.widthPt ?? 1)}"`
     : '';
-  return `<polygon points="${pointsAttr(p.points)}" fill="#${p.fillHex}"${stroke}/>`;
+  const fill = p.fillHex ? `#${p.fillHex}` : 'none';
+  return `<polygon points="${pointsAttr(p.points)}" fill="${fill}"${stroke}/>`;
 }
 
 // Pie/doughnut wedge — the same center→arc→close path the PDF emitter draws,
@@ -561,9 +568,14 @@ function labelSvg(l: ChartLabel, sceneH: number, anchor: 'start' | 'middle' | 'e
   const rot = l.rotationDeg
     ? ` transform="rotate(${fmt(-l.rotationDeg)} ${fmt(l.x)} ${fmt(sceneH - l.y)})"`
     : '';
+  // The face the chart sets the text in, as a run's family is stacked; a chart
+  // whose reader resolved none keeps the plain sans it always had.
+  const family = l.family ? escapeAttr(fontStack(l.family)) : 'sans-serif';
+  const weight = l.bold ? ' font-weight="bold"' : '';
+  const slant = l.italic ? ' font-style="italic"' : '';
   return (
     `<text x="${fmt(l.x)}" y="${fmt(sceneH - l.y)}"${rot} font-size="${fmt(l.sizePt)}" ` +
-    `font-family="sans-serif" fill="#${l.colorHex}" text-anchor="${anchor}">${escapeText(l.text)}</text>`
+    `font-family="${family}"${weight}${slant} fill="#${l.colorHex}" text-anchor="${anchor}">${escapeText(l.text)}</text>`
   );
 }
 

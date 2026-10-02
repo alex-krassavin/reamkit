@@ -3,6 +3,93 @@
 All notable changes to **Ream** (`reamkit`) are documented here. The project
 follows [Semantic Versioning](https://semver.org/).
 
+## 1.33.0
+
+A release about charts, set and drawn as Excel sets and draws them.
+
+Excel's own PDFs of probe workbooks were asked again, about charts this time:
+what face a chart's text is in, what a pie's labels say and where they stand,
+how a 3-D chart stands. Excel's PDF draws a 3-D chart as a picture, so those
+were measured by their pixels — how deep a bar is, which way its depth runs,
+how much darker its top and its side are than its front. The corpus then showed
+what else a chart part asks for that was not drawn: a stack's width, a
+cluster's overlap, gridlines a chart has not got, axes their author deleted.
+
+### Added
+
+- **3-D bar and column charts stand in three dimensions.** §21.2.2.15
+  `c:bar3DChart` was drawn flat. Each bar is a box now, standing in a box of
+  walls and a floor seen as the chart's view (§21.2.2.228) turns and tilts it:
+  each point of depth moves `sin rotY` across and `sin rotX` up; a bar is
+  `depthPercent` of its width deep and the box that and `gapDepth` more; a
+  bar's top is 0.76 of its colour and its right side 0.635, a bottom or a left
+  side seen from below or turned left 0.4. The gridlines run across the side
+  wall and along the back wall, the floor is ruled in light grey unless the
+  chart clears it, and the walls are filled and ruled as the chart says. A 3-D
+  value axis takes no 5% past its data — 10…20 runs 0…20 — the upright axis
+  stands on the box's outer edge, and a value labels a column over the far
+  edge of its top. A view of no angle at all is flat, as Excel draws it.
+  chart-dupe.docx, tdf128207.docx and LIBRE_OFFICE-100610-0.pptx's five bar
+  charts now stand in 3-D.
+
+- **A 3-D pie is a tilted disc.** §21.2.2.140 `c:pie3DChart` is an ellipse
+  `sin rotX` as tall as it is wide, standing 0.25·cos²(rotX) of its radius
+  deep, its front edge each slice's colour darkened; a view without `rotX` is
+  edge on, as Excel draws it. A slice stands out by its `c:explosion`, the
+  series' own and each point's; a flat pie's first slice turns to its
+  `c:firstSliceAng`; and a pie fills the box its author sized the plot to.
+
+### Fixed
+
+- **A chart's text in the face, size and colour Excel sets it in.** Not the
+  workbook's Normal font at 9pt in grey, a 13pt title: the theme's minor font at
+  10pt in its text colour, the title and the axis titles bold, under the
+  chart's own `c:txPr` and each element's over it. A workbook without a theme
+  part sets its charts in Calibri when its Normal font is a plain Calibri, and
+  in Aptos Narrow, the Office 2023 minor font, otherwise — a Normal font marked
+  as the theme's (`<scheme val="minor"/>`) among them. Word and PowerPoint
+  charts are drawn as before.
+
+- **A pie's data labels say what they are asked, where Excel sets them.** A pie
+  with no `c:dLbls`, or whose switches show nothing, carries no text; shares are
+  whole and add up to a hundred — 10, 20 and 15 of 45 read 22%, 45% and 33%;
+  the parts come in Excel's order, joined by the chart's separator. A label
+  stands inside its slice where it fits, outside, wrapped and tied back by a
+  leader line, where it does not, and where its author dragged it if they did;
+  labels set round a pie give way to each other rather than pile up. 10 of the
+  corpus's 25 pies drew shares nobody asked for.
+
+- **A scatter's axes told apart by where they sit.** The x axis's fixed ends,
+  step, number format and title went to the y axis: DataTableCities.xlsx now
+  runs −180…180 by 60 and −90…90 by 30, in `0"°"`, as it says.
+
+- **A plot its author sized is that box** (§21.2.2.104, an `inner` manual
+  layout), the axes' labels and titles outside it. Fifteen of the corpus's
+  charts size theirs.
+
+- **A stack is one bar wide, a cluster spaced by its overlap.** A stack took
+  0.7 of its slot whatever its `gapWidth`, where Excel stands one at 150 in 0.4
+  of it; `c:overlap` was not read, and the bars of Excel's own clusters, which
+  it spaces at `-27`, touched and stood a tenth too wide.
+
+- **Gridlines only where an axis has them, nothing of a deleted axis.** Every
+  chart was ruled, those without `c:majorGridlines` too, and a horizontal bar
+  chart took its gridlines' rule off its category axis; an axis its author
+  deleted (`c:delete`) still drew its rule and its labels.
+
+- **A chart in HTML has its frame, its plot's fill and its gridlines**, which
+  the HTML writer stopped drawing when they moved into layers of their own.
+
+### Internals
+
+- The development toolchain is at its current releases — vite 8.3.2 among them,
+  and api-extractor's lodash and minimatch at their patched ones through an
+  override — and the documentation site runs on Astro 7 and on 1.32.1. The
+  runtime dependencies are unchanged.
+- The corpus harness keeps only whole fonts in its font cache and fetches again
+  a file that is not one; the SVG stand measures a page by its own background;
+  the veraPDF suite waits as long as veraPDF takes.
+
 ## 1.32.1
 
 A patch about what a file can make Ream do, and about numbers as Excel writes

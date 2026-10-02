@@ -424,6 +424,12 @@ export interface XlsxFont {
    */
   readonly colorRef?: string;
   readonly name?: string;
+  /**
+   * §18.8.35 `<scheme>` — the theme font this font stands for, whatever its
+   * `name` says. Excel draws such a font in the theme's: a workbook without a
+   * theme part writes Calibri this way and is set in Office 2023's Aptos Narrow.
+   */
+  readonly scheme?: 'major' | 'minor';
 }
 
 /** §18.8.20 `<fill>` — one fill record: pattern type plus foreground/background colours. */

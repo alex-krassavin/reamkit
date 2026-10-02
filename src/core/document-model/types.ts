@@ -1606,6 +1606,13 @@ export interface ChartSeries {
   readonly colorHex?: string; // c:spPr solidFill
   readonly pointColors?: ReadonlyArray<ChartDataPoint>; // c:dPt overrides (pie slices)
   /**
+   * §21.2.2.61 `c:explosion` — how far a pie's slices stand out from its
+   * centre, as a percentage of its radius: the series' own, and each point's
+   * (`c:dPt/c:explosion`) over it.
+   */
+  readonly explosion?: number;
+  readonly pointExplosions?: ReadonlyArray<{ readonly idx: number; readonly percent: number }>;
+  /**
    * §21.2.2.49 `c:dLbl/c:tx` — a data label the author typed rather than one
    * the chart computes, by point index. Excel and Calc print it verbatim: it
    * is the only place a label like "Промышленные потребители; 22,7млрд.кВтч;
@@ -1613,6 +1620,19 @@ export interface ChartSeries {
    * sentence.
    */
   readonly pointLabels?: ReadonlyArray<{ readonly idx: number; readonly text: string }>;
+  /**
+   * §21.2.2.47 `c:dLbl` — where one point's label stands, when the point says:
+   * its own `c:dLblPos`, and the `c:layout/c:manualLayout` it was dragged to —
+   * `x` and `y` fractions of the chart, the label's own top-left corner where
+   * `edge`, else how far it moved from where the chart would set it.
+   */
+  readonly pointLabelPlacements?: ReadonlyArray<{
+    readonly idx: number;
+    readonly position?: ChartLabelPosition;
+    readonly x?: number;
+    readonly y?: number;
+    readonly edge?: boolean;
+  }>;
   /**
    * §21.2.2.59 `c:val/c:numRef/c:f` and §21.2.2.215 `c:tx/c:strRef/c:f` — where
    * the series reads its numbers and its name FROM, when the chart part carries
@@ -1676,10 +1696,90 @@ export interface ChartLineStyle {
   readonly dash?: ShapeDash;
 }
 
+/** A 3-D chart's wall or floor (§21.2.2.11, §21.2.2.69, §21.2.2.191): its fill and rule. */
+export interface ChartSurface {
+  /** `c:spPr/a:solidFill` — RRGGBB; absent, unfilled. */
+  readonly fillHex?: string;
+  /** `c:spPr/a:ln` — its rule, `{ none: true }` for `a:noFill`; absent, the default. */
+  readonly line?: ChartLineStyle;
+}
+
+/**
+ * §21.2.2.216 `c:txPr`, §21.2.2.156 `c:rich` — how one kind of a chart's text
+ * is set: the element's own run properties over the chart's (`c:chartSpace/
+ * c:txPr`) over the application's defaults, theme tokens resolved.
+ */
+export interface ChartTextStyle {
+  /** `a:latin@typeface` — the family, `+mn-lt`/`+mj-lt` already resolved. */
+  readonly family?: string;
+  /** `@sz`, in points. */
+  readonly sizePt?: number;
+  readonly bold?: boolean;
+  readonly italic?: boolean;
+  /** `a:solidFill` — the text colour as RRGGBB. */
+  readonly colorHex?: string;
+}
+
+/** A chart's text by role, each resolved through the cascade on its own. */
+export interface ChartTextStyles {
+  /** `c:chart/c:title`. */
+  readonly title?: ChartTextStyle;
+  /** `c:legend` — the entries. */
+  readonly legend?: ChartTextStyle;
+  /** The category axis's tick labels — a scatter's horizontal value axis. */
+  readonly catAxis?: ChartTextStyle;
+  /** The value axis's tick labels — a scatter's upright one. */
+  readonly valAxis?: ChartTextStyle;
+  /** The secondary value axis's tick labels. */
+  readonly secondaryValAxis?: ChartTextStyle;
+  readonly catAxisTitle?: ChartTextStyle;
+  readonly valAxisTitle?: ChartTextStyle;
+  readonly secondaryValAxisTitle?: ChartTextStyle;
+  /** `c:dLbls` — the values and labels printed on the data. */
+  readonly dataLabels?: ChartTextStyle;
+}
+
+/** §21.2.2.48 ST_DLblPos — where a data label stands against its point. */
+export type ChartLabelPosition =
+  | 'bestFit'
+  | 'b'
+  | 'ctr'
+  | 'inBase'
+  | 'inEnd'
+  | 'l'
+  | 'outEnd'
+  | 'r'
+  | 't';
+
+/**
+ * §21.2.2.49 `c:dLbls` — what a chart's data labels show and how their parts
+ * are joined: the chart group's switches, the first series' own over them.
+ */
+export interface ChartDataLabels {
+  readonly showVal?: boolean;
+  readonly showCatName?: boolean;
+  readonly showSerName?: boolean;
+  readonly showPercent?: boolean;
+  /** §21.2.2.166 `c:separator` — between the parts; absent, Excel's ", ". */
+  readonly separator?: string;
+  /** `c:dLbls/c:numFmt@formatCode`, when the labels have their own. */
+  readonly numberFormat?: string;
+  /** §21.2.2.48 `c:dLblPos` — where the labels stand. */
+  readonly position?: ChartLabelPosition;
+  /** §21.2.2.183 `c:showLeaderLines` — a label set off its slice is tied back to it. */
+  readonly showLeaderLines?: boolean;
+}
+
 /** A parsed chart (§21.2): its type, title, categories, series and rendering options. */
 export interface Chart {
   readonly type: ChartType;
   readonly title?: string;
+  /**
+   * The chart's text, role by role, as its application sets it. Absent when
+   * the reader resolves none: the renderer then keeps its own sizes and greys
+   * in the document's base face.
+   */
+  readonly text?: ChartTextStyles;
   readonly categories: ReadonlyArray<string>; // c:cat (shared across series)
   /** §21.2.2.24 `c:cat/…/c:f` — where the categories live, when uncached. */
   readonly categoriesRef?: string;
@@ -1698,12 +1798,69 @@ export interface Chart {
   readonly barDir?: 'col' | 'bar'; // c:barDir (bar charts)
   readonly grouping?: 'clustered' | 'stacked' | 'percentStacked' | 'standard';
   readonly doughnut?: boolean; // c:doughnutChart (a pie with a central hole)
+  /**
+   * §21.2.2.140 `c:pie3DChart` with §21.2.2.228 `c:view3D` — a pie drawn as a
+   * tilted disc: `rotX` the elevation in degrees (90 looks straight down),
+   * `rotY` how far its first slice is turned clockwise from twelve o'clock.
+   */
+  readonly pie3D?: { readonly rotX: number; readonly rotY: number };
+  /**
+   * §21.2.2.15 `c:bar3DChart` with §21.2.2.228 `c:view3D` — bars drawn as
+   * boxes standing in a box of walls and a floor, seen at an angle with the
+   * axes kept square: `rotX` the elevation and `rotY` the turn in degrees,
+   * `depthPercent` a bar's depth as a percentage of its width, `gapDepth` the
+   * room before and behind it as a percentage of its depth.
+   */
+  readonly bar3D?: {
+    readonly rotX: number;
+    readonly rotY: number;
+    readonly depthPercent: number;
+    readonly gapDepth: number;
+  };
+  /**
+   * §21.2.2.69 `c:floor` — a 3-D chart's floor, the wall its bars stand on:
+   * its fill and its rule. Absent, it is unfilled and ruled in light grey.
+   */
+  readonly floor?: ChartSurface;
+  /** §21.2.2.11 `c:backWall` — the wall behind the bars; absent, nothing drawn. */
+  readonly backWall?: ChartSurface;
+  /** §21.2.2.191 `c:sideWall` — the wall beside them; absent, nothing drawn. */
+  readonly sideWall?: ChartSurface;
+  /** §21.2.2.68 `c:firstSliceAng` — a flat pie's first slice, degrees clockwise from twelve. */
+  readonly firstSliceAngle?: number;
+  /**
+   * §21.2.2.104 `c:plotArea/c:layout/c:manualLayout` in `edge` mode — the box
+   * the author sized the plot to, as fractions of the chart from its top
+   * left; a pie is fitted into it whole, keeping its shape.
+   */
+  readonly plotBox?: {
+    readonly x: number;
+    readonly y: number;
+    readonly w: number;
+    readonly h: number;
+    /**
+     * `c:layoutTarget` `inner` — the box is the plot's own rectangle, the
+     * axes' labels outside it; else (`outer`) it holds them too.
+     */
+    readonly inner?: boolean;
+  };
   readonly showValues?: boolean; // c:dLbls/c:showVal — print each datum's value
+  /**
+   * §21.2.2.49 — the data labels' switches, when the chart has a `c:dLbls` at
+   * all. Absent, it labels nothing.
+   */
+  readonly dataLabels?: ChartDataLabels;
   /**
    * §21.2.2.75 `c:gapWidth` — the gap between category slots as a percentage
    * of the bar width. Absent ⇒ the schema's 150.
    */
   readonly gapPercent?: number;
+  /**
+   * §21.2.2.131 `c:overlap` — how far the bars of one category's cluster lie
+   * over each other, as a percentage of a bar's width: −100 a bar's width
+   * apart … 100 one on the next. Absent ⇒ 0, bars side by side.
+   */
+  readonly overlapPercent?: number;
   readonly catAxisTitle?: string; // c:catAx/c:title
   /**
    * §21.2.2.134 `c:catAx/c:scaling/c:orientation` = `maxMin` — the category
@@ -1753,8 +1910,21 @@ export interface Chart {
   readonly valAxisLine?: ChartLineStyle;
   /** §21.2.2.196 — the secondary value axis's own rule. */
   readonly secondaryValAxisLine?: ChartLineStyle;
-  /** §21.2.2.87 `c:majorGridlines/c:spPr/a:ln` — the gridlines' own rule. */
+  /**
+   * §21.2.2.100 `c:majorGridlines` of the value axis (a scatter's upright one)
+   * — its own rule (§21.2.2.197 `c:spPr/a:ln`). An axis without the element
+   * rules nothing, which reads `{ none: true }`; absent, the default rule.
+   */
   readonly gridLine?: ChartLineStyle;
+  /** The same for a scatter's lying (x) axis. */
+  readonly xGridLine?: ChartLineStyle;
+  /**
+   * §21.2.2.40 `c:delete` — the author deleted the category axis (a scatter's
+   * x axis): neither its rule nor its labels are drawn, nor room kept for them.
+   */
+  readonly catAxisDeleted?: boolean;
+  /** §21.2.2.40 — …or the value axis (a scatter's upright one). */
+  readonly valAxisDeleted?: boolean;
   /**
    * §21.2.2.157 `c:valAx/c:scaling/c:min|c:max` — the value axis the AUTHOR
    * fixed. Absent means "auto", and only then is the range read off the data:
@@ -1764,10 +1934,20 @@ export interface Chart {
   readonly valAxisMin?: number;
   readonly valAxisMax?: number;
   /**
-   * §21.2.2.98 `c:valAx/c:majorUnit` — the step between the value axis's
+   * §21.2.2.103 `c:valAx/c:majorUnit` — the step between the value axis's
    * labels, when the author fixed it. Absent ⇒ the application's own choice.
    */
   readonly valAxisMajorUnit?: number;
+  /**
+   * §21.2.2.226 — a scatter's lying value axis, the x's: the ends and step the
+   * author fixed and its number format, as {@link Chart.valAxisMin},
+   * {@link Chart.valAxisMax}, {@link Chart.valAxisMajorUnit} and
+   * {@link Chart.numberFormat} are its upright one's.
+   */
+  readonly xAxisMin?: number;
+  readonly xAxisMax?: number;
+  readonly xAxisMajorUnit?: number;
+  readonly xNumberFormat?: string;
   /**
    * §21.2.2.198 `c:chartSpace/c:spPr` — the frame around the whole chart: its
    * background fill and its outline. Excel writes both on every chart it

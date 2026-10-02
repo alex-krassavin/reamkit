@@ -256,6 +256,78 @@ describe('parseChart', () => {
     expect(text).toMatch(/\[[\d.]+ [\d.]+\] 0 d/); // a dash pattern
   });
 
+  it("reads how far a cluster's bars overlap (§21.2.2.131)", () => {
+    const withOverlap = (val: string): string =>
+      BAR_CHART.replace('<c:axId val="111"/>', `<c:overlap val="${val}"/><c:axId val="111"/>`);
+    const read = (xml: string) => parseChart(enc.encode(xml), defaultColorResolver)!;
+    expect(read(withOverlap('-27')).overlapPercent).toBe(-27);
+    // None, or none to speak of, leaves the bars side by side; past ±100 is ±100.
+    expect(read(BAR_CHART).overlapPercent).toBeUndefined();
+    expect(read(withOverlap('0')).overlapPercent).toBeUndefined();
+    expect(read(withOverlap('250')).overlapPercent).toBe(100);
+    expect(read(withOverlap('x')).overlapPercent).toBeUndefined();
+  });
+
+  it('rules the plot only with the gridlines its value axis has (§21.2.2.100)', () => {
+    const measure = (t: string, sz: number) => t.length * sz * 0.5;
+    const ruled = (xml: string) =>
+      buildChartScene(parseChart(enc.encode(xml), defaultColorResolver)!, 400, 300, measure)!
+        .gridlines ?? [];
+    // tdf147586.pptx: no `c:majorGridlines`, no gridlines.
+    expect(parseChart(enc.encode(BAR_CHART), defaultColorResolver)!.gridLine).toEqual({
+      none: true,
+    });
+    expect(ruled(BAR_CHART)).toHaveLength(0);
+    const gridded = BAR_CHART.replace(
+      '<c:valAx><c:axId val="222"/>',
+      '<c:valAx><c:axId val="222"/><c:majorGridlines><c:spPr><a:ln w="19050"><a:solidFill>' +
+        '<a:srgbClr val="C00000"/></a:solidFill></a:ln></c:spPr></c:majorGridlines>',
+    );
+    expect(ruled(gridded).length).toBeGreaterThan(0);
+    for (const g of ruled(gridded)) expect(g).toMatchObject({ strokeHex: 'C00000', widthPt: 1.5 });
+    // A horizontal bar chart's are its value axis's, lying along its foot, not
+    // the upright category axis's (tdf128207.docx).
+    const lying = gridded
+      .replace('<c:barDir val="col"/>', '<c:barDir val="bar"/>')
+      .replace('<c:catAx><c:axId val="111"/>', '<c:catAx><c:axId val="111"/><c:axPos val="l"/>')
+      .replace('<c:valAx><c:axId val="222"/>', '<c:valAx><c:axId val="222"/><c:axPos val="b"/>');
+    expect(parseChart(enc.encode(lying), defaultColorResolver)!.gridLine).toMatchObject({
+      colorHex: 'C00000',
+    });
+    // A rule of `a:noFill` rules nothing either.
+    const unruled = BAR_CHART.replace(
+      '<c:valAx><c:axId val="222"/>',
+      '<c:valAx><c:axId val="222"/><c:majorGridlines><c:spPr><a:ln><a:noFill/></a:ln></c:spPr></c:majorGridlines>',
+    );
+    expect(ruled(unruled)).toHaveLength(0);
+  });
+
+  it('draws nothing of an axis its author deleted, and keeps no room for it (§21.2.2.40)', () => {
+    // LIBRE_OFFICE-100610-0.pptx deletes both axes of its five bar charts.
+    const measure = (t: string, sz: number) => t.length * sz * 0.5;
+    const deleted = BAR_CHART.replace(
+      '<c:catAx><c:axId val="111"/>',
+      '<c:catAx><c:axId val="111"/><c:delete val="1"/>',
+    ).replace('<c:valAx><c:axId val="222"/>', '<c:valAx><c:axId val="222"/><c:delete val="1"/>');
+    const chart = parseChart(enc.encode(deleted), defaultColorResolver)!;
+    expect(chart).toMatchObject({ catAxisDeleted: true, valAxisDeleted: true });
+    expect(chart.catAxisLine).toEqual({ none: true });
+    expect(chart.valAxisLine).toEqual({ none: true });
+    const scene = buildChartScene(chart, 400, 300, measure)!;
+    const texts = scene.labels.map((l) => l.text);
+    for (const t of ['Q1', 'Q2', 'Q3', '0', '10', '20']) expect(texts).not.toContain(t);
+    // The bars take the room the labels leave.
+    const shown = buildChartScene(
+      parseChart(enc.encode(BAR_CHART), defaultColorResolver)!,
+      400,
+      300,
+      measure,
+    )!;
+    const left = (s: typeof scene) =>
+      Math.min(...s.rects.filter((r) => r.fillHex === '4472C4').map((r) => r.x));
+    expect(left(scene)).toBeLessThan(left(shown));
+  });
+
   it('takes a gradient-filled series from its first stop, not from its outline', () => {
     // §20.1.8.33 — a series filled with a gradient still has a colour, and the
     // scene model carries one per series. Falling through to the outline
@@ -416,9 +488,178 @@ describe('parseChart', () => {
     expect(drawn('<c:dLbls><c:showVal val="1"/></c:dLbls>')).toEqual(
       expect.arrayContaining(['4', '6']),
     );
-    // A chart that asks for no values keeps the share, which is what a pie
-    // with no labels of its own has always been drawn with.
-    expect(drawn('')).toEqual(expect.arrayContaining(['40%', '60%']));
+    // §21.2.2.49 — a pie whose labels show nothing, or that has none, shows
+    // nothing: Excel's PDF of such a pie carries no text at all (2026-10-02).
+    expect(drawn('')).toEqual([]);
+    expect(drawn('<c:dLbls><c:showVal val="0"/><c:showPercent val="0"/></c:dLbls>')).toEqual([]);
+    expect(drawn('<c:dLbls><c:delete val="1"/></c:dLbls>')).toEqual([]);
+  });
+
+  it("labels a pie's slices with what its switches ask for, as Excel does", () => {
+    // Excel's PDF of 10, 20 and 15 (2026-10-02): whole shares that add up to a
+    // hundred — 22%, 45%, 33%, where rounding each reads 44 for the middle
+    // one; the category over the share where the separator is a new line;
+    // the value then the share where it names none.
+    const pie = (dLbls: string): string =>
+      `<c:chartSpace ${C_NS}><c:chart><c:plotArea><c:pieChart>
+      <c:ser><c:idx val="0"/>${dLbls}
+        <c:cat><c:strRef><c:strCache><c:ptCount val="3"/>
+          <c:pt idx="0"><c:v>Alpha</c:v></c:pt><c:pt idx="1"><c:v>Beta</c:v></c:pt><c:pt idx="2"><c:v>Gamma</c:v></c:pt>
+        </c:strCache></c:strRef></c:cat>
+        <c:val><c:numRef><c:numCache><c:ptCount val="3"/>
+          <c:pt idx="0"><c:v>10</c:v></c:pt><c:pt idx="1"><c:v>20</c:v></c:pt><c:pt idx="2"><c:v>15</c:v></c:pt>
+        </c:numCache></c:numRef></c:val>
+      </c:ser></c:pieChart></c:plotArea></c:chart></c:chartSpace>`;
+    const drawn = (dLbls: string): Array<string> =>
+      buildChartScene(
+        parseChart(enc.encode(pie(dLbls)), defaultColorResolver)!,
+        320,
+        240,
+        (t, sz) => t.length * sz * 0.5,
+      )!.labels.map((l) => l.text);
+    expect(drawn('<c:dLbls><c:showPercent val="1"/></c:dLbls>')).toEqual(['22%', '45%', '33%']);
+    expect(
+      drawn(
+        '<c:dLbls><c:showCatName val="1"/><c:showPercent val="1"/><c:separator>\n</c:separator></c:dLbls>',
+      ),
+    ).toEqual(['Alpha', '22%', 'Beta', '45%', 'Gamma', '33%']);
+    expect(drawn('<c:dLbls><c:showVal val="1"/><c:showPercent val="1"/></c:dLbls>')).toEqual([
+      '10, 22%',
+      '20, 45%',
+      '15, 33%',
+    ]);
+    // The labels' own format is the share's where only the share is shown.
+    expect(
+      drawn(
+        '<c:dLbls><c:numFmt formatCode="0.0%" sourceLinked="0"/><c:showPercent val="1"/></c:dLbls>',
+      ),
+    ).toEqual(['22.2%', '44.4%', '33.3%']);
+  });
+
+  it("sets a slice's label inside where it fits and outside, tied back, where it does not", () => {
+    // §21.2.2.48 bestFit, Excel's default: the big slice keeps its name; the
+    // thin one's long name stands past its end with a leader line.
+    const pie = (dLblsExtra: string, dLbl = ''): string =>
+      `<c:chartSpace ${C_NS}><c:chart><c:plotArea><c:pieChart>
+      <c:ser><c:idx val="0"/>
+        <c:dLbls>${dLbl}<c:showCatName val="1"/><c:showLeaderLines val="1"/>${dLblsExtra}</c:dLbls>
+        <c:cat><c:strRef><c:strCache><c:ptCount val="2"/>
+          <c:pt idx="0"><c:v>Big</c:v></c:pt><c:pt idx="1"><c:v>A rather long name for a thin slice</c:v></c:pt>
+        </c:strCache></c:strRef></c:cat>
+        <c:val><c:numRef><c:numCache><c:ptCount val="2"/>
+          <c:pt idx="0"><c:v>95</c:v></c:pt><c:pt idx="1"><c:v>5</c:v></c:pt>
+        </c:numCache></c:numRef></c:val>
+      </c:ser></c:pieChart></c:plotArea></c:chart></c:chartSpace>`;
+    const scene = (xml: string) =>
+      buildChartScene(
+        parseChart(enc.encode(xml), defaultColorResolver)!,
+        400,
+        300,
+        (t, sz) => t.length * sz * 0.5,
+      )!;
+    const s = scene(pie(''));
+    const wedge = s.wedges[0]!;
+    const at = (text: string) => s.labels.find((l) => l.text.startsWith(text))!;
+    const dist = (l: { x: number; y: number }): number =>
+      Math.hypot(l.x - wedge.cx, l.y - wedge.cy);
+    expect(dist(at('Big'))).toBeLessThan(wedge.r);
+    expect(dist(at('A rather'))).toBeGreaterThan(wedge.r);
+    expect(s.polylines.length).toBe(1);
+    // …and a label its author placed by its own corner (§21.2.2.104, edge)
+    // stands there, the chart's fractions of its width and height.
+    const placed = scene(
+      pie(
+        '',
+        '<c:dLbl><c:idx val="1"/><c:layout><c:manualLayout><c:xMode val="edge"/><c:yMode val="edge"/>' +
+          '<c:x val="0.05"/><c:y val="0.1"/></c:manualLayout></c:layout><c:showCatName val="1"/></c:dLbl>',
+      ),
+    );
+    const moved = placed.labels.find((l) => l.text.startsWith('A rather'))!;
+    expect(moved.y).toBeGreaterThan(300 * 0.75);
+  });
+
+  it('draws a 3-D pie as a tilted disc, its front edge darker, as Excel does', () => {
+    // §21.2.2.140/§21.2.2.228 — Excel's PDF of a 3-D pie at rotX 30
+    // (2026-10-02): an ellipse half as tall as wide, standing 0.17 of its
+    // radius deep; with no rotX at all, the disc seen edge on.
+    const pie3D = (view: string, extra = ''): string =>
+      `<c:chartSpace ${C_NS}><c:chart>${view}<c:plotArea>${extra}<c:pie3DChart><c:varyColors val="1"/>
+      <c:ser><c:idx val="0"/><c:explosion val="25"/>
+        <c:dPt><c:idx val="1"/><c:explosion val="0"/></c:dPt>
+        <c:val><c:numRef><c:numCache><c:ptCount val="2"/>
+          <c:pt idx="0"><c:v>3</c:v></c:pt><c:pt idx="1"><c:v>1</c:v></c:pt>
+        </c:numCache></c:numRef></c:val>
+      </c:ser></c:pie3DChart></c:plotArea></c:chart></c:chartSpace>`;
+    const chart = parseChart(
+      enc.encode(pie3D('<c:view3D><c:rotX val="30"/><c:rotY val="90"/></c:view3D>')),
+      defaultColorResolver,
+    )!;
+    expect(chart.pie3D).toEqual({ rotX: 30, rotY: 90 });
+    expect(chart.series[0]).toMatchObject({
+      explosion: 25,
+      pointExplosions: [{ idx: 1, percent: 0 }],
+    });
+    const scene = buildChartScene(chart, 400, 300, (t, sz) => t.length * sz * 0.5)!;
+    expect(scene.wedges).toEqual([]);
+    const polygons = scene.polygons ?? [];
+    // Each slice's face in its own colour, and the edge under the front in a
+    // darker one.
+    const faces = polygons.filter((pg) => pg.fillHex === '4472C4' || pg.fillHex === 'ED7D31');
+    expect(faces).toHaveLength(2);
+    expect(polygons.some((pg) => pg.fillHex === '305089')).toBe(true);
+    const extent = (pts: ReadonlyArray<readonly [number, number]>) => {
+      const xs = pts.map(([x]) => x);
+      const ys = pts.map(([, y]) => y);
+      return { w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
+    };
+    const all = extent(polygons.flatMap((pg) => pg.points));
+    expect(all.h / all.w).toBeLessThan(0.75);
+    // No rotX: the schema's 0, edge on.
+    expect(
+      parseChart(
+        enc.encode(pie3D('<c:view3D><c:perspective val="0"/></c:view3D>')),
+        defaultColorResolver,
+      )!.pie3D,
+    ).toEqual({ rotX: 0, rotY: 0 });
+  });
+
+  it('fits a pie into the box its author sized the plot to (§21.2.2.104)', () => {
+    // Excel's PDF: a flat pie in a box 0.4 wide and 0.25 tall is a circle as
+    // wide as the box is tall, centred in it.
+    const pie = `<c:chartSpace ${C_NS}><c:chart><c:plotArea>
+      <c:layout><c:manualLayout><c:layoutTarget val="inner"/><c:xMode val="edge"/><c:yMode val="edge"/>
+        <c:x val="0.3"/><c:y val="0.4"/><c:w val="0.4"/><c:h val="0.25"/></c:manualLayout></c:layout>
+      <c:pieChart><c:varyColors val="1"/><c:ser><c:idx val="0"/>
+        <c:val><c:numRef><c:numCache><c:ptCount val="2"/>
+          <c:pt idx="0"><c:v>3</c:v></c:pt><c:pt idx="1"><c:v>1</c:v></c:pt>
+        </c:numCache></c:numRef></c:val>
+      </c:ser></c:pieChart></c:plotArea></c:chart></c:chartSpace>`;
+    const chart = parseChart(enc.encode(pie), defaultColorResolver)!;
+    expect(chart.plotBox).toEqual({ x: 0.3, y: 0.4, w: 0.4, h: 0.25, inner: true });
+    const wedge = buildChartScene(chart, 400, 300, (t, sz) => t.length * sz * 0.5)!.wedges[0]!;
+    expect(wedge.r).toBeCloseTo((0.25 * 300) / 2, 5);
+    expect(wedge.cx).toBeCloseTo(0.5 * 400, 5);
+    expect(wedge.cy).toBeCloseTo(300 - (0.4 + 0.125) * 300, 5);
+  });
+
+  it("sets a chart's plot in the inner box its author sized (§21.2.2.104)", () => {
+    // aascu 5864.pptx sizes its bar charts' plots to the top of their frames,
+    // their legends placed under them; the plot is that box, its labels outside.
+    const withBox = BAR_CHART.replace(
+      '<c:plotArea>',
+      '<c:plotArea><c:layout><c:manualLayout><c:layoutTarget val="inner"/><c:xMode val="edge"/>' +
+        '<c:yMode val="edge"/><c:x val="0.2"/><c:y val="0.1"/><c:w val="0.6"/><c:h val="0.5"/>' +
+        '</c:manualLayout></c:layout>',
+    ).replace('<c:valAx><c:axId val="222"/>', '<c:valAx><c:axId val="222"/><c:majorGridlines/>');
+    const chart = parseChart(enc.encode(withBox), defaultColorResolver)!;
+    expect(chart.plotBox).toEqual({ x: 0.2, y: 0.1, w: 0.6, h: 0.5, inner: true });
+    const scene = buildChartScene(chart, 400, 300, (t, sz) => t.length * sz * 0.5)!;
+    const xs = (scene.gridlines ?? []).flatMap((g) => g.points.map(([x]) => x));
+    const ys = (scene.gridlines ?? []).flatMap((g) => g.points.map(([, y]) => y));
+    expect(Math.min(...xs)).toBeCloseTo(0.2 * 400, 5);
+    expect(Math.max(...xs)).toBeCloseTo(0.8 * 400, 5);
+    expect(Math.max(...ys)).toBeCloseTo(300 - 0.1 * 300, 5);
+    expect(Math.min(...ys)).toBeCloseTo(300 - 0.6 * 300, 5);
   });
 
   it('flags a doughnut chart (renders as a pie with a hole)', () => {

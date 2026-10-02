@@ -345,6 +345,8 @@ function parseFonts(root: Record<string, unknown>, colors: WorkbookColors): Arra
     if (colorRef !== undefined) font.colorRef = colorRef;
     const nameVal = childValAttr(obj, 'name');
     if (nameVal) font.name = nameVal;
+    const scheme = childValAttr(obj, 'scheme');
+    if (scheme === 'minor' || scheme === 'major') font.scheme = scheme;
     out.push(font);
   }
   return out;

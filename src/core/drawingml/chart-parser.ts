@@ -9,18 +9,23 @@ import { XMLParser } from 'fast-xml-parser';
 
 import type {
   Chart,
+  ChartDataLabels,
   ChartDataPoint,
+  ChartLabelPosition,
   ChartLineStyle,
   ChartMarker,
   ChartMarkerSymbol,
   ChartSeries,
+  ChartSurface,
   ChartType,
   ShapeDash,
 } from '@/core/document-model';
 import type { ResourceId } from '@/core/ir';
 import type { OpcPackage } from '@/core/opc';
 import type { ColorMod, ColorResolver } from '@/core/drawingml/colors';
+import type { ChartTextDefaults } from '@/core/drawingml/chart-text';
 import type { PoNode } from '@/core/po-helpers';
+import { chartTextStyles } from '@/core/drawingml/chart-text';
 import { resolveColorNode } from '@/core/drawingml/colors';
 import {
   poAttr,
@@ -101,12 +106,16 @@ export function pointsPerSeries(seriesCount: number): number {
  *
  * @param chartXml     The raw chart1.xml part bytes.
  * @param resolveColor Maps a DrawingML colour reference to a 6-hex string.
+ * @param resolveImage Maps a blip's relationship id to its image resource.
+ * @param textDefaults The host's defaults for chart text; given, the chart's
+ *                     text is resolved role by role ({@link Chart.text}).
  * @returns The parsed chart, or `null` when there is no `c:chart` / `c:plotArea`.
  */
 export function parseChart(
   chartXml: Uint8Array,
   resolveColor: ColorResolver,
   resolveImage?: (relId: string) => ResourceId | undefined,
+  textDefaults?: ChartTextDefaults,
 ): Chart | null {
   const tree = parser.parse(decoder.decode(chartXml)) as Array<PoNode>;
   const chart = poFindByPath(tree, ['c:chartSpace', 'c:chart']);
@@ -211,12 +220,70 @@ export function parseChart(
   const barDir = group ? poVal(poChildren(group).find((c) => poIs(c, 'c:barDir'))) : undefined;
   const grouping = group ? poVal(poChildren(group).find((c) => poIs(c, 'c:grouping'))) : undefined;
   const doughnut = group ? poIs(group, 'c:doughnutChart') : false;
+  // §21.2.2.140/§21.2.2.228 — a 3-D pie is a tilted disc, by its view's
+  // elevation and turn; Excel writes `rotX="30"` for the one it inserts, and
+  // that is its view where the part states none.
+  const view3D = poChildren(chart).find((c) => poIs(c, 'c:view3D'));
+  const viewAngle = (tag: string, fallback: number): number => {
+    const v = Number(poVal(view3D ? poChildren(view3D).find((c) => poIs(c, tag)) : undefined));
+    return Number.isFinite(v) ? v : fallback;
+  };
+  // An absent `c:rotX` is the schema's 0 — the disc seen edge on, as Excel's
+  // own PDF draws a 3-D pie whose view says only its perspective.
+  const pie3D =
+    group && poIs(group, 'c:pie3DChart')
+      ? { rotX: viewAngle('c:rotX', 0), rotY: viewAngle('c:rotY', 0) }
+      : undefined;
+  // §21.2.2.15 — 3-D bars are boxes, seen by the same view; the bars' depth is
+  // the view's (§21.2.2.41, a percentage of a bar's width, 100 unsaid) and the
+  // room before and behind them the group's (§21.2.2.74, 150 unsaid). An
+  // angle unsaid is again 0, which Excel's PDF draws flat: aascu 5864.pptx's
+  // view says only that its axes are square.
+  const gapDepthRaw =
+    group && poIs(group, 'c:bar3DChart')
+      ? Number(poVal(poChildren(group).find((c) => poIs(c, 'c:gapDepth'))) ?? NaN)
+      : NaN;
+  const bar3D =
+    group && poIs(group, 'c:bar3DChart')
+      ? {
+          rotX: Math.min(90, Math.max(-90, viewAngle('c:rotX', 0))),
+          rotY: ((viewAngle('c:rotY', 0) % 360) + 360) % 360,
+          depthPercent: Math.min(2000, Math.max(20, viewAngle('c:depthPercent', 100))),
+          gapDepth: Number.isFinite(gapDepthRaw) ? Math.min(500, Math.max(0, gapDepthRaw)) : 150,
+        }
+      : undefined;
+  // §21.2.2.69/§21.2.2.11/§21.2.2.191 — its floor and walls, as they are filled
+  // and ruled; tdf128207.docx and LIBRE_OFFICE-100610-0.pptx clear them all.
+  const floor = bar3D
+    ? surfaceOf(
+        poChildren(chart).find((c) => poIs(c, 'c:floor')),
+        resolveColor,
+      )
+    : undefined;
+  const backWall = bar3D
+    ? surfaceOf(
+        poChildren(chart).find((c) => poIs(c, 'c:backWall')),
+        resolveColor,
+      )
+    : undefined;
+  const sideWall = bar3D
+    ? surfaceOf(
+        poChildren(chart).find((c) => poIs(c, 'c:sideWall')),
+        resolveColor,
+      )
+    : undefined;
+  const plotBox = plotBoxOf(plotArea);
+  const firstSliceRaw =
+    group && (poIs(group, 'c:pieChart') || poIs(group, 'c:doughnutChart'))
+      ? Number(poVal(poChildren(group).find((c) => poIs(c, 'c:firstSliceAng'))))
+      : Number.NaN;
+  const firstSliceAngle = Number.isFinite(firstSliceRaw) ? firstSliceRaw : undefined;
   const showValues = group ? chartShowsValues(group) : false;
-  const catAxisTitle = axisTitle(plotArea, 'c:catAx');
-  const valAxisTitle = axisTitle(plotArea, 'c:valAx');
+  const firstSerNode = group ? poChildren(group).find((c) => poIs(c, 'c:ser')) : undefined;
+  const dataLabels = dataLabelsOf(group, firstSerNode);
   const catAxNode = poChildren(plotArea).find((c) => poIs(c, 'c:catAx'));
   const valAxNode = poChildren(plotArea).find((c) => poIs(c, 'c:valAx'));
-  // §21.2.2.28 `c:axPos` — an axis line and its gridlines are geometry, so bind
+  // §21.2.2.10 `c:axPos` — an axis line and its gridlines are geometry, so bind
   // them by WHERE the axis sits and not by which element declared it. A scatter
   // has two `c:valAx` and no `c:catAx` at all: chartTitle_noTitle.xlsx asks for
   // a 0.75pt #BFBFBF rule along the bottom and got the 1pt #595959 we fall back
@@ -230,16 +297,49 @@ export function parseChart(
     );
   const bottomAxNode = axisAt('b', 't') ?? catAxNode;
   const leftAxNode = axisAt('l', 'r') ?? valAxNode;
-  const catAxisLine = lineStyleOf(bottomAxNode, resolveColor);
-  const valAxisLine = lineStyleOf(leftAxNode, resolveColor);
+  // §21.2.2.226 — a scatter has two value axes and no category axis, and which
+  // is which is where each SITS: its upright one is the values', its lying one
+  // the x's. Taken as "the first c:valAx", Excel's own order put the x axis's
+  // ends, step and format on the y axis (DataTableCities.xlsx runs its longitude
+  // −180…180 by 60 in `0"°"`), and its title on the wrong side.
+  const isScatter = type === 'scatter';
+  // The axis each role is: a scatter's by where it sits, any other chart's by
+  // what it is — a horizontal bar chart's value axis lies along its foot.
+  const valRoleAx = isScatter
+    ? leftAxNode
+    : poChildren(plotArea).find((c) => poIs(c, 'c:valAx') && c !== secondaryValAx);
+  const catRoleAx = isScatter
+    ? bottomAxNode
+    : (catAxNode ?? poChildren(plotArea).find((c) => poIs(c, 'c:dateAx')));
+  // §21.2.2.40 `c:delete` — an axis its author deleted draws neither its rule
+  // nor its labels, and keeps no room for them: LIBRE_OFFICE-100610-0.pptx
+  // deletes both axes of its five bar charts, and we labelled them all.
+  const catAxisDeleted = isDeletedAxis(catRoleAx);
+  const valAxisDeleted = isDeletedAxis(valRoleAx);
+  const ruleOf = (ax: PoNode | undefined): ChartLineStyle | undefined =>
+    isDeletedAxis(ax) ? { none: true } : lineStyleOf(ax, resolveColor);
+  const catAxisLine = ruleOf(bottomAxNode);
+  const valAxisLine = ruleOf(leftAxNode);
   const secondaryValAxisLine = lineStyleOf(secondaryValAx, resolveColor);
-  const gridLine = lineStyleOf(
-    leftAxNode ? poChildren(leftAxNode).find((c) => poIs(c, 'c:majorGridlines')) : undefined,
-    resolveColor,
-  );
-  const valAxisMin = axisScaling(plotArea, 'c:min');
-  const valAxisMax = axisScaling(plotArea, 'c:max');
-  const valAxisMajorUnit = majorUnitOf(plotArea);
+  // §21.2.2.100 — an axis rules the plot only where it has major gridlines:
+  // tdf147586.pptx's has none and we ruled it anyway. They are the VALUE
+  // axis's, which a horizontal bar chart lays along its foot — read off the
+  // upright category axis, tdf128207.docx's mid-grey rules came out light.
+  const gridLine = gridlinesOf(valRoleAx, resolveColor);
+  const xGridLine = isScatter ? gridlinesOf(bottomAxNode, resolveColor) : undefined;
+  const catAxisTitle = isScatter ? axisTitleOf(bottomAxNode) : axisTitle(plotArea, 'c:catAx');
+  const valAxisTitle = isScatter ? axisTitleOf(leftAxNode) : axisTitle(plotArea, 'c:valAx');
+  const valAxisMin = isScatter
+    ? axisScalingOf(leftAxNode, 'c:min')
+    : axisScaling(plotArea, 'c:min');
+  const valAxisMax = isScatter
+    ? axisScalingOf(leftAxNode, 'c:max')
+    : axisScaling(plotArea, 'c:max');
+  const valAxisMajorUnit = isScatter ? majorUnitOfAxis(leftAxNode) : majorUnitOf(plotArea);
+  const xAxisMin = isScatter ? axisScalingOf(bottomAxNode, 'c:min') : undefined;
+  const xAxisMax = isScatter ? axisScalingOf(bottomAxNode, 'c:max') : undefined;
+  const xAxisMajorUnit = isScatter ? majorUnitOfAxis(bottomAxNode) : undefined;
+  const xNumberFormat = isScatter ? formatCodeOf(bottomAxNode) : undefined;
   // §21.2.2.134 — the category axis may run the other way, which is how a
   // ranked bar chart puts its first row at the top.
   const catAxisReversed = axisOrientation(catAxNode) === 'maxMin';
@@ -275,11 +375,39 @@ export function parseChart(
       ? frameFillOf(frameLine, resolveColor)
       : undefined
     : 'D9D9D9';
-  const numberFormat = valueFormatCode(plotArea);
+  const numberFormat = isScatter ? formatCodeOf(leftAxNode) : valueFormatCode(plotArea);
 
   const legend = poChildren(chart).find((c) => poIs(c, 'c:legend'));
   const legendPos = legend
     ? poVal(poChildren(legend).find((c) => poIs(c, 'c:legendPos')))
+    : undefined;
+
+  // §21.2.2.216 — the text each part of the chart is set in, when the host
+  // asked for it. The labels belong to the axis that DRAWS them: a scatter's
+  // horizontal value axis labels as the category axis does elsewhere.
+  const firstSer = serNodes[0];
+  const text = textDefaults
+    ? chartTextStyles(
+        {
+          ...(chartSpace ? { chartSpace } : {}),
+          ...withNode(
+            'title',
+            poChildren(chart).find((c) => poIs(c, 'c:title')),
+          ),
+          ...withNode('legend', legend),
+          ...withNode('catAxis', catRoleAx),
+          ...withNode('valAxis', valRoleAx),
+          ...withNode('secondaryValAxis', secondaryValAx),
+          ...withNode(
+            'dataLabels',
+            (firstSer ? poChildren(firstSer).find((c) => poIs(c, 'c:dLbls')) : undefined) ??
+              (group ? poChildren(group).find((c) => poIs(c, 'c:dLbls')) : undefined),
+          ),
+        },
+        resolveColor,
+        (fill) => colorFromSolidFill(fill, resolveColor),
+        textDefaults,
+      )
     : undefined;
 
   const title = chartTitle(chart, series);
@@ -296,11 +424,23 @@ export function parseChart(
     .find((c) => poIs(c, 'c:gapWidth'));
   const gapRaw = gapNode ? poVal(gapNode) : undefined;
   const gapPercent = gapRaw === undefined ? NaN : Number(gapRaw);
+  // §21.2.2.131 — and how far a cluster's bars lie over each other. Excel's
+  // own charts space theirs a quarter of a bar apart (`-27`), which drawn
+  // touching made every bar of chart.docx's clusters a tenth too wide.
+  const overlapNode = poChildren(plotArea)
+    .flatMap((g) => poChildren(g))
+    .find((c) => poIs(c, 'c:overlap'));
+  const overlapRaw = overlapNode ? poVal(overlapNode) : undefined;
+  const overlapPercent = overlapRaw === undefined ? NaN : Number(overlapRaw);
 
   return {
     type,
     ...(title ? { title } : {}),
+    ...(text ? { text } : {}),
     ...(Number.isFinite(gapPercent) && gapPercent >= 0 ? { gapPercent } : {}),
+    ...(Number.isFinite(overlapPercent) && overlapPercent !== 0
+      ? { overlapPercent: Math.min(100, Math.max(-100, overlapPercent)) }
+      : {}),
     categories,
     ...(categoriesRef ? { categoriesRef } : {}),
     ...(categoryGroups && categoryGroups.length > 0 ? { categoryGroups } : {}),
@@ -310,7 +450,15 @@ export function parseChart(
     ...(barDir === 'col' || barDir === 'bar' ? { barDir } : {}),
     ...(isGrouping(grouping) ? { grouping } : {}),
     ...(doughnut ? { doughnut: true } : {}),
+    ...(pie3D ? { pie3D } : {}),
+    ...(bar3D ? { bar3D } : {}),
+    ...(floor ? { floor } : {}),
+    ...(backWall ? { backWall } : {}),
+    ...(sideWall ? { sideWall } : {}),
+    ...(plotBox ? { plotBox } : {}),
+    ...(firstSliceAngle ? { firstSliceAngle } : {}),
     ...(showValues ? { showValues: true } : {}),
+    ...(dataLabels ? { dataLabels } : {}),
     ...(catAxisTitle ? { catAxisTitle } : {}),
     ...(catAxisReversed ? { catAxisReversed } : {}),
     ...(catAxisCrosses !== undefined ? { catAxisCrosses } : {}),
@@ -324,9 +472,16 @@ export function parseChart(
     ...(valAxisLine ? { valAxisLine } : {}),
     ...(secondaryValAxisLine ? { secondaryValAxisLine } : {}),
     ...(gridLine ? { gridLine } : {}),
+    ...(xGridLine ? { xGridLine } : {}),
+    ...(catAxisDeleted ? { catAxisDeleted: true } : {}),
+    ...(valAxisDeleted ? { valAxisDeleted: true } : {}),
     ...(valAxisMin !== undefined ? { valAxisMin } : {}),
     ...(valAxisMax !== undefined ? { valAxisMax } : {}),
     ...(valAxisMajorUnit !== undefined ? { valAxisMajorUnit } : {}),
+    ...(xAxisMin !== undefined ? { xAxisMin } : {}),
+    ...(xAxisMax !== undefined ? { xAxisMax } : {}),
+    ...(xAxisMajorUnit !== undefined ? { xAxisMajorUnit } : {}),
+    ...(xNumberFormat ? { xNumberFormat } : {}),
     ...(frameFillHex ? { frameFillHex } : {}),
     ...(frameFillImage ? { frameFillImage } : {}),
     ...(frameLineHex ? { frameLineHex } : {}),
@@ -336,6 +491,14 @@ export function parseChart(
     ...(plotLine && plotLine.none !== true ? { plotLine } : {}),
     ...(numberFormat ? { numberFormat } : {}),
   };
+}
+
+/** `{ [role]: node }` when there is a node — the shape `ChartTextNodes` takes. */
+function withNode<TRole extends string>(
+  role: TRole,
+  node: PoNode | undefined,
+): { [P in TRole]?: PoNode } {
+  return (node ? { [role]: node } : {}) as { [P in TRole]?: PoNode };
 }
 
 function parseSeries(ser: PoNode, resolveColor: ColorResolver, most: number): ChartSeries {
@@ -353,6 +516,18 @@ function parseSeries(ser: PoNode, resolveColor: ColorResolver, most: number): Ch
   );
   const pointColors = dataPointColors(ser, resolveColor);
   const pointLabels = customDataLabels(ser);
+  const explosion = explosionOf(ser);
+  const pointExplosions = poChildren(ser)
+    .filter((c) => poIs(c, 'c:dPt'))
+    .flatMap((dPt) => {
+      const percent = explosionOf(dPt);
+      const idx = poIntAttr(
+        poChildren(dPt).find((c) => poIs(c, 'c:idx')),
+        'val',
+      );
+      return percent !== undefined && idx !== undefined ? [{ idx, percent }] : [];
+    });
+  const pointLabelPlacements = labelPlacements(ser);
   const marker = seriesMarker(ser);
   const line = lineStyleOf(ser, resolveColor);
   // Keep the references so the reader can resolve them when nothing is cached.
@@ -367,6 +542,9 @@ function parseSeries(ser: PoNode, resolveColor: ColorResolver, most: number): Ch
     ...(colorHex ? { colorHex } : {}),
     ...(pointColors.length > 0 ? { pointColors } : {}),
     ...(pointLabels.length > 0 ? { pointLabels } : {}),
+    ...(explosion ? { explosion } : {}),
+    ...(pointExplosions.length > 0 ? { pointExplosions } : {}),
+    ...(pointLabelPlacements.length > 0 ? { pointLabelPlacements } : {}),
     ...(marker ? { marker } : {}),
     ...(line ? { line } : {}),
   };
@@ -418,6 +596,35 @@ function seriesName(ser: PoNode): string | undefined {
  * its own `<c:tx><c:rich>` replaces whatever the chart would have computed for
  * that point, and it is the only place that text exists.
  */
+/**
+ * §21.2.2.104 — the plot area's box where the author sized it: `edge` mode,
+ * every one of x, y, w and h stated, each a fraction of the chart.
+ */
+function plotBoxOf(plotArea: PoNode): Chart['plotBox'] {
+  const layout = poChildren(plotArea).find((c) => poIs(c, 'c:layout'));
+  const manual = layout ? poChildren(layout).find((c) => poIs(c, 'c:manualLayout')) : undefined;
+  if (!manual) return undefined;
+  const kids = poChildren(manual);
+  const val = (tag: string): string | undefined => poVal(kids.find((c) => poIs(c, tag)));
+  if (val('c:xMode') !== 'edge' || val('c:yMode') !== 'edge') return undefined;
+  const [x, y, w, h] = ['c:x', 'c:y', 'c:w', 'c:h'].map((tag) => Number(val(tag)));
+  if (![x, y, w, h].every((v) => v !== undefined && Number.isFinite(v))) return undefined;
+  if (w! <= 0 || h! <= 0) return undefined;
+  return {
+    x: x!,
+    y: y!,
+    w: w!,
+    h: h!,
+    ...(val('c:layoutTarget') === 'inner' ? { inner: true } : {}),
+  };
+}
+
+/** §21.2.2.61 `c:explosion` — a percentage of the pie's radius, at most 400. */
+function explosionOf(owner: PoNode): number | undefined {
+  const v = Number(poVal(poChildren(owner).find((c) => poIs(c, 'c:explosion'))));
+  return Number.isFinite(v) && v >= 0 ? Math.min(v, 400) : undefined;
+}
+
 function customDataLabels(ser: PoNode): Array<{ idx: number; text: string }> {
   const dLbls = poChildren(ser).find((c) => poIs(c, 'c:dLbls'));
   if (!dLbls) return [];
@@ -597,7 +804,11 @@ function cachedTitleText(title: PoNode): string | undefined {
 // placeholder "Axis Title". 57362.xlsx leaves both of its value axes that way
 // and we drew neither.
 function axisTitle(plotArea: PoNode, axTag: string): string | undefined {
-  const ax = poChildren(plotArea).find((c) => poIs(c, axTag));
+  return axisTitleOf(poChildren(plotArea).find((c) => poIs(c, axTag)));
+}
+
+/** An axis node's own `c:title` text. */
+function axisTitleOf(ax: PoNode | undefined): string | undefined {
   const title = ax ? poChildren(ax).find((c) => poIs(c, 'c:title')) : undefined;
   if (!title) return undefined;
   return collectAT(title) || cachedTitleText(title) || 'Axis Title';
@@ -633,16 +844,25 @@ function axisOrientation(ax: PoNode | undefined): string | undefined {
   return scaling ? poVal(poChildren(scaling).find((c) => poIs(c, 'c:orientation'))) : undefined;
 }
 
-/** §21.2.2.98 `c:valAx/c:majorUnit` — a positive step, or undefined for "auto". */
+/** §21.2.2.103 `c:valAx/c:majorUnit` — a positive step, or undefined for "auto". */
 function majorUnitOf(plotArea: PoNode): number | undefined {
-  const ax = poChildren(plotArea).find((c) => poIs(c, 'c:valAx'));
+  return majorUnitOfAxis(poChildren(plotArea).find((c) => poIs(c, 'c:valAx')));
+}
+
+function majorUnitOfAxis(ax: PoNode | undefined): number | undefined {
   const node = ax ? poChildren(ax).find((c) => poIs(c, 'c:majorUnit')) : undefined;
   const v = node ? Number(poAttr(node, 'val')) : Number.NaN;
   return Number.isFinite(v) && v > 0 ? v : undefined;
 }
 
 function axisScaling(plotArea: PoNode, tag: 'c:min' | 'c:max'): number | undefined {
-  const ax = poChildren(plotArea).find((c) => poIs(c, 'c:valAx'));
+  return axisScalingOf(
+    poChildren(plotArea).find((c) => poIs(c, 'c:valAx')),
+    tag,
+  );
+}
+
+function axisScalingOf(ax: PoNode | undefined, tag: 'c:min' | 'c:max'): number | undefined {
   const scaling = ax ? poChildren(ax).find((c) => poIs(c, 'c:scaling')) : undefined;
   const node = scaling ? poChildren(scaling).find((c) => poIs(c, tag)) : undefined;
   const v = node ? Number(poAttr(node, 'val')) : Number.NaN;
@@ -671,6 +891,36 @@ const DASHES = new Set<string>([
   'sysDot',
 ]);
 
+/** A 3-D chart's wall or floor: what its `c:spPr` fills and rules it with. */
+function surfaceOf(
+  node: PoNode | undefined,
+  resolveColor: ColorResolver,
+): ChartSurface | undefined {
+  const spPr = node ? poChildren(node).find((c) => poIs(c, 'c:spPr')) : undefined;
+  if (!spPr) return undefined;
+  const fillHex = frameFillOf(spPr, resolveColor);
+  const line = lineStyleOf(node, resolveColor);
+  return { ...(fillHex ? { fillHex } : {}), ...(line ? { line } : {}) };
+}
+
+/** §21.2.2.40 — whether the author deleted an axis. */
+function isDeletedAxis(ax: PoNode | undefined): boolean {
+  const del = ax ? poVal(poChildren(ax).find((c) => poIs(c, 'c:delete'))) : undefined;
+  return del === '1' || del === 'true';
+}
+
+/**
+ * §21.2.2.100 — an axis's major gridlines: their rule, the default one where
+ * they state none (undefined), and none at all where the axis has none.
+ */
+function gridlinesOf(
+  ax: PoNode | undefined,
+  resolveColor: ColorResolver,
+): ChartLineStyle | undefined {
+  const grid = ax ? poChildren(ax).find((c) => poIs(c, 'c:majorGridlines')) : undefined;
+  return grid ? lineStyleOf(grid, resolveColor) : { none: true };
+}
+
 function lineStyleOf(
   owner: PoNode | undefined,
   resolveColor: ColorResolver,
@@ -698,7 +948,10 @@ function lineStyleOf(
 }
 
 function valueFormatCode(plotArea: PoNode): string | undefined {
-  const ax = poChildren(plotArea).find((c) => poIs(c, 'c:valAx'));
+  return formatCodeOf(poChildren(plotArea).find((c) => poIs(c, 'c:valAx')));
+}
+
+function formatCodeOf(ax: PoNode | undefined): string | undefined {
   const numFmt = ax ? poChildren(ax).find((c) => poIs(c, 'c:numFmt')) : undefined;
   const code = numFmt ? poAttr(numFmt, 'formatCode') : undefined;
   if (code === undefined || code.trim().length === 0) return undefined;
@@ -710,6 +963,116 @@ function dLblsShowVal(dLbls: PoNode | undefined): boolean {
   if (!dLbls) return false;
   const v = poVal(poChildren(dLbls).find((c) => poIs(c, 'c:showVal')));
   return v === '1' || v === 'true';
+}
+
+/**
+ * §21.2.2.49 — what a chart's data labels show: its group's `c:dLbls` with the
+ * first series' own over it. `c:delete` shows nothing; a chart with no
+ * `c:dLbls` anywhere has no labels, which is not a chart that shows its
+ * percentages — Excel prints nothing on such a pie.
+ *
+ * @param group     The chart group (`c:pieChart`, …).
+ * @param firstSer  Its first series.
+ * @returns The switches, or undefined for a chart without data labels.
+ */
+function dataLabelsOf(
+  group: PoNode | undefined,
+  firstSer: PoNode | undefined,
+): ChartDataLabels | undefined {
+  const own = (owner: PoNode | undefined): PoNode | undefined =>
+    owner ? poChildren(owner).find((c) => poIs(c, 'c:dLbls')) : undefined;
+  const groupLabels = own(group);
+  const seriesLabels = own(firstSer);
+  if (!groupLabels && !seriesLabels) return undefined;
+  const read = (dLbls: PoNode | undefined): ChartDataLabels => {
+    if (!dLbls) return {};
+    const kids = poChildren(dLbls);
+    const deleted = poVal(kids.find((c) => poIs(c, 'c:delete')));
+    if (deleted === '1' || deleted === 'true') {
+      return { showVal: false, showCatName: false, showSerName: false, showPercent: false };
+    }
+    const flag = (tag: string): Partial<Record<string, boolean>> => {
+      const v = poVal(kids.find((c) => poIs(c, tag)));
+      return v === undefined ? {} : { [tag.slice(2)]: v === '1' || v === 'true' };
+    };
+    const separatorNode = kids.find((c) => poIs(c, 'c:separator'));
+    const numFmt = kids.find((c) => poIs(c, 'c:numFmt'));
+    const code = numFmt ? poAttr(numFmt, 'formatCode') : undefined;
+    const linked = numFmt ? poAttr(numFmt, 'sourceLinked') : undefined;
+    const position = labelPosition(kids);
+    return {
+      ...flag('c:showVal'),
+      ...flag('c:showCatName'),
+      ...flag('c:showSerName'),
+      ...flag('c:showPercent'),
+      ...flag('c:showLeaderLines'),
+      ...(position ? { position } : {}),
+      ...(separatorNode ? { separator: poText(separatorNode) } : {}),
+      ...(code && code.trim() !== '' && code.trim().toLowerCase() !== 'general' && linked !== '1'
+        ? { numberFormat: code }
+        : {}),
+    };
+  };
+  return { ...read(groupLabels), ...read(seriesLabels) };
+}
+
+const LABEL_POSITIONS: ReadonlySet<string> = new Set([
+  'bestFit',
+  'b',
+  'ctr',
+  'inBase',
+  'inEnd',
+  'l',
+  'outEnd',
+  'r',
+  't',
+]);
+
+/** §21.2.2.48 — a label's `c:dLblPos` among its siblings, when it states one. */
+function labelPosition(kids: ReadonlyArray<PoNode>): ChartLabelPosition | undefined {
+  const v = poVal(kids.find((c) => poIs(c, 'c:dLblPos')));
+  return v !== undefined && LABEL_POSITIONS.has(v) ? (v as ChartLabelPosition) : undefined;
+}
+
+/**
+ * §21.2.2.47 — where each point's own label stands, for the points that say:
+ * their `c:dLblPos`, and the `c:manualLayout` an author dragged them to
+ * (45544.xlsx sets every one of its slices' names out by hand).
+ */
+function labelPlacements(ser: PoNode): NonNullable<ChartSeries['pointLabelPlacements']> {
+  const dLbls = poChildren(ser).find((c) => poIs(c, 'c:dLbls'));
+  if (!dLbls) return [];
+  const out: Array<NonNullable<ChartSeries['pointLabelPlacements']>[number]> = [];
+  for (const dLbl of poChildren(dLbls)) {
+    if (!poIs(dLbl, 'c:dLbl')) continue;
+    const kids = poChildren(dLbl);
+    const idx =
+      poIntAttr(
+        kids.find((c) => poIs(c, 'c:idx')),
+        'val',
+      ) ?? 0;
+    const position = labelPosition(kids);
+    const layout = kids.find((c) => poIs(c, 'c:layout'));
+    const manual = layout ? poChildren(layout).find((c) => poIs(c, 'c:manualLayout')) : undefined;
+    const num = (tag: string): number | undefined => {
+      const v = Number(poVal(manual ? poChildren(manual).find((c) => poIs(c, tag)) : undefined));
+      return Number.isFinite(v) ? v : undefined;
+    };
+    const x = num('c:x');
+    const y = num('c:y');
+    const mode = (tag: string): string | undefined =>
+      poVal(manual ? poChildren(manual).find((c) => poIs(c, tag)) : undefined);
+    const edge = mode('c:xMode') === 'edge' && mode('c:yMode') === 'edge';
+    if (position === undefined && x === undefined && y === undefined) continue;
+    out.push({
+      idx,
+      ...(position ? { position } : {}),
+      ...(x !== undefined ? { x } : {}),
+      ...(y !== undefined ? { y } : {}),
+      ...(edge ? { edge: true } : {}),
+    });
+  }
+  return out;
 }
 
 function chartShowsValues(group: PoNode): boolean {
