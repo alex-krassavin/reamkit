@@ -563,11 +563,31 @@ describe('parseChart', () => {
         </c:numCache></c:numRef></c:val>
       </c:ser></c:pieChart></c:plotArea></c:chart></c:chartSpace>`;
     const chart = parseChart(enc.encode(pie), defaultColorResolver)!;
-    expect(chart.plotBox).toEqual({ x: 0.3, y: 0.4, w: 0.4, h: 0.25 });
+    expect(chart.plotBox).toEqual({ x: 0.3, y: 0.4, w: 0.4, h: 0.25, inner: true });
     const wedge = buildChartScene(chart, 400, 300, (t, sz) => t.length * sz * 0.5)!.wedges[0]!;
     expect(wedge.r).toBeCloseTo((0.25 * 300) / 2, 5);
     expect(wedge.cx).toBeCloseTo(0.5 * 400, 5);
     expect(wedge.cy).toBeCloseTo(300 - (0.4 + 0.125) * 300, 5);
+  });
+
+  it("sets a chart's plot in the inner box its author sized (§21.2.2.95)", () => {
+    // aascu 5864.pptx sizes its bar charts' plots to the top of their frames,
+    // their legends placed under them; the plot is that box, its labels outside.
+    const withBox = BAR_CHART.replace(
+      '<c:plotArea>',
+      '<c:plotArea><c:layout><c:manualLayout><c:layoutTarget val="inner"/><c:xMode val="edge"/>' +
+        '<c:yMode val="edge"/><c:x val="0.2"/><c:y val="0.1"/><c:w val="0.6"/><c:h val="0.5"/>' +
+        '</c:manualLayout></c:layout>',
+    );
+    const chart = parseChart(enc.encode(withBox), defaultColorResolver)!;
+    expect(chart.plotBox).toEqual({ x: 0.2, y: 0.1, w: 0.6, h: 0.5, inner: true });
+    const scene = buildChartScene(chart, 400, 300, (t, sz) => t.length * sz * 0.5)!;
+    const xs = (scene.gridlines ?? []).flatMap((g) => g.points.map(([x]) => x));
+    const ys = (scene.gridlines ?? []).flatMap((g) => g.points.map(([, y]) => y));
+    expect(Math.min(...xs)).toBeCloseTo(0.2 * 400, 5);
+    expect(Math.max(...xs)).toBeCloseTo(0.8 * 400, 5);
+    expect(Math.max(...ys)).toBeCloseTo(300 - 0.1 * 300, 5);
+    expect(Math.min(...ys)).toBeCloseTo(300 - 0.6 * 300, 5);
   });
 
   it('flags a doughnut chart (renders as a pie with a hole)', () => {

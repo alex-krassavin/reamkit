@@ -1808,6 +1808,11 @@ export interface Chart {
     readonly y: number;
     readonly w: number;
     readonly h: number;
+    /**
+     * `c:layoutTarget` `inner` — the box is the plot's own rectangle, the
+     * axes' labels outside it; else (`outer`) it holds them too.
+     */
+    readonly inner?: boolean;
   };
   readonly showValues?: boolean; // c:dLbls/c:showVal — print each datum's value
   /**

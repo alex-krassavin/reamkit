@@ -396,6 +396,26 @@ function axisScale(
   );
 }
 
+/**
+ * §21.2.2.95 — the plot's own rectangle where its author sized it (an
+ * `inner` manual layout), in the scene's y-up frame: the axes' labels and
+ * titles stand outside it, where the chart sets them.
+ */
+function innerPlot(
+  chart: Chart,
+  wPt: number,
+  hPt: number,
+): { x0: number; y0: number; plotW: number; plotH: number } | undefined {
+  const box = chart.plotBox;
+  if (!box?.inner) return undefined;
+  return {
+    x0: box.x * wPt,
+    y0: hPt - (box.y + box.h) * hPt,
+    plotW: Math.max(1, box.w * wPt),
+    plotH: Math.max(1, box.h * hPt),
+  };
+}
+
 /** The ends and step an author fixed on one axis, each absent where not. */
 interface AxisFix {
   readonly min: number | undefined;
@@ -806,24 +826,27 @@ function buildFrame(
   const footTitle = horizontal ? chart.valAxisTitle : chart.catAxisTitle;
   const leftTitleFace = faceOf(chart, horizontal ? 'catAxisTitle' : 'valAxisTitle');
   const footTitleFace = faceOf(chart, horizontal ? 'valAxisTitle' : 'catAxisTitle');
+  const own = innerPlot(chart, wPt, hPt);
   const x0 =
+    own?.x0 ??
     4 +
-    (leftTitle ? leftTitleFace.sizePt * 1.5 : 0) +
-    (horizontal
-      ? labelsAt === 'start'
-        ? catLabelW
-        : tickHalf(tickVals[0])
-      : valAtEnd
-        ? 0
-        : tickLabelW);
+      (leftTitle ? leftTitleFace.sizePt * 1.5 : 0) +
+      (horizontal
+        ? labelsAt === 'start'
+          ? catLabelW
+          : tickHalf(tickVals[0])
+        : valAtEnd
+          ? 0
+          : tickLabelW);
   const y0 =
+    own?.y0 ??
     4 +
-    legend.bottomHeight +
-    (footTitle ? footTitleFace.sizePt * 1.5 : 0) +
-    ((horizontal ? !valAtEnd : labelsAt === 'start') ? catBand : 0) +
-    (!horizontal && labelsAt === 'start' ? groupLevels.length * catBand : 0);
-  const plotW = Math.max(1, plotRight - x0);
-  const plotH = Math.max(1, hPt - top - y0);
+      legend.bottomHeight +
+      (footTitle ? footTitleFace.sizePt * 1.5 : 0) +
+      ((horizontal ? !valAtEnd : labelsAt === 'start') ? catBand : 0) +
+      (!horizontal && labelsAt === 'start' ? groupLevels.length * catBand : 0);
+  const plotW = own?.plotW ?? Math.max(1, plotRight - x0);
+  const plotH = own?.plotH ?? Math.max(1, hPt - top - y0);
 
   const valueOffset = (v: number): number => fractionOf(v, scale) * (horizontal ? plotW : plotH);
   // Bars grow from where the category axis crosses: zero, or the end of the
@@ -1569,14 +1592,16 @@ export function buildScatterScene(
   const yTitleFace = faceOf(chart, 'valAxisTitle');
   const xTitleFace = faceOf(chart, 'catAxisTitle');
   const tickLabelW = Math.max(0, ...yTicks.map((v) => widthIn(measure, fmtY(v), yFace))) + 4;
-  const x0 = 4 + (chart.valAxisTitle ? yTitleFace.sizePt * 1.5 : 0) + tickLabelW;
+  const own = innerPlot(chart, wPt, hPt);
+  const x0 = own?.x0 ?? 4 + (chart.valAxisTitle ? yTitleFace.sizePt * 1.5 : 0) + tickLabelW;
   const y0 =
+    own?.y0 ??
     4 +
-    legend.bottomHeight +
-    (chart.catAxisTitle ? xTitleFace.sizePt * 1.5 : 0) +
-    xFace.sizePt * 1.6;
-  const plotW = Math.max(1, wPt - 4 - legend.rightWidth - x0);
-  const plotH = Math.max(1, hPt - top - y0);
+      legend.bottomHeight +
+      (chart.catAxisTitle ? xTitleFace.sizePt * 1.5 : 0) +
+      xFace.sizePt * 1.6;
+  const plotW = own?.plotW ?? Math.max(1, wPt - 4 - legend.rightWidth - x0);
+  const plotH = own?.plotH ?? Math.max(1, hPt - top - y0);
   const xAt = (v: number): number => x0 + fractionOf(v, xScale) * plotW;
   const yAt = (v: number): number => y0 + fractionOf(v, yScale) * plotH;
 

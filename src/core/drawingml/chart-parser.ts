@@ -546,7 +546,13 @@ function plotBoxOf(plotArea: PoNode): Chart['plotBox'] {
   const [x, y, w, h] = ['c:x', 'c:y', 'c:w', 'c:h'].map((tag) => Number(val(tag)));
   if (![x, y, w, h].every((v) => v !== undefined && Number.isFinite(v))) return undefined;
   if (w! <= 0 || h! <= 0) return undefined;
-  return { x: x!, y: y!, w: w!, h: h! };
+  return {
+    x: x!,
+    y: y!,
+    w: w!,
+    h: h!,
+    ...(val('c:layoutTarget') === 'inner' ? { inner: true } : {}),
+  };
 }
 
 /** §21.2.2.62 `c:explosion` — a percentage of the pie's radius, at most 400. */
