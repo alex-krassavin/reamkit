@@ -859,7 +859,7 @@ describe('buildAreaScene', () => {
     const scene = buildAreaScene({ ...barChart('col'), type: 'area' }, W, H, measure);
     expect(scene.polygons).toHaveLength(2);
     expect(pointsInBounds(scene.polygons!)).toBe(true);
-    expect(scene.polygons!.every((p) => p.fillHex.length === 6)).toBe(true);
+    expect(scene.polygons!.every((p) => p.fillHex?.length === 6)).toBe(true);
   });
 
   it('stacks bands and pins the percent axis at 100%', () => {

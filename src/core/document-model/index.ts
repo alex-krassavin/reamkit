@@ -32,6 +32,7 @@ export type {
   ChartMarker,
   ChartMarkerSymbol,
   ChartSeries,
+  ChartSurface,
   ChartTextStyle,
   ChartTextStyles,
   ChartType,

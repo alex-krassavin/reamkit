@@ -37,10 +37,14 @@ export interface ChartPolyline {
   readonly strokeHex: string;
   readonly widthPt: number;
 }
-/** A closed, filled polygon (area-chart bands). Drawn before strokes/labels. */
+/**
+ * A closed polygon: area-chart bands, the faces of 3-D bars, a 3-D chart's
+ * walls. Drawn before rectangles, strokes and labels; one without a fill is
+ * its outline alone.
+ */
 export interface ChartPolygon {
   readonly points: ReadonlyArray<readonly [number, number]>;
-  readonly fillHex: string;
+  readonly fillHex?: string;
   readonly strokeHex?: string;
   readonly widthPt?: number;
 }
@@ -97,6 +101,11 @@ export interface ChartScene {
    * frame and under the gridlines.
    */
   readonly plotBackground?: ChartRect;
+  /**
+   * §21.2.2.69/§21.2.2.11/§21.2.2.176 — a 3-D chart's floor and walls, drawn
+   * over the plot's own fill and under its gridlines.
+   */
+  readonly walls?: ReadonlyArray<ChartPolygon>;
   /**
    * Major gridlines, drawn UNDER the plotted data. Kept apart from the other
    * polylines because z-order is the whole point: gridlines over the bars strip
@@ -218,10 +227,13 @@ export function niceScale(dataMin: number, dataMax: number, maxIntervals = 10): 
 
 /**
  * The ends {@link niceScale} rounds out to its step: the data's, padded as
- * Excel pads them. Never past the largest double, which the padding of values
+ * Excel pads them — by `pad` of their reach, 5%, which a 3-D chart's axis
+ * does without: Excel's PDF runs 3-D columns of 70…96 on 0…100 by 10 and of
+ * −5…15 on −6…16 by 2, where flat ones run 0…120 by 20 and −10…20 by 5
+ * (2026-10-02). Never past the largest double, which the padding of values
  * out at ±1.7E+308 would run them to.
  */
-function paddedEnds(dataMin: number, dataMax: number): { lo: number; hi: number } {
+function paddedEnds(dataMin: number, dataMax: number, pad = 0.05): { lo: number; hi: number } {
   let lo = Math.min(dataMin, dataMax);
   let hi = Math.max(dataMin, dataMax);
   // One value is a spread from zero to it.
@@ -233,13 +245,13 @@ function paddedEnds(dataMin: number, dataMax: number): { lo: number; hi: number 
   const spread = hi - lo;
   if (lo >= 0) {
     const from = spread < hi / 6 ? lo - spread / 2 : 0;
-    return { lo: from, hi: finite(hi + (hi - from) * 0.05) };
+    return { lo: from, hi: finite(hi + (hi - from) * pad) };
   }
   if (hi <= 0) {
     const to = spread < -lo / 6 ? hi + spread / 2 : 0;
-    return { lo: finite(lo - (to - lo) * 0.05), hi: to };
+    return { lo: finite(lo - (to - lo) * pad), hi: to };
   }
-  return { lo: finite(lo - spread * 0.05), hi: finite(hi + spread * 0.05) };
+  return { lo: finite(lo - spread * pad), hi: finite(hi + spread * pad) };
 }
 
 /** `v`, or the largest double of its sign where it ran past it. */
@@ -365,6 +377,8 @@ const ticks = (s: Scale): Array<number> => {
  * @param extentPt   The axis's length — how many ticks fit is a question
  *                   about the plot, not about the numbers.
  * @param horizontal Whether the axis lies along the foot.
+ * @param pad        How far past the data the automatic ends reach, as a
+ *                   share of its reach ({@link paddedEnds}).
  * @returns The axis min/max and tick step.
  */
 function axisScale(
@@ -373,10 +387,11 @@ function axisScale(
   dataMax: number,
   extentPt: number,
   horizontal = false,
+  pad = 0.05,
 ): Scale {
   const fixedMin = chart.valAxisMin;
   const fixedMax = chart.valAxisMax;
-  const padded = paddedEnds(fixedMin ?? dataMin, fixedMax ?? dataMax);
+  const padded = paddedEnds(fixedMin ?? dataMin, fixedMax ?? dataMax, pad);
   const lo = fixedMin ?? padded.lo;
   const hi = fixedMax ?? padded.hi;
   const rounded = (step: number): Scale => ({
@@ -475,6 +490,19 @@ interface CartesianFrame {
   /** §21.2.2.145 — the plot rectangle's own fill/rule, drawn under both. */
   readonly plotBackground?: ChartRect;
   readonly labels: Array<ChartLabel>;
+  /**
+   * §21.2.2.16 — a 3-D chart's box: the offset from its front plane, which
+   * `x0`…`plotH` are, to its back wall.
+   */
+  readonly depth?: BoxDepth;
+  /** Its floor and walls, under the gridlines. */
+  readonly walls?: ReadonlyArray<ChartPolygon>;
+}
+
+/** Where a 3-D box's back stands from its front, in the scene's frame. */
+interface BoxDepth {
+  readonly dx: number;
+  readonly dy: number;
 }
 
 // Build the plot frame and emit its chrome (title, gridlines, tick + category
@@ -486,6 +514,21 @@ interface FrameOpts {
   // The range IS the axis — no room added, nothing rounded out (a 100% stack).
   readonly exactRange?: boolean;
   readonly formatValue?: (v: number) => string; // override tick label text (percent axis)
+  /** §21.2.2.16 — the plot is a 3-D box, seen as this says. */
+  readonly depth?: FrameDepth;
+  /** The value axis runs to the data's ends rounded out, and no further (a 3-D chart's). */
+  readonly unpadded?: boolean;
+}
+
+/**
+ * How a 3-D bar chart's box is seen: how deep it reaches back, as a multiple
+ * of one category slot, and the sines of the view's elevation and turn — the
+ * screen offset of each point of depth, up and across.
+ */
+interface FrameDepth {
+  readonly perSlot: number;
+  readonly sinX: number;
+  readonly sinY: number;
 }
 
 // ── shared axis chrome (C10) ─────────────────────────────────────────────────
@@ -679,15 +722,18 @@ function pushAxisLines(
   plotH: number,
   chart: Chart,
   cross: { readonly x?: number; readonly y?: number } = {},
+  shift: { readonly upright?: BoxDepth } = {},
 ): void {
+  // A 3-D box moves the upright one to its back edge, where that is the outer.
+  const up = shift.upright ?? { dx: 0, dy: 0 };
   const val = axisStroke(chart.valAxisLine);
-  const x = x0 + (cross.x ?? 0);
+  const x = x0 + (cross.x ?? 0) + up.dx;
   const y = y0 + (cross.y ?? 0);
   if (val) {
     polylines.push({
       points: [
-        [x, y0],
-        [x, y0 + plotH],
+        [x, y0 + up.dy],
+        [x, y0 + plotH + up.dy],
       ],
       strokeHex: val.hex,
       widthPt: val.widthPt,
@@ -703,6 +749,167 @@ function pushAxisLines(
       strokeHex: cat.hex,
       widthPt: cat.widthPt,
     });
+  }
+}
+
+/** A 3-D chart's front plane: where its axes measure from. */
+interface FrontPlane {
+  readonly x0: number;
+  readonly y0: number;
+  readonly plotW: number;
+  readonly plotH: number;
+}
+
+/**
+ * Where a 3-D box's back stands from its front. Each point of depth moves
+ * `sin rotY` across and `sin rotX` up — Excel's PDF of its own 3-D columns,
+ * at four views and three depths (2026-10-02) — and the box is as deep as a
+ * share of one category slot, the slot a share of the front plane the depth
+ * leaves: solved for, so box and front fill the plot between them. Never so
+ * deep that the front plane is left with no height (or width) across.
+ *
+ * @returns The offset from the front plane's corner to the back wall's.
+ */
+function boxDepth(
+  d: FrameDepth,
+  boxW: number,
+  boxH: number,
+  nCats: number,
+  horizontal: boolean,
+): BoxDepth {
+  const k = d.perSlot / Math.max(1, nCats);
+  const along = horizontal ? boxH / (1 + k * Math.abs(d.sinX)) : boxW / (1 + k * Math.abs(d.sinY));
+  const across = Math.abs(horizontal ? d.sinY : d.sinX);
+  const room = (horizontal ? boxW : boxH) * 0.9;
+  const t = across > 0 ? Math.min(k * along, room / across) : k * along;
+  return { dx: t * d.sinY, dy: t * d.sinX };
+}
+
+/** The light grey Excel rules a 3-D chart's floor in where it states none. */
+const FLOOR_RULE: ChartLineStyle = { colorHex: GRID_COLOR, widthPt: 0.75 };
+
+/**
+ * §21.2.2.69/§21.2.2.11/§21.2.2.176 — a 3-D box's floor, back wall and side
+ * wall, as the chart fills and rules them; the floor ruled in light grey
+ * unless the chart says otherwise, the walls drawn only as stated. Which wall
+ * is which is as Excel's PDF draws them (2026-10-02): columns stand on the
+ * bottom, which a view from below does not show, and their side wall is the
+ * one the view looks into — the left, turned right; bars stand on the side
+ * the view looks into — the left, turned right — and their side wall is the
+ * bottom, whatever the view.
+ */
+function pushBoxWalls(
+  walls: Array<ChartPolygon>,
+  chart: Chart,
+  f: FrontPlane,
+  d: BoxDepth,
+  horizontal: boolean,
+): void {
+  const back = sideOf(f, d, 'back');
+  const turnedRight = d.dx >= 0;
+  const floor = horizontal
+    ? sideOf(f, d, turnedRight ? 'left' : 'right')
+    : d.dy >= 0
+      ? sideOf(f, d, 'bottom')
+      : undefined;
+  const side = horizontal ? sideOf(f, d, 'bottom') : sideOf(f, d, turnedRight ? 'left' : 'right');
+  const surface = (
+    points: ReadonlyArray<readonly [number, number]> | undefined,
+    fillHex: string | undefined,
+    rule: ChartLineStyle | undefined,
+  ): void => {
+    const stroke = rule && !rule.none && rule.colorHex ? rule : undefined;
+    if (!points || (!fillHex && !stroke)) return;
+    walls.push({
+      points,
+      ...(fillHex ? { fillHex } : {}),
+      ...(stroke ? { strokeHex: stroke.colorHex, widthPt: stroke.widthPt ?? 0.75 } : {}),
+    });
+  };
+  surface(back, chart.backWall?.fillHex, chart.backWall?.line);
+  surface(side, chart.sideWall?.fillHex, chart.sideWall?.line);
+  surface(floor, chart.floor?.fillHex, chart.floor ? chart.floor.line : FLOOR_RULE);
+}
+
+/** One face of a 3-D box: its back wall, or the wall along one side of its front. */
+function sideOf(
+  f: FrontPlane,
+  d: BoxDepth,
+  which: 'back' | 'left' | 'right' | 'bottom',
+): Array<readonly [number, number]> {
+  const { x0, y0, plotW, plotH } = f;
+  if (which === 'back') {
+    return [
+      [x0 + d.dx, y0 + d.dy],
+      [x0 + plotW + d.dx, y0 + d.dy],
+      [x0 + plotW + d.dx, y0 + plotH + d.dy],
+      [x0 + d.dx, y0 + plotH + d.dy],
+    ];
+  }
+  if (which === 'bottom') {
+    return [
+      [x0, y0],
+      [x0 + plotW, y0],
+      [x0 + plotW + d.dx, y0 + d.dy],
+      [x0 + d.dx, y0 + d.dy],
+    ];
+  }
+  const x = which === 'left' ? x0 : x0 + plotW;
+  return [
+    [x, y0],
+    [x + d.dx, y0 + d.dy],
+    [x + d.dx, y0 + plotH + d.dy],
+    [x, y0 + plotH],
+  ];
+}
+
+/**
+ * A 3-D box's major gridlines: each value's line across the side wall from
+ * the front plane and on along the back wall, as Excel rules them — a bar
+ * chart's across its bottom whatever the view.
+ *
+ * @param offsets Each tick's distance along the value axis from its start.
+ */
+function pushBoxGridlines(
+  gridlines: Array<ChartPolyline>,
+  grid: ChartLineStyle | undefined,
+  offsets: ReadonlyArray<number>,
+  f: FrontPlane,
+  d: BoxDepth,
+  horizontal: boolean,
+): void {
+  if (grid?.none) return;
+  const rule = { strokeHex: grid?.colorHex ?? GRID_COLOR, widthPt: grid?.widthPt ?? 0.75 };
+  const { x0, y0, plotW, plotH } = f;
+  for (const off of offsets) {
+    if (horizontal) {
+      const gx = x0 + off;
+      gridlines.push({
+        points: [
+          [gx, y0],
+          [gx + d.dx, y0 + d.dy],
+          [gx + d.dx, y0 + plotH + d.dy],
+        ],
+        ...rule,
+      });
+    } else {
+      const gy = y0 + off;
+      gridlines.push({
+        points:
+          d.dx >= 0
+            ? [
+                [x0, gy],
+                [x0 + d.dx, gy + d.dy],
+                [x0 + plotW + d.dx, gy + d.dy],
+              ]
+            : [
+                [x0 + d.dx, gy + d.dy],
+                [x0 + plotW + d.dx, gy + d.dy],
+                [x0 + plotW, gy],
+              ],
+        ...rule,
+      });
+    }
   }
 }
 
@@ -736,7 +943,14 @@ function buildFrame(
         step: niceScale(dataMin, dataMax, intervalsThatFit(horizontal ? wPt : hPt, horizontal))
           .step,
       }
-    : axisScale(chart, dataMin, dataMax, horizontal ? wPt : hPt, horizontal);
+    : axisScale(
+        chart,
+        dataMin,
+        dataMax,
+        horizontal ? wPt : hPt,
+        horizontal,
+        opts.unpadded ? 0 : 0.05,
+      );
   const fmtVal = opts.formatValue ?? formatTick;
   const tickVals = ticks(scale);
   const vals2 = onSecondary.flatMap((s) => s.values.slice(0, nCats));
@@ -760,8 +974,12 @@ function buildFrame(
     ),
     scale.max,
   );
+  // A 3-D box seen from below shows no axis along its foot: Excel's PDF draws
+  // neither its rule nor its labels, of columns' categories or of bars' values
+  // (2026-10-02).
+  const fromBelow = (opts.depth?.sinX ?? 0) < 0;
   const labelsAt: 'start' | 'cross' | 'end' | 'none' =
-    chart.catAxisDeleted === true || chart.catTickLabelPos === 'none'
+    chart.catAxisDeleted === true || chart.catTickLabelPos === 'none' || (fromBelow && !horizontal)
       ? 'none'
       : chart.catTickLabelPos === 'low'
         ? 'start'
@@ -797,7 +1015,7 @@ function buildFrame(
       ? chart.valAxisCrosses !== 'max'
       : chart.valAxisCrosses === 'max';
   // §21.2.2.40 — a deleted value axis labels nothing, and keeps no room to.
-  const valLabelled = chart.valAxisDeleted !== true;
+  const valLabelled = chart.valAxisDeleted !== true && !(fromBelow && horizontal);
   const title = titleLines(chart, wPt, measure);
   const top =
     4 +
@@ -842,7 +1060,7 @@ function buildFrame(
   const leftTitleFace = faceOf(chart, horizontal ? 'catAxisTitle' : 'valAxisTitle');
   const footTitleFace = faceOf(chart, horizontal ? 'valAxisTitle' : 'catAxisTitle');
   const own = innerPlot(chart, wPt, hPt);
-  const x0 =
+  const boxX0 =
     own?.x0 ??
     4 +
       (leftTitle ? leftTitleFace.sizePt * 1.5 : 0) +
@@ -853,15 +1071,28 @@ function buildFrame(
         : valAtEnd
           ? 0
           : tickLabelW);
-  const y0 =
+  const boxY0 =
     own?.y0 ??
     4 +
       legend.bottomHeight +
       (footTitle ? footTitleFace.sizePt * 1.5 : 0) +
       ((horizontal ? !valAtEnd && valLabelled : labelsAt === 'start') ? catBand : 0) +
       (!horizontal && labelsAt === 'start' ? groupLevels.length * catBand : 0);
-  const plotW = own?.plotW ?? Math.max(1, plotRight - x0);
-  const plotH = own?.plotH ?? Math.max(1, hPt - top - y0);
+  const boxW = own?.plotW ?? Math.max(1, plotRight - boxX0);
+  const boxH = own?.plotH ?? Math.max(1, hPt - top - boxY0);
+  // §21.2.2.16 — a 3-D chart's plot is a box reaching back from its front
+  // plane, and the front plane is what its axes measure: the box's depth is
+  // taken off it, across and up as the view turns and tilts it.
+  const depth = opts.depth ? boxDepth(opts.depth, boxW, boxH, nCats, horizontal) : undefined;
+  const x0 = boxX0 + Math.max(0, -(depth?.dx ?? 0));
+  const y0 = boxY0 + Math.max(0, -(depth?.dy ?? 0));
+  const plotW = Math.max(1, boxW - Math.abs(depth?.dx ?? 0));
+  const plotH = Math.max(1, boxH - Math.abs(depth?.dy ?? 0));
+  // The upright axis stands at the box's outer edge: its front, unless the
+  // view turns the back further out — Excel's PDF of columns turned to 340°
+  // labels their values up the back of the box, of bars their categories.
+  const upright = depth && depth.dx < 0 ? depth : { dx: 0, dy: 0 };
+  const edge = horizontal ? { dx: 0, dy: 0 } : upright;
 
   const valueOffset = (v: number): number => fractionOf(v, scale) * (horizontal ? plotW : plotH);
   // Bars grow from where the category axis crosses: zero, or the end of the
@@ -874,10 +1105,10 @@ function buildFrame(
   const plotBackground: ChartRect | undefined =
     (chart.plotFillHex ?? chart.plotLine?.colorHex)
       ? {
-          x: x0,
-          y: y0,
-          w: plotW,
-          h: plotH,
+          x: boxX0,
+          y: boxY0,
+          w: boxW,
+          h: boxH,
           ...(chart.plotFillHex ? { fillHex: chart.plotFillHex } : {}),
           ...(chart.plotLine?.colorHex
             ? {
@@ -912,6 +1143,9 @@ function buildFrame(
     });
   }
 
+  // A 3-D box's gridlines run round its walls, drawn apart below; the labels
+  // stand where the value axis does.
+  const flatGrid: ChartLineStyle | undefined = depth ? { none: true } : chart.gridLine;
   if (horizontal) {
     pushGridTicks(
       gridlines,
@@ -919,12 +1153,12 @@ function buildFrame(
       tickVals,
       fmtVal,
       'x',
-      (v) => x0 + valueOffset(v),
-      x0,
-      y0,
+      (v) => x0 + edge.dx + valueOffset(v),
+      x0 + edge.dx,
+      y0 + edge.dy,
       plotW,
       plotH,
-      chart.gridLine,
+      flatGrid,
       valFace,
       valAtEnd,
       valLabelled,
@@ -936,15 +1170,28 @@ function buildFrame(
       tickVals,
       fmtVal,
       'y',
-      (v) => y0 + valueOffset(v),
-      x0,
-      y0,
+      (v) => y0 + edge.dy + valueOffset(v),
+      x0 + edge.dx,
+      y0 + edge.dy,
       plotW,
       plotH,
-      chart.gridLine,
+      flatGrid,
       valFace,
       valAtEnd,
       valLabelled,
+    );
+  }
+  const walls: Array<ChartPolygon> = [];
+  if (depth) {
+    const front = { x0, y0, plotW, plotH };
+    pushBoxWalls(walls, chart, front, depth, horizontal);
+    pushBoxGridlines(
+      gridlines,
+      chart.gridLine,
+      tickVals.map((v) => valueOffset(v)),
+      front,
+      depth,
+      horizontal,
     );
   }
 
@@ -1011,8 +1258,8 @@ function buildFrame(
     if (horizontal) {
       labels.push({
         text: cat,
-        x: labelsAt === 'end' ? x0 + across + 3 : x0 + across - 3,
-        y: center - catFace.sizePt / 3,
+        x: (labelsAt === 'end' ? x0 + across + 3 : x0 + across - 3) + upright.dx,
+        y: center - catFace.sizePt / 3 + upright.dy,
         ...catFace,
         align: labelsAt === 'end' ? 'left' : 'right',
       });
@@ -1061,10 +1308,11 @@ function buildFrame(
     y0,
     plotW,
     plotH,
-    chart,
+    fromBelow ? { ...chart, catAxisLine: { none: true } } : chart,
     horizontal
       ? { x: zeroOffset, ...(valAtEnd ? { y: plotH } : {}) }
       : { y: zeroOffset, ...(valAtEnd ? { x: plotW } : {}) },
+    { upright },
   );
   legend.emit(rects, labels);
 
@@ -1084,6 +1332,7 @@ function buildFrame(
     gridlines,
     ...(plotBackground ? { plotBackground } : {}),
     labels,
+    ...(depth ? { depth, walls } : {}),
   };
 }
 
@@ -1291,7 +1540,6 @@ export function buildBarScene(
   const percent = g === 'percentStacked';
   const horizontal = chart.barDir === 'bar';
   const nCats = catCount(chart);
-  const f = buildFrame(chart, wPt, hPt, measure, horizontal, groupingFrameOpts(chart, nCats));
   // §21.2.2.145 — a combo's other groups plot on this same frame. Their series
   // are NOT bars: they must not take a slot in the cluster (57362.xlsx's two
   // series would each get half a slot and the bars come out at half width), and
@@ -1299,16 +1547,57 @@ export function buildBarScene(
   const barIdx: Array<number> = [];
   const lineIdx: Array<number> = [];
   chart.series.forEach((s, i) => (isLineLike(s) ? lineIdx : barIdx).push(i));
+  const nSer = Math.max(1, barIdx.length);
 
   // §21.2.2.75 — the gap between slots is a percentage of one bar's width,
-  // whatever the grouping.
+  // whatever the grouping. A stack is one bar wide: the slot holds it and its
+  // gap. A flat 15% of padding each side made every stack 0.7 of its slot,
+  // where Excel's own PDF gives one of `gapWidth="150"` 0.4 (2026-10-02) —
+  // WithChartSheet.xlsx's stood nearly twice as wide as Calc draws them.
+  // A cluster's slot holds its `nSer` bars and the gap. Guessing a flat 15%
+  // padding gave every bar 0.63 of its slot — 57362.xlsx asks for 219 and got
+  // bars 2.6× the reference's — and a further 10% shaved off the bar was a
+  // leftover from before the gap was read: dataValidationTableRange.xlsx asks
+  // for `gapWidth="0"`, where both references draw bars that touch.
+  // §21.2.2.131 — and the bars of a cluster lie `overlap` percent of a width
+  // over each other, or apart where it is negative: Excel's PDF of three
+  // series at `overlap="-27"` steps them 1.27 widths apart, each a 5.73rd of
+  // the slot at `gapWidth="219"` (2026-10-02).
   const gap = (chart.gapPercent ?? 150) / 100;
+  const overlap = (chart.overlapPercent ?? 0) / 100;
+  const barShare = 1 / (stacked ? 1 + gap : nSer - (nSer - 1) * overlap + gap);
+
+  // §21.2.2.16 — 3-D bars are boxes in a box: each as deep as `depthPercent`
+  // of its width, with `gapDepth` of that before and behind it. A view of no
+  // angle at all is drawn flat, as Excel's PDF draws it; its axis, as any 3-D
+  // chart's, runs to the data's ends and no further.
+  const view = chart.bar3D;
+  const sinX = view ? Math.sin((view.rotX * Math.PI) / 180) : 0;
+  const sinY = view ? Math.sin((view.rotY * Math.PI) / 180) : 0;
+  const seen = view !== undefined && (Math.abs(sinX) > 1e-9 || Math.abs(sinY) > 1e-9);
+  const f = buildFrame(chart, wPt, hPt, measure, horizontal, {
+    ...groupingFrameOpts(chart, nCats),
+    ...(view ? { unpadded: true } : {}),
+    ...(view && seen
+      ? {
+          depth: {
+            perSlot: barShare * (view.depthPercent / 100) * (1 + view.gapDepth / 100),
+            sinX,
+            sinY,
+          },
+        }
+      : {}),
+  });
+  const barW = f.slot * barShare;
+  // In 3-D the bars are gathered and drawn back to front once all are placed.
+  const boxes: Array<BarBox> = [];
+  const put = (rect: ChartRect, lift: readonly [number, number] = [0, 0]): void => {
+    if (f.depth) boxes.push({ rect, lift });
+    else f.rects.push(rect);
+  };
+  const values: Array<{ label: ChartLabel; lift: readonly [number, number] }> = [];
+
   if (stacked) {
-    // A stack is one bar wide: the slot holds it and its gap. A flat 15% of
-    // padding each side made every stack 0.7 of its slot, where Excel's own PDF
-    // gives one of `gapWidth="150"` 0.4 (2026-10-02) — WithChartSheet.xlsx's
-    // stood nearly twice as wide as Calc draws them.
-    const barW = f.slot / (1 + gap);
     const groupPad = (f.slot - barW) / 2;
     for (let c = 0; c < f.nCats; c++) {
       const along = (horizontal ? f.y0 : f.x0) + c * f.slot + groupPad;
@@ -1329,99 +1618,125 @@ export function buildBarScene(
         const color = pointColor(series, c) ?? seriesColor(series, s, chart.seriesColorCycle);
         const outline = barOutline(series);
         if (horizontal)
-          f.rects.push({ x: f.x0 + lo, y: along, w: span, h: barW, fillHex: color, ...outline });
-        else f.rects.push({ x: along, y: f.y0 + lo, w: barW, h: span, fillHex: color, ...outline });
+          put({ x: f.x0 + lo, y: along, w: span, h: barW, fillHex: color, ...outline });
+        else put({ x: along, y: f.y0 + lo, w: barW, h: span, fillHex: color, ...outline });
         if (chart.showValues && span > faceOf(chart, 'dataLabels').sizePt) {
           const raw = series.values[c] ?? 0;
-          if (horizontal)
-            f.labels.push(
-              centeredLabel(
-                fmtDataLabel(chart, raw),
-                f.x0 + lo + span / 2,
-                along + barW * 0.3,
-                faceOf(chart, 'dataLabels'),
-              ),
-            );
-          else
-            f.labels.push(
-              centeredLabel(
-                fmtDataLabel(chart, raw),
-                along + barW / 2,
-                f.y0 + lo + span / 2 - 3,
-                faceOf(chart, 'dataLabels'),
-              ),
-            );
+          const face = faceOf(chart, 'dataLabels');
+          values.push({
+            label: horizontal
+              ? centeredLabel(
+                  fmtDataLabel(chart, raw),
+                  f.x0 + lo + span / 2,
+                  f.depth ? along + barW / 2 - face.sizePt * 0.35 : along + barW * 0.3,
+                  face,
+                )
+              : centeredLabel(
+                  fmtDataLabel(chart, raw),
+                  along + barW / 2,
+                  f.y0 + lo + span / 2 - 3,
+                  face,
+                ),
+            lift: [0, 0],
+          });
         }
         if (v >= 0) cumPos = top;
         else cumNeg = top;
       }
     }
-    pushComboLines(chart, f, lineIdx);
-    return {
-      rects: f.rects,
-      polylines: f.polylines,
-      gridlines: f.gridlines,
-      ...(f.plotBackground ? { plotBackground: f.plotBackground } : {}),
-      ...(f.plotBackground ? { plotBackground: f.plotBackground } : {}),
-      wedges: [],
-      labels: f.labels,
-    };
-  }
-
-  // clustered: series side by side within each category slot
-  const nSer = Math.max(1, barIdx.length);
-  // §21.2.2.75: the slot holds `nSer` bars plus a gap of `gapWidth` percent of
-  // one bar. Guessing a flat 15% padding gave every bar 0.63 of its slot —
-  // 57362.xlsx asks for 219 and got bars 2.6× the reference's.
-  // …and the bar then fills that width. A further 10 % shaved off it was a
-  // leftover from before the gap was read: dataValidationTableRange.xlsx asks
-  // for `gapWidth="0"`, where both references draw bars that touch, and ours
-  // still showed a white line between every pair.
-  // §21.2.2.131 — and the bars of a cluster lie `overlap` percent of a width
-  // over each other, or apart where it is negative: Excel's PDF of three
-  // series at `overlap="-27"` steps them 1.27 widths apart, each a 5.73rd of
-  // the slot at `gapWidth="219"` (2026-10-02).
-  const overlap = (chart.overlapPercent ?? 0) / 100;
-  const barW = f.slot / (nSer - (nSer - 1) * overlap + gap);
-  const pitch = barW * (1 - overlap);
-  const groupPad = (f.slot - barW - (nSer - 1) * pitch) / 2;
-  for (let c = 0; c < f.nCats; c++) {
-    const slotStart = (horizontal ? f.y0 : f.x0) + c * f.slot + groupPad;
-    for (let b = 0; b < barIdx.length; b++) {
-      const s = barIdx[b]!;
-      const series = chart.series[s]!;
-      const len = f.valueOffset(series.values[c] ?? 0) - f.zeroOffset; // signed from zero line
-      const color = pointColor(series, c) ?? seriesColor(series, s, chart.seriesColorCycle);
-      const along = slotStart + b * pitch;
-      const outline = barOutline(series);
-      if (horizontal) {
-        const bx = f.x0 + f.zeroOffset + Math.min(0, len);
-        f.rects.push({ x: bx, y: along, w: Math.abs(len), h: barW, fillHex: color, ...outline });
-      } else {
-        const by = f.y0 + f.zeroOffset + Math.min(0, len);
-        f.rects.push({ x: along, y: by, w: barW, h: Math.abs(len), fillHex: color, ...outline });
-      }
-      if (chart.showValues) {
-        const raw = series.values[c] ?? 0;
-        const txt = fmtDataLabel(chart, raw);
+  } else {
+    const pitch = barW * (1 - overlap);
+    const groupPad = (f.slot - barW - (nSer - 1) * pitch) / 2;
+    for (let c = 0; c < f.nCats; c++) {
+      const slotStart = (horizontal ? f.y0 : f.x0) + c * f.slot + groupPad;
+      for (let b = 0; b < barIdx.length; b++) {
+        const s = barIdx[b]!;
+        const series = chart.series[s]!;
+        const len = f.valueOffset(series.values[c] ?? 0) - f.zeroOffset; // signed from zero line
+        const color = pointColor(series, c) ?? seriesColor(series, s, chart.seriesColorCycle);
+        const along = slotStart + b * pitch;
+        const outline = barOutline(series);
         if (horizontal) {
-          const end = f.x0 + f.zeroOffset + len;
-          f.labels.push({
-            text: txt,
-            x: end + (len >= 0 ? 3 : -3),
-            y: along + barW * 0.25,
-            ...faceOf(chart, 'dataLabels'),
-            align: len >= 0 ? 'left' : 'right',
-          });
+          const bx = f.x0 + f.zeroOffset + Math.min(0, len);
+          put({ x: bx, y: along, w: Math.abs(len), h: barW, fillHex: color, ...outline });
         } else {
-          const end = f.y0 + f.zeroOffset + len;
+          const by = f.y0 + f.zeroOffset + Math.min(0, len);
+          put({ x: along, y: by, w: barW, h: Math.abs(len), fillHex: color, ...outline });
+        }
+        if (chart.showValues) {
+          const raw = series.values[c] ?? 0;
+          const txt = fmtDataLabel(chart, raw);
           const face = faceOf(chart, 'dataLabels');
-          f.labels.push(
-            centeredLabel(txt, along + barW * 0.45, len >= 0 ? end + 2 : end - face.sizePt, face),
-          );
+          if (horizontal) {
+            const end = f.x0 + f.zeroOffset + len;
+            values.push({
+              label: {
+                text: txt,
+                x: end + (len >= 0 ? 3 : -3),
+                // Beside a 3-D bar Excel's PDF centres it on the bar's front:
+                // lower, it falls on the top of the bar below.
+                y: f.depth ? along + barW / 2 - face.sizePt * 0.35 : along + barW * 0.25,
+                ...face,
+                align: len >= 0 ? 'left' : 'right',
+              },
+              // Past a 3-D bar's end, halfway across its side (Excel's PDF).
+              lift: [len >= 0 ? 0.5 : 0, 0],
+            });
+          } else {
+            const end = f.y0 + f.zeroOffset + len;
+            // Over a 3-D column Excel's PDF centres it on the far edge of the
+            // column's top, over its front.
+            const above = f.depth ? end - face.sizePt * 0.35 : end + 2;
+            values.push({
+              label: centeredLabel(
+                txt,
+                along + barW * 0.45,
+                len >= 0 ? above : end - face.sizePt,
+                face,
+              ),
+              lift: [0, len >= 0 ? 1 : 0],
+            });
+          }
         }
       }
     }
+  }
+
+  const polygons: Array<ChartPolygon> = [];
+  let shift = { dx: 0, dy: 0 };
+  let own = { dx: 0, dy: 0 };
+  if (f.depth && view) {
+    // A bar is a share of the box's depth, its front standing half its gap
+    // back from the box's (Excel's PDF: 0.75 of the bar's depth at 150).
+    const share = 1 / (1 + view.gapDepth / 100);
+    own = { dx: f.depth.dx * share, dy: f.depth.dy * share };
+    const back = view.gapDepth / 200;
+    shift = { dx: own.dx * back, dy: own.dy * back };
+    // Back to front: along the categories first, the way the view turns them,
+    // then up (or along) each stack the way it tilts.
+    const across = (r: ChartRect): number => (horizontal ? r.y + r.h / 2 : r.x + r.w / 2);
+    const up = (r: ChartRect): number => (horizontal ? r.x + r.w / 2 : r.y + r.h / 2);
+    const first = Math.sign(horizontal ? sinX : sinY) || 1;
+    const then = Math.sign(horizontal ? sinY : sinX) || 1;
+    boxes.sort(
+      (a, b) => first * (across(a.rect) - across(b.rect)) || then * (up(a.rect) - up(b.rect)),
+    );
+    for (const { rect } of boxes) {
+      const front = { ...rect, x: rect.x + shift.dx, y: rect.y + shift.dy };
+      pushBarFaces(polygons, front, own);
+      f.rects.push(front);
+    }
+  }
+  for (const { label, lift } of values) {
+    f.labels.push(
+      f.depth
+        ? {
+            ...label,
+            x: label.x + shift.dx + lift[0] * own.dx,
+            y: label.y + shift.dy + lift[1] * own.dy,
+          }
+        : label,
+    );
   }
   pushComboLines(chart, f, lineIdx);
   return {
@@ -1429,9 +1744,59 @@ export function buildBarScene(
     polylines: f.polylines,
     gridlines: f.gridlines,
     ...(f.plotBackground ? { plotBackground: f.plotBackground } : {}),
+    ...(f.walls && f.walls.length > 0 ? { walls: f.walls } : {}),
+    ...(polygons.length > 0 ? { polygons } : {}),
     wedges: [],
     labels: f.labels,
   };
+}
+
+/** A 3-D bar, its front as a flat chart would draw it. */
+interface BarBox {
+  readonly rect: ChartRect;
+  readonly lift: readonly [number, number];
+}
+
+/**
+ * The faces of one 3-D bar a viewer sees beside its front: its top when the
+ * view looks down on it (its bottom when up at it), its right side when the
+ * view is turned to the right (its left when to the left) — each shaded as
+ * Excel's own PDF shades them: a top 0.76 of the bar's colour, a right side
+ * 0.635, a bottom or a left side 0.4 (2026-10-02).
+ *
+ * @param r The bar's front.
+ * @param d Its depth, as an offset from the front.
+ */
+function pushBarFaces(polygons: Array<ChartPolygon>, r: ChartRect, d: BoxDepth): void {
+  const fill = r.fillHex ?? '000000';
+  const stroke = r.strokeHex ? { strokeHex: r.strokeHex, widthPt: r.strokeWidthPt ?? 0.75 } : {};
+  const { x, y, w, h } = r;
+  if (d.dy !== 0) {
+    const at = d.dy > 0 ? y + h : y;
+    polygons.push({
+      points: [
+        [x, at],
+        [x + w, at],
+        [x + w + d.dx, at + d.dy],
+        [x + d.dx, at + d.dy],
+      ],
+      fillHex: shadeHex(fill, d.dy > 0 ? 0.76 : 0.4),
+      ...stroke,
+    });
+  }
+  if (d.dx !== 0) {
+    const at = d.dx > 0 ? x + w : x;
+    polygons.push({
+      points: [
+        [at, y],
+        [at + d.dx, y + d.dy],
+        [at + d.dx, y + h + d.dy],
+        [at, y + h],
+      ],
+      fillHex: shadeHex(fill, d.dx > 0 ? 0.635 : 0.4),
+      ...stroke,
+    });
+  }
 }
 
 /**

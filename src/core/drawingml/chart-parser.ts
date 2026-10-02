@@ -16,6 +16,7 @@ import type {
   ChartMarker,
   ChartMarkerSymbol,
   ChartSeries,
+  ChartSurface,
   ChartType,
   ShapeDash,
 } from '@/core/document-model';
@@ -233,6 +234,44 @@ export function parseChart(
     group && poIs(group, 'c:pie3DChart')
       ? { rotX: viewAngle('c:rotX', 0), rotY: viewAngle('c:rotY', 0) }
       : undefined;
+  // §21.2.2.16 — 3-D bars are boxes, seen by the same view; the bars' depth is
+  // the view's (§21.2.2.46, a percentage of a bar's width, 100 unsaid) and the
+  // room before and behind them the group's (§21.2.2.74, 150 unsaid). An
+  // angle unsaid is again 0, which Excel's PDF draws flat: aascu 5864.pptx's
+  // view says only that its axes are square.
+  const gapDepthRaw =
+    group && poIs(group, 'c:bar3DChart')
+      ? Number(poVal(poChildren(group).find((c) => poIs(c, 'c:gapDepth'))) ?? NaN)
+      : NaN;
+  const bar3D =
+    group && poIs(group, 'c:bar3DChart')
+      ? {
+          rotX: Math.min(90, Math.max(-90, viewAngle('c:rotX', 0))),
+          rotY: ((viewAngle('c:rotY', 0) % 360) + 360) % 360,
+          depthPercent: Math.min(2000, Math.max(20, viewAngle('c:depthPercent', 100))),
+          gapDepth: Number.isFinite(gapDepthRaw) ? Math.min(500, Math.max(0, gapDepthRaw)) : 150,
+        }
+      : undefined;
+  // §21.2.2.69/§21.2.2.11/§21.2.2.176 — its floor and walls, as they are filled
+  // and ruled; tdf128207.docx and LIBRE_OFFICE-100610-0.pptx clear them all.
+  const floor = bar3D
+    ? surfaceOf(
+        poChildren(chart).find((c) => poIs(c, 'c:floor')),
+        resolveColor,
+      )
+    : undefined;
+  const backWall = bar3D
+    ? surfaceOf(
+        poChildren(chart).find((c) => poIs(c, 'c:backWall')),
+        resolveColor,
+      )
+    : undefined;
+  const sideWall = bar3D
+    ? surfaceOf(
+        poChildren(chart).find((c) => poIs(c, 'c:sideWall')),
+        resolveColor,
+      )
+    : undefined;
   const plotBox = plotBoxOf(plotArea);
   const firstSliceRaw =
     group && (poIs(group, 'c:pieChart') || poIs(group, 'c:doughnutChart'))
@@ -412,6 +451,10 @@ export function parseChart(
     ...(isGrouping(grouping) ? { grouping } : {}),
     ...(doughnut ? { doughnut: true } : {}),
     ...(pie3D ? { pie3D } : {}),
+    ...(bar3D ? { bar3D } : {}),
+    ...(floor ? { floor } : {}),
+    ...(backWall ? { backWall } : {}),
+    ...(sideWall ? { sideWall } : {}),
     ...(plotBox ? { plotBox } : {}),
     ...(firstSliceAngle ? { firstSliceAngle } : {}),
     ...(showValues ? { showValues: true } : {}),
@@ -847,6 +890,18 @@ const DASHES = new Set<string>([
   'sysDash',
   'sysDot',
 ]);
+
+/** A 3-D chart's wall or floor: what its `c:spPr` fills and rules it with. */
+function surfaceOf(
+  node: PoNode | undefined,
+  resolveColor: ColorResolver,
+): ChartSurface | undefined {
+  const spPr = node ? poChildren(node).find((c) => poIs(c, 'c:spPr')) : undefined;
+  if (!spPr) return undefined;
+  const fillHex = frameFillOf(spPr, resolveColor);
+  const line = lineStyleOf(node, resolveColor);
+  return { ...(fillHex ? { fillHex } : {}), ...(line ? { line } : {}) };
+}
 
 /** §21.2.2.40 — whether the author deleted an axis. */
 function isDeletedAxis(ax: PoNode | undefined): boolean {

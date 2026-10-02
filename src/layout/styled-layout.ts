@@ -3637,11 +3637,13 @@ function buildChartLayout(
   }
   const shapes: Array<ChartShapePrim> = [];
   // Area-fill polygons sit at the bottom of the z-order (below gridlines/labels).
-  // Z-order: the chart-space frame under everything, then the gridlines, then
-  // the plotted data over both. Gridlines drawn after the bars ruled white
-  // lines straight across every one of them (123233_charts.xlsx).
+  // Z-order: the chart-space frame under everything, then a 3-D chart's walls,
+  // then the gridlines, then the plotted data over them. Gridlines drawn after
+  // the bars ruled white lines straight across every one of them
+  // (123233_charts.xlsx).
   if (scene.background) shapes.push(rectPrim(scene.background));
   if (scene.plotBackground) shapes.push(rectPrim(scene.plotBackground));
+  for (const w of scene.walls ?? []) shapes.push(polygonPrim(w));
   for (const g of scene.gridlines ?? []) shapes.push(polylinePrim(g));
   for (const pg of scene.polygons ?? []) shapes.push(polygonPrim(pg));
   for (const r of scene.rects) shapes.push(rectPrim(r));
@@ -3893,7 +3895,7 @@ function polygonPrim(p: ChartPolygon): ChartShapePrim {
   b.close();
   return {
     paths: [b.build()],
-    fillColorHex: p.fillHex,
+    ...(p.fillHex ? { fillColorHex: p.fillHex } : {}),
     ...(p.strokeHex ? { stroke: { colorHex: p.strokeHex, widthPt: p.widthPt ?? 1 } } : {}),
   };
 }

@@ -1696,6 +1696,14 @@ export interface ChartLineStyle {
   readonly dash?: ShapeDash;
 }
 
+/** A 3-D chart's wall or floor (§21.2.2.11, §21.2.2.69, §21.2.2.176): its fill and rule. */
+export interface ChartSurface {
+  /** `c:spPr/a:solidFill` — RRGGBB; absent, unfilled. */
+  readonly fillHex?: string;
+  /** `c:spPr/a:ln` — its rule, `{ none: true }` for `a:noFill`; absent, the default. */
+  readonly line?: ChartLineStyle;
+}
+
 /**
  * §21.2.2.216 `c:txPr`, §21.2.2.156 `c:rich` — how one kind of a chart's text
  * is set: the element's own run properties over the chart's (`c:chartSpace/
@@ -1796,6 +1804,28 @@ export interface Chart {
    * `rotY` how far its first slice is turned clockwise from twelve o'clock.
    */
   readonly pie3D?: { readonly rotX: number; readonly rotY: number };
+  /**
+   * §21.2.2.16 `c:bar3DChart` with §21.2.2.228 `c:view3D` — bars drawn as
+   * boxes standing in a box of walls and a floor, seen at an angle with the
+   * axes kept square: `rotX` the elevation and `rotY` the turn in degrees,
+   * `depthPercent` a bar's depth as a percentage of its width, `gapDepth` the
+   * room before and behind it as a percentage of its depth.
+   */
+  readonly bar3D?: {
+    readonly rotX: number;
+    readonly rotY: number;
+    readonly depthPercent: number;
+    readonly gapDepth: number;
+  };
+  /**
+   * §21.2.2.69 `c:floor` — a 3-D chart's floor, the wall its bars stand on:
+   * its fill and its rule. Absent, it is unfilled and ruled in light grey.
+   */
+  readonly floor?: ChartSurface;
+  /** §21.2.2.11 `c:backWall` — the wall behind the bars; absent, nothing drawn. */
+  readonly backWall?: ChartSurface;
+  /** §21.2.2.176 `c:sideWall` — the wall beside them; absent, nothing drawn. */
+  readonly sideWall?: ChartSurface;
   /** §21.2.2.68 `c:firstSliceAng` — a flat pie's first slice, degrees clockwise from twelve. */
   readonly firstSliceAngle?: number;
   /**

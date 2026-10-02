@@ -493,6 +493,28 @@ describe('html writer (FlowDoc adapter)', () => {
     expect(bar).toBeGreaterThan(grid);
   });
 
+  it("draws a 3-D chart's floor under its gridlines, and its bars as boxes", async () => {
+    const boxed = BAR_CHART.replace(
+      '<c:plotArea><c:barChart>',
+      '<c:view3D><c:rotX val="15"/><c:rotY val="20"/><c:rAngAx val="1"/></c:view3D><c:plotArea><c:bar3DChart>',
+    ).replace(
+      '</c:barChart></c:plotArea>',
+      '<c:axId val="1"/><c:axId val="2"/><c:axId val="0"/></c:bar3DChart>' +
+        '<c:catAx><c:axId val="1"/><c:axPos val="b"/><c:crossAx val="2"/></c:catAx>' +
+        '<c:valAx><c:axId val="2"/><c:axPos val="l"/><c:majorGridlines><c:spPr><a:ln><a:solidFill><a:srgbClr val="C00000"/></a:solidFill></a:ln></c:spPr></c:majorGridlines><c:crossAx val="1"/></c:valAx></c:plotArea>',
+    );
+    const docx = buildDocxFromBody(chartDrawing('rId8'), { charts: { rId8: boxed } });
+    const html = decode(await Ream.parse(docx).convert('html'));
+    const floor = html.search(/<polygon [^>]*fill="none" stroke="#D9D9D9"/);
+    const grid = html.indexOf('stroke="#C00000"');
+    expect(floor).toBeGreaterThan(0);
+    expect(grid).toBeGreaterThan(floor);
+    // The bars' tops, 0.76 of their colour, and their fronts over them.
+    const top = html.search(/<polygon [^>]*fill="#345795"/);
+    expect(top).toBeGreaterThan(grid);
+    expect(html.search(/<rect [^>]*fill="#4472C4"/)).toBeGreaterThan(top);
+  });
+
   it('renders pie wedges as bezier paths', async () => {
     const docx = buildDocxFromBody(chartDrawing('rId6'), { charts: { rId6: PIE_CHART } });
     const html = decode(await Ream.parse(docx).convert('html'));
