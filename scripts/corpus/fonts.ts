@@ -27,7 +27,7 @@
 // its name, the way `.lo-cache` keeps the reference renders. `CORPUS_FONTS=
 // roboto` restores the old single-family measurement for a side-by-side.
 
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -68,20 +68,50 @@ function readCached(file: string): Uint8Array | undefined {
 }
 
 /**
+ * The first four bytes of a font file: TrueType outlines (0x00010000, `true`),
+ * PostScript ones (`OTTO`, `typ1`), a collection (`ttcf`) and the web wrappers
+ * (`wOFF`, `wOF2`).
+ */
+const FONT_SIGNATURES: ReadonlyArray<number> = [
+  0x00010000, 0x74727565, 0x4f54544f, 0x74797031, 0x74746366, 0x774f4646, 0x774f4632,
+];
+
+/**
+ * Whether the bytes begin as a font does. A CDN or a captive portal can answer
+ * 200 with a page, and kept under a font's name it would be read back as that
+ * font by every sweep after.
+ */
+function isFontFile(bytes: Uint8Array): boolean {
+  if (bytes.length < 4) return false;
+  const tag = ((bytes[0]! << 24) | (bytes[1]! << 16) | (bytes[2]! << 8) | bytes[3]!) >>> 0;
+  return FONT_SIGNATURES.includes(tag);
+}
+
+/**
  * A `fetch` for the font path that answers from disk when it can. A miss is
  * fetched once and written under {@link FONT_CACHE_DIR} by the file's own name
  * (`Carlito_400Regular.ttf`), which is unique across the curated families.
+ * Only a font is kept, and a cached file that is not one is fetched again.
  */
 export function cachedFontFetch(): FetchLike {
   return async (url: string) => {
     mkdirSync(FONT_CACHE_DIR, { recursive: true });
     const file = resolve(FONT_CACHE_DIR, basename(new URL(url).pathname));
     const kept = readCached(file);
-    if (kept) return { ok: true, arrayBuffer: () => Promise.resolve(bufferOf(kept)) };
+    if (kept && isFontFile(kept)) {
+      return { ok: true, arrayBuffer: () => Promise.resolve(bufferOf(kept)) };
+    }
     const res = await fetch(url);
     if (!res.ok) return { ok: false, arrayBuffer: () => Promise.resolve(new ArrayBuffer(0)) };
     const buf = await res.arrayBuffer();
-    writeFileSync(file, Buffer.from(buf));
+    const bytes = new Uint8Array(buf);
+    if (isFontFile(bytes)) {
+      // Written beside it and renamed into place, so a write cut short never
+      // leaves a file under the font's name to be read back as the font.
+      const part = `${file}.${String(process.pid)}.part`;
+      writeFileSync(part, bytes);
+      renameSync(part, file);
+    }
     return { ok: true, arrayBuffer: () => Promise.resolve(buf) };
   };
 }
