@@ -2078,8 +2078,43 @@ export function buildPieScene(
   const polylines: Array<ChartPolyline> = [];
   const face = faceOf(chart, 'dataLabels');
   const lineH = face.sizePt * 1.2;
-  for (const box of boxes) {
-    const { bx, by } = positionOf(box, r);
+  const placed = boxes.map((box) => ({ box, ...positionOf(box, r) }));
+  // Labels set outside the pie that would run into each other are stacked
+  // apart, top down, as Excel's best fit spreads the names of a run of thin
+  // slices — and kept off the chart's foot. A label its author placed stays
+  // where they put it, and the ones the chart sets give way to it.
+  const outside = placed
+    .filter((p) => p.box.where === 'out' || across(p.bx, p.by, d.cyTop) >= r)
+    .sort((a, b) => b.by - a.by);
+  const overlaps = (a: (typeof placed)[number], b: (typeof placed)[number]): boolean =>
+    Math.abs(a.bx - b.bx) < (a.box.width + b.box.width) / 2 &&
+    Math.abs(a.by - b.by) < (a.box.height + b.box.height) / 2 + 2;
+  const fixed = outside.filter((p) => p.box.placement);
+  const chartSet = outside.filter((p) => !p.box.placement);
+  // Spreading compares each label with the ones before it, and a pie of a
+  // hundred thousand slices — a file can ask for one — made that a hang:
+  // past a few dozen labels a pie is a crowd no spreading reads, and they
+  // stay where they stand.
+  if (fixed.length + chartSet.length <= MOST_SPREAD_LABELS) {
+    chartSet.forEach((here, k) => {
+      // Every label its author placed is in the way wherever it stands, and so
+      // is every one the chart set above this one; moving under one may land
+      // on another, so the walk goes on until none is hit.
+      const blocks = (other: (typeof placed)[number]): boolean => overlaps(other, here);
+      for (let pass = 0; pass <= fixed.length + k; pass++) {
+        const hit = fixed.find(blocks) ?? chartSet.slice(0, k).find(blocks);
+        if (!hit) break;
+        here.by = hit.by - (hit.box.height + here.box.height) / 2 - 2;
+      }
+    });
+    const lowest = chartSet.reduce<(typeof placed)[number] | undefined>(
+      (low, p) => (low === undefined || p.by < low.by ? p : low),
+      undefined,
+    );
+    const under = lowest ? 2 - (lowest.by - lowest.box.height / 2) : 0;
+    if (under > 0) for (const p of chartSet) p.by += under;
+  }
+  for (const { box, bx, by } of placed) {
     const moved = box.placement;
     // §21.2.2.181 — a label off its slice is tied back to it, where the chart
     // asks for leader lines; one dragged into the pie stands on its slice, and
@@ -2170,6 +2205,9 @@ function shadeHex(hex: string, f: number): string {
 
 /** The room kept between a pie and a label set outside it. */
 const PIE_LABEL_GAP = 6;
+
+/** The most labels round a pie that are spread apart (see buildPieScene). */
+const MOST_SPREAD_LABELS = 64;
 
 /** A slice's label, measured before the pie is sized. */
 interface PieLabelBox {
