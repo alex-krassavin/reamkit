@@ -1880,8 +1880,21 @@ export interface Chart {
   readonly valAxisLine?: ChartLineStyle;
   /** §21.2.2.196 — the secondary value axis's own rule. */
   readonly secondaryValAxisLine?: ChartLineStyle;
-  /** §21.2.2.87 `c:majorGridlines/c:spPr/a:ln` — the gridlines' own rule. */
+  /**
+   * §21.2.2.100 `c:majorGridlines` of the value axis (a scatter's upright one)
+   * — its own rule (§21.2.2.87 `c:spPr/a:ln`). An axis without the element
+   * rules nothing, which reads `{ none: true }`; absent, the default rule.
+   */
   readonly gridLine?: ChartLineStyle;
+  /** The same for a scatter's lying (x) axis. */
+  readonly xGridLine?: ChartLineStyle;
+  /**
+   * §21.2.2.40 `c:delete` — the author deleted the category axis (a scatter's
+   * x axis): neither its rule nor its labels are drawn, nor room kept for them.
+   */
+  readonly catAxisDeleted?: boolean;
+  /** §21.2.2.40 — …or the value axis (a scatter's upright one). */
+  readonly valAxisDeleted?: boolean;
   /**
    * §21.2.2.157 `c:valAx/c:scaling/c:min|c:max` — the value axis the AUTHOR
    * fixed. Absent means "auto", and only then is the range read off the data:

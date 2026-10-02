@@ -268,6 +268,66 @@ describe('parseChart', () => {
     expect(read(withOverlap('x')).overlapPercent).toBeUndefined();
   });
 
+  it('rules the plot only with the gridlines its value axis has (§21.2.2.100)', () => {
+    const measure = (t: string, sz: number) => t.length * sz * 0.5;
+    const ruled = (xml: string) =>
+      buildChartScene(parseChart(enc.encode(xml), defaultColorResolver)!, 400, 300, measure)!
+        .gridlines ?? [];
+    // tdf147586.pptx: no `c:majorGridlines`, no gridlines.
+    expect(parseChart(enc.encode(BAR_CHART), defaultColorResolver)!.gridLine).toEqual({
+      none: true,
+    });
+    expect(ruled(BAR_CHART)).toHaveLength(0);
+    const gridded = BAR_CHART.replace(
+      '<c:valAx><c:axId val="222"/>',
+      '<c:valAx><c:axId val="222"/><c:majorGridlines><c:spPr><a:ln w="19050"><a:solidFill>' +
+        '<a:srgbClr val="C00000"/></a:solidFill></a:ln></c:spPr></c:majorGridlines>',
+    );
+    expect(ruled(gridded).length).toBeGreaterThan(0);
+    for (const g of ruled(gridded)) expect(g).toMatchObject({ strokeHex: 'C00000', widthPt: 1.5 });
+    // A horizontal bar chart's are its value axis's, lying along its foot, not
+    // the upright category axis's (tdf128207.docx).
+    const lying = gridded
+      .replace('<c:barDir val="col"/>', '<c:barDir val="bar"/>')
+      .replace('<c:catAx><c:axId val="111"/>', '<c:catAx><c:axId val="111"/><c:axPos val="l"/>')
+      .replace('<c:valAx><c:axId val="222"/>', '<c:valAx><c:axId val="222"/><c:axPos val="b"/>');
+    expect(parseChart(enc.encode(lying), defaultColorResolver)!.gridLine).toMatchObject({
+      colorHex: 'C00000',
+    });
+    // A rule of `a:noFill` rules nothing either.
+    const unruled = BAR_CHART.replace(
+      '<c:valAx><c:axId val="222"/>',
+      '<c:valAx><c:axId val="222"/><c:majorGridlines><c:spPr><a:ln><a:noFill/></a:ln></c:spPr></c:majorGridlines>',
+    );
+    expect(ruled(unruled)).toHaveLength(0);
+  });
+
+  it('draws nothing of an axis its author deleted, and keeps no room for it (§21.2.2.40)', () => {
+    // LIBRE_OFFICE-100610-0.pptx deletes both axes of its five bar charts.
+    const measure = (t: string, sz: number) => t.length * sz * 0.5;
+    const deleted = BAR_CHART.replace(
+      '<c:catAx><c:axId val="111"/>',
+      '<c:catAx><c:axId val="111"/><c:delete val="1"/>',
+    ).replace('<c:valAx><c:axId val="222"/>', '<c:valAx><c:axId val="222"/><c:delete val="1"/>');
+    const chart = parseChart(enc.encode(deleted), defaultColorResolver)!;
+    expect(chart).toMatchObject({ catAxisDeleted: true, valAxisDeleted: true });
+    expect(chart.catAxisLine).toEqual({ none: true });
+    expect(chart.valAxisLine).toEqual({ none: true });
+    const scene = buildChartScene(chart, 400, 300, measure)!;
+    const texts = scene.labels.map((l) => l.text);
+    for (const t of ['Q1', 'Q2', 'Q3', '0', '10', '20']) expect(texts).not.toContain(t);
+    // The bars take the room the labels leave.
+    const shown = buildChartScene(
+      parseChart(enc.encode(BAR_CHART), defaultColorResolver)!,
+      400,
+      300,
+      measure,
+    )!;
+    const left = (s: typeof scene) =>
+      Math.min(...s.rects.filter((r) => r.fillHex === '4472C4').map((r) => r.x));
+    expect(left(scene)).toBeLessThan(left(shown));
+  });
+
   it('takes a gradient-filled series from its first stop, not from its outline', () => {
     // §20.1.8.33 — a series filled with a gradient still has a colour, and the
     // scene model carries one per series. Falling through to the outline
@@ -590,7 +650,7 @@ describe('parseChart', () => {
       '<c:plotArea><c:layout><c:manualLayout><c:layoutTarget val="inner"/><c:xMode val="edge"/>' +
         '<c:yMode val="edge"/><c:x val="0.2"/><c:y val="0.1"/><c:w val="0.6"/><c:h val="0.5"/>' +
         '</c:manualLayout></c:layout>',
-    );
+    ).replace('<c:valAx><c:axId val="222"/>', '<c:valAx><c:axId val="222"/><c:majorGridlines/>');
     const chart = parseChart(enc.encode(withBox), defaultColorResolver)!;
     expect(chart.plotBox).toEqual({ x: 0.2, y: 0.1, w: 0.6, h: 0.5, inner: true });
     const scene = buildChartScene(chart, 400, 300, (t, sz) => t.length * sz * 0.5)!;

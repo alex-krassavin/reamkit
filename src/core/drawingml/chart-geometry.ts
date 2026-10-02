@@ -603,42 +603,53 @@ function pushGridTicks(
   grid: ChartLineStyle | undefined,
   face: TextFace,
   atEnd = false,
+  labelled = true,
 ): void {
+  // An axis without major gridlines rules nothing (§21.2.2.100).
+  const rule = grid?.none
+    ? undefined
+    : { strokeHex: grid?.colorHex ?? GRID_COLOR, widthPt: grid?.widthPt ?? 0.75 };
   for (const v of tickVals) {
     if (axis === 'x') {
       const gx = at(v);
-      gridlines.push({
-        points: [
-          [gx, y0],
-          [gx, y0 + plotH],
-        ],
-        strokeHex: grid?.colorHex ?? GRID_COLOR,
-        widthPt: 0.75,
-      });
-      labels.push({
-        text: fmt(v),
-        x: gx,
-        y: atEnd ? y0 + plotH + face.sizePt * 0.4 : y0 - face.sizePt,
-        ...face,
-        align: 'center',
-      });
+      if (rule) {
+        gridlines.push({
+          points: [
+            [gx, y0],
+            [gx, y0 + plotH],
+          ],
+          ...rule,
+        });
+      }
+      if (labelled) {
+        labels.push({
+          text: fmt(v),
+          x: gx,
+          y: atEnd ? y0 + plotH + face.sizePt * 0.4 : y0 - face.sizePt,
+          ...face,
+          align: 'center',
+        });
+      }
     } else {
       const gy = at(v);
-      gridlines.push({
-        points: [
-          [x0, gy],
-          [x0 + plotW, gy],
-        ],
-        strokeHex: grid?.colorHex ?? GRID_COLOR,
-        widthPt: 0.75,
-      });
-      labels.push({
-        text: fmt(v),
-        x: atEnd ? x0 + plotW + 3 : x0 - 3,
-        y: gy - face.sizePt / 3,
-        ...face,
-        align: atEnd ? 'left' : 'right',
-      });
+      if (rule) {
+        gridlines.push({
+          points: [
+            [x0, gy],
+            [x0 + plotW, gy],
+          ],
+          ...rule,
+        });
+      }
+      if (labelled) {
+        labels.push({
+          text: fmt(v),
+          x: atEnd ? x0 + plotW + 3 : x0 - 3,
+          y: gy - face.sizePt / 3,
+          ...face,
+          align: atEnd ? 'left' : 'right',
+        });
+      }
     }
   }
 }
@@ -750,7 +761,7 @@ function buildFrame(
     scale.max,
   );
   const labelsAt: 'start' | 'cross' | 'end' | 'none' =
-    chart.catTickLabelPos === 'none'
+    chart.catAxisDeleted === true || chart.catTickLabelPos === 'none'
       ? 'none'
       : chart.catTickLabelPos === 'low'
         ? 'start'
@@ -785,12 +796,14 @@ function buildFrame(
     chart.catAxisReversed === true
       ? chart.valAxisCrosses !== 'max'
       : chart.valAxisCrosses === 'max';
+  // §21.2.2.40 — a deleted value axis labels nothing, and keeps no room to.
+  const valLabelled = chart.valAxisDeleted !== true;
   const title = titleLines(chart, wPt, measure);
   const top =
     4 +
     titleHeight(title, chart) +
     (!horizontal && labelsAt === 'end' ? catBand : 0) +
-    (horizontal && valAtEnd ? catBand : 0);
+    (horizontal && valAtEnd && valLabelled ? catBand : 0);
   const legend = buildLegendBlock(chart, wPt, hPt, measure);
   const tick2W =
     scale2 && !horizontal
@@ -802,10 +815,12 @@ function buildFrame(
   // foot, so the last one reaches half its width past the plot's end: room is
   // kept for it inside the frame, or "80" is cut in two by the frame's edge.
   const tickHalf = (v: number | undefined): number =>
-    horizontal && v !== undefined ? widthIn(measure, fmtVal(v), valFace) / 2 : 0;
+    horizontal && valLabelled && v !== undefined ? widthIn(measure, fmtVal(v), valFace) / 2 : 0;
   const lastTickHalf = tickHalf(tickVals[tickVals.length - 1]);
   const catLabelW = Math.min(wPt * 0.4, widestCat + 6);
-  const tickLabelW = Math.max(0, ...tickVals.map((v) => widthIn(measure, fmtVal(v), valFace))) + 4;
+  const tickLabelW = valLabelled
+    ? Math.max(0, ...tickVals.map((v) => widthIn(measure, fmtVal(v), valFace))) + 4
+    : 0;
   const plotRight =
     wPt -
     4 -
@@ -843,7 +858,7 @@ function buildFrame(
     4 +
       legend.bottomHeight +
       (footTitle ? footTitleFace.sizePt * 1.5 : 0) +
-      ((horizontal ? !valAtEnd : labelsAt === 'start') ? catBand : 0) +
+      ((horizontal ? !valAtEnd && valLabelled : labelsAt === 'start') ? catBand : 0) +
       (!horizontal && labelsAt === 'start' ? groupLevels.length * catBand : 0);
   const plotW = own?.plotW ?? Math.max(1, plotRight - x0);
   const plotH = own?.plotH ?? Math.max(1, hPt - top - y0);
@@ -912,6 +927,7 @@ function buildFrame(
       chart.gridLine,
       valFace,
       valAtEnd,
+      valLabelled,
     );
   } else {
     pushGridTicks(
@@ -928,6 +944,7 @@ function buildFrame(
       chart.gridLine,
       valFace,
       valAtEnd,
+      valLabelled,
     );
   }
 
@@ -1603,7 +1620,11 @@ export function buildScatterScene(
   // under its own.
   const yTitleFace = faceOf(chart, 'valAxisTitle');
   const xTitleFace = faceOf(chart, 'catAxisTitle');
-  const tickLabelW = Math.max(0, ...yTicks.map((v) => widthIn(measure, fmtY(v), yFace))) + 4;
+  // §21.2.2.40 — a deleted axis keeps no room for the labels it does not draw.
+  const tickLabelW =
+    chart.valAxisDeleted === true
+      ? 0
+      : Math.max(0, ...yTicks.map((v) => widthIn(measure, fmtY(v), yFace))) + 4;
   const own = innerPlot(chart, wPt, hPt);
   const x0 = own?.x0 ?? 4 + (chart.valAxisTitle ? yTitleFace.sizePt * 1.5 : 0) + tickLabelW;
   const y0 =
@@ -1611,7 +1632,7 @@ export function buildScatterScene(
     4 +
       legend.bottomHeight +
       (chart.catAxisTitle ? xTitleFace.sizePt * 1.5 : 0) +
-      xFace.sizePt * 1.6;
+      (chart.catAxisDeleted === true ? 0 : xFace.sizePt * 1.6);
   const plotW = own?.plotW ?? Math.max(1, wPt - 4 - legend.rightWidth - x0);
   const plotH = own?.plotH ?? Math.max(1, hPt - top - y0);
   const xAt = (v: number): number => x0 + fractionOf(v, xScale) * plotW;
@@ -1650,6 +1671,8 @@ export function buildScatterScene(
     plotH,
     chart.gridLine,
     yFace,
+    false,
+    chart.valAxisDeleted !== true,
   );
   pushGridTicks(
     gridlines,
@@ -1662,8 +1685,10 @@ export function buildScatterScene(
     y0,
     plotW,
     plotH,
-    chart.gridLine,
+    chart.xGridLine,
     xFace,
+    false,
+    chart.catAxisDeleted !== true,
   );
   pushAxisLines(polylines, x0, y0, plotW, plotH, chart);
 

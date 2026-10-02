@@ -258,19 +258,36 @@ export function parseChart(
     );
   const bottomAxNode = axisAt('b', 't') ?? catAxNode;
   const leftAxNode = axisAt('l', 'r') ?? valAxNode;
-  const catAxisLine = lineStyleOf(bottomAxNode, resolveColor);
-  const valAxisLine = lineStyleOf(leftAxNode, resolveColor);
-  const secondaryValAxisLine = lineStyleOf(secondaryValAx, resolveColor);
-  const gridLine = lineStyleOf(
-    leftAxNode ? poChildren(leftAxNode).find((c) => poIs(c, 'c:majorGridlines')) : undefined,
-    resolveColor,
-  );
   // §21.2.2.226 — a scatter has two value axes and no category axis, and which
   // is which is where each SITS: its upright one is the values', its lying one
   // the x's. Taken as "the first c:valAx", Excel's own order put the x axis's
   // ends, step and format on the y axis (DataTableCities.xlsx runs its longitude
   // −180…180 by 60 in `0"°"`), and its title on the wrong side.
   const isScatter = type === 'scatter';
+  // The axis each role is: a scatter's by where it sits, any other chart's by
+  // what it is — a horizontal bar chart's value axis lies along its foot.
+  const valRoleAx = isScatter
+    ? leftAxNode
+    : poChildren(plotArea).find((c) => poIs(c, 'c:valAx') && c !== secondaryValAx);
+  const catRoleAx = isScatter
+    ? bottomAxNode
+    : (catAxNode ?? poChildren(plotArea).find((c) => poIs(c, 'c:dateAx')));
+  // §21.2.2.40 `c:delete` — an axis its author deleted draws neither its rule
+  // nor its labels, and keeps no room for them: LIBRE_OFFICE-100610-0.pptx
+  // deletes both axes of its five bar charts, and we labelled them all.
+  const catAxisDeleted = isDeletedAxis(catRoleAx);
+  const valAxisDeleted = isDeletedAxis(valRoleAx);
+  const ruleOf = (ax: PoNode | undefined): ChartLineStyle | undefined =>
+    isDeletedAxis(ax) ? { none: true } : lineStyleOf(ax, resolveColor);
+  const catAxisLine = ruleOf(bottomAxNode);
+  const valAxisLine = ruleOf(leftAxNode);
+  const secondaryValAxisLine = lineStyleOf(secondaryValAx, resolveColor);
+  // §21.2.2.100 — an axis rules the plot only where it has major gridlines:
+  // tdf147586.pptx's has none and we ruled it anyway. They are the VALUE
+  // axis's, which a horizontal bar chart lays along its foot — read off the
+  // upright category axis, tdf128207.docx's mid-grey rules came out light.
+  const gridLine = gridlinesOf(valRoleAx, resolveColor);
+  const xGridLine = isScatter ? gridlinesOf(bottomAxNode, resolveColor) : undefined;
   const catAxisTitle = isScatter ? axisTitleOf(bottomAxNode) : axisTitle(plotArea, 'c:catAx');
   const valAxisTitle = isScatter ? axisTitleOf(leftAxNode) : axisTitle(plotArea, 'c:valAx');
   const valAxisMin = isScatter
@@ -339,18 +356,8 @@ export function parseChart(
             poChildren(chart).find((c) => poIs(c, 'c:title')),
           ),
           ...withNode('legend', legend),
-          ...withNode(
-            'catAxis',
-            isScatter
-              ? bottomAxNode
-              : (catAxNode ?? poChildren(plotArea).find((c) => poIs(c, 'c:dateAx'))),
-          ),
-          ...withNode(
-            'valAxis',
-            isScatter
-              ? leftAxNode
-              : poChildren(plotArea).find((c) => poIs(c, 'c:valAx') && c !== secondaryValAx),
-          ),
+          ...withNode('catAxis', catRoleAx),
+          ...withNode('valAxis', valRoleAx),
           ...withNode('secondaryValAxis', secondaryValAx),
           ...withNode(
             'dataLabels',
@@ -422,6 +429,9 @@ export function parseChart(
     ...(valAxisLine ? { valAxisLine } : {}),
     ...(secondaryValAxisLine ? { secondaryValAxisLine } : {}),
     ...(gridLine ? { gridLine } : {}),
+    ...(xGridLine ? { xGridLine } : {}),
+    ...(catAxisDeleted ? { catAxisDeleted: true } : {}),
+    ...(valAxisDeleted ? { valAxisDeleted: true } : {}),
     ...(valAxisMin !== undefined ? { valAxisMin } : {}),
     ...(valAxisMax !== undefined ? { valAxisMax } : {}),
     ...(valAxisMajorUnit !== undefined ? { valAxisMajorUnit } : {}),
@@ -837,6 +847,24 @@ const DASHES = new Set<string>([
   'sysDash',
   'sysDot',
 ]);
+
+/** §21.2.2.40 — whether the author deleted an axis. */
+function isDeletedAxis(ax: PoNode | undefined): boolean {
+  const del = ax ? poVal(poChildren(ax).find((c) => poIs(c, 'c:delete'))) : undefined;
+  return del === '1' || del === 'true';
+}
+
+/**
+ * §21.2.2.100 — an axis's major gridlines: their rule, the default one where
+ * they state none (undefined), and none at all where the axis has none.
+ */
+function gridlinesOf(
+  ax: PoNode | undefined,
+  resolveColor: ColorResolver,
+): ChartLineStyle | undefined {
+  const grid = ax ? poChildren(ax).find((c) => poIs(c, 'c:majorGridlines')) : undefined;
+  return grid ? lineStyleOf(grid, resolveColor) : { none: true };
+}
 
 function lineStyleOf(
   owner: PoNode | undefined,
