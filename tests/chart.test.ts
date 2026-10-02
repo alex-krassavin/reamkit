@@ -506,6 +506,70 @@ describe('parseChart', () => {
     expect(moved.y).toBeGreaterThan(300 * 0.75);
   });
 
+  it('draws a 3-D pie as a tilted disc, its front edge darker, as Excel does', () => {
+    // §21.2.2.143/§21.2.2.228 — Excel's PDF of a 3-D pie at rotX 30
+    // (2026-10-02): an ellipse half as tall as wide, standing 0.17 of its
+    // radius deep; with no rotX at all, the disc seen edge on.
+    const pie3D = (view: string, extra = ''): string =>
+      `<c:chartSpace ${C_NS}><c:chart>${view}<c:plotArea>${extra}<c:pie3DChart><c:varyColors val="1"/>
+      <c:ser><c:idx val="0"/><c:explosion val="25"/>
+        <c:dPt><c:idx val="1"/><c:explosion val="0"/></c:dPt>
+        <c:val><c:numRef><c:numCache><c:ptCount val="2"/>
+          <c:pt idx="0"><c:v>3</c:v></c:pt><c:pt idx="1"><c:v>1</c:v></c:pt>
+        </c:numCache></c:numRef></c:val>
+      </c:ser></c:pie3DChart></c:plotArea></c:chart></c:chartSpace>`;
+    const chart = parseChart(
+      enc.encode(pie3D('<c:view3D><c:rotX val="30"/><c:rotY val="90"/></c:view3D>')),
+      defaultColorResolver,
+    )!;
+    expect(chart.pie3D).toEqual({ rotX: 30, rotY: 90 });
+    expect(chart.series[0]).toMatchObject({
+      explosion: 25,
+      pointExplosions: [{ idx: 1, percent: 0 }],
+    });
+    const scene = buildChartScene(chart, 400, 300, (t, sz) => t.length * sz * 0.5)!;
+    expect(scene.wedges).toEqual([]);
+    const polygons = scene.polygons ?? [];
+    // Each slice's face in its own colour, and the edge under the front in a
+    // darker one.
+    const faces = polygons.filter((pg) => pg.fillHex === '4472C4' || pg.fillHex === 'ED7D31');
+    expect(faces).toHaveLength(2);
+    expect(polygons.some((pg) => pg.fillHex === '305089')).toBe(true);
+    const extent = (pts: ReadonlyArray<readonly [number, number]>) => {
+      const xs = pts.map(([x]) => x);
+      const ys = pts.map(([, y]) => y);
+      return { w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
+    };
+    const all = extent(polygons.flatMap((pg) => pg.points));
+    expect(all.h / all.w).toBeLessThan(0.75);
+    // No rotX: the schema's 0, edge on.
+    expect(
+      parseChart(
+        enc.encode(pie3D('<c:view3D><c:perspective val="0"/></c:view3D>')),
+        defaultColorResolver,
+      )!.pie3D,
+    ).toEqual({ rotX: 0, rotY: 0 });
+  });
+
+  it('fits a pie into the box its author sized the plot to (§21.2.2.95)', () => {
+    // Excel's PDF: a flat pie in a box 0.4 wide and 0.25 tall is a circle as
+    // wide as the box is tall, centred in it.
+    const pie = `<c:chartSpace ${C_NS}><c:chart><c:plotArea>
+      <c:layout><c:manualLayout><c:layoutTarget val="inner"/><c:xMode val="edge"/><c:yMode val="edge"/>
+        <c:x val="0.3"/><c:y val="0.4"/><c:w val="0.4"/><c:h val="0.25"/></c:manualLayout></c:layout>
+      <c:pieChart><c:varyColors val="1"/><c:ser><c:idx val="0"/>
+        <c:val><c:numRef><c:numCache><c:ptCount val="2"/>
+          <c:pt idx="0"><c:v>3</c:v></c:pt><c:pt idx="1"><c:v>1</c:v></c:pt>
+        </c:numCache></c:numRef></c:val>
+      </c:ser></c:pieChart></c:plotArea></c:chart></c:chartSpace>`;
+    const chart = parseChart(enc.encode(pie), defaultColorResolver)!;
+    expect(chart.plotBox).toEqual({ x: 0.3, y: 0.4, w: 0.4, h: 0.25 });
+    const wedge = buildChartScene(chart, 400, 300, (t, sz) => t.length * sz * 0.5)!.wedges[0]!;
+    expect(wedge.r).toBeCloseTo((0.25 * 300) / 2, 5);
+    expect(wedge.cx).toBeCloseTo(0.5 * 400, 5);
+    expect(wedge.cy).toBeCloseTo(300 - (0.4 + 0.125) * 300, 5);
+  });
+
   it('flags a doughnut chart (renders as a pie with a hole)', () => {
     const doughnut = `<c:chartSpace ${C_NS}><c:chart><c:plotArea><c:doughnutChart>
       <c:ser><c:idx val="0"/>

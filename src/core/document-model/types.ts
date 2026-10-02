@@ -1606,6 +1606,13 @@ export interface ChartSeries {
   readonly colorHex?: string; // c:spPr solidFill
   readonly pointColors?: ReadonlyArray<ChartDataPoint>; // c:dPt overrides (pie slices)
   /**
+   * §21.2.2.62 `c:explosion` — how far a pie's slices stand out from its
+   * centre, as a percentage of its radius: the series' own, and each point's
+   * (`c:dPt/c:explosion`) over it.
+   */
+  readonly explosion?: number;
+  readonly pointExplosions?: ReadonlyArray<{ readonly idx: number; readonly percent: number }>;
+  /**
    * §21.2.2.49 `c:dLbl/c:tx` — a data label the author typed rather than one
    * the chart computes, by point index. Excel and Calc print it verbatim: it
    * is the only place a label like "Промышленные потребители; 22,7млрд.кВтч;
@@ -1783,6 +1790,25 @@ export interface Chart {
   readonly barDir?: 'col' | 'bar'; // c:barDir (bar charts)
   readonly grouping?: 'clustered' | 'stacked' | 'percentStacked' | 'standard';
   readonly doughnut?: boolean; // c:doughnutChart (a pie with a central hole)
+  /**
+   * §21.2.2.143 `c:pie3DChart` with §21.2.2.228 `c:view3D` — a pie drawn as a
+   * tilted disc: `rotX` the elevation in degrees (90 looks straight down),
+   * `rotY` how far its first slice is turned clockwise from twelve o'clock.
+   */
+  readonly pie3D?: { readonly rotX: number; readonly rotY: number };
+  /** §21.2.2.68 `c:firstSliceAng` — a flat pie's first slice, degrees clockwise from twelve. */
+  readonly firstSliceAngle?: number;
+  /**
+   * §21.2.2.95 `c:plotArea/c:layout/c:manualLayout` in `edge` mode — the box
+   * the author sized the plot to, as fractions of the chart from its top
+   * left; a pie is fitted into it whole, keeping its shape.
+   */
+  readonly plotBox?: {
+    readonly x: number;
+    readonly y: number;
+    readonly w: number;
+    readonly h: number;
+  };
   readonly showValues?: boolean; // c:dLbls/c:showVal — print each datum's value
   /**
    * §21.2.2.49 — the data labels' switches, when the chart has a `c:dLbls` at

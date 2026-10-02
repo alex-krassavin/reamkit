@@ -1832,20 +1832,53 @@ export function buildPieScene(
     faceOf(chart, 'legend'),
   );
 
-  const availW = Math.max(1, wPt - 8 - legend.rightWidth);
-  const availH = Math.max(1, hPt - top - 4 - legend.bottomHeight);
-  const cx = 4 + availW / 2;
-  const cy = 4 + legend.bottomHeight + availH / 2;
-  const fullR = Math.max(1, (Math.min(availW, availH) / 2) * 0.95);
+  // §21.2.2.95 — the box the plot was sized to, where the author sized it,
+  // and the room left by the title and the legend where they did not.
+  const plotBox = chart.plotBox;
+  const availW = plotBox ? plotBox.w * wPt : Math.max(1, wPt - 8 - legend.rightWidth);
+  const availH = plotBox ? plotBox.h * hPt : Math.max(1, hPt - top - 4 - legend.bottomHeight);
+  const cx = plotBox ? (plotBox.x + plotBox.w / 2) * wPt : 4 + availW / 2;
+  const cy = plotBox
+    ? hPt - (plotBox.y + plotBox.h / 2) * hPt
+    : 4 + legend.bottomHeight + availH / 2;
 
-  // Excel pies start at 12 o'clock and sweep clockwise (negative in y-up).
+  // §21.2.2.143 — a 3-D pie is a disc tilted to its view's elevation: an
+  // ellipse `tilt` as tall as it is wide, standing `thickness` deep, its
+  // front edge showing. A flat pie is the disc seen from straight above.
+  const disc = chart.pie3D;
+  const elevation = disc ? (Math.min(90, Math.max(0, disc.rotX)) * Math.PI) / 180 : Math.PI / 2;
+  // Floored a little above edge-on, where the disc would vanish; the depth is
+  // Excel's, read off its PDF: a quarter of the radius seen edge on, 0.17 of
+  // it at 30°, shrinking with the square of the elevation's cosine.
+  const tilt = Math.max(Math.sin(elevation), 0.02);
+  const thickF = disc ? 0.25 * Math.cos(elevation) ** 2 : 0;
+  // §21.2.2.62 — each slice stands out from the centre by its explosion, and
+  // the pie shrinks so the farthest of them still fits.
+  const explosionOfSlice = (i: number): number =>
+    (atPoint(series.pointExplosions, i)?.percent ?? series.explosion ?? 0) / 100;
+  let maxOut = 0;
+  for (let i = 0; i < values.length; i++) {
+    if ((values[i] ?? 0) > 0) maxOut = Math.max(maxOut, explosionOfSlice(i));
+  }
+  // In the author's box the pie fills it, its smaller side whole, as Excel's
+  // PDF has it; in the room left over, a little inside it.
+  const fullR = Math.max(
+    1,
+    Math.min(availW / 2 / (1 + maxOut), availH / (2 * tilt * (1 + maxOut) + thickF)) *
+      (plotBox ? 1 : 0.95),
+  );
+
+  // Excel pies start at 12 o'clock and sweep clockwise (negative in y-up),
+  // turned by the first slice's angle (§21.2.2.68) or the 3-D view's.
+  const turn = ((disc ? disc.rotY : (chart.firstSliceAngle ?? 0)) * Math.PI) / 180;
   const sweeps = values.map((v) => (v > 0 ? -(v / total) * 2 * Math.PI : 0));
   const starts: Array<number> = [];
-  let ang = Math.PI / 2;
+  let ang = Math.PI / 2 - turn;
   for (const sweep of sweeps) {
     starts.push(ang);
     ang += sweep;
   }
+  const midOf = (i: number): number => (starts[i] ?? 0) + (sweeps[i] ?? 0) / 2;
 
   // The labels first: what they say, where they stand and how much room they
   // take — a label set outside the pie takes its room from the pie's radius.
@@ -1855,37 +1888,58 @@ export function buildPieScene(
   // tightest of them leaves. A label the author placed stands where they put
   // it, and takes none.
   let room = fullR;
-  for (const b of boxes) {
+  for (const b of plotBox ? [] : boxes) {
     if (b.where !== 'out' || b.placement) continue;
     const c = Math.abs(Math.cos(b.mid));
-    const sn = Math.abs(Math.sin(b.mid));
+    const sn = Math.abs(Math.sin(b.mid)) * tilt;
     if (c > 0.05) room = Math.min(room, (availW / 2 - PIE_LABEL_GAP - b.width) / c);
     if (sn > 0.05) room = Math.min(room, (availH / 2 - PIE_LABEL_GAP - b.height) / sn);
   }
-  // Where each label stands for a pie of radius `rr` (the chart's place for
-  // it, or the author's), kept inside the chart. A label the author placed is
-  // placed in the chart's frame — from where it stood round the full pie — and
-  // stays there however far the pie then gives way.
+
+  // The disc for a radius: its top face's centre — raised by half its depth,
+  // so the face and the edge under it are centred together — and each
+  // slice's own centre, moved out by its explosion.
+  const discOf = (rr: number) => {
+    const thickness = thickF * rr;
+    const cyTop = cy + thickness / 2;
+    const centre = (i: number): readonly [number, number] => {
+      const out = explosionOfSlice(i) * rr;
+      const mid = midOf(i);
+      return [cx + Math.cos(mid) * out, cyTop + Math.sin(mid) * out * tilt];
+    };
+    const point = (i: number, t: number, along: number): readonly [number, number] => {
+      const [x0, y0] = centre(i);
+      return [x0 + Math.cos(t) * along, y0 + Math.sin(t) * along * tilt];
+    };
+    return { thickness, cyTop, centre, point };
+  };
+
+  // Where each label stands for a pie of radius `pieR` (the chart's place
+  // for it, or the author's), kept inside the chart. A label the author
+  // placed is placed in the chart's frame — from where it stood round the
+  // full pie — and stays there however far the pie then gives way.
   const positionOf = (box: PieLabelBox, pieR: number): { bx: number; by: number } => {
     const rr = box.placement ? fullR : pieR;
+    const d = discOf(rr);
+    const i = box.index;
     const cos = Math.cos(box.mid);
     const sin = Math.sin(box.mid);
     // Where the chart would set it: on the ring of a doughnut, inside a
     // slice at the depth its position asks for, or past the slice's end,
-    // leaning away from the pie on its own side.
+    // leaning away from the pie on its own side — under the disc's edge
+    // where the slice is in front.
     let bx: number;
     let by: number;
     if (box.where === 'out') {
-      const px = cx + cos * (rr + PIE_LABEL_GAP);
-      const py = cy + sin * (rr + PIE_LABEL_GAP);
+      const [px, py0] = d.point(i, box.mid, rr + PIE_LABEL_GAP / Math.max(tilt, 0.2));
+      const py = sin < 0 ? py0 - d.thickness : py0;
       bx = px + (cos >= 0 ? box.width / 2 : -box.width / 2);
       by = py + (sin * box.height) / 2;
     } else {
       const depth = chart.doughnut
         ? (rr * 0.5 + rr) / 2
         : rr * (box.where === 'ctr' ? 0.5 : box.where === 'end' ? 0.75 : 0.6);
-      bx = cx + cos * depth;
-      by = cy + sin * depth;
+      [bx, by] = d.point(i, box.mid, depth);
     }
     // …or where the author dragged it (§21.2.2.95): its own corner as a
     // fraction of the chart, or that far from where the chart would set it.
@@ -1904,52 +1958,110 @@ export function buildPieScene(
   };
   // …and no label meant to stand outside the pie lies over it: the pie gives
   // way to the labels set round it. 45544.xlsx's names stand where its author
-  // dragged them round Excel's 3-D pie, an ellipse well inside the frame; a
-  // label dragged INTO its slice is meant there, and is not in the way.
+  // dragged them round Excel's 3-D pie; a label dragged INTO its slice is
+  // meant there, and is not in the way. Distances are the disc's own, its
+  // height counted back up by its tilt.
+  const across = (x: number, y: number, cyTop: number): number =>
+    Math.hypot(x - cx, (y - cyTop) / tilt);
   let r = Math.max(fullR * 0.4, room);
-  for (const box of boxes) {
+  for (const box of plotBox ? [] : boxes) {
     if (box.where !== 'out' || !box.placement) continue;
     const { bx, by } = positionOf(box, r);
-    if (Math.hypot(bx - cx, by - cy) < fullR * 0.9) continue;
+    const cyTop = discOf(fullR).cyTop;
+    if (across(bx, by, cyTop) < fullR * 0.9) continue;
     const nx = Math.min(Math.max(cx, bx - box.width / 2), bx + box.width / 2);
-    const ny = Math.min(Math.max(cy, by - box.height / 2), by + box.height / 2);
-    r = Math.max(fullR * 0.4, Math.min(r, Math.hypot(nx - cx, ny - cy) - PIE_LABEL_GAP / 2));
+    const ny = Math.min(Math.max(cyTop, by - box.height / 2), by + box.height / 2);
+    r = Math.max(fullR * 0.4, Math.min(r, across(nx, ny, cyTop) - PIE_LABEL_GAP / 2));
   }
 
+  const d = discOf(r);
   // A doughnut is a pie with a central hole; place its labels out on the ring.
   const holeR = chart.doughnut ? r * 0.5 : 0;
-
-  for (let i = 0; i < values.length; i++) {
-    if ((values[i] ?? 0) <= 0) continue;
-    wedges.push({
-      cx,
-      cy,
-      r,
-      startRad: starts[i]!,
-      sweepRad: sweeps[i]!,
-      fillHex: sliceColor(series, i, chart.seriesColorCycle),
-      strokeHex: 'FFFFFF',
-    });
-  }
-  // Punch the hole: a white disc over the wedge centres (drawn after slices).
-  if (holeR > 0) {
-    wedges.push({ cx, cy, r: holeR, startRad: 0, sweepRad: -2 * Math.PI, fillHex: 'FFFFFF' });
+  const polygons: Array<ChartPolygon> = [];
+  if (disc) {
+    // The edge first, back to front, then every slice's face over it: the
+    // front of the disc shows its depth in each slice's colour, darkened, and
+    // a slice standing out shows its cut sides.
+    const sides: Array<ChartPolygon & { readonly depth: number }> = [];
+    for (let i = 0; i < values.length; i++) {
+      if ((values[i] ?? 0) <= 0) continue;
+      const fill = shadeHex(sliceColor(series, i, chart.seriesColorCycle), 0.7);
+      const a0 = starts[i]!;
+      const a1 = a0 + sweeps[i]!;
+      for (const [from, to] of frontArcs(a1, a0)) {
+        const topArc = arcPoints(from, to, (t) => d.point(i, t, r));
+        const bottom = topArc.map(([x, y]) => [x, y - d.thickness] as const).reverse();
+        sides.push({
+          points: [...topArc, ...bottom],
+          fillHex: fill,
+          strokeHex: fill,
+          widthPt: 0.5,
+          depth: Math.min(...topArc.map(([, y]) => y)),
+        });
+      }
+      if (explosionOfSlice(i) > 0) {
+        const [x0, y0] = d.centre(i);
+        for (const t of [a0, a1]) {
+          const [ex, ey] = d.point(i, t, r);
+          sides.push({
+            points: [
+              [x0, y0],
+              [ex, ey],
+              [ex, ey - d.thickness],
+              [x0, y0 - d.thickness],
+            ],
+            fillHex: fill,
+            strokeHex: fill,
+            widthPt: 0.5,
+            depth: Math.min(y0, ey),
+          });
+        }
+      }
+    }
+    sides.sort((a, b) => b.depth - a.depth);
+    for (const { depth: _depth, ...side } of sides) polygons.push(side);
+    for (let i = 0; i < values.length; i++) {
+      if ((values[i] ?? 0) <= 0) continue;
+      const a0 = starts[i]!;
+      polygons.push({
+        points: [d.centre(i), ...arcPoints(a0, a0 + sweeps[i]!, (t) => d.point(i, t, r))],
+        fillHex: sliceColor(series, i, chart.seriesColorCycle),
+        strokeHex: 'FFFFFF',
+        widthPt: 0.75,
+      });
+    }
+  } else {
+    for (let i = 0; i < values.length; i++) {
+      if ((values[i] ?? 0) <= 0) continue;
+      const [x0, y0] = d.centre(i);
+      wedges.push({
+        cx: x0,
+        cy: y0,
+        r,
+        startRad: starts[i]!,
+        sweepRad: sweeps[i]!,
+        fillHex: sliceColor(series, i, chart.seriesColorCycle),
+        strokeHex: 'FFFFFF',
+      });
+    }
+    // Punch the hole: a white disc over the wedge centres (drawn after slices).
+    if (holeR > 0) {
+      wedges.push({ cx, cy, r: holeR, startRad: 0, sweepRad: -2 * Math.PI, fillHex: 'FFFFFF' });
+    }
   }
 
   const polylines: Array<ChartPolyline> = [];
   const face = faceOf(chart, 'dataLabels');
   const lineH = face.sizePt * 1.2;
   for (const box of boxes) {
-    const cos = Math.cos(box.mid);
-    const sin = Math.sin(box.mid);
     const { bx, by } = positionOf(box, r);
     const moved = box.placement;
     // §21.2.2.181 — a label off its slice is tied back to it, where the chart
-    // asks for leader lines.
-    const off = box.where === 'out' || moved !== undefined;
+    // asks for leader lines; one dragged into the pie stands on its slice, and
+    // takes none (orderOfCNumFmtElements.xlsx's 67%).
+    const off = (box.where === 'out' || moved !== undefined) && across(bx, by, d.cyTop) >= r;
     if (off && chart.dataLabels?.showLeaderLines) {
-      const ex = cx + cos * r;
-      const ey = cy + sin * r;
+      const [ex, ey] = d.point(box.index, box.mid, r);
       const tx = Math.min(Math.max(ex, bx - box.width / 2), bx + box.width / 2);
       const ty = Math.min(Math.max(ey, by - box.height / 2), by + box.height / 2);
       if (Math.hypot(tx - ex, ty - ey) > 3) {
@@ -1987,7 +2099,48 @@ export function buildPieScene(
 
   pushChartTitle(labels, title, wPt, hPt, chart);
   legend.emit(rects, labels);
-  return { rects, polylines, wedges, labels };
+  return { rects, polylines, wedges, labels, ...(polygons.length > 0 ? { polygons } : {}) };
+}
+
+/**
+ * The parts of an arc from `from` to `to` (radians, `from` < `to`) that lie
+ * on the disc's front half — below its centre in the y-up frame, where sin
+ * is negative — each as a [from, to] pair.
+ */
+function frontArcs(from: number, to: number): Array<readonly [number, number]> {
+  const out: Array<readonly [number, number]> = [];
+  // The front half is (π, 2π) modulo 2π; walk the arc's turns.
+  const TAU = 2 * Math.PI;
+  const k0 = Math.floor((from - Math.PI) / TAU) - 1;
+  const k1 = Math.ceil((to - Math.PI) / TAU) + 1;
+  for (let k = k0; k <= k1; k++) {
+    const lo = Math.max(from, Math.PI + k * TAU);
+    const hi = Math.min(to, TAU + k * TAU);
+    if (hi - lo > 1e-6) out.push([lo, hi]);
+  }
+  return out;
+}
+
+/** Points along an arc from `a0` by its sweep to `a1`, one every 3.75°. */
+function arcPoints(
+  a0: number,
+  a1: number,
+  at: (t: number) => readonly [number, number],
+): Array<readonly [number, number]> {
+  const n = Math.max(2, Math.ceil(Math.abs(a1 - a0) / (Math.PI / 48)));
+  const out: Array<readonly [number, number]> = [];
+  for (let k = 0; k <= n; k++) out.push(at(a0 + ((a1 - a0) * k) / n));
+  return out;
+}
+
+/** `hex` with each channel scaled by `f` — a darker shade of it below 1. */
+function shadeHex(hex: string, f: number): string {
+  const n = parseInt(hex, 16);
+  const ch = (shift: number): string =>
+    Math.max(0, Math.min(255, Math.round(((n >> shift) & 255) * f)))
+      .toString(16)
+      .padStart(2, '0');
+  return `${ch(16)}${ch(8)}${ch(0)}`.toUpperCase();
 }
 
 /** The room kept between a pie and a label set outside it. */
@@ -1995,6 +2148,8 @@ const PIE_LABEL_GAP = 6;
 
 /** A slice's label, measured before the pie is sized. */
 interface PieLabelBox {
+  /** The slice's index. */
+  readonly index: number;
   readonly mid: number;
   readonly lines: ReadonlyArray<string>;
   readonly width: number;
@@ -2088,6 +2243,7 @@ function pieLabelBoxes(
       width = widest(lines);
     }
     out.push({
+      index: i,
       mid,
       lines,
       width,

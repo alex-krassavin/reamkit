@@ -219,6 +219,26 @@ export function parseChart(
   const barDir = group ? poVal(poChildren(group).find((c) => poIs(c, 'c:barDir'))) : undefined;
   const grouping = group ? poVal(poChildren(group).find((c) => poIs(c, 'c:grouping'))) : undefined;
   const doughnut = group ? poIs(group, 'c:doughnutChart') : false;
+  // §21.2.2.143/§21.2.2.228 — a 3-D pie is a tilted disc, by its view's
+  // elevation and turn; Excel writes `rotX="30"` for the one it inserts, and
+  // that is its view where the part states none.
+  const view3D = poChildren(chart).find((c) => poIs(c, 'c:view3D'));
+  const viewAngle = (tag: string, fallback: number): number => {
+    const v = Number(poVal(view3D ? poChildren(view3D).find((c) => poIs(c, tag)) : undefined));
+    return Number.isFinite(v) ? v : fallback;
+  };
+  // An absent `c:rotX` is the schema's 0 — the disc seen edge on, as Excel's
+  // own PDF draws a 3-D pie whose view says only its perspective.
+  const pie3D =
+    group && poIs(group, 'c:pie3DChart')
+      ? { rotX: viewAngle('c:rotX', 0), rotY: viewAngle('c:rotY', 0) }
+      : undefined;
+  const plotBox = plotBoxOf(plotArea);
+  const firstSliceRaw =
+    group && (poIs(group, 'c:pieChart') || poIs(group, 'c:doughnutChart'))
+      ? Number(poVal(poChildren(group).find((c) => poIs(c, 'c:firstSliceAng'))))
+      : Number.NaN;
+  const firstSliceAngle = Number.isFinite(firstSliceRaw) ? firstSliceRaw : undefined;
   const showValues = group ? chartShowsValues(group) : false;
   const firstSerNode = group ? poChildren(group).find((c) => poIs(c, 'c:ser')) : undefined;
   const dataLabels = dataLabelsOf(group, firstSerNode);
@@ -373,6 +393,9 @@ export function parseChart(
     ...(barDir === 'col' || barDir === 'bar' ? { barDir } : {}),
     ...(isGrouping(grouping) ? { grouping } : {}),
     ...(doughnut ? { doughnut: true } : {}),
+    ...(pie3D ? { pie3D } : {}),
+    ...(plotBox ? { plotBox } : {}),
+    ...(firstSliceAngle ? { firstSliceAngle } : {}),
     ...(showValues ? { showValues: true } : {}),
     ...(dataLabels ? { dataLabels } : {}),
     ...(catAxisTitle ? { catAxisTitle } : {}),
@@ -429,6 +452,17 @@ function parseSeries(ser: PoNode, resolveColor: ColorResolver, most: number): Ch
   );
   const pointColors = dataPointColors(ser, resolveColor);
   const pointLabels = customDataLabels(ser);
+  const explosion = explosionOf(ser);
+  const pointExplosions = poChildren(ser)
+    .filter((c) => poIs(c, 'c:dPt'))
+    .flatMap((dPt) => {
+      const percent = explosionOf(dPt);
+      const idx = poIntAttr(
+        poChildren(dPt).find((c) => poIs(c, 'c:idx')),
+        'val',
+      );
+      return percent !== undefined && idx !== undefined ? [{ idx, percent }] : [];
+    });
   const pointLabelPlacements = labelPlacements(ser);
   const marker = seriesMarker(ser);
   const line = lineStyleOf(ser, resolveColor);
@@ -444,6 +478,8 @@ function parseSeries(ser: PoNode, resolveColor: ColorResolver, most: number): Ch
     ...(colorHex ? { colorHex } : {}),
     ...(pointColors.length > 0 ? { pointColors } : {}),
     ...(pointLabels.length > 0 ? { pointLabels } : {}),
+    ...(explosion ? { explosion } : {}),
+    ...(pointExplosions.length > 0 ? { pointExplosions } : {}),
     ...(pointLabelPlacements.length > 0 ? { pointLabelPlacements } : {}),
     ...(marker ? { marker } : {}),
     ...(line ? { line } : {}),
@@ -496,6 +532,29 @@ function seriesName(ser: PoNode): string | undefined {
  * its own `<c:tx><c:rich>` replaces whatever the chart would have computed for
  * that point, and it is the only place that text exists.
  */
+/**
+ * §21.2.2.95 — the plot area's box where the author sized it: `edge` mode,
+ * every one of x, y, w and h stated, each a fraction of the chart.
+ */
+function plotBoxOf(plotArea: PoNode): Chart['plotBox'] {
+  const layout = poChildren(plotArea).find((c) => poIs(c, 'c:layout'));
+  const manual = layout ? poChildren(layout).find((c) => poIs(c, 'c:manualLayout')) : undefined;
+  if (!manual) return undefined;
+  const kids = poChildren(manual);
+  const val = (tag: string): string | undefined => poVal(kids.find((c) => poIs(c, tag)));
+  if (val('c:xMode') !== 'edge' || val('c:yMode') !== 'edge') return undefined;
+  const [x, y, w, h] = ['c:x', 'c:y', 'c:w', 'c:h'].map((tag) => Number(val(tag)));
+  if (![x, y, w, h].every((v) => v !== undefined && Number.isFinite(v))) return undefined;
+  if (w! <= 0 || h! <= 0) return undefined;
+  return { x: x!, y: y!, w: w!, h: h! };
+}
+
+/** §21.2.2.62 `c:explosion` — a percentage of the pie's radius, at most 400. */
+function explosionOf(owner: PoNode): number | undefined {
+  const v = Number(poVal(poChildren(owner).find((c) => poIs(c, 'c:explosion'))));
+  return Number.isFinite(v) && v >= 0 ? Math.min(v, 400) : undefined;
+}
+
 function customDataLabels(ser: PoNode): Array<{ idx: number; text: string }> {
   const dLbls = poChildren(ser).find((c) => poIs(c, 'c:dLbls'));
   if (!dLbls) return [];
