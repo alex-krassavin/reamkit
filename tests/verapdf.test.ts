@@ -123,7 +123,9 @@ function translucentDocx(): Uint8Array {
   );
 }
 
-describe.skipIf(!VP)('veraPDF formal conformance', () => {
+// Each check starts a JVM — seconds apiece, more on a busy machine, and one test
+// runs two — so the suite gets more than a test's default five seconds.
+describe.skipIf(!VP)('veraPDF formal conformance', { timeout: 60_000 }, () => {
   it('validates a plain document (with ligatures) as PDF/A-1b', () => {
     const pdf = convertDocxToPdfSync(
       buildDocxFromBody(
