@@ -1810,6 +1810,16 @@ export interface Chart {
    */
   readonly valAxisMajorUnit?: number;
   /**
+   * §21.2.2.226 — a scatter's lying value axis, the x's: the ends and step the
+   * author fixed and its number format, as {@link Chart.valAxisMin},
+   * {@link Chart.valAxisMax}, {@link Chart.valAxisMajorUnit} and
+   * {@link Chart.numberFormat} are its upright one's.
+   */
+  readonly xAxisMin?: number;
+  readonly xAxisMax?: number;
+  readonly xAxisMajorUnit?: number;
+  readonly xNumberFormat?: string;
+  /**
    * §21.2.2.198 `c:chartSpace/c:spPr` — the frame around the whole chart: its
    * background fill and its outline. Excel writes both on every chart it
    * creates, and both references draw them.

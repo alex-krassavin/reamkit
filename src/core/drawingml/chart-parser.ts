@@ -218,8 +218,6 @@ export function parseChart(
   const grouping = group ? poVal(poChildren(group).find((c) => poIs(c, 'c:grouping'))) : undefined;
   const doughnut = group ? poIs(group, 'c:doughnutChart') : false;
   const showValues = group ? chartShowsValues(group) : false;
-  const catAxisTitle = axisTitle(plotArea, 'c:catAx');
-  const valAxisTitle = axisTitle(plotArea, 'c:valAx');
   const catAxNode = poChildren(plotArea).find((c) => poIs(c, 'c:catAx'));
   const valAxNode = poChildren(plotArea).find((c) => poIs(c, 'c:valAx'));
   // §21.2.2.28 `c:axPos` — an axis line and its gridlines are geometry, so bind
@@ -243,9 +241,25 @@ export function parseChart(
     leftAxNode ? poChildren(leftAxNode).find((c) => poIs(c, 'c:majorGridlines')) : undefined,
     resolveColor,
   );
-  const valAxisMin = axisScaling(plotArea, 'c:min');
-  const valAxisMax = axisScaling(plotArea, 'c:max');
-  const valAxisMajorUnit = majorUnitOf(plotArea);
+  // §21.2.2.226 — a scatter has two value axes and no category axis, and which
+  // is which is where each SITS: its upright one is the values', its lying one
+  // the x's. Taken as "the first c:valAx", Excel's own order put the x axis's
+  // ends, step and format on the y axis (DataTableCities.xlsx runs its longitude
+  // −180…180 by 60 in `0"°"`), and its title on the wrong side.
+  const isScatter = type === 'scatter';
+  const catAxisTitle = isScatter ? axisTitleOf(bottomAxNode) : axisTitle(plotArea, 'c:catAx');
+  const valAxisTitle = isScatter ? axisTitleOf(leftAxNode) : axisTitle(plotArea, 'c:valAx');
+  const valAxisMin = isScatter
+    ? axisScalingOf(leftAxNode, 'c:min')
+    : axisScaling(plotArea, 'c:min');
+  const valAxisMax = isScatter
+    ? axisScalingOf(leftAxNode, 'c:max')
+    : axisScaling(plotArea, 'c:max');
+  const valAxisMajorUnit = isScatter ? majorUnitOfAxis(leftAxNode) : majorUnitOf(plotArea);
+  const xAxisMin = isScatter ? axisScalingOf(bottomAxNode, 'c:min') : undefined;
+  const xAxisMax = isScatter ? axisScalingOf(bottomAxNode, 'c:max') : undefined;
+  const xAxisMajorUnit = isScatter ? majorUnitOfAxis(bottomAxNode) : undefined;
+  const xNumberFormat = isScatter ? formatCodeOf(bottomAxNode) : undefined;
   // §21.2.2.134 — the category axis may run the other way, which is how a
   // ranked bar chart puts its first row at the top.
   const catAxisReversed = axisOrientation(catAxNode) === 'maxMin';
@@ -281,7 +295,7 @@ export function parseChart(
       ? frameFillOf(frameLine, resolveColor)
       : undefined
     : 'D9D9D9';
-  const numberFormat = valueFormatCode(plotArea);
+  const numberFormat = isScatter ? formatCodeOf(leftAxNode) : valueFormatCode(plotArea);
 
   const legend = poChildren(chart).find((c) => poIs(c, 'c:legend'));
   const legendPos = legend
@@ -291,7 +305,6 @@ export function parseChart(
   // §21.2.2.216 — the text each part of the chart is set in, when the host
   // asked for it. The labels belong to the axis that DRAWS them: a scatter's
   // horizontal value axis labels as the category axis does elsewhere.
-  const scatter = type === 'scatter';
   const firstSer = serNodes[0];
   const text = textDefaults
     ? chartTextStyles(
@@ -304,13 +317,13 @@ export function parseChart(
           ...withNode('legend', legend),
           ...withNode(
             'catAxis',
-            scatter
+            isScatter
               ? bottomAxNode
               : (catAxNode ?? poChildren(plotArea).find((c) => poIs(c, 'c:dateAx'))),
           ),
           ...withNode(
             'valAxis',
-            scatter
+            isScatter
               ? leftAxNode
               : poChildren(plotArea).find((c) => poIs(c, 'c:valAx') && c !== secondaryValAx),
           ),
@@ -373,6 +386,10 @@ export function parseChart(
     ...(valAxisMin !== undefined ? { valAxisMin } : {}),
     ...(valAxisMax !== undefined ? { valAxisMax } : {}),
     ...(valAxisMajorUnit !== undefined ? { valAxisMajorUnit } : {}),
+    ...(xAxisMin !== undefined ? { xAxisMin } : {}),
+    ...(xAxisMax !== undefined ? { xAxisMax } : {}),
+    ...(xAxisMajorUnit !== undefined ? { xAxisMajorUnit } : {}),
+    ...(xNumberFormat ? { xNumberFormat } : {}),
     ...(frameFillHex ? { frameFillHex } : {}),
     ...(frameFillImage ? { frameFillImage } : {}),
     ...(frameLineHex ? { frameLineHex } : {}),
@@ -651,7 +668,11 @@ function cachedTitleText(title: PoNode): string | undefined {
 // placeholder "Axis Title". 57362.xlsx leaves both of its value axes that way
 // and we drew neither.
 function axisTitle(plotArea: PoNode, axTag: string): string | undefined {
-  const ax = poChildren(plotArea).find((c) => poIs(c, axTag));
+  return axisTitleOf(poChildren(plotArea).find((c) => poIs(c, axTag)));
+}
+
+/** An axis node's own `c:title` text. */
+function axisTitleOf(ax: PoNode | undefined): string | undefined {
   const title = ax ? poChildren(ax).find((c) => poIs(c, 'c:title')) : undefined;
   if (!title) return undefined;
   return collectAT(title) || cachedTitleText(title) || 'Axis Title';
@@ -689,14 +710,23 @@ function axisOrientation(ax: PoNode | undefined): string | undefined {
 
 /** §21.2.2.98 `c:valAx/c:majorUnit` — a positive step, or undefined for "auto". */
 function majorUnitOf(plotArea: PoNode): number | undefined {
-  const ax = poChildren(plotArea).find((c) => poIs(c, 'c:valAx'));
+  return majorUnitOfAxis(poChildren(plotArea).find((c) => poIs(c, 'c:valAx')));
+}
+
+function majorUnitOfAxis(ax: PoNode | undefined): number | undefined {
   const node = ax ? poChildren(ax).find((c) => poIs(c, 'c:majorUnit')) : undefined;
   const v = node ? Number(poAttr(node, 'val')) : Number.NaN;
   return Number.isFinite(v) && v > 0 ? v : undefined;
 }
 
 function axisScaling(plotArea: PoNode, tag: 'c:min' | 'c:max'): number | undefined {
-  const ax = poChildren(plotArea).find((c) => poIs(c, 'c:valAx'));
+  return axisScalingOf(
+    poChildren(plotArea).find((c) => poIs(c, 'c:valAx')),
+    tag,
+  );
+}
+
+function axisScalingOf(ax: PoNode | undefined, tag: 'c:min' | 'c:max'): number | undefined {
   const scaling = ax ? poChildren(ax).find((c) => poIs(c, 'c:scaling')) : undefined;
   const node = scaling ? poChildren(scaling).find((c) => poIs(c, tag)) : undefined;
   const v = node ? Number(poAttr(node, 'val')) : Number.NaN;
@@ -752,7 +782,10 @@ function lineStyleOf(
 }
 
 function valueFormatCode(plotArea: PoNode): string | undefined {
-  const ax = poChildren(plotArea).find((c) => poIs(c, 'c:valAx'));
+  return formatCodeOf(poChildren(plotArea).find((c) => poIs(c, 'c:valAx')));
+}
+
+function formatCodeOf(ax: PoNode | undefined): string | undefined {
   const numFmt = ax ? poChildren(ax).find((c) => poIs(c, 'c:numFmt')) : undefined;
   const code = numFmt ? poAttr(numFmt, 'formatCode') : undefined;
   if (code === undefined || code.trim().length === 0) return undefined;

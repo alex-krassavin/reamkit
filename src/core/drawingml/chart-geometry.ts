@@ -396,6 +396,44 @@ function axisScale(
   );
 }
 
+/** The ends and step an author fixed on one axis, each absent where not. */
+interface AxisFix {
+  readonly min: number | undefined;
+  readonly max: number | undefined;
+  readonly unit: number | undefined;
+}
+
+/**
+ * A scatter axis's {@link Scale}: {@link niceScale}'s where its author fixed
+ * nothing, and where they did, their ends exactly and their step, the ends
+ * they left to the data rounded out to it — never cut into more than
+ * {@link MOST_INTERVALS}, as a frame chart's value axis is not.
+ */
+function scatterScale(lo: number, hi: number, maxIntervals: number, fix: AxisFix): Scale {
+  if (fix.min === undefined && fix.max === undefined && fix.unit === undefined) {
+    return niceScale(lo, hi, maxIntervals);
+  }
+  const auto = niceScale(fix.min ?? lo, fix.max ?? hi, maxIntervals);
+  const step =
+    fix.unit ??
+    (fix.min !== undefined && fix.max !== undefined
+      ? stepFor(fix.min, fix.max, maxIntervals)
+      : auto.step);
+  const scale: Scale = {
+    min: fix.min ?? below(auto.min, step),
+    max: fix.max ?? above(auto.max, step),
+    step,
+  };
+  if (intervalsOf(scale) <= MOST_INTERVALS) return scale;
+  const span = scale.max - scale.min;
+  return {
+    ...scale,
+    step: Number.isFinite(span)
+      ? span / MOST_INTERVALS
+      : scale.max / MOST_INTERVALS - scale.min / MOST_INTERVALS,
+  };
+}
+
 // ─── shared cartesian frame (scale, plot area, axes, gridlines, labels) ──────
 interface CartesianFrame {
   readonly x0: number;
@@ -1087,6 +1125,16 @@ function groupingFrameOpts(chart: Chart, nCats: number): FrameOpts {
 const CHART_FORMAT_ID = 1_000_000;
 const formatterCache = new WeakMap<Chart, ((v: number) => string) | null>();
 
+/**
+ * A tick formatter for a number format code — made per scene and not kept: a
+ * cache by code would grow with every code every document ever named.
+ */
+function formatterOf(code: string | undefined): ((v: number) => string) | undefined {
+  if (code === undefined) return undefined;
+  const formats = new Map([[CHART_FORMAT_ID, code]]);
+  return (v: number) => applyNumberFormat(String(v), CHART_FORMAT_ID, formats);
+}
+
 function chartValueFormatter(chart: Chart): ((v: number) => string) | undefined {
   const hit = formatterCache.get(chart);
   if (hit !== undefined) return hit ?? undefined;
@@ -1434,30 +1482,70 @@ export function buildScatterScene(
   // charts: the x labels sit side by side, so they need more room than the y.
   const [xLo, xHi] = extentOf(xs) ?? [0, 1];
   const [yLo, yHi] = extentOf(ys) ?? [0, 1];
-  const xScale = niceScale(xLo, xHi, intervalsThatFit(wPt, true));
-  const yScale = niceScale(yLo, yHi, intervalsThatFit(hPt, false));
+  // …and each axis takes the ends, step and number format its author fixed
+  // (§21.2.2.157, §21.2.2.98, §21.2.2.121), the lying one its own.
+  const xScale = scatterScale(xLo, xHi, intervalsThatFit(wPt, true), {
+    min: chart.xAxisMin,
+    max: chart.xAxisMax,
+    unit: chart.xAxisMajorUnit,
+  });
+  const yScale = scatterScale(yLo, yHi, intervalsThatFit(hPt, false), {
+    min: chart.valAxisMin,
+    max: chart.valAxisMax,
+    unit: chart.valAxisMajorUnit,
+  });
   const xTicks = ticks(xScale);
   const yTicks = ticks(yScale);
+  const fmtX = formatterOf(chart.xNumberFormat) ?? formatTick;
+  const fmtY = formatterOf(chart.numberFormat) ?? formatTick;
 
   const title = titleLines(chart, wPt, measure);
   const top = 4 + titleHeight(title, chart);
   const legend = buildLegendBlock(chart, wPt, hPt, measure);
   const xFace = faceOf(chart, 'catAxis');
   const yFace = faceOf(chart, 'valAxis');
-  const tickLabelW = Math.max(0, ...yTicks.map((v) => widthIn(measure, formatTick(v), yFace))) + 4;
-  const x0 = 4 + tickLabelW;
-  const y0 = 4 + legend.bottomHeight + xFace.sizePt * 1.6;
+  // The axis titles, as a frame chart sets them: the upright axis's reading
+  // bottom-to-top in the gutter outside its labels, the lying one's centred
+  // under its own.
+  const yTitleFace = faceOf(chart, 'valAxisTitle');
+  const xTitleFace = faceOf(chart, 'catAxisTitle');
+  const tickLabelW = Math.max(0, ...yTicks.map((v) => widthIn(measure, fmtY(v), yFace))) + 4;
+  const x0 = 4 + (chart.valAxisTitle ? yTitleFace.sizePt * 1.5 : 0) + tickLabelW;
+  const y0 =
+    4 +
+    legend.bottomHeight +
+    (chart.catAxisTitle ? xTitleFace.sizePt * 1.5 : 0) +
+    xFace.sizePt * 1.6;
   const plotW = Math.max(1, wPt - 4 - legend.rightWidth - x0);
   const plotH = Math.max(1, hPt - top - y0);
   const xAt = (v: number): number => x0 + fractionOf(v, xScale) * plotW;
   const yAt = (v: number): number => y0 + fractionOf(v, yScale) * plotH;
 
   pushChartTitle(labels, title, wPt, hPt, chart);
+  if (chart.valAxisTitle) {
+    labels.push({
+      text: chart.valAxisTitle,
+      x: 4 + yTitleFace.sizePt * 0.9,
+      y: y0 + plotH / 2,
+      ...yTitleFace,
+      align: 'center',
+      rotationDeg: 90,
+    });
+  }
+  if (chart.catAxisTitle) {
+    labels.push({
+      text: chart.catAxisTitle,
+      x: x0 + plotW / 2,
+      y: legend.bottomHeight + 2,
+      ...xTitleFace,
+      align: 'center',
+    });
+  }
   pushGridTicks(
     gridlines,
     labels,
     yTicks,
-    formatTick,
+    fmtY,
     'y',
     yAt,
     x0,
@@ -1471,7 +1559,7 @@ export function buildScatterScene(
     gridlines,
     labels,
     xTicks,
-    formatTick,
+    fmtX,
     'x',
     xAt,
     x0,
