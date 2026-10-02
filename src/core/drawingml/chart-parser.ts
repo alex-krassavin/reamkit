@@ -220,7 +220,7 @@ export function parseChart(
   const barDir = group ? poVal(poChildren(group).find((c) => poIs(c, 'c:barDir'))) : undefined;
   const grouping = group ? poVal(poChildren(group).find((c) => poIs(c, 'c:grouping'))) : undefined;
   const doughnut = group ? poIs(group, 'c:doughnutChart') : false;
-  // §21.2.2.143/§21.2.2.228 — a 3-D pie is a tilted disc, by its view's
+  // §21.2.2.140/§21.2.2.228 — a 3-D pie is a tilted disc, by its view's
   // elevation and turn; Excel writes `rotX="30"` for the one it inserts, and
   // that is its view where the part states none.
   const view3D = poChildren(chart).find((c) => poIs(c, 'c:view3D'));
@@ -234,8 +234,8 @@ export function parseChart(
     group && poIs(group, 'c:pie3DChart')
       ? { rotX: viewAngle('c:rotX', 0), rotY: viewAngle('c:rotY', 0) }
       : undefined;
-  // §21.2.2.16 — 3-D bars are boxes, seen by the same view; the bars' depth is
-  // the view's (§21.2.2.46, a percentage of a bar's width, 100 unsaid) and the
+  // §21.2.2.15 — 3-D bars are boxes, seen by the same view; the bars' depth is
+  // the view's (§21.2.2.41, a percentage of a bar's width, 100 unsaid) and the
   // room before and behind them the group's (§21.2.2.74, 150 unsaid). An
   // angle unsaid is again 0, which Excel's PDF draws flat: aascu 5864.pptx's
   // view says only that its axes are square.
@@ -252,7 +252,7 @@ export function parseChart(
           gapDepth: Number.isFinite(gapDepthRaw) ? Math.min(500, Math.max(0, gapDepthRaw)) : 150,
         }
       : undefined;
-  // §21.2.2.69/§21.2.2.11/§21.2.2.176 — its floor and walls, as they are filled
+  // §21.2.2.69/§21.2.2.11/§21.2.2.191 — its floor and walls, as they are filled
   // and ruled; tdf128207.docx and LIBRE_OFFICE-100610-0.pptx clear them all.
   const floor = bar3D
     ? surfaceOf(
@@ -283,7 +283,7 @@ export function parseChart(
   const dataLabels = dataLabelsOf(group, firstSerNode);
   const catAxNode = poChildren(plotArea).find((c) => poIs(c, 'c:catAx'));
   const valAxNode = poChildren(plotArea).find((c) => poIs(c, 'c:valAx'));
-  // §21.2.2.28 `c:axPos` — an axis line and its gridlines are geometry, so bind
+  // §21.2.2.10 `c:axPos` — an axis line and its gridlines are geometry, so bind
   // them by WHERE the axis sits and not by which element declared it. A scatter
   // has two `c:valAx` and no `c:catAx` at all: chartTitle_noTitle.xlsx asks for
   // a 0.75pt #BFBFBF rule along the bottom and got the 1pt #595959 we fall back
@@ -597,7 +597,7 @@ function seriesName(ser: PoNode): string | undefined {
  * that point, and it is the only place that text exists.
  */
 /**
- * §21.2.2.95 — the plot area's box where the author sized it: `edge` mode,
+ * §21.2.2.104 — the plot area's box where the author sized it: `edge` mode,
  * every one of x, y, w and h stated, each a fraction of the chart.
  */
 function plotBoxOf(plotArea: PoNode): Chart['plotBox'] {
@@ -619,7 +619,7 @@ function plotBoxOf(plotArea: PoNode): Chart['plotBox'] {
   };
 }
 
-/** §21.2.2.62 `c:explosion` — a percentage of the pie's radius, at most 400. */
+/** §21.2.2.61 `c:explosion` — a percentage of the pie's radius, at most 400. */
 function explosionOf(owner: PoNode): number | undefined {
   const v = Number(poVal(poChildren(owner).find((c) => poIs(c, 'c:explosion'))));
   return Number.isFinite(v) && v >= 0 ? Math.min(v, 400) : undefined;
@@ -844,7 +844,7 @@ function axisOrientation(ax: PoNode | undefined): string | undefined {
   return scaling ? poVal(poChildren(scaling).find((c) => poIs(c, 'c:orientation'))) : undefined;
 }
 
-/** §21.2.2.98 `c:valAx/c:majorUnit` — a positive step, or undefined for "auto". */
+/** §21.2.2.103 `c:valAx/c:majorUnit` — a positive step, or undefined for "auto". */
 function majorUnitOf(plotArea: PoNode): number | undefined {
   return majorUnitOfAxis(poChildren(plotArea).find((c) => poIs(c, 'c:valAx')));
 }

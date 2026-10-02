@@ -1,4 +1,4 @@
-// §21.2.2.16 `c:bar3DChart` — bars drawn as boxes standing in a box of walls,
+// §21.2.2.15 `c:bar3DChart` — bars drawn as boxes standing in a box of walls,
 // as Excel's own PDF of its probe charts draws them (2026-10-02): four views,
 // three depths, stacks, values below zero, deleted axes.
 
@@ -50,7 +50,7 @@ const shaded = (s: ChartScene, hex: string): Array<ChartPolygon> =>
   (s.polygons ?? []).filter((pg) => pg.fillHex === hex);
 const texts = (s: ChartScene): Array<string> => s.labels.map((l) => l.text);
 
-describe('reading a 3-D bar chart (§21.2.2.16)', () => {
+describe('reading a 3-D bar chart (§21.2.2.15)', () => {
   it('reads its view, depth and the room around its bars', () => {
     const chart = parseChart(
       enc.encode(

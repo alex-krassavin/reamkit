@@ -1606,7 +1606,7 @@ export interface ChartSeries {
   readonly colorHex?: string; // c:spPr solidFill
   readonly pointColors?: ReadonlyArray<ChartDataPoint>; // c:dPt overrides (pie slices)
   /**
-   * §21.2.2.62 `c:explosion` — how far a pie's slices stand out from its
+   * §21.2.2.61 `c:explosion` — how far a pie's slices stand out from its
    * centre, as a percentage of its radius: the series' own, and each point's
    * (`c:dPt/c:explosion`) over it.
    */
@@ -1696,7 +1696,7 @@ export interface ChartLineStyle {
   readonly dash?: ShapeDash;
 }
 
-/** A 3-D chart's wall or floor (§21.2.2.11, §21.2.2.69, §21.2.2.176): its fill and rule. */
+/** A 3-D chart's wall or floor (§21.2.2.11, §21.2.2.69, §21.2.2.191): its fill and rule. */
 export interface ChartSurface {
   /** `c:spPr/a:solidFill` — RRGGBB; absent, unfilled. */
   readonly fillHex?: string;
@@ -1766,7 +1766,7 @@ export interface ChartDataLabels {
   readonly numberFormat?: string;
   /** §21.2.2.48 `c:dLblPos` — where the labels stand. */
   readonly position?: ChartLabelPosition;
-  /** §21.2.2.181 `c:showLeaderLines` — a label set off its slice is tied back to it. */
+  /** §21.2.2.183 `c:showLeaderLines` — a label set off its slice is tied back to it. */
   readonly showLeaderLines?: boolean;
 }
 
@@ -1799,13 +1799,13 @@ export interface Chart {
   readonly grouping?: 'clustered' | 'stacked' | 'percentStacked' | 'standard';
   readonly doughnut?: boolean; // c:doughnutChart (a pie with a central hole)
   /**
-   * §21.2.2.143 `c:pie3DChart` with §21.2.2.228 `c:view3D` — a pie drawn as a
+   * §21.2.2.140 `c:pie3DChart` with §21.2.2.228 `c:view3D` — a pie drawn as a
    * tilted disc: `rotX` the elevation in degrees (90 looks straight down),
    * `rotY` how far its first slice is turned clockwise from twelve o'clock.
    */
   readonly pie3D?: { readonly rotX: number; readonly rotY: number };
   /**
-   * §21.2.2.16 `c:bar3DChart` with §21.2.2.228 `c:view3D` — bars drawn as
+   * §21.2.2.15 `c:bar3DChart` with §21.2.2.228 `c:view3D` — bars drawn as
    * boxes standing in a box of walls and a floor, seen at an angle with the
    * axes kept square: `rotX` the elevation and `rotY` the turn in degrees,
    * `depthPercent` a bar's depth as a percentage of its width, `gapDepth` the
@@ -1824,12 +1824,12 @@ export interface Chart {
   readonly floor?: ChartSurface;
   /** §21.2.2.11 `c:backWall` — the wall behind the bars; absent, nothing drawn. */
   readonly backWall?: ChartSurface;
-  /** §21.2.2.176 `c:sideWall` — the wall beside them; absent, nothing drawn. */
+  /** §21.2.2.191 `c:sideWall` — the wall beside them; absent, nothing drawn. */
   readonly sideWall?: ChartSurface;
   /** §21.2.2.68 `c:firstSliceAng` — a flat pie's first slice, degrees clockwise from twelve. */
   readonly firstSliceAngle?: number;
   /**
-   * §21.2.2.95 `c:plotArea/c:layout/c:manualLayout` in `edge` mode — the box
+   * §21.2.2.104 `c:plotArea/c:layout/c:manualLayout` in `edge` mode — the box
    * the author sized the plot to, as fractions of the chart from its top
    * left; a pie is fitted into it whole, keeping its shape.
    */
@@ -1912,7 +1912,7 @@ export interface Chart {
   readonly secondaryValAxisLine?: ChartLineStyle;
   /**
    * §21.2.2.100 `c:majorGridlines` of the value axis (a scatter's upright one)
-   * — its own rule (§21.2.2.87 `c:spPr/a:ln`). An axis without the element
+   * — its own rule (§21.2.2.197 `c:spPr/a:ln`). An axis without the element
    * rules nothing, which reads `{ none: true }`; absent, the default rule.
    */
   readonly gridLine?: ChartLineStyle;
@@ -1934,7 +1934,7 @@ export interface Chart {
   readonly valAxisMin?: number;
   readonly valAxisMax?: number;
   /**
-   * §21.2.2.98 `c:valAx/c:majorUnit` — the step between the value axis's
+   * §21.2.2.103 `c:valAx/c:majorUnit` — the step between the value axis's
    * labels, when the author fixed it. Absent ⇒ the application's own choice.
    */
   readonly valAxisMajorUnit?: number;

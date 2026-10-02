@@ -102,7 +102,7 @@ export interface ChartScene {
    */
   readonly plotBackground?: ChartRect;
   /**
-   * §21.2.2.69/§21.2.2.11/§21.2.2.176 — a 3-D chart's floor and walls, drawn
+   * §21.2.2.69/§21.2.2.11/§21.2.2.191 — a 3-D chart's floor and walls, drawn
    * over the plot's own fill and under its gridlines.
    */
   readonly walls?: ReadonlyArray<ChartPolygon>;
@@ -360,7 +360,7 @@ const ticks = (s: Scale): Array<number> => {
  * {@link niceScale} pads them, where they did not. A fixed end is exact —
  * nice-rounding it would move a number the author chose.
  *
- * The step is the author's (§21.2.2.98 `c:majorUnit`), else the 1-2-5 step
+ * The step is the author's (§21.2.2.103 `c:majorUnit`), else the 1-2-5 step
  * of the span between the ends — with both fixed, of the span they fix:
  * −1E+300…1E+300 runs by 2E+299 in Excel, where padding the ends first
  * stepped it by 5E+299. The automatic ends round out to an author's step
@@ -412,7 +412,7 @@ function axisScale(
 }
 
 /**
- * §21.2.2.95 — the plot's own rectangle where its author sized it (an
+ * §21.2.2.104 — the plot's own rectangle where its author sized it (an
  * `inner` manual layout), in the scene's y-up frame: the axes' labels and
  * titles stand outside it, where the chart sets them.
  */
@@ -491,7 +491,7 @@ interface CartesianFrame {
   readonly plotBackground?: ChartRect;
   readonly labels: Array<ChartLabel>;
   /**
-   * §21.2.2.16 — a 3-D chart's box: the offset from its front plane, which
+   * §21.2.2.15 — a 3-D chart's box: the offset from its front plane, which
    * `x0`…`plotH` are, to its back wall.
    */
   readonly depth?: BoxDepth;
@@ -514,7 +514,7 @@ interface FrameOpts {
   // The range IS the axis — no room added, nothing rounded out (a 100% stack).
   readonly exactRange?: boolean;
   readonly formatValue?: (v: number) => string; // override tick label text (percent axis)
-  /** §21.2.2.16 — the plot is a 3-D box, seen as this says. */
+  /** §21.2.2.15 — the plot is a 3-D box, seen as this says. */
   readonly depth?: FrameDepth;
   /** The value axis runs to the data's ends rounded out, and no further (a 3-D chart's). */
   readonly unpadded?: boolean;
@@ -789,7 +789,7 @@ function boxDepth(
 const FLOOR_RULE: ChartLineStyle = { colorHex: GRID_COLOR, widthPt: 0.75 };
 
 /**
- * §21.2.2.69/§21.2.2.11/§21.2.2.176 — a 3-D box's floor, back wall and side
+ * §21.2.2.69/§21.2.2.11/§21.2.2.191 — a 3-D box's floor, back wall and side
  * wall, as the chart fills and rules them; the floor ruled in light grey
  * unless the chart says otherwise, the walls drawn only as stated. Which wall
  * is which is as Excel's PDF draws them (2026-10-02): columns stand on the
@@ -1080,7 +1080,7 @@ function buildFrame(
       (!horizontal && labelsAt === 'start' ? groupLevels.length * catBand : 0);
   const boxW = own?.plotW ?? Math.max(1, plotRight - boxX0);
   const boxH = own?.plotH ?? Math.max(1, hPt - top - boxY0);
-  // §21.2.2.16 — a 3-D chart's plot is a box reaching back from its front
+  // §21.2.2.15 — a 3-D chart's plot is a box reaching back from its front
   // plane, and the front plane is what its axes measure: the box's depth is
   // taken off it, across and up as the view turns and tilts it.
   const depth = opts.depth ? boxDepth(opts.depth, boxW, boxH, nCats, horizontal) : undefined;
@@ -1567,7 +1567,7 @@ export function buildBarScene(
   const overlap = (chart.overlapPercent ?? 0) / 100;
   const barShare = 1 / (stacked ? 1 + gap : nSer - (nSer - 1) * overlap + gap);
 
-  // §21.2.2.16 — 3-D bars are boxes in a box: each as deep as `depthPercent`
+  // §21.2.2.15 — 3-D bars are boxes in a box: each as deep as `depthPercent`
   // of its width, with `gapDepth` of that before and behind it. A view of no
   // angle at all is drawn flat, as Excel's PDF draws it; its axis, as any 3-D
   // chart's, runs to the data's ends and no further.
@@ -1959,7 +1959,7 @@ export function buildScatterScene(
   const [xLo, xHi] = extentOf(xs) ?? [0, 1];
   const [yLo, yHi] = extentOf(ys) ?? [0, 1];
   // …and each axis takes the ends, step and number format its author fixed
-  // (§21.2.2.157, §21.2.2.98, §21.2.2.121), the lying one its own.
+  // (§21.2.2.157, §21.2.2.103, §21.2.2.121), the lying one its own.
   const xScale = scatterScale(xLo, xHi, intervalsThatFit(wPt, true), {
     min: chart.xAxisMin,
     max: chart.xAxisMax,
@@ -2259,7 +2259,7 @@ export function buildPieScene(
     faceOf(chart, 'legend'),
   );
 
-  // §21.2.2.95 — the box the plot was sized to, where the author sized it,
+  // §21.2.2.104 — the box the plot was sized to, where the author sized it,
   // and the room left by the title and the legend where they did not.
   const plotBox = chart.plotBox;
   const availW = plotBox ? plotBox.w * wPt : Math.max(1, wPt - 8 - legend.rightWidth);
@@ -2269,7 +2269,7 @@ export function buildPieScene(
     ? hPt - (plotBox.y + plotBox.h / 2) * hPt
     : 4 + legend.bottomHeight + availH / 2;
 
-  // §21.2.2.143 — a 3-D pie is a disc tilted to its view's elevation: an
+  // §21.2.2.140 — a 3-D pie is a disc tilted to its view's elevation: an
   // ellipse `tilt` as tall as it is wide, standing `thickness` deep, its
   // front edge showing. A flat pie is the disc seen from straight above.
   const disc = chart.pie3D;
@@ -2279,7 +2279,7 @@ export function buildPieScene(
   // it at 30°, shrinking with the square of the elevation's cosine.
   const tilt = Math.max(Math.sin(elevation), 0.02);
   const thickF = disc ? 0.25 * Math.cos(elevation) ** 2 : 0;
-  // §21.2.2.62 — each slice stands out from the centre by its explosion, and
+  // §21.2.2.61 — each slice stands out from the centre by its explosion, and
   // the pie shrinks so the farthest of them still fits.
   const explosionOfSlice = (i: number): number =>
     (atPoint(series.pointExplosions, i)?.percent ?? series.explosion ?? 0) / 100;
@@ -2368,7 +2368,7 @@ export function buildPieScene(
         : rr * (box.where === 'ctr' ? 0.5 : box.where === 'end' ? 0.75 : 0.6);
       [bx, by] = d.point(i, box.mid, depth);
     }
-    // …or where the author dragged it (§21.2.2.95): its own corner as a
+    // …or where the author dragged it (§21.2.2.104): its own corner as a
     // fraction of the chart, or that far from where the chart would set it.
     const moved = box.placement;
     if (moved?.edge) {
@@ -2518,7 +2518,7 @@ export function buildPieScene(
   }
   for (const { box, bx, by } of placed) {
     const moved = box.placement;
-    // §21.2.2.181 — a label off its slice is tied back to it, where the chart
+    // §21.2.2.183 — a label off its slice is tied back to it, where the chart
     // asks for leader lines; one dragged into the pie stands on its slice, and
     // takes none (orderOfCNumFmtElements.xlsx's 67%).
     const off = (box.where === 'out' || moved !== undefined) && across(bx, by, d.cyTop) >= r;
@@ -2672,7 +2672,7 @@ function pieLabelBoxes(
       sweep >= Math.PI ? fullR * 1.6 : 2 * fullR * 0.6 * Math.sin(Math.min(sweep, Math.PI) / 2);
     let fits = width + 4 <= across && lines.length * lineH <= fullR * 0.7;
     // A label the author dragged moved from where it stood unwrapped: the
-    // offset is from THAT place (§21.2.2.95), outside its slice where it did
+    // offset is from THAT place (§21.2.2.104), outside its slice where it did
     // not fit — orderOfCNumFmtElements.xlsx's 67% slice's label, dragged up
     // and left from past the slice's end, lands inside it.
     const dragged =

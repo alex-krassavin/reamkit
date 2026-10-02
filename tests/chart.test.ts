@@ -565,7 +565,7 @@ describe('parseChart', () => {
     expect(dist(at('Big'))).toBeLessThan(wedge.r);
     expect(dist(at('A rather'))).toBeGreaterThan(wedge.r);
     expect(s.polylines.length).toBe(1);
-    // …and a label its author placed by its own corner (§21.2.2.95, edge)
+    // …and a label its author placed by its own corner (§21.2.2.104, edge)
     // stands there, the chart's fractions of its width and height.
     const placed = scene(
       pie(
@@ -579,7 +579,7 @@ describe('parseChart', () => {
   });
 
   it('draws a 3-D pie as a tilted disc, its front edge darker, as Excel does', () => {
-    // §21.2.2.143/§21.2.2.228 — Excel's PDF of a 3-D pie at rotX 30
+    // §21.2.2.140/§21.2.2.228 — Excel's PDF of a 3-D pie at rotX 30
     // (2026-10-02): an ellipse half as tall as wide, standing 0.17 of its
     // radius deep; with no rotX at all, the disc seen edge on.
     const pie3D = (view: string, extra = ''): string =>
@@ -623,7 +623,7 @@ describe('parseChart', () => {
     ).toEqual({ rotX: 0, rotY: 0 });
   });
 
-  it('fits a pie into the box its author sized the plot to (§21.2.2.95)', () => {
+  it('fits a pie into the box its author sized the plot to (§21.2.2.104)', () => {
     // Excel's PDF: a flat pie in a box 0.4 wide and 0.25 tall is a circle as
     // wide as the box is tall, centred in it.
     const pie = `<c:chartSpace ${C_NS}><c:chart><c:plotArea>
@@ -642,7 +642,7 @@ describe('parseChart', () => {
     expect(wedge.cy).toBeCloseTo(300 - (0.4 + 0.125) * 300, 5);
   });
 
-  it("sets a chart's plot in the inner box its author sized (§21.2.2.95)", () => {
+  it("sets a chart's plot in the inner box its author sized (§21.2.2.104)", () => {
     // aascu 5864.pptx sizes its bar charts' plots to the top of their frames,
     // their legends placed under them; the plot is that box, its labels outside.
     const withBox = BAR_CHART.replace(

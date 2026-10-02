@@ -409,7 +409,7 @@ describe('a value axis the author fixed (§21.2.2.157)', () => {
   });
 });
 
-describe('a step the author fixed (§21.2.2.98)', () => {
+describe('a step the author fixed (§21.2.2.103)', () => {
   /** The value axis's labels, bottom up, of a column chart of `values`. */
   const axisLabels = (
     axis: Partial<Chart>,
