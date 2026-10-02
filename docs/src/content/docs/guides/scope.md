@@ -673,6 +673,18 @@ yourself, or `{ images: 'drop' }` to omit them.
   labels are General in nine characters, as Excel writes them; categories on several
   levels (`c:multiLvlStrCache`) are labelled in rows; a long title wraps; system
   colours (`sysClr`) are read and transformed.
+- **3-D charts in three dimensions.** A 3-D bar or column chart stands as boxes in a
+  box of walls and a floor, seen as its view (`c:view3D`) turns and tilts it: each
+  bar `depthPercent` of its width deep, its top and side shaded as Excel shades
+  them, the gridlines round the walls, the walls and floor filled and ruled as the
+  chart says. A 3-D pie is a tilted disc, its slices standing out by their
+  `c:explosion`. Each rule was measured on Excel's own PDF.
+- **A chart as Excel sets it.** A workbook's chart text is in the theme's face at
+  10pt in its text colour, its titles bold, under the chart's and each element's own
+  `c:txPr`; a pie's data labels say what their switches ask, inside their slices or
+  outside and tied back, as Excel places them; bars are as wide as `gapWidth` and
+  `c:overlap` leave them; gridlines are drawn only where an axis has them, a deleted
+  axis not at all, and a plot its author sized fills that box.
 - OfficeMath — fractions, scripts, radicals, n-ary operators, functions, limits,
   delimiters, matrices, accents; inline and display.
 
