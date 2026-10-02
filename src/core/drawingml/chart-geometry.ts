@@ -1283,9 +1283,16 @@ export function buildBarScene(
   const lineIdx: Array<number> = [];
   chart.series.forEach((s, i) => (isLineLike(s) ? lineIdx : barIdx).push(i));
 
+  // §21.2.2.75 — the gap between slots is a percentage of one bar's width,
+  // whatever the grouping.
+  const gap = (chart.gapPercent ?? 150) / 100;
   if (stacked) {
-    const groupPad = f.slot * 0.15;
-    const barW = f.slot - 2 * groupPad;
+    // A stack is one bar wide: the slot holds it and its gap. A flat 15% of
+    // padding each side made every stack 0.7 of its slot, where Excel's own PDF
+    // gives one of `gapWidth="150"` 0.4 (2026-10-02) — WithChartSheet.xlsx's
+    // stood nearly twice as wide as Calc draws them.
+    const barW = f.slot / (1 + gap);
+    const groupPad = (f.slot - barW) / 2;
     for (let c = 0; c < f.nCats; c++) {
       const along = (horizontal ? f.y0 : f.x0) + c * f.slot + groupPad;
       const denom = percent
@@ -1353,9 +1360,14 @@ export function buildBarScene(
   // leftover from before the gap was read: dataValidationTableRange.xlsx asks
   // for `gapWidth="0"`, where both references draw bars that touch, and ours
   // still showed a white line between every pair.
-  const gap = (chart.gapPercent ?? 150) / 100;
-  const barW = f.slot / (nSer + gap);
-  const groupPad = (f.slot - barW * nSer) / 2;
+  // §21.2.2.131 — and the bars of a cluster lie `overlap` percent of a width
+  // over each other, or apart where it is negative: Excel's PDF of three
+  // series at `overlap="-27"` steps them 1.27 widths apart, each a 5.73rd of
+  // the slot at `gapWidth="219"` (2026-10-02).
+  const overlap = (chart.overlapPercent ?? 0) / 100;
+  const barW = f.slot / (nSer - (nSer - 1) * overlap + gap);
+  const pitch = barW * (1 - overlap);
+  const groupPad = (f.slot - barW - (nSer - 1) * pitch) / 2;
   for (let c = 0; c < f.nCats; c++) {
     const slotStart = (horizontal ? f.y0 : f.x0) + c * f.slot + groupPad;
     for (let b = 0; b < barIdx.length; b++) {
@@ -1363,7 +1375,7 @@ export function buildBarScene(
       const series = chart.series[s]!;
       const len = f.valueOffset(series.values[c] ?? 0) - f.zeroOffset; // signed from zero line
       const color = pointColor(series, c) ?? seriesColor(series, s, chart.seriesColorCycle);
-      const along = slotStart + b * barW;
+      const along = slotStart + b * pitch;
       const outline = barOutline(series);
       if (horizontal) {
         const bx = f.x0 + f.zeroOffset + Math.min(0, len);

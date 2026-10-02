@@ -1825,6 +1825,12 @@ export interface Chart {
    * of the bar width. Absent ⇒ the schema's 150.
    */
   readonly gapPercent?: number;
+  /**
+   * §21.2.2.131 `c:overlap` — how far the bars of one category's cluster lie
+   * over each other, as a percentage of a bar's width: −100 a bar's width
+   * apart … 100 one on the next. Absent ⇒ 0, bars side by side.
+   */
+  readonly overlapPercent?: number;
   readonly catAxisTitle?: string; // c:catAx/c:title
   /**
    * §21.2.2.134 `c:catAx/c:scaling/c:orientation` = `maxMin` — the category

@@ -256,6 +256,18 @@ describe('parseChart', () => {
     expect(text).toMatch(/\[[\d.]+ [\d.]+\] 0 d/); // a dash pattern
   });
 
+  it("reads how far a cluster's bars overlap (§21.2.2.131)", () => {
+    const withOverlap = (val: string): string =>
+      BAR_CHART.replace('<c:axId val="111"/>', `<c:overlap val="${val}"/><c:axId val="111"/>`);
+    const read = (xml: string) => parseChart(enc.encode(xml), defaultColorResolver)!;
+    expect(read(withOverlap('-27')).overlapPercent).toBe(-27);
+    // None, or none to speak of, leaves the bars side by side; past ±100 is ±100.
+    expect(read(BAR_CHART).overlapPercent).toBeUndefined();
+    expect(read(withOverlap('0')).overlapPercent).toBeUndefined();
+    expect(read(withOverlap('250')).overlapPercent).toBe(100);
+    expect(read(withOverlap('x')).overlapPercent).toBeUndefined();
+  });
+
   it('takes a gradient-filled series from its first stop, not from its outline', () => {
     // §20.1.8.33 — a series filled with a gradient still has a colour, and the
     // scene model carries one per series. Falling through to the outline

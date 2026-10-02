@@ -378,12 +378,23 @@ export function parseChart(
     .find((c) => poIs(c, 'c:gapWidth'));
   const gapRaw = gapNode ? poVal(gapNode) : undefined;
   const gapPercent = gapRaw === undefined ? NaN : Number(gapRaw);
+  // §21.2.2.131 — and how far a cluster's bars lie over each other. Excel's
+  // own charts space theirs a quarter of a bar apart (`-27`), which drawn
+  // touching made every bar of chart.docx's clusters a tenth too wide.
+  const overlapNode = poChildren(plotArea)
+    .flatMap((g) => poChildren(g))
+    .find((c) => poIs(c, 'c:overlap'));
+  const overlapRaw = overlapNode ? poVal(overlapNode) : undefined;
+  const overlapPercent = overlapRaw === undefined ? NaN : Number(overlapRaw);
 
   return {
     type,
     ...(title ? { title } : {}),
     ...(text ? { text } : {}),
     ...(Number.isFinite(gapPercent) && gapPercent >= 0 ? { gapPercent } : {}),
+    ...(Number.isFinite(overlapPercent) && overlapPercent !== 0
+      ? { overlapPercent: Math.min(100, Math.max(-100, overlapPercent)) }
+      : {}),
     categories,
     ...(categoriesRef ? { categoriesRef } : {}),
     ...(categoryGroups && categoryGroups.length > 0 ? { categoryGroups } : {}),
