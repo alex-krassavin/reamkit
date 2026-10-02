@@ -1614,6 +1614,19 @@ export interface ChartSeries {
    */
   readonly pointLabels?: ReadonlyArray<{ readonly idx: number; readonly text: string }>;
   /**
+   * §21.2.2.47 `c:dLbl` — where one point's label stands, when the point says:
+   * its own `c:dLblPos`, and the `c:layout/c:manualLayout` it was dragged to —
+   * `x` and `y` fractions of the chart, the label's own top-left corner where
+   * `edge`, else how far it moved from where the chart would set it.
+   */
+  readonly pointLabelPlacements?: ReadonlyArray<{
+    readonly idx: number;
+    readonly position?: ChartLabelPosition;
+    readonly x?: number;
+    readonly y?: number;
+    readonly edge?: boolean;
+  }>;
+  /**
    * §21.2.2.59 `c:val/c:numRef/c:f` and §21.2.2.215 `c:tx/c:strRef/c:f` — where
    * the series reads its numbers and its name FROM, when the chart part carries
    * no cache of them. A chart written without caches is not a chart without
@@ -1711,6 +1724,37 @@ export interface ChartTextStyles {
   readonly dataLabels?: ChartTextStyle;
 }
 
+/** §21.2.2.48 ST_DLblPos — where a data label stands against its point. */
+export type ChartLabelPosition =
+  | 'bestFit'
+  | 'b'
+  | 'ctr'
+  | 'inBase'
+  | 'inEnd'
+  | 'l'
+  | 'outEnd'
+  | 'r'
+  | 't';
+
+/**
+ * §21.2.2.49 `c:dLbls` — what a chart's data labels show and how their parts
+ * are joined: the chart group's switches, the first series' own over them.
+ */
+export interface ChartDataLabels {
+  readonly showVal?: boolean;
+  readonly showCatName?: boolean;
+  readonly showSerName?: boolean;
+  readonly showPercent?: boolean;
+  /** §21.2.2.166 `c:separator` — between the parts; absent, Excel's ", ". */
+  readonly separator?: string;
+  /** `c:dLbls/c:numFmt@formatCode`, when the labels have their own. */
+  readonly numberFormat?: string;
+  /** §21.2.2.48 `c:dLblPos` — where the labels stand. */
+  readonly position?: ChartLabelPosition;
+  /** §21.2.2.181 `c:showLeaderLines` — a label set off its slice is tied back to it. */
+  readonly showLeaderLines?: boolean;
+}
+
 /** A parsed chart (§21.2): its type, title, categories, series and rendering options. */
 export interface Chart {
   readonly type: ChartType;
@@ -1740,6 +1784,11 @@ export interface Chart {
   readonly grouping?: 'clustered' | 'stacked' | 'percentStacked' | 'standard';
   readonly doughnut?: boolean; // c:doughnutChart (a pie with a central hole)
   readonly showValues?: boolean; // c:dLbls/c:showVal — print each datum's value
+  /**
+   * §21.2.2.49 — the data labels' switches, when the chart has a `c:dLbls` at
+   * all. Absent, it labels nothing.
+   */
+  readonly dataLabels?: ChartDataLabels;
   /**
    * §21.2.2.75 `c:gapWidth` — the gap between category slots as a percentage
    * of the bar width. Absent ⇒ the schema's 150.

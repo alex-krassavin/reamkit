@@ -416,9 +416,94 @@ describe('parseChart', () => {
     expect(drawn('<c:dLbls><c:showVal val="1"/></c:dLbls>')).toEqual(
       expect.arrayContaining(['4', '6']),
     );
-    // A chart that asks for no values keeps the share, which is what a pie
-    // with no labels of its own has always been drawn with.
-    expect(drawn('')).toEqual(expect.arrayContaining(['40%', '60%']));
+    // §21.2.2.49 — a pie whose labels show nothing, or that has none, shows
+    // nothing: Excel's PDF of such a pie carries no text at all (2026-10-02).
+    expect(drawn('')).toEqual([]);
+    expect(drawn('<c:dLbls><c:showVal val="0"/><c:showPercent val="0"/></c:dLbls>')).toEqual([]);
+    expect(drawn('<c:dLbls><c:delete val="1"/></c:dLbls>')).toEqual([]);
+  });
+
+  it("labels a pie's slices with what its switches ask for, as Excel does", () => {
+    // Excel's PDF of 10, 20 and 15 (2026-10-02): whole shares that add up to a
+    // hundred — 22%, 45%, 33%, where rounding each reads 44 for the middle
+    // one; the category over the share where the separator is a new line;
+    // the value then the share where it names none.
+    const pie = (dLbls: string): string =>
+      `<c:chartSpace ${C_NS}><c:chart><c:plotArea><c:pieChart>
+      <c:ser><c:idx val="0"/>${dLbls}
+        <c:cat><c:strRef><c:strCache><c:ptCount val="3"/>
+          <c:pt idx="0"><c:v>Alpha</c:v></c:pt><c:pt idx="1"><c:v>Beta</c:v></c:pt><c:pt idx="2"><c:v>Gamma</c:v></c:pt>
+        </c:strCache></c:strRef></c:cat>
+        <c:val><c:numRef><c:numCache><c:ptCount val="3"/>
+          <c:pt idx="0"><c:v>10</c:v></c:pt><c:pt idx="1"><c:v>20</c:v></c:pt><c:pt idx="2"><c:v>15</c:v></c:pt>
+        </c:numCache></c:numRef></c:val>
+      </c:ser></c:pieChart></c:plotArea></c:chart></c:chartSpace>`;
+    const drawn = (dLbls: string): Array<string> =>
+      buildChartScene(
+        parseChart(enc.encode(pie(dLbls)), defaultColorResolver)!,
+        320,
+        240,
+        (t, sz) => t.length * sz * 0.5,
+      )!.labels.map((l) => l.text);
+    expect(drawn('<c:dLbls><c:showPercent val="1"/></c:dLbls>')).toEqual(['22%', '45%', '33%']);
+    expect(
+      drawn(
+        '<c:dLbls><c:showCatName val="1"/><c:showPercent val="1"/><c:separator>\n</c:separator></c:dLbls>',
+      ),
+    ).toEqual(['Alpha', '22%', 'Beta', '45%', 'Gamma', '33%']);
+    expect(drawn('<c:dLbls><c:showVal val="1"/><c:showPercent val="1"/></c:dLbls>')).toEqual([
+      '10, 22%',
+      '20, 45%',
+      '15, 33%',
+    ]);
+    // The labels' own format is the share's where only the share is shown.
+    expect(
+      drawn(
+        '<c:dLbls><c:numFmt formatCode="0.0%" sourceLinked="0"/><c:showPercent val="1"/></c:dLbls>',
+      ),
+    ).toEqual(['22.2%', '44.4%', '33.3%']);
+  });
+
+  it("sets a slice's label inside where it fits and outside, tied back, where it does not", () => {
+    // §21.2.2.48 bestFit, Excel's default: the big slice keeps its name; the
+    // thin one's long name stands past its end with a leader line.
+    const pie = (dLblsExtra: string, dLbl = ''): string =>
+      `<c:chartSpace ${C_NS}><c:chart><c:plotArea><c:pieChart>
+      <c:ser><c:idx val="0"/>
+        <c:dLbls>${dLbl}<c:showCatName val="1"/><c:showLeaderLines val="1"/>${dLblsExtra}</c:dLbls>
+        <c:cat><c:strRef><c:strCache><c:ptCount val="2"/>
+          <c:pt idx="0"><c:v>Big</c:v></c:pt><c:pt idx="1"><c:v>A rather long name for a thin slice</c:v></c:pt>
+        </c:strCache></c:strRef></c:cat>
+        <c:val><c:numRef><c:numCache><c:ptCount val="2"/>
+          <c:pt idx="0"><c:v>95</c:v></c:pt><c:pt idx="1"><c:v>5</c:v></c:pt>
+        </c:numCache></c:numRef></c:val>
+      </c:ser></c:pieChart></c:plotArea></c:chart></c:chartSpace>`;
+    const scene = (xml: string) =>
+      buildChartScene(
+        parseChart(enc.encode(xml), defaultColorResolver)!,
+        400,
+        300,
+        (t, sz) => t.length * sz * 0.5,
+      )!;
+    const s = scene(pie(''));
+    const wedge = s.wedges[0]!;
+    const at = (text: string) => s.labels.find((l) => l.text.startsWith(text))!;
+    const dist = (l: { x: number; y: number }): number =>
+      Math.hypot(l.x - wedge.cx, l.y - wedge.cy);
+    expect(dist(at('Big'))).toBeLessThan(wedge.r);
+    expect(dist(at('A rather'))).toBeGreaterThan(wedge.r);
+    expect(s.polylines.length).toBe(1);
+    // …and a label its author placed by its own corner (§21.2.2.95, edge)
+    // stands there, the chart's fractions of its width and height.
+    const placed = scene(
+      pie(
+        '',
+        '<c:dLbl><c:idx val="1"/><c:layout><c:manualLayout><c:xMode val="edge"/><c:yMode val="edge"/>' +
+          '<c:x val="0.05"/><c:y val="0.1"/></c:manualLayout></c:layout><c:showCatName val="1"/></c:dLbl>',
+      ),
+    );
+    const moved = placed.labels.find((l) => l.text.startsWith('A rather'))!;
+    expect(moved.y).toBeGreaterThan(300 * 0.75);
   });
 
   it('flags a doughnut chart (renders as a pie with a hole)', () => {

@@ -9,7 +9,9 @@ import { XMLParser } from 'fast-xml-parser';
 
 import type {
   Chart,
+  ChartDataLabels,
   ChartDataPoint,
+  ChartLabelPosition,
   ChartLineStyle,
   ChartMarker,
   ChartMarkerSymbol,
@@ -218,6 +220,8 @@ export function parseChart(
   const grouping = group ? poVal(poChildren(group).find((c) => poIs(c, 'c:grouping'))) : undefined;
   const doughnut = group ? poIs(group, 'c:doughnutChart') : false;
   const showValues = group ? chartShowsValues(group) : false;
+  const firstSerNode = group ? poChildren(group).find((c) => poIs(c, 'c:ser')) : undefined;
+  const dataLabels = dataLabelsOf(group, firstSerNode);
   const catAxNode = poChildren(plotArea).find((c) => poIs(c, 'c:catAx'));
   const valAxNode = poChildren(plotArea).find((c) => poIs(c, 'c:valAx'));
   // §21.2.2.28 `c:axPos` — an axis line and its gridlines are geometry, so bind
@@ -370,6 +374,7 @@ export function parseChart(
     ...(isGrouping(grouping) ? { grouping } : {}),
     ...(doughnut ? { doughnut: true } : {}),
     ...(showValues ? { showValues: true } : {}),
+    ...(dataLabels ? { dataLabels } : {}),
     ...(catAxisTitle ? { catAxisTitle } : {}),
     ...(catAxisReversed ? { catAxisReversed } : {}),
     ...(catAxisCrosses !== undefined ? { catAxisCrosses } : {}),
@@ -424,6 +429,7 @@ function parseSeries(ser: PoNode, resolveColor: ColorResolver, most: number): Ch
   );
   const pointColors = dataPointColors(ser, resolveColor);
   const pointLabels = customDataLabels(ser);
+  const pointLabelPlacements = labelPlacements(ser);
   const marker = seriesMarker(ser);
   const line = lineStyleOf(ser, resolveColor);
   // Keep the references so the reader can resolve them when nothing is cached.
@@ -438,6 +444,7 @@ function parseSeries(ser: PoNode, resolveColor: ColorResolver, most: number): Ch
     ...(colorHex ? { colorHex } : {}),
     ...(pointColors.length > 0 ? { pointColors } : {}),
     ...(pointLabels.length > 0 ? { pointLabels } : {}),
+    ...(pointLabelPlacements.length > 0 ? { pointLabelPlacements } : {}),
     ...(marker ? { marker } : {}),
     ...(line ? { line } : {}),
   };
@@ -797,6 +804,116 @@ function dLblsShowVal(dLbls: PoNode | undefined): boolean {
   if (!dLbls) return false;
   const v = poVal(poChildren(dLbls).find((c) => poIs(c, 'c:showVal')));
   return v === '1' || v === 'true';
+}
+
+/**
+ * §21.2.2.49 — what a chart's data labels show: its group's `c:dLbls` with the
+ * first series' own over it. `c:delete` shows nothing; a chart with no
+ * `c:dLbls` anywhere has no labels, which is not a chart that shows its
+ * percentages — Excel prints nothing on such a pie.
+ *
+ * @param group     The chart group (`c:pieChart`, …).
+ * @param firstSer  Its first series.
+ * @returns The switches, or undefined for a chart without data labels.
+ */
+function dataLabelsOf(
+  group: PoNode | undefined,
+  firstSer: PoNode | undefined,
+): ChartDataLabels | undefined {
+  const own = (owner: PoNode | undefined): PoNode | undefined =>
+    owner ? poChildren(owner).find((c) => poIs(c, 'c:dLbls')) : undefined;
+  const groupLabels = own(group);
+  const seriesLabels = own(firstSer);
+  if (!groupLabels && !seriesLabels) return undefined;
+  const read = (dLbls: PoNode | undefined): ChartDataLabels => {
+    if (!dLbls) return {};
+    const kids = poChildren(dLbls);
+    const deleted = poVal(kids.find((c) => poIs(c, 'c:delete')));
+    if (deleted === '1' || deleted === 'true') {
+      return { showVal: false, showCatName: false, showSerName: false, showPercent: false };
+    }
+    const flag = (tag: string): Partial<Record<string, boolean>> => {
+      const v = poVal(kids.find((c) => poIs(c, tag)));
+      return v === undefined ? {} : { [tag.slice(2)]: v === '1' || v === 'true' };
+    };
+    const separatorNode = kids.find((c) => poIs(c, 'c:separator'));
+    const numFmt = kids.find((c) => poIs(c, 'c:numFmt'));
+    const code = numFmt ? poAttr(numFmt, 'formatCode') : undefined;
+    const linked = numFmt ? poAttr(numFmt, 'sourceLinked') : undefined;
+    const position = labelPosition(kids);
+    return {
+      ...flag('c:showVal'),
+      ...flag('c:showCatName'),
+      ...flag('c:showSerName'),
+      ...flag('c:showPercent'),
+      ...flag('c:showLeaderLines'),
+      ...(position ? { position } : {}),
+      ...(separatorNode ? { separator: poText(separatorNode) } : {}),
+      ...(code && code.trim() !== '' && code.trim().toLowerCase() !== 'general' && linked !== '1'
+        ? { numberFormat: code }
+        : {}),
+    };
+  };
+  return { ...read(groupLabels), ...read(seriesLabels) };
+}
+
+const LABEL_POSITIONS: ReadonlySet<string> = new Set([
+  'bestFit',
+  'b',
+  'ctr',
+  'inBase',
+  'inEnd',
+  'l',
+  'outEnd',
+  'r',
+  't',
+]);
+
+/** §21.2.2.48 — a label's `c:dLblPos` among its siblings, when it states one. */
+function labelPosition(kids: ReadonlyArray<PoNode>): ChartLabelPosition | undefined {
+  const v = poVal(kids.find((c) => poIs(c, 'c:dLblPos')));
+  return v !== undefined && LABEL_POSITIONS.has(v) ? (v as ChartLabelPosition) : undefined;
+}
+
+/**
+ * §21.2.2.47 — where each point's own label stands, for the points that say:
+ * their `c:dLblPos`, and the `c:manualLayout` an author dragged them to
+ * (45544.xlsx sets every one of its slices' names out by hand).
+ */
+function labelPlacements(ser: PoNode): NonNullable<ChartSeries['pointLabelPlacements']> {
+  const dLbls = poChildren(ser).find((c) => poIs(c, 'c:dLbls'));
+  if (!dLbls) return [];
+  const out: Array<NonNullable<ChartSeries['pointLabelPlacements']>[number]> = [];
+  for (const dLbl of poChildren(dLbls)) {
+    if (!poIs(dLbl, 'c:dLbl')) continue;
+    const kids = poChildren(dLbl);
+    const idx =
+      poIntAttr(
+        kids.find((c) => poIs(c, 'c:idx')),
+        'val',
+      ) ?? 0;
+    const position = labelPosition(kids);
+    const layout = kids.find((c) => poIs(c, 'c:layout'));
+    const manual = layout ? poChildren(layout).find((c) => poIs(c, 'c:manualLayout')) : undefined;
+    const num = (tag: string): number | undefined => {
+      const v = Number(poVal(manual ? poChildren(manual).find((c) => poIs(c, tag)) : undefined));
+      return Number.isFinite(v) ? v : undefined;
+    };
+    const x = num('c:x');
+    const y = num('c:y');
+    const mode = (tag: string): string | undefined =>
+      poVal(manual ? poChildren(manual).find((c) => poIs(c, tag)) : undefined);
+    const edge = mode('c:xMode') === 'edge' && mode('c:yMode') === 'edge';
+    if (position === undefined && x === undefined && y === undefined) continue;
+    out.push({
+      idx,
+      ...(position ? { position } : {}),
+      ...(x !== undefined ? { x } : {}),
+      ...(y !== undefined ? { y } : {}),
+      ...(edge ? { edge: true } : {}),
+    });
+  }
+  return out;
 }
 
 function chartShowsValues(group: PoNode): boolean {

@@ -1150,6 +1150,65 @@ function chartValueFormatter(chart: Chart): ((v: number) => string) | undefined 
   return made ?? undefined;
 }
 
+/**
+ * Whole percentages that add up to a hundred, as Excel labels a pie's slices:
+ * each share's floor, and the points still missing given to the slices with
+ * the largest remainders — 10, 20 and 15 of 45 read 22%, 45% and 33% in
+ * Excel's PDF, where rounding each one reads 22, 44 and 33.
+ *
+ * @param values The slices' values, a slice that is not positive drawing none.
+ * @param total  Their sum.
+ * @returns Each slice's whole percentage.
+ */
+function wholePercents(values: ReadonlyArray<number>, total: number): Array<number> {
+  const exact = values.map((v) => (v > 0 && total > 0 ? (v / total) * 100 : 0));
+  const out = exact.map((e) => Math.floor(e));
+  let missing = 100 - out.reduce((a, b) => a + b, 0);
+  const byRemainder = exact
+    .map((e, i) => ({ i, rest: e - (out[i] ?? 0) }))
+    .filter(({ i }) => (values[i] ?? 0) > 0)
+    .sort((a, b) => b.rest - a.rest || a.i - b.i);
+  for (const { i } of byRemainder) {
+    if (missing <= 0) break;
+    out[i] = (out[i] ?? 0) + 1;
+    missing--;
+  }
+  return out;
+}
+
+/**
+ * §21.2.2.49 — the text a slice's data label shows: the parts the chart's
+ * switches turn on, in Excel's order — series name, category name, value,
+ * percentage — joined by its separator, ", " where it states none. The
+ * labels' own number format is the value's where the value is shown, and the
+ * percentage's where only that is; a percentage is otherwise whole.
+ * LIBRE_OFFICE-100610-0.pptx's five pies show the 4, 6, 3 and 6 they ask for,
+ * 45540_classic_Footer.xlsx its functions' names over their shares, and a pie
+ * whose labels show nothing — or that has none — shows nothing, as Excel's.
+ *
+ * @returns The label, or undefined when the chart labels nothing.
+ */
+function sliceLabel(
+  chart: Chart,
+  series: ChartSeries,
+  i: number,
+  v: number,
+  total: number,
+  percent: number,
+): string | undefined {
+  const dl = chart.dataLabels;
+  if (!dl) return undefined;
+  const own = formatterOf(dl.numberFormat);
+  const parts: Array<string> = [];
+  if (dl.showSerName) parts.push(series.name ?? legendSeriesName(series, 0));
+  if (dl.showCatName) parts.push(chart.categories[i] ?? String(i + 1));
+  if (dl.showVal) parts.push(own ? own(v) : fmtDataLabel(chart, v));
+  if (dl.showPercent) {
+    parts.push(own && !dl.showVal ? own(v / total) : `${String(percent)}%`);
+  }
+  return parts.length > 0 ? parts.join(dl.separator ?? ', ') : undefined;
+}
+
 // ─── bar / column chart (clustered, stacked, percentStacked) ────────────────
 /**
  * Lay out a bar/column {@link Chart} into a {@link ChartScene}. Honours
@@ -1775,66 +1834,296 @@ export function buildPieScene(
 
   const availW = Math.max(1, wPt - 8 - legend.rightWidth);
   const availH = Math.max(1, hPt - top - 4 - legend.bottomHeight);
-  const r = Math.max(1, (Math.min(availW, availH) / 2) * 0.95);
   const cx = 4 + availW / 2;
   const cy = 4 + legend.bottomHeight + availH / 2;
+  const fullR = Math.max(1, (Math.min(availW, availH) / 2) * 0.95);
+
+  // Excel pies start at 12 o'clock and sweep clockwise (negative in y-up).
+  const sweeps = values.map((v) => (v > 0 ? -(v / total) * 2 * Math.PI : 0));
+  const starts: Array<number> = [];
+  let ang = Math.PI / 2;
+  for (const sweep of sweeps) {
+    starts.push(ang);
+    ang += sweep;
+  }
+
+  // The labels first: what they say, where they stand and how much room they
+  // take — a label set outside the pie takes its room from the pie's radius.
+  const boxes = pieLabelBoxes(chart, series, values, total, sweeps, starts, fullR, wPt, measure);
+  // Each label set outside takes its room on its own side: a label beside the
+  // pie its width, one over or under it its height — the radius is what the
+  // tightest of them leaves. A label the author placed stands where they put
+  // it, and takes none.
+  let room = fullR;
+  for (const b of boxes) {
+    if (b.where !== 'out' || b.placement) continue;
+    const c = Math.abs(Math.cos(b.mid));
+    const sn = Math.abs(Math.sin(b.mid));
+    if (c > 0.05) room = Math.min(room, (availW / 2 - PIE_LABEL_GAP - b.width) / c);
+    if (sn > 0.05) room = Math.min(room, (availH / 2 - PIE_LABEL_GAP - b.height) / sn);
+  }
+  // Where each label stands for a pie of radius `rr` (the chart's place for
+  // it, or the author's), kept inside the chart. A label the author placed is
+  // placed in the chart's frame — from where it stood round the full pie — and
+  // stays there however far the pie then gives way.
+  const positionOf = (box: PieLabelBox, pieR: number): { bx: number; by: number } => {
+    const rr = box.placement ? fullR : pieR;
+    const cos = Math.cos(box.mid);
+    const sin = Math.sin(box.mid);
+    // Where the chart would set it: on the ring of a doughnut, inside a
+    // slice at the depth its position asks for, or past the slice's end,
+    // leaning away from the pie on its own side.
+    let bx: number;
+    let by: number;
+    if (box.where === 'out') {
+      const px = cx + cos * (rr + PIE_LABEL_GAP);
+      const py = cy + sin * (rr + PIE_LABEL_GAP);
+      bx = px + (cos >= 0 ? box.width / 2 : -box.width / 2);
+      by = py + (sin * box.height) / 2;
+    } else {
+      const depth = chart.doughnut
+        ? (rr * 0.5 + rr) / 2
+        : rr * (box.where === 'ctr' ? 0.5 : box.where === 'end' ? 0.75 : 0.6);
+      bx = cx + cos * depth;
+      by = cy + sin * depth;
+    }
+    // …or where the author dragged it (§21.2.2.95): its own corner as a
+    // fraction of the chart, or that far from where the chart would set it.
+    const moved = box.placement;
+    if (moved?.edge) {
+      if (moved.x !== undefined) bx = moved.x * wPt + box.width / 2;
+      if (moved.y !== undefined) by = hPt - moved.y * hPt - box.height / 2;
+    } else if (moved) {
+      bx += (moved.x ?? 0) * wPt;
+      by -= (moved.y ?? 0) * hPt;
+    }
+    return {
+      bx: Math.min(Math.max(bx, box.width / 2 + 2), wPt - box.width / 2 - 2),
+      by: Math.min(Math.max(by, box.height / 2 + 2), hPt - box.height / 2 - 2),
+    };
+  };
+  // …and no label meant to stand outside the pie lies over it: the pie gives
+  // way to the labels set round it. 45544.xlsx's names stand where its author
+  // dragged them round Excel's 3-D pie, an ellipse well inside the frame; a
+  // label dragged INTO its slice is meant there, and is not in the way.
+  let r = Math.max(fullR * 0.4, room);
+  for (const box of boxes) {
+    if (box.where !== 'out' || !box.placement) continue;
+    const { bx, by } = positionOf(box, r);
+    if (Math.hypot(bx - cx, by - cy) < fullR * 0.9) continue;
+    const nx = Math.min(Math.max(cx, bx - box.width / 2), bx + box.width / 2);
+    const ny = Math.min(Math.max(cy, by - box.height / 2), by + box.height / 2);
+    r = Math.max(fullR * 0.4, Math.min(r, Math.hypot(nx - cx, ny - cy) - PIE_LABEL_GAP / 2));
+  }
 
   // A doughnut is a pie with a central hole; place its labels out on the ring.
   const holeR = chart.doughnut ? r * 0.5 : 0;
-  const labelR = chart.doughnut ? (holeR + r) / 2 : r * 0.6;
 
-  // Excel pies start at 12 o'clock and sweep clockwise (negative in y-up).
-  let ang = Math.PI / 2;
   for (let i = 0; i < values.length; i++) {
-    const v = values[i]!;
-    if (v <= 0) continue;
-    const sweep = -(v / total) * 2 * Math.PI;
+    if ((values[i] ?? 0) <= 0) continue;
     wedges.push({
       cx,
       cy,
       r,
-      startRad: ang,
-      sweepRad: sweep,
+      startRad: starts[i]!,
+      sweepRad: sweeps[i]!,
       fillHex: sliceColor(series, i, chart.seriesColorCycle),
       strokeHex: 'FFFFFF',
     });
-    const mid = ang + sweep / 2;
-    const pct = Math.round((v / total) * 100);
-    // §21.2.2.223 `c:showVal` — a pie labels its slices with the NUMBERS when
-    // the chart asks for them, and with their share of the whole otherwise.
-    // Always a share, LIBRE_OFFICE-100610-0.pptx's five pies read 21/32/16/32%
-    // where every reader prints the 4, 6, 3 and 6 the file says to show.
-    const own = chart.showValues ? fmtDataLabel(chart, v) : `${pct}%`;
-    // A label the author typed wins over the one we would compute — see
-    // ChartSeries.pointLabels. It is drawn whatever the slice's size, because
-    // the author put it there on purpose.
-    const custom = atPoint(series.pointLabels, i)?.text;
-    if (custom !== undefined || chart.showValues || pct >= 5) {
-      // The chart's own colour where the reader resolved it; else white on the
-      // slice and grey on a ring or for a label the author typed.
-      const face = faceOf(chart, 'dataLabels');
-      labels.push({
-        text: custom ?? own,
-        x: cx + Math.cos(mid) * labelR,
-        y: cy + Math.sin(mid) * labelR - face.sizePt / 3,
-        ...face,
-        colorHex:
-          custom !== undefined || chart.doughnut || chart.text?.dataLabels?.colorHex
-            ? face.colorHex
-            : 'FFFFFF',
-        align: 'center',
-      });
-    }
-    ang += sweep;
   }
   // Punch the hole: a white disc over the wedge centres (drawn after slices).
   if (holeR > 0) {
     wedges.push({ cx, cy, r: holeR, startRad: 0, sweepRad: -2 * Math.PI, fillHex: 'FFFFFF' });
   }
 
+  const polylines: Array<ChartPolyline> = [];
+  const face = faceOf(chart, 'dataLabels');
+  const lineH = face.sizePt * 1.2;
+  for (const box of boxes) {
+    const cos = Math.cos(box.mid);
+    const sin = Math.sin(box.mid);
+    const { bx, by } = positionOf(box, r);
+    const moved = box.placement;
+    // §21.2.2.181 — a label off its slice is tied back to it, where the chart
+    // asks for leader lines.
+    const off = box.where === 'out' || moved !== undefined;
+    if (off && chart.dataLabels?.showLeaderLines) {
+      const ex = cx + cos * r;
+      const ey = cy + sin * r;
+      const tx = Math.min(Math.max(ex, bx - box.width / 2), bx + box.width / 2);
+      const ty = Math.min(Math.max(ey, by - box.height / 2), by + box.height / 2);
+      if (Math.hypot(tx - ex, ty - ey) > 3) {
+        polylines.push({
+          points: [
+            [ex, ey],
+            [tx, ty],
+          ],
+          strokeHex: LABEL_COLOR,
+          widthPt: 0.75,
+        });
+      }
+    }
+    // White on the slice where the reader resolved no colour; the chart's own
+    // colour off it, on a ring, or for a label the author typed.
+    const colorHex =
+      box.where === 'out' ||
+      moved !== undefined ||
+      box.custom ||
+      chart.doughnut ||
+      chart.text?.dataLabels?.colorHex
+        ? face.colorHex
+        : 'FFFFFF';
+    box.lines.forEach((line, k) => {
+      labels.push({
+        text: line,
+        x: bx,
+        y: by - face.sizePt / 3 + ((box.lines.length - 1) / 2 - k) * lineH,
+        ...face,
+        colorHex,
+        align: 'center',
+      });
+    });
+  }
+
   pushChartTitle(labels, title, wPt, hPt, chart);
   legend.emit(rects, labels);
-  return { rects, polylines: [], wedges, labels };
+  return { rects, polylines, wedges, labels };
+}
+
+/** The room kept between a pie and a label set outside it. */
+const PIE_LABEL_GAP = 6;
+
+/** A slice's label, measured before the pie is sized. */
+interface PieLabelBox {
+  readonly mid: number;
+  readonly lines: ReadonlyArray<string>;
+  readonly width: number;
+  readonly height: number;
+  /** Inside the slice — at its middle, its centre or its end — or outside it. */
+  readonly where: 'in' | 'ctr' | 'end' | 'out';
+  readonly placement?: { readonly x?: number; readonly y?: number; readonly edge?: boolean };
+  readonly custom: boolean;
+}
+
+/**
+ * §21.2.2.48 — each slice's label, measured and placed: inside where the
+ * position asks for it, outside for `outEnd`, and for `bestFit`, Excel's
+ * default, inside where it fits across the slice and outside where it does
+ * not — wrapped at its spaces to under a third of the chart's width, as
+ * 45544.xlsx's function names stand beside their slices.
+ */
+function pieLabelBoxes(
+  chart: Chart,
+  series: ChartSeries,
+  values: ReadonlyArray<number>,
+  total: number,
+  sweeps: ReadonlyArray<number>,
+  starts: ReadonlyArray<number>,
+  fullR: number,
+  wPt: number,
+  measure: MeasureText,
+): Array<PieLabelBox> {
+  const face = faceOf(chart, 'dataLabels');
+  const lineH = face.sizePt * 1.2;
+  const percents = wholePercents(values, total);
+  const widest = (lines: ReadonlyArray<string>): number =>
+    lines.reduce((m, l) => Math.max(m, widthIn(measure, l, face)), 0);
+  const out: Array<PieLabelBox> = [];
+  for (let i = 0; i < values.length; i++) {
+    const v = values[i] ?? 0;
+    if (v <= 0) continue;
+    // A label the author typed wins over the one we would compute — see
+    // ChartSeries.pointLabels — and the one we compute says what the chart's
+    // switches ask for (sliceLabel), or nothing at all.
+    const custom = atPoint(series.pointLabels, i)?.text;
+    const text = custom ?? sliceLabel(chart, series, i, v, total, percents[i] ?? 0);
+    if (text === undefined || text.length === 0) continue;
+    const placement = atPoint(series.pointLabelPlacements, i);
+    const position = placement?.position ?? chart.dataLabels?.position ?? 'bestFit';
+    const sweep = Math.abs(sweeps[i] ?? 0);
+    const mid = (starts[i] ?? 0) - sweep / 2;
+    // A separator may break the label into lines (`c:separator` "\n").
+    let lines = text.split('\n');
+    let width = widest(lines);
+    // The room across the slice where its label stands — and across most of
+    // the pie for a slice that is more than half of it: orderOfCNumFmtElements
+    // .xlsx sets its 79% slice's "110кВ; 26,7млрд.кВтч; 79,2%" on one line.
+    const across =
+      sweep >= Math.PI ? fullR * 1.6 : 2 * fullR * 0.6 * Math.sin(Math.min(sweep, Math.PI) / 2);
+    let fits = width + 4 <= across && lines.length * lineH <= fullR * 0.7;
+    // A label the author dragged moved from where it stood unwrapped: the
+    // offset is from THAT place (§21.2.2.95), outside its slice where it did
+    // not fit — orderOfCNumFmtElements.xlsx's 67% slice's label, dragged up
+    // and left from past the slice's end, lands inside it.
+    const dragged =
+      placement !== undefined &&
+      !placement.edge &&
+      (placement.x !== undefined || placement.y !== undefined);
+    if (!fits && position === 'bestFit' && !dragged) {
+      // …wrapped first, as Excel fits a label into its slice before it sets it
+      // outside: orderOfCNumFmtElements.xlsx's 67% slice holds its whole
+      // "Промышленные потребители; 22,7млрд.кВтч; 67,3%" in four lines.
+      const wrapped = lines.flatMap((line) =>
+        wrapAtSpaces(line, Math.min(across * 0.9, wPt * 0.3), (t) => widthIn(measure, t, face)),
+      );
+      const wrappedWidth = widest(wrapped);
+      if (wrappedWidth + 4 <= across && wrapped.length * lineH <= fullR * 0.7) {
+        lines = wrapped;
+        width = wrappedWidth;
+        fits = true;
+      }
+    }
+    const where: PieLabelBox['where'] = chart.doughnut
+      ? 'in'
+      : position === 'outEnd' || (position === 'bestFit' && !fits)
+        ? 'out'
+        : position === 'ctr' || position === 'inBase'
+          ? 'ctr'
+          : position === 'inEnd'
+            ? 'end'
+            : 'in';
+    if (where === 'out') {
+      const room = Math.max(40, wPt * 0.3);
+      lines = lines.flatMap((line) => wrapAtSpaces(line, room, (t) => widthIn(measure, t, face)));
+      width = widest(lines);
+    }
+    out.push({
+      mid,
+      lines,
+      width,
+      height: lines.length * lineH,
+      where,
+      ...(placement && (placement.x !== undefined || placement.y !== undefined)
+        ? {
+            placement: {
+              ...(placement.x !== undefined ? { x: placement.x } : {}),
+              ...(placement.y !== undefined ? { y: placement.y } : {}),
+              ...(placement.edge ? { edge: true } : {}),
+            },
+          }
+        : {}),
+      custom: custom !== undefined,
+    });
+  }
+  return out;
+}
+
+/** A line broken at its spaces into lines no wider than `room` where a break allows. */
+function wrapAtSpaces(line: string, room: number, width: (t: string) => number): Array<string> {
+  const words = line.split(' ');
+  const out: Array<string> = [];
+  let cur = '';
+  for (const word of words) {
+    const longer = cur ? `${cur} ${word}` : word;
+    if (cur && width(longer) > room) {
+      out.push(cur);
+      cur = word;
+    } else {
+      cur = longer;
+    }
+  }
+  out.push(cur);
+  return out;
 }
 
 function pointColor(series: ChartSeries, idx: number): string | undefined {
@@ -2007,6 +2296,11 @@ function withReversedCategories(chart: Chart): Chart {
         : {}),
       ...(s.pointLabels
         ? { pointLabels: s.pointLabels.map((p) => ({ ...p, idx: flip(p.idx) })) }
+        : {}),
+      ...(s.pointLabelPlacements
+        ? {
+            pointLabelPlacements: s.pointLabelPlacements.map((p) => ({ ...p, idx: flip(p.idx) })),
+          }
         : {}),
     })),
   };
