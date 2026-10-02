@@ -7,6 +7,8 @@
 
 import type { Chart, DocumentInfo, ShapeBlock } from '@/core/document-model';
 import type { CoreProperties, Relationship } from '@/core/opc';
+import type { ChartTextDefaults } from '@/core/drawingml/chart-text';
+import type { ThemeFonts } from '@/core/drawingml/theme-parser';
 import type { PoNode } from '@/core/po-helpers';
 import type { DocumentReader, ReadResult } from '@/core/ir/adapters';
 import type { FlowDoc } from '@/core/ir/flow';
@@ -54,6 +56,7 @@ import {
   parseTheme,
   parseThemeEffectStyles,
   parseThemeFillStyles,
+  parseThemeFonts,
   parseThemeLineWidths,
 } from '@/core/drawingml/theme-parser';
 import { makeColWidthPt, makeRowHeightPt, parseSheetDrawing } from '@/excel/sheet-drawing';
@@ -203,6 +206,17 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
   const themeLineWidths = buildThemeLineWidths(pkg, workbookRels);
   const themeFillStyles = buildThemeFillStyles(pkg, workbookRels);
   const themeEffectStyles = buildThemeEffectStyles(pkg, workbookRels);
+  // §21.2.2.216 — the text a chart leaves unsaid, as Excel sets it (chart-text):
+  // in the theme's minor font, never the Normal style's. A workbook without a
+  // theme part has Calibri when its Normal font is Calibri, and Office 2023's
+  // Aptos Narrow when it is anything else.
+  const themeFonts = buildThemeFonts(pkg, workbookRels);
+  const chartText: ChartTextDefaults = themeFonts
+    ? { themeFonts, ...(themeFonts.minor.latin ? { family: themeFonts.minor.latin } : {}) }
+    : {
+        family:
+          styles.fonts[0]?.name?.trim().toLowerCase() === 'calibri' ? 'Calibri' : 'Aptos Narrow',
+      };
 
   const sheetsOut: Array<Sheet> = [];
   // Embedded files (`<oleObject progId="Package">` and friends) that no page can
@@ -263,7 +277,9 @@ export function readXlsxToSheetDoc(xlsx: Uint8Array): SheetDoc {
         for (const ref of chartRefs) {
           if (!chartData.has(ref.chartPartPath)) {
             const chartXml = pkg.getPart(ref.chartPartPath);
-            const parsed = chartXml ? parseChart(chartXml, resolveColor) : null;
+            const parsed = chartXml
+              ? parseChart(chartXml, resolveColor, undefined, chartText)
+              : null;
             if (!parsed) continue;
             chartData.set(
               ref.chartPartPath,
@@ -1060,6 +1076,19 @@ function buildThemePalette(
     break;
   }
   return palette;
+}
+
+// §20.1.4.1.16 — the theme's two fonts, when the workbook has a theme part.
+function buildThemeFonts(
+  pkg: OpcPackage,
+  workbookRels: ReadonlyArray<Relationship>,
+): ThemeFonts | undefined {
+  for (const rel of workbookRels) {
+    if (!isOoxmlRel(rel.type, 'theme')) continue;
+    const resolved = pkg.resolveRelatedPart(WORKBOOK_PART, rel);
+    if (resolved) return parseThemeFonts(resolved.data);
+  }
+  return undefined;
 }
 
 function buildThemeLineWidths(

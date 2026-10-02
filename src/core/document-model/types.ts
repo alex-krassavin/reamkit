@@ -1676,10 +1676,51 @@ export interface ChartLineStyle {
   readonly dash?: ShapeDash;
 }
 
+/**
+ * §21.2.2.216 `c:txPr`, §21.2.2.156 `c:rich` — how one kind of a chart's text
+ * is set: the element's own run properties over the chart's (`c:chartSpace/
+ * c:txPr`) over the application's defaults, theme tokens resolved.
+ */
+export interface ChartTextStyle {
+  /** `a:latin@typeface` — the family, `+mn-lt`/`+mj-lt` already resolved. */
+  readonly family?: string;
+  /** `@sz`, in points. */
+  readonly sizePt?: number;
+  readonly bold?: boolean;
+  readonly italic?: boolean;
+  /** `a:solidFill` — the text colour as RRGGBB. */
+  readonly colorHex?: string;
+}
+
+/** A chart's text by role, each resolved through the cascade on its own. */
+export interface ChartTextStyles {
+  /** `c:chart/c:title`. */
+  readonly title?: ChartTextStyle;
+  /** `c:legend` — the entries. */
+  readonly legend?: ChartTextStyle;
+  /** The category axis's tick labels — a scatter's horizontal value axis. */
+  readonly catAxis?: ChartTextStyle;
+  /** The value axis's tick labels — a scatter's upright one. */
+  readonly valAxis?: ChartTextStyle;
+  /** The secondary value axis's tick labels. */
+  readonly secondaryValAxis?: ChartTextStyle;
+  readonly catAxisTitle?: ChartTextStyle;
+  readonly valAxisTitle?: ChartTextStyle;
+  readonly secondaryValAxisTitle?: ChartTextStyle;
+  /** `c:dLbls` — the values and labels printed on the data. */
+  readonly dataLabels?: ChartTextStyle;
+}
+
 /** A parsed chart (§21.2): its type, title, categories, series and rendering options. */
 export interface Chart {
   readonly type: ChartType;
   readonly title?: string;
+  /**
+   * The chart's text, role by role, as its application sets it. Absent when
+   * the reader resolves none: the renderer then keeps its own sizes and greys
+   * in the document's base face.
+   */
+  readonly text?: ChartTextStyles;
   readonly categories: ReadonlyArray<string>; // c:cat (shared across series)
   /** §21.2.2.24 `c:cat/…/c:f` — where the categories live, when uncached. */
   readonly categoriesRef?: string;

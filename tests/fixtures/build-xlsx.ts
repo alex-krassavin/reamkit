@@ -152,6 +152,8 @@ export interface XlsxBuilderOptions {
   readonly date1904?: boolean;
   readonly definedNames?: ReadonlyArray<XlsxDefinedNameSpec>;
   /** Attach a chart to the FIRST sheet via a drawing part (twoCellAnchor). */
+  /** A whole `a:theme` part (xl/theme/theme1.xml), related from the workbook. */
+  readonly themeXml?: string;
   readonly sheetChart?: {
     readonly chartXml: string; // full c:chartSpace markup
     readonly colorsXml?: string; // full cs:colorStyle markup (colors1.xml)
@@ -628,7 +630,11 @@ ${sheetRows.join('\n')}
     options.date1904 ?? false,
     options.definedNames ?? [],
   );
-  const workbookRelsXml = buildWorkbookRelsXml(sheets.length, Boolean(options.stylesXml));
+  const workbookRelsXml = buildWorkbookRelsXml(
+    sheets.length,
+    Boolean(options.stylesXml),
+    Boolean(options.themeXml),
+  );
 
   const sharedStringsXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="${sharedStringsList.length}" uniqueCount="${sharedStringsList.length}">
@@ -646,6 +652,9 @@ ${options.sharedStringsXml ?? sharedStringsList.map((str) => `  <si><t>${escapeX
     sheetOverrides +
     CONTENT_TYPES_FIXED_OVERRIDES +
     (options.stylesXml ? STYLES_TYPE_OVERRIDE : '') +
+    (options.themeXml
+      ? '<Override PartName="/xl/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/>'
+      : '') +
     (options.sheetChart
       ? '<Override PartName="/xl/drawings/drawing1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>' +
         '<Override PartName="/xl/charts/chart1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"/>' +
@@ -694,6 +703,7 @@ ${options.sharedStringsXml ?? sharedStringsList.map((str) => `  <si><t>${escapeX
     'xl/_rels/workbook.xml.rels': encoder.encode(workbookRelsXml),
     'xl/sharedStrings.xml': encoder.encode(sharedStringsXml),
   };
+  if (options.themeXml) entries['xl/theme/theme1.xml'] = encoder.encode(options.themeXml);
   if (options.sheetChart && sheetParts.length > 0) {
     const first = sheetParts[0]!;
     first.xml = first.xml.replace('</worksheet>', '<drawing r:id="rId100"/></worksheet>');
@@ -1235,7 +1245,11 @@ ${relLine}
   );
 }
 
-function buildWorkbookRelsXml(sheetCount: number, includeStyles: boolean): string {
+function buildWorkbookRelsXml(
+  sheetCount: number,
+  includeStyles: boolean,
+  includeTheme = false,
+): string {
   const lines: Array<string> = [
     '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
     '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">',
@@ -1252,6 +1266,11 @@ function buildWorkbookRelsXml(sheetCount: number, includeStyles: boolean): strin
   if (includeStyles) {
     lines.push(
       `  <Relationship Id="rId${sharedId + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>`,
+    );
+  }
+  if (includeTheme) {
+    lines.push(
+      `  <Relationship Id="rId${sharedId + 2}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" Target="theme/theme1.xml"/>`,
     );
   }
   lines.push('</Relationships>');

@@ -561,9 +561,14 @@ function labelSvg(l: ChartLabel, sceneH: number, anchor: 'start' | 'middle' | 'e
   const rot = l.rotationDeg
     ? ` transform="rotate(${fmt(-l.rotationDeg)} ${fmt(l.x)} ${fmt(sceneH - l.y)})"`
     : '';
+  // The face the chart sets the text in, as a run's family is stacked; a chart
+  // whose reader resolved none keeps the plain sans it always had.
+  const family = l.family ? escapeAttr(fontStack(l.family)) : 'sans-serif';
+  const weight = l.bold ? ' font-weight="bold"' : '';
+  const slant = l.italic ? ' font-style="italic"' : '';
   return (
     `<text x="${fmt(l.x)}" y="${fmt(sceneH - l.y)}"${rot} font-size="${fmt(l.sizePt)}" ` +
-    `font-family="sans-serif" fill="#${l.colorHex}" text-anchor="${anchor}">${escapeText(l.text)}</text>`
+    `font-family="${family}"${weight}${slant} fill="#${l.colorHex}" text-anchor="${anchor}">${escapeText(l.text)}</text>`
   );
 }
 

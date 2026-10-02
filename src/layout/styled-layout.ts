@@ -68,6 +68,7 @@ import type { Pt, ResourceId } from '@/core/ir';
 import type { ResolvedParagraphProperties, ResolvedRunProperties } from '@/core/style-cascade';
 import type { ShapeGradient, StrokeStyle, VectorPath } from '@/core/vector';
 import type {
+  ChartFont,
   ChartLabel,
   ChartPolygon,
   ChartPolyline,
@@ -3460,7 +3461,7 @@ function metafileDrawing(
       seq++;
       continue;
     }
-    const line = makeChartLabelLine(prim.text, font, sizePt, textHex ?? prim.colorHex);
+    const line = makeChartLabelLine(prim.text, { font }, sizePt, textHex ?? prim.colorHex);
     const shift =
       prim.alignH === 'center'
         ? -line.contentWidthPt / 2
@@ -3510,9 +3511,13 @@ function layoutChartBlock(
   }
   const chart = options.charts?.get(block.chartRelId);
   const { variant } = options.registry.resolveByStyle(false, false);
-  const font = fontResources.get(variant);
+  const faceFor = chart
+    ? chartFaceResolver(options, fontResources, fontResources.get(variant))
+    : undefined;
   const layout =
-    chart && font ? buildChartLayout(chart, widthPt, heightPt, font) : { shapes: [], texts: [] };
+    chart && faceFor
+      ? buildChartLayout(chart, widthPt, heightPt, faceFor)
+      : { shapes: [], texts: [] };
   const pp = block.paragraphProperties;
   // Figure alt text: the drawing's docPr description, else the chart's own title.
   const altText = block.altText ?? chart?.title;
@@ -3544,16 +3549,83 @@ function layoutChartBlock(
   };
 }
 
+/** The face one piece of a chart's text is drawn in. */
+interface ChartFace {
+  readonly font: FontResource;
+  readonly synthetic?: SyntheticFace;
+}
+
+/**
+ * Where a chart's text finds its face: the family and weight the chart sets it
+ * in, resolved as a run's are (runFontKeyAndParsed), and the document's base
+ * face for text that names none — which is all of a chart's text unless its
+ * reader resolved the chart's own (Chart.text).
+ */
+function chartFaceResolver(
+  options: StyledRenderOptions,
+  fontResources: ReadonlyMap<string, FontResource>,
+  base: FontResource | undefined,
+): ((font: ChartFont | undefined) => ChartFace) | undefined {
+  // A chart whose every text names its face asks the subset for no base face
+  // (chartFonts), and where several families are loaded the base face then has
+  // no resource of its own: any face on hand stands in, for text that never
+  // comes.
+  const fallback = base ?? fontResources.values().next().value;
+  if (!fallback) return undefined;
+  return (font) => {
+    if (!font || (font.family === undefined && !font.bold && !font.italic)) {
+      return { font: fallback };
+    }
+    const { fontKey, synthetic } = runFontKeyAndParsed(
+      options,
+      font.family,
+      font.bold === true,
+      font.italic === true,
+    );
+    const resource = fontResources.get(fontKey);
+    return resource ? { font: resource, ...(synthetic ? { synthetic } : {}) } : { font: fallback };
+  };
+}
+
+/**
+ * The faces a chart's text is drawn in, one per distinct family and weight;
+ * `undefined` stands for the document's base face, which text naming none is
+ * drawn in.
+ */
+function chartFonts(chart: Chart): Array<ChartFont | undefined> {
+  if (!chart.text) return [undefined];
+  const seen = new Map<string, ChartFont>();
+  let base = false;
+  for (const style of Object.values(chart.text)) {
+    if (!style) continue;
+    if (style.family === undefined && !style.bold && !style.italic) {
+      base = true;
+      continue;
+    }
+    const font: ChartFont = {
+      ...(style.family !== undefined ? { family: style.family } : {}),
+      ...(style.bold ? { bold: true } : {}),
+      ...(style.italic ? { italic: true } : {}),
+    };
+    seen.set(`${font.family ?? ''}|${font.bold === true}|${font.italic === true}`, font);
+  }
+  return base ? [undefined, ...seen.values()] : [...seen.values()];
+}
+
 // Build a chart's draw primitives (local y-up frame, origin bottom-left) from
-// the pure geometry scene. Chart text uses the regular font. Unsupported chart
-// types (no scene) fall back to a light bounding box reserving the space.
+// the pure geometry scene. Each label is measured and drawn in its own face.
+// Unsupported chart types (no scene) fall back to a light bounding box
+// reserving the space.
 function buildChartLayout(
   chart: Chart,
   widthPt: number,
   heightPt: number,
-  font: FontResource,
+  faceFor: (font: ChartFont | undefined) => ChartFace,
 ): ChartLayout {
-  const measure = (text: string, sizePt: number): number => font.measure.textWidthPt(text, sizePt);
+  const measure = (text: string, sizePt: number, font?: ChartFont): number => {
+    const face = faceFor(font);
+    return face.font.measure.textWidthPt(text, sizePt) * (face.synthetic?.widthScale ?? 1);
+  };
   const scene = buildChartScene(chart, widthPt, heightPt, measure);
   if (!scene) {
     return {
@@ -3575,7 +3647,7 @@ function buildChartLayout(
   for (const r of scene.rects) shapes.push(rectPrim(r));
   for (const p of scene.polylines) shapes.push(polylinePrim(p));
   for (const w of scene.wedges) shapes.push(wedgePrim(w));
-  const texts: Array<ChartTextPrim> = scene.labels.map((l) => labelPrim(l, font));
+  const texts: Array<ChartTextPrim> = scene.labels.map((l) => labelPrim(l, faceFor(l)));
   return { shapes, texts };
 }
 
@@ -3840,8 +3912,8 @@ function wedgePrim(w: ChartWedge): ChartShapePrim {
   };
 }
 
-function labelPrim(l: ChartLabel, font: FontResource): ChartTextPrim {
-  const line = makeChartLabelLine(l.text, font, l.sizePt, l.colorHex);
+function labelPrim(l: ChartLabel, face: ChartFace): ChartTextPrim {
+  const line = makeChartLabelLine(l.text, face, l.sizePt, l.colorHex);
   const w = line.contentWidthPt;
   const shift = l.align === 'center' ? -w / 2 : l.align === 'right' ? -w : 0;
   // A rotated label reads along the rotated axis, so its own alignment shifts
@@ -3853,13 +3925,9 @@ function labelPrim(l: ChartLabel, font: FontResource): ChartTextPrim {
 }
 
 // A minimal single-token Line for a positioned chart label.
-function makeChartLabelLine(
-  text: string,
-  font: FontResource,
-  sizePt: number,
-  colorHex: string,
-): Line {
-  const widthPt = font.measure.textWidthPt(text, sizePt);
+function makeChartLabelLine(text: string, face: ChartFace, sizePt: number, colorHex: string): Line {
+  const { font, synthetic } = face;
+  const widthPt = font.measure.textWidthPt(text, sizePt) * (synthetic?.widthScale ?? 1);
   const token: TextToken = {
     kind: 'text',
     text,
@@ -3873,6 +3941,7 @@ function makeChartLabelLine(
     fontSizePt: sizePt,
     widthPt,
     bidiLevel: 0,
+    ...(synthetic ? { synthetic } : {}),
   };
   return {
     tokens: [token],
@@ -5467,14 +5536,35 @@ function collectFontResources(
         // …and what is left is a chart.
         const chart = options.charts?.get(el.chart.chartRelId);
         if (chart) {
-          const reg = options.registry.resolveByStyle(false, false);
-          let bucket = used.get(reg.variant);
-          if (!bucket) {
-            bucket = { parsed: reg.parsed, gids: new Set<number>() };
-            used.set(reg.variant, bucket);
-          }
+          // Each face the chart's text is set in gets every string the chart
+          // may draw: which role a string lands in is the geometry's business,
+          // and a glyph missing from the face that draws it is drawn blank.
+          const buckets = chartFonts(chart).map((font) => {
+            const face =
+              font === undefined
+                ? (() => {
+                    const reg = options.registry.resolveByStyle(false, false);
+                    return { fontKey: reg.variant, parsed: reg.parsed };
+                  })()
+                : runFontKeyAndParsed(
+                    options,
+                    font.family,
+                    font.bold === true,
+                    font.italic === true,
+                  );
+            let bucket = used.get(face.fontKey);
+            if (!bucket) {
+              bucket = { parsed: face.parsed, gids: new Set<number>() };
+              used.set(face.fontKey, bucket);
+            }
+            return bucket;
+          });
           const add = (s: string): void => {
-            for (const ch of s) bucket.gids.add(reg.parsed.glyphForCodepoint(ch.codePointAt(0)!));
+            for (const bucket of buckets) {
+              for (const ch of s) {
+                bucket.gids.add(bucket.parsed.glyphForCodepoint(ch.codePointAt(0)!));
+              }
+            }
           };
           if (chart.title) add(chart.title);
           for (const c of chart.categories) add(c);

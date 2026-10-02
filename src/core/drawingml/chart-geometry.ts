@@ -10,6 +10,7 @@ import type {
   ChartLineStyle,
   ChartMarker,
   ChartSeries,
+  ChartTextStyles,
   ShapeDash,
 } from '@/core/document-model';
 
@@ -60,7 +61,7 @@ export interface ChartWedge {
 /** How a {@link ChartLabel} sits horizontally relative to its anchor point. */
 export type LabelAlign = 'left' | 'center' | 'right';
 /** A text label (title, axis tick, category, data value, legend entry). */
-export interface ChartLabel {
+export interface ChartLabel extends ChartFont {
   readonly text: string;
   /** Anchor point; `align` says how text sits relative to it. */
   readonly x: number;
@@ -106,11 +107,21 @@ export interface ChartScene {
 }
 
 /**
- * Injected text-width measurer: the rendered advance width (points) of `text` at
- * `sizePt`. Keeps this module free of any font/PDF dependency, so it is
- * unit-testable in isolation.
+ * The face a chart's text is set in beyond its size: the family the chart
+ * names (absent — the document's own) and its weight and slant.
  */
-export type MeasureText = (text: string, sizePt: number) => number;
+export interface ChartFont {
+  readonly family?: string;
+  readonly bold?: boolean;
+  readonly italic?: boolean;
+}
+
+/**
+ * Injected text-width measurer: the rendered advance width (points) of `text` at
+ * `sizePt`, in `font` when the chart names one. Keeps this module free of any
+ * font/PDF dependency, so it is unit-testable in isolation.
+ */
+export type MeasureText = (text: string, sizePt: number, font?: ChartFont) => number;
 
 /** Font size (points) for axis ticks, category/data labels and legend text. */
 export const CHART_LABEL_PT = 9;
@@ -120,6 +131,33 @@ const AXIS_COLOR = '595959';
 const GRID_COLOR = 'D9D9D9';
 const LABEL_COLOR = '595959';
 const TITLE_COLOR = '404040';
+
+/** How one kind of a chart's text is set: its size and colour, and its face. */
+interface TextFace extends ChartFont {
+  readonly sizePt: number;
+  readonly colorHex: string;
+}
+
+/**
+ * The face one role of the chart's text is set in: the chart's own
+ * ({@link Chart.text}) where the reader resolved it, and otherwise the sizes
+ * and greys this module has always drawn in, in the document's face.
+ */
+function faceOf(chart: Chart, role: keyof ChartTextStyles): TextFace {
+  const own = chart.text?.[role];
+  const title = role === 'title';
+  return {
+    sizePt: own?.sizePt ?? (title ? CHART_TITLE_PT : CHART_LABEL_PT),
+    colorHex: own?.colorHex ?? (title ? TITLE_COLOR : LABEL_COLOR),
+    ...(own?.family ? { family: own.family } : {}),
+    ...(own?.bold ? { bold: true } : {}),
+    ...(own?.italic ? { italic: true } : {}),
+  };
+}
+
+/** The width of `text` set in `face`. */
+const widthIn = (measure: MeasureText, text: string, face: TextFace): number =>
+  measure(text, face.sizePt, face);
 
 /** The Office accent cycle (RRGGBB) for series without an explicit colour. */
 export const SERIES_COLORS = ['4472C4', 'ED7D31', 'A5A5A5', 'FFC000', '5B9BD5', '70AD47'];
@@ -412,12 +450,13 @@ interface FrameOpts {
  */
 function titleLines(chart: Chart, wPt: number, measure: MeasureText): Array<string> {
   if (!chart.title) return [];
+  const face = faceOf(chart, 'title');
   const room = wPt * 0.8;
   const lines: Array<string> = [];
   let line = '';
   for (const word of chart.title.split(/\s+/).filter((w) => w.length > 0)) {
     const longer = line ? `${line} ${word}` : word;
-    if (line && measure(longer, CHART_TITLE_PT) > room) {
+    if (line && widthIn(measure, longer, face) > room) {
       lines.push(line);
       line = word;
     } else {
@@ -429,22 +468,23 @@ function titleLines(chart: Chart, wPt: number, measure: MeasureText): Array<stri
 }
 
 /** The band a title of `lines` takes at the top of the chart. */
-const titleHeight = (lines: ReadonlyArray<string>): number =>
-  lines.length === 0 ? 0 : CHART_TITLE_PT * (1.6 + 1.2 * (lines.length - 1));
+const titleHeight = (lines: ReadonlyArray<string>, chart: Chart): number =>
+  lines.length === 0 ? 0 : faceOf(chart, 'title').sizePt * (1.6 + 1.2 * (lines.length - 1));
 
 function pushChartTitle(
   labels: Array<ChartLabel>,
   lines: ReadonlyArray<string>,
   wPt: number,
   hPt: number,
+  chart: Chart,
 ): void {
+  const face = faceOf(chart, 'title');
   lines.forEach((text, i) => {
     labels.push({
       text,
       x: wPt / 2,
-      y: hPt - 4 - CHART_TITLE_PT * (1 + 1.2 * i),
-      sizePt: CHART_TITLE_PT,
-      colorHex: TITLE_COLOR,
+      y: hPt - 4 - face.sizePt * (1 + 1.2 * i),
+      ...face,
       align: 'center',
     });
   });
@@ -483,6 +523,7 @@ function buildLegendBlock(
     wPt,
     hPt,
     measure,
+    faceOf(chart, 'legend'),
     marker,
   );
 }
@@ -502,6 +543,7 @@ function pushGridTicks(
   plotW: number,
   plotH: number,
   grid: ChartLineStyle | undefined,
+  face: TextFace,
   atEnd = false,
 ): void {
   for (const v of tickVals) {
@@ -518,9 +560,8 @@ function pushGridTicks(
       labels.push({
         text: fmt(v),
         x: gx,
-        y: atEnd ? y0 + plotH + CHART_LABEL_PT * 0.4 : y0 - CHART_LABEL_PT,
-        sizePt: CHART_LABEL_PT,
-        colorHex: LABEL_COLOR,
+        y: atEnd ? y0 + plotH + face.sizePt * 0.4 : y0 - face.sizePt,
+        ...face,
         align: 'center',
       });
     } else {
@@ -536,9 +577,8 @@ function pushGridTicks(
       labels.push({
         text: fmt(v),
         x: atEnd ? x0 + plotW + 3 : x0 - 3,
-        y: gy - CHART_LABEL_PT / 3,
-        sizePt: CHART_LABEL_PT,
-        colorHex: LABEL_COLOR,
+        y: gy - face.sizePt / 3,
+        ...face,
         align: atEnd ? 'left' : 'right',
       });
     }
@@ -667,10 +707,13 @@ function buildFrame(
   // Excel and Calc both label the axis with — an unlabelled category axis
   // leaves the bars standing on nothing.
   const catText = (c: number): string => chart.categories[c] ?? String(c + 1);
+  const catFace = faceOf(chart, 'catAxis');
+  const valFace = faceOf(chart, 'valAxis');
+  const val2Face = faceOf(chart, 'secondaryValAxis');
   let widestCat = 0;
   for (let c = 0; c < nCats; c++)
-    widestCat = Math.max(widestCat, measure(catText(c), CHART_LABEL_PT));
-  const catBand = CHART_LABEL_PT * 1.6;
+    widestCat = Math.max(widestCat, widthIn(measure, catText(c), catFace));
+  const catBand = catFace.sizePt * 1.6;
   // §21.2.2.115 — the outer levels of a category axis labelled on several,
   // each a row of its own under the categories' labels (a column chart's).
   const groupLevels = horizontal ? [] : (chart.categoryGroups ?? []);
@@ -687,24 +730,24 @@ function buildFrame(
   const title = titleLines(chart, wPt, measure);
   const top =
     4 +
-    titleHeight(title) +
+    titleHeight(title, chart) +
     (!horizontal && labelsAt === 'end' ? catBand : 0) +
     (horizontal && valAtEnd ? catBand : 0);
   const legend = buildLegendBlock(chart, wPt, hPt, measure);
   const tick2W =
     scale2 && !horizontal
-      ? Math.max(0, ...tickVals2.map((v) => measure(formatTick(v), CHART_LABEL_PT))) +
+      ? Math.max(0, ...tickVals2.map((v) => widthIn(measure, formatTick(v), val2Face))) +
         4 +
-        (chart.secondaryValAxisTitle ? CHART_LABEL_PT * 1.5 : 0)
+        (chart.secondaryValAxisTitle ? faceOf(chart, 'secondaryValAxisTitle').sizePt * 1.5 : 0)
       : 0;
   // A bar chart's value labels stand centred under their ticks along the
   // foot, so the last one reaches half its width past the plot's end: room is
   // kept for it inside the frame, or "80" is cut in two by the frame's edge.
   const tickHalf = (v: number | undefined): number =>
-    horizontal && v !== undefined ? measure(fmtVal(v), CHART_LABEL_PT) / 2 : 0;
+    horizontal && v !== undefined ? widthIn(measure, fmtVal(v), valFace) / 2 : 0;
   const lastTickHalf = tickHalf(tickVals[tickVals.length - 1]);
   const catLabelW = Math.min(wPt * 0.4, widestCat + 6);
-  const tickLabelW = Math.max(0, ...tickVals.map((v) => measure(fmtVal(v), CHART_LABEL_PT))) + 4;
+  const tickLabelW = Math.max(0, ...tickVals.map((v) => widthIn(measure, fmtVal(v), valFace))) + 4;
   const plotRight =
     wPt -
     4 -
@@ -721,12 +764,13 @@ function buildFrame(
   // ticks no wider than "80"). A name is given at most two fifths of the width.
   // The category labels take room only where they stand at the plot's edge;
   // on the zero line they stand inside it.
-  const axisTitleBand = CHART_LABEL_PT * 1.5;
   const leftTitle = horizontal ? chart.catAxisTitle : chart.valAxisTitle;
   const footTitle = horizontal ? chart.valAxisTitle : chart.catAxisTitle;
+  const leftTitleFace = faceOf(chart, horizontal ? 'catAxisTitle' : 'valAxisTitle');
+  const footTitleFace = faceOf(chart, horizontal ? 'valAxisTitle' : 'catAxisTitle');
   const x0 =
     4 +
-    (leftTitle ? axisTitleBand : 0) +
+    (leftTitle ? leftTitleFace.sizePt * 1.5 : 0) +
     (horizontal
       ? labelsAt === 'start'
         ? catLabelW
@@ -737,7 +781,7 @@ function buildFrame(
   const y0 =
     4 +
     legend.bottomHeight +
-    (footTitle ? axisTitleBand : 0) +
+    (footTitle ? footTitleFace.sizePt * 1.5 : 0) +
     ((horizontal ? !valAtEnd : labelsAt === 'start') ? catBand : 0) +
     (!horizontal && labelsAt === 'start' ? groupLevels.length * catBand : 0);
   const plotW = Math.max(1, plotRight - x0);
@@ -769,16 +813,15 @@ function buildFrame(
         }
       : undefined;
 
-  pushChartTitle(labels, title, wPt, hPt);
+  pushChartTitle(labels, title, wPt, hPt, chart);
   // Axis titles. The upright axis's title reads bottom-to-top, in the gutter
   // outside its own labels; the lying one's sits centred below its labels.
   if (leftTitle) {
     labels.push({
       text: leftTitle,
-      x: 4 + CHART_LABEL_PT * 0.9,
+      x: 4 + leftTitleFace.sizePt * 0.9,
       y: y0 + plotH / 2,
-      sizePt: CHART_LABEL_PT,
-      colorHex: LABEL_COLOR,
+      ...leftTitleFace,
       align: 'center',
       rotationDeg: 90,
     });
@@ -788,8 +831,7 @@ function buildFrame(
       text: footTitle,
       x: x0 + plotW / 2,
       y: legend.bottomHeight + 2,
-      sizePt: CHART_LABEL_PT,
-      colorHex: LABEL_COLOR,
+      ...footTitleFace,
       align: 'center',
     });
   }
@@ -807,6 +849,7 @@ function buildFrame(
       plotW,
       plotH,
       chart.gridLine,
+      valFace,
       valAtEnd,
     );
   } else {
@@ -822,6 +865,7 @@ function buildFrame(
       plotW,
       plotH,
       chart.gridLine,
+      valFace,
       valAtEnd,
     );
   }
@@ -833,9 +877,8 @@ function buildFrame(
       labels.push({
         text: formatTick(v),
         x: x0 + plotW + 3,
-        y: y0 + valueOffset2(v) - CHART_LABEL_PT / 3,
-        sizePt: CHART_LABEL_PT,
-        colorHex: LABEL_COLOR,
+        y: y0 + valueOffset2(v) - val2Face.sizePt / 3,
+        ...val2Face,
         align: 'left',
       });
     }
@@ -855,8 +898,7 @@ function buildFrame(
         text: chart.secondaryValAxisTitle,
         x: wPt - 4,
         y: y0 + plotH / 2,
-        sizePt: CHART_LABEL_PT,
-        colorHex: LABEL_COLOR,
+        ...faceOf(chart, 'secondaryValAxisTitle'),
         align: 'center',
         rotationDeg: 90,
       });
@@ -871,7 +913,7 @@ function buildFrame(
   // The labels measured are the labels drawn: a chart with no <c:cat> is
   // labelled with its point indices, and measuring the categories it does not
   // have stepped 47813.xlsx's 716 points by five, its numbers run together.
-  const need = horizontal ? CHART_LABEL_PT * 1.4 : widestCat + 4;
+  const need = horizontal ? catFace.sizePt * 1.4 : widestCat + 4;
   const step = Math.max(1, Math.ceil(need / Math.max(slot, 0.01)));
   // Where the labels stand across the axis: beside the plot's start, on the
   // crossing, or beside its end.
@@ -892,18 +934,16 @@ function buildFrame(
       labels.push({
         text: cat,
         x: labelsAt === 'end' ? x0 + across + 3 : x0 + across - 3,
-        y: center - CHART_LABEL_PT / 3,
-        sizePt: CHART_LABEL_PT,
-        colorHex: LABEL_COLOR,
+        y: center - catFace.sizePt / 3,
+        ...catFace,
         align: labelsAt === 'end' ? 'left' : 'right',
       });
     } else {
       labels.push({
         text: cat,
         x: center,
-        y: labelsAt === 'end' ? y0 + across + CHART_LABEL_PT * 0.4 : y0 + across - CHART_LABEL_PT,
-        sizePt: CHART_LABEL_PT,
-        colorHex: LABEL_COLOR,
+        y: labelsAt === 'end' ? y0 + across + catFace.sizePt * 0.4 : y0 + across - catFace.sizePt,
+        ...catFace,
         align: 'center',
       });
     }
@@ -912,7 +952,7 @@ function buildFrame(
   // rule between one group and the next running down through the rows.
   if (labelsAt !== 'none' && labelsAt !== 'end') {
     groupLevels.forEach((groups, level) => {
-      const rowY = y0 + across - CHART_LABEL_PT - (level + 1) * catBand;
+      const rowY = y0 + across - catFace.sizePt - (level + 1) * catBand;
       groups.forEach((group, i) => {
         const end = Math.min(nCats, groups[i + 1]?.start ?? nCats);
         if (end <= group.start) return;
@@ -920,15 +960,14 @@ function buildFrame(
           text: group.label,
           x: x0 + ((group.start + end) / 2) * slot,
           y: rowY,
-          sizePt: CHART_LABEL_PT,
-          colorHex: LABEL_COLOR,
+          ...catFace,
           align: 'center',
         });
         if (i > 0) {
           polylines.push({
             points: [
               [x0 + group.start * slot, y0 + across],
-              [x0 + group.start * slot, rowY - CHART_LABEL_PT * 0.4],
+              [x0 + group.start * slot, rowY - catFace.sizePt * 0.4],
             ],
             strokeHex: GRID_COLOR,
             widthPt: 0.75,
@@ -1138,15 +1177,25 @@ export function buildBarScene(
         if (horizontal)
           f.rects.push({ x: f.x0 + lo, y: along, w: span, h: barW, fillHex: color, ...outline });
         else f.rects.push({ x: along, y: f.y0 + lo, w: barW, h: span, fillHex: color, ...outline });
-        if (chart.showValues && span > CHART_LABEL_PT) {
+        if (chart.showValues && span > faceOf(chart, 'dataLabels').sizePt) {
           const raw = series.values[c] ?? 0;
           if (horizontal)
             f.labels.push(
-              centeredLabel(fmtDataLabel(chart, raw), f.x0 + lo + span / 2, along + barW * 0.3),
+              centeredLabel(
+                fmtDataLabel(chart, raw),
+                f.x0 + lo + span / 2,
+                along + barW * 0.3,
+                faceOf(chart, 'dataLabels'),
+              ),
             );
           else
             f.labels.push(
-              centeredLabel(fmtDataLabel(chart, raw), along + barW / 2, f.y0 + lo + span / 2 - 3),
+              centeredLabel(
+                fmtDataLabel(chart, raw),
+                along + barW / 2,
+                f.y0 + lo + span / 2 - 3,
+                faceOf(chart, 'dataLabels'),
+              ),
             );
         }
         if (v >= 0) cumPos = top;
@@ -1202,14 +1251,14 @@ export function buildBarScene(
             text: txt,
             x: end + (len >= 0 ? 3 : -3),
             y: along + barW * 0.25,
-            sizePt: CHART_LABEL_PT,
-            colorHex: LABEL_COLOR,
+            ...faceOf(chart, 'dataLabels'),
             align: len >= 0 ? 'left' : 'right',
           });
         } else {
           const end = f.y0 + f.zeroOffset + len;
+          const face = faceOf(chart, 'dataLabels');
           f.labels.push(
-            centeredLabel(txt, along + barW * 0.45, len >= 0 ? end + 2 : end - CHART_LABEL_PT),
+            centeredLabel(txt, along + barW * 0.45, len >= 0 ? end + 2 : end - face.sizePt, face),
           );
         }
       }
@@ -1267,8 +1316,8 @@ function pushComboLines(chart: Chart, f: CartesianFrame, lineIdx: ReadonlyArray<
   }
 }
 
-function centeredLabel(text: string, x: number, y: number): ChartLabel {
-  return { text, x, y, sizePt: CHART_LABEL_PT, colorHex: LABEL_COLOR, align: 'center' };
+function centeredLabel(text: string, x: number, y: number, face: TextFace): ChartLabel {
+  return { text, x, y, ...face, align: 'center' };
 }
 
 // ─── area chart (standard, stacked, percentStacked) ─────────────────────────
@@ -1391,17 +1440,19 @@ export function buildScatterScene(
   const yTicks = ticks(yScale);
 
   const title = titleLines(chart, wPt, measure);
-  const top = 4 + titleHeight(title);
+  const top = 4 + titleHeight(title, chart);
   const legend = buildLegendBlock(chart, wPt, hPt, measure);
-  const tickLabelW = Math.max(0, ...yTicks.map((v) => measure(formatTick(v), CHART_LABEL_PT))) + 4;
+  const xFace = faceOf(chart, 'catAxis');
+  const yFace = faceOf(chart, 'valAxis');
+  const tickLabelW = Math.max(0, ...yTicks.map((v) => widthIn(measure, formatTick(v), yFace))) + 4;
   const x0 = 4 + tickLabelW;
-  const y0 = 4 + legend.bottomHeight + CHART_LABEL_PT * 1.6;
+  const y0 = 4 + legend.bottomHeight + xFace.sizePt * 1.6;
   const plotW = Math.max(1, wPt - 4 - legend.rightWidth - x0);
   const plotH = Math.max(1, hPt - top - y0);
   const xAt = (v: number): number => x0 + fractionOf(v, xScale) * plotW;
   const yAt = (v: number): number => y0 + fractionOf(v, yScale) * plotH;
 
-  pushChartTitle(labels, title, wPt, hPt);
+  pushChartTitle(labels, title, wPt, hPt, chart);
   pushGridTicks(
     gridlines,
     labels,
@@ -1414,6 +1465,7 @@ export function buildScatterScene(
     plotW,
     plotH,
     chart.gridLine,
+    yFace,
   );
   pushGridTicks(
     gridlines,
@@ -1427,6 +1479,7 @@ export function buildScatterScene(
     plotW,
     plotH,
     chart.gridLine,
+    xFace,
   );
   pushAxisLines(polylines, x0, y0, plotW, plotH, chart);
 
@@ -1551,7 +1604,14 @@ export function buildLineScene(
       pts.push([x, y]);
       if (chart.lineMarkers) pushMarker(f.rects, wedges, series.marker, x, y, color);
       if (chart.showValues)
-        f.labels.push(centeredLabel(fmtDataLabel(chart, series.values[c] ?? 0), x, y + 3));
+        f.labels.push(
+          centeredLabel(
+            fmtDataLabel(chart, series.values[c] ?? 0),
+            x,
+            y + 3,
+            faceOf(chart, 'dataLabels'),
+          ),
+        );
     }
     if (pts.length >= 2) {
       f.polylines.push({ points: pts, strokeHex: color, widthPt: 1.5 });
@@ -1606,7 +1666,7 @@ export function buildPieScene(
   if (!series || total <= 0) return { rects, polylines: [], wedges, labels };
 
   const title = titleLines(chart, wPt, measure);
-  const top = 4 + titleHeight(title);
+  const top = 4 + titleHeight(title, chart);
   // Pie legend lists categories (each in its slice colour). A pie written
   // without `<c:cat>` has none, and its legend came out empty — the same case
   // the category axis already answers with the point indices, which is what
@@ -1622,6 +1682,7 @@ export function buildPieScene(
     wPt,
     hPt,
     measure,
+    faceOf(chart, 'legend'),
   );
 
   const availW = Math.max(1, wPt - 8 - legend.rightWidth);
@@ -1661,12 +1722,18 @@ export function buildPieScene(
     // the author put it there on purpose.
     const custom = atPoint(series.pointLabels, i)?.text;
     if (custom !== undefined || chart.showValues || pct >= 5) {
+      // The chart's own colour where the reader resolved it; else white on the
+      // slice and grey on a ring or for a label the author typed.
+      const face = faceOf(chart, 'dataLabels');
       labels.push({
         text: custom ?? own,
         x: cx + Math.cos(mid) * labelR,
-        y: cy + Math.sin(mid) * labelR - CHART_LABEL_PT / 3,
-        sizePt: CHART_LABEL_PT,
-        colorHex: custom !== undefined || chart.doughnut ? LABEL_COLOR : 'FFFFFF',
+        y: cy + Math.sin(mid) * labelR - face.sizePt / 3,
+        ...face,
+        colorHex:
+          custom !== undefined || chart.doughnut || chart.text?.dataLabels?.colorHex
+            ? face.colorHex
+            : 'FFFFFF',
         align: 'center',
       });
     }
@@ -1677,7 +1744,7 @@ export function buildPieScene(
     wedges.push({ cx, cy, r: holeR, startRad: 0, sweepRad: -2 * Math.PI, fillHex: 'FFFFFF' });
   }
 
-  pushChartTitle(labels, title, wPt, hPt);
+  pushChartTitle(labels, title, wPt, hPt, chart);
   legend.emit(rects, labels);
   return { rects, polylines: [], wedges, labels };
 }
@@ -1736,12 +1803,13 @@ function layoutLegend(
   wPt: number,
   hPt: number,
   measure: MeasureText,
+  face: TextFace,
   marker: LegendMarker = 'box',
 ): LegendLayout {
   if (!hasLegend || entries.length === 0) {
     return { rightWidth: 0, bottomHeight: 0, emit: () => {} };
   }
-  const sw = CHART_LABEL_PT; // key height reference
+  const sw = face.sizePt; // key height reference
   const gap = 4;
   // Neither reader draws the key as a square: Excel and Calc both draw a WIDE,
   // flat swatch about twice the text height across — 57362.xlsx's key is 20 x
@@ -1753,7 +1821,7 @@ function layoutLegend(
     (e.marker ?? marker) === 'line'
       ? { x, y: y + sw / 2 - 0.75, w: keyW, h: 1.5, fillHex: e.colorHex }
       : { x, y: y + (sw - keyH) / 2, w: keyW, h: keyH, fillHex: e.colorHex };
-  const entryW = (e: LegendEntry): number => keyW + 3 + measure(e.name, CHART_LABEL_PT) + gap * 2;
+  const entryW = (e: LegendEntry): number => keyW + 3 + widthIn(measure, e.name, face) + gap * 2;
 
   if (pos === 'r' || pos === 'l') {
     const colW = entries.reduce((w, e) => Math.max(w, entryW(e)), 0);
@@ -1769,8 +1837,7 @@ function layoutLegend(
             text: e.name,
             x: lx + keyW + 3,
             y: ly + 1,
-            sizePt: CHART_LABEL_PT,
-            colorHex: LABEL_COLOR,
+            ...face,
             align: 'left',
           });
           ly -= sw + 4;
@@ -1791,8 +1858,7 @@ function layoutLegend(
           text: e.name,
           x: lx + keyW + 3,
           y: ly + 1,
-          sizePt: CHART_LABEL_PT,
-          colorHex: LABEL_COLOR,
+          ...face,
           align: 'left',
         });
         lx += entryW(e);

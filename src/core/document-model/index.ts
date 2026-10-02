@@ -30,6 +30,8 @@ export type {
   ChartMarker,
   ChartMarkerSymbol,
   ChartSeries,
+  ChartTextStyle,
+  ChartTextStyles,
   ChartType,
   CustomGeometry,
   CustomPathCmd,

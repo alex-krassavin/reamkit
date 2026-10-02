@@ -20,7 +20,9 @@ import type {
 import type { ResourceId } from '@/core/ir';
 import type { OpcPackage } from '@/core/opc';
 import type { ColorMod, ColorResolver } from '@/core/drawingml/colors';
+import type { ChartTextDefaults } from '@/core/drawingml/chart-text';
 import type { PoNode } from '@/core/po-helpers';
+import { chartTextStyles } from '@/core/drawingml/chart-text';
 import { resolveColorNode } from '@/core/drawingml/colors';
 import {
   poAttr,
@@ -101,12 +103,16 @@ export function pointsPerSeries(seriesCount: number): number {
  *
  * @param chartXml     The raw chart1.xml part bytes.
  * @param resolveColor Maps a DrawingML colour reference to a 6-hex string.
+ * @param resolveImage Maps a blip's relationship id to its image resource.
+ * @param textDefaults The host's defaults for chart text; given, the chart's
+ *                     text is resolved role by role ({@link Chart.text}).
  * @returns The parsed chart, or `null` when there is no `c:chart` / `c:plotArea`.
  */
 export function parseChart(
   chartXml: Uint8Array,
   resolveColor: ColorResolver,
   resolveImage?: (relId: string) => ResourceId | undefined,
+  textDefaults?: ChartTextDefaults,
 ): Chart | null {
   const tree = parser.parse(decoder.decode(chartXml)) as Array<PoNode>;
   const chart = poFindByPath(tree, ['c:chartSpace', 'c:chart']);
@@ -282,6 +288,45 @@ export function parseChart(
     ? poVal(poChildren(legend).find((c) => poIs(c, 'c:legendPos')))
     : undefined;
 
+  // §21.2.2.216 — the text each part of the chart is set in, when the host
+  // asked for it. The labels belong to the axis that DRAWS them: a scatter's
+  // horizontal value axis labels as the category axis does elsewhere.
+  const scatter = type === 'scatter';
+  const firstSer = serNodes[0];
+  const text = textDefaults
+    ? chartTextStyles(
+        {
+          ...(chartSpace ? { chartSpace } : {}),
+          ...withNode(
+            'title',
+            poChildren(chart).find((c) => poIs(c, 'c:title')),
+          ),
+          ...withNode('legend', legend),
+          ...withNode(
+            'catAxis',
+            scatter
+              ? bottomAxNode
+              : (catAxNode ?? poChildren(plotArea).find((c) => poIs(c, 'c:dateAx'))),
+          ),
+          ...withNode(
+            'valAxis',
+            scatter
+              ? leftAxNode
+              : poChildren(plotArea).find((c) => poIs(c, 'c:valAx') && c !== secondaryValAx),
+          ),
+          ...withNode('secondaryValAxis', secondaryValAx),
+          ...withNode(
+            'dataLabels',
+            (firstSer ? poChildren(firstSer).find((c) => poIs(c, 'c:dLbls')) : undefined) ??
+              (group ? poChildren(group).find((c) => poIs(c, 'c:dLbls')) : undefined),
+          ),
+        },
+        resolveColor,
+        (fill) => colorFromSolidFill(fill, resolveColor),
+        textDefaults,
+      )
+    : undefined;
+
   const title = chartTitle(chart, series);
   // §21.2.2.75 — the gap between category slots, as a percentage of the bar
   // width. Unread, every bar took 0.63 of its slot; 57362.xlsx asks for 219 and
@@ -300,6 +345,7 @@ export function parseChart(
   return {
     type,
     ...(title ? { title } : {}),
+    ...(text ? { text } : {}),
     ...(Number.isFinite(gapPercent) && gapPercent >= 0 ? { gapPercent } : {}),
     categories,
     ...(categoriesRef ? { categoriesRef } : {}),
@@ -336,6 +382,14 @@ export function parseChart(
     ...(plotLine && plotLine.none !== true ? { plotLine } : {}),
     ...(numberFormat ? { numberFormat } : {}),
   };
+}
+
+/** `{ [role]: node }` when there is a node — the shape `ChartTextNodes` takes. */
+function withNode<TRole extends string>(
+  role: TRole,
+  node: PoNode | undefined,
+): { [P in TRole]?: PoNode } {
+  return (node ? { [role]: node } : {}) as { [P in TRole]?: PoNode };
 }
 
 function parseSeries(ser: PoNode, resolveColor: ColorResolver, most: number): ChartSeries {
