@@ -11,4 +11,5 @@ Allow: /
 # The search box's own index, fetched by the page as you type; not pages.
 Disallow: /pagefind/
 
-Sitemap: https://reamkit.dev/sitemap-index.xml
+# One file with every page (the index, /sitemap-index.xml, lists the same).
+Sitemap: https://reamkit.dev/sitemap.xml
