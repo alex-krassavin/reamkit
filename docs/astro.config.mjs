@@ -11,8 +11,10 @@ export default defineConfig({
   integrations: [
     starlight({
       title: 'Ream',
+      // At most 155 characters: what a results page shows whole. A page without
+      // its own falls back to this one.
       description:
-        'Read Word, Excel, PowerPoint and PDF — including the legacy .doc / .xls / .ppt — and convert any of them to PDF, SVG, HTML, DOCX or XLSX. In the browser, from the ECMA-376 and ISO 32000 specifications.',
+        'Read Word, Excel, PowerPoint and PDF, the legacy .doc, .xls and .ppt too, and convert them to PDF, SVG, HTML, Markdown, DOCX or XLSX — in the browser.',
       // The warm-paper design (Claude Design handoff): theme tokens + restyled
       // sidebar / TOC / cards / search, and the branded site title.
       customCss: ['./src/styles/theme.css'],
@@ -21,7 +23,11 @@ export default defineConfig({
         Sidebar: './src/components/Sidebar.astro',
         SocialIcons: './src/components/SocialIcons.astro',
         Footer: './src/components/Footer.astro',
+        PageTitle: './src/components/PageTitle.astro',
       },
+      // Head fixes Starlight's defaults cannot express: og:locale, the home
+      // page's og:type, a 404's noindex, and the API pages' own descriptions.
+      routeMiddleware: './src/routeData.ts',
       head: [
         { tag: 'link', attrs: { rel: 'preconnect', href: 'https://fonts.googleapis.com' } },
         {
@@ -67,7 +73,7 @@ export default defineConfig({
                 url: 'https://reamkit.dev/',
                 name: 'Ream',
                 description:
-                  'Read Word, Excel, PowerPoint and PDF — including the legacy .doc / .xls / .ppt — and convert any of them to PDF, SVG, HTML, DOCX or XLSX, in the browser.',
+                  'Read Word, Excel, PowerPoint and PDF — including the legacy .doc / .xls / .ppt — and convert any of them to PDF, SVG, HTML, Markdown, DOCX or XLSX, in the browser.',
                 inLanguage: 'en',
               },
               {
@@ -87,9 +93,11 @@ export default defineConfig({
                 programmingLanguage: 'TypeScript',
                 license: 'https://opensource.org/licenses/MIT',
                 isAccessibleForFree: true,
-                author: { '@type': 'Person', name: 'Alex Krassavin' },
+                author: { '@type': 'Person', name: 'Alexandr Krassavin' },
+                copyrightHolder: { '@type': 'Person', name: 'Alexandr Krassavin' },
+                copyrightYear: 2026,
                 description:
-                  'A TypeScript library that reads DOCX, XLSX, PPTX and PDF (plus the legacy binary .doc / .xls / .ppt) and converts them to PDF, SVG, HTML, DOCX or XLSX — built from the ECMA-376 and ISO 32000 specifications, with no LibreOffice, headless Office or commercial SDK.',
+                  'A TypeScript library that reads DOCX, XLSX, PPTX and PDF (plus the legacy binary .doc / .xls / .ppt) and converts them to PDF, SVG, HTML, Markdown, DOCX or XLSX — built from the ECMA-376 and ISO 32000 specifications, with no LibreOffice, headless Office or commercial SDK.',
               },
             ],
           }),

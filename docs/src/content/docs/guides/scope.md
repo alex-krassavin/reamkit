@@ -1,6 +1,6 @@
 ---
 title: Scope & limitations
-description: What Ream implements today, and where the edges are.
+description: 'What Ream reads and writes today — DOCX, XLSX, PPTX, PDF and the legacy .doc, .xls and .ppt — feature by feature, and where its edges are.'
 ---
 
 The conversion core is broad and spec-driven, but ECMA-376 is vast and Ream does

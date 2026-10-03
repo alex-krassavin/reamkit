@@ -1,0 +1,11 @@
+---
+// A page that sets its own heading (`ownHeading` in its frontmatter — the
+// home page's hero, the playground's) gets no second <h1>: Starlight's would
+// only be hidden there, and a page is read by its one heading. The skip link's
+// target, `#_top`, is that page's own heading block.
+import Default from '@astrojs/starlight/components/PageTitle.astro';
+
+const { ownHeading } = Astro.locals.starlightRoute.entry.data;
+---
+
+{!ownHeading && <Default />}

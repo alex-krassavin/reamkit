@@ -15,7 +15,7 @@
 ---
 
 <section class="rk-play not-content">
-  <header class="rk-play-head">
+  <header class="rk-play-head" id="_top">
     <h1 class="rk-play-title">Convert a document in your browser</h1>
     <p class="rk-play-lede">
       Drop a file and convert it to PDF, SVG, HTML, Markdown, DOCX or XLSX — the whole thing runs on this page.
@@ -671,8 +671,7 @@
   .content-panel + .content-panel {
     border-top: 0;
   }
-  /* Starlight renders the frontmatter title as the first content heading; the
-     playground supplies its own. */
+  /* The title's panel, left empty: the playground has the page's heading. */
   .content-panel:first-of-type {
     display: none;
   }
