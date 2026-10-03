@@ -291,4 +291,4 @@ and known limitations.
 
 ## License
 
-[MIT](./LICENSE) © Alex Krassavin
+[MIT](./LICENSE) — Copyright (c) 2026 Alexandr Krassavin

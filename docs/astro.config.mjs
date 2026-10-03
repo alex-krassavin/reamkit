@@ -93,7 +93,9 @@ export default defineConfig({
                 programmingLanguage: 'TypeScript',
                 license: 'https://opensource.org/licenses/MIT',
                 isAccessibleForFree: true,
-                author: { '@type': 'Person', name: 'Alex Krassavin' },
+                author: { '@type': 'Person', name: 'Alexandr Krassavin' },
+                copyrightHolder: { '@type': 'Person', name: 'Alexandr Krassavin' },
+                copyrightYear: 2026,
                 description:
                   'A TypeScript library that reads DOCX, XLSX, PPTX and PDF (plus the legacy binary .doc / .xls / .ppt) and converts them to PDF, SVG, HTML, Markdown, DOCX or XLSX — built from the ECMA-376 and ISO 32000 specifications, with no LibreOffice, headless Office or commercial SDK.',
               },
