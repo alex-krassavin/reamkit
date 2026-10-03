@@ -1,6 +1,6 @@
 ---
 title: Concepts
-description: How Ream converts a document — the from-scratch, spec-driven pipeline.
+description: 'How Ream converts a document: readers build one document model from the ECMA-376 and ISO 32000 specs, and writers set it as PDF, SVG, HTML and more.'
 ---
 
 Ream is written **from the specifications**, not as a wrapper. There is no

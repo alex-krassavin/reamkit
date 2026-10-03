@@ -82,8 +82,8 @@ const ICONS: Record<string, string> = {
      button colours (Astro scopes with :where(), i.e. zero specificity) and make
      the primary button's text terracotta-on-terracotta until hover. -->
 <div class="rk-home not-content">
-  <!-- hero -->
-  <section class="rk-hero">
+  <!-- hero: the page's one heading, and the skip link's target -->
+  <section class="rk-hero" id="_top">
     <div class="rk-tags">
       <span class="rk-tag rk-tag--mit">MIT</span>
       <span class="rk-tag">TypeScript</span>
@@ -545,9 +545,7 @@ const ICONS: Record<string, string> = {
   .content-panel + .content-panel {
     border-top: 0;
   }
-  /* Starlight renders the frontmatter title as the first content heading; the
-     hero already has its own. */
-  .content-panel h1#_top,
+  /* The title's panel, left empty: the hero has the page's heading. */
   .content-panel:first-of-type {
     display: none;
   }

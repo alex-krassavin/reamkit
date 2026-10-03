@@ -1,6 +1,6 @@
 ---
 title: Getting started
-description: Install Ream and convert your first document to PDF.
+description: 'Install Ream from npm and convert your first Word, Excel, PowerPoint or PDF document to PDF, HTML or Markdown — in the browser or in Node.js.'
 ---
 
 Ream reads Word, Excel, PowerPoint and PDF — the modern `.docx` / `.xlsx` / `.pptx` /

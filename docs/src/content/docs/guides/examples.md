@@ -1,6 +1,6 @@
 ---
 title: Examples
-description: Working recipes — PDF/A, digital signatures, font providers, SVG, HTML and Markdown output, strict mode, the interlayer.
+description: 'Working recipes for Ream: PDF/A, digital signatures, font providers, SVG, HTML and Markdown output, strict mode and the document interlayer.'
 ---
 
 Every snippet below is runnable as-is; they all start from document bytes

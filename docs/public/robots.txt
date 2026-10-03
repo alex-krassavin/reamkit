@@ -1,4 +1,14 @@
+# Ream — https://reamkit.dev
+#
+# The documentation is open. Search engines may index it, and AI systems may
+# read it to answer questions and may train on it (Content Signals,
+# https://contentsignals.org). A Markdown edition for language models is at
+# https://reamkit.dev/llms.txt, with llms-full.txt and llms-small.txt beside it.
+
 User-agent: *
+Content-Signal: search=yes, ai-input=yes, ai-train=yes
 Allow: /
+# The search box's own index, fetched by the page as you type; not pages.
+Disallow: /pagefind/
 
 Sitemap: https://reamkit.dev/sitemap-index.xml
