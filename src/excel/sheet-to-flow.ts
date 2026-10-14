@@ -131,6 +131,14 @@ export interface ProjectSheetOptions {
    * on it (`fitPagesToContent`). The SVG target asks for this.
    */
   readonly wholeSheetPages?: boolean;
+  /**
+   * Let a cell's text run on over its empty neighbours, as a printed or shown
+   * sheet does — modelled as a span from the cell over them. On by default.
+   * Off for a medium that keeps cells and not widths: markdown has no column
+   * for text to run on into, and a spill to the LEFT moved a right-aligned
+   * label into the column before its own.
+   */
+  readonly spill?: boolean;
 }
 
 /**
@@ -250,6 +258,7 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
     const titleRows = screen ? undefined : resolvePrintTitleRows(sheet.definedNames, sheetIdx);
     const gridBody = worksheetToBody(ws.grid, sheet.sharedStrings, sheet.styles, sheet.date1904, {
       ...(screen ? { screen } : {}),
+      ...(options.spill === false ? { spill: false } : {}),
       ...(screen && options.wholeSheetPages === true ? { image: true } : {}),
       ...(printArea ? { printArea } : {}),
       ...(titleRows ? { titleRows } : {}),

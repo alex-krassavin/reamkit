@@ -231,6 +231,70 @@ describe('a page drawn for its artwork stays a page in Markdown too', () => {
   });
 });
 
+describe('a page ruled into a table reads as a document for Markdown', () => {
+  /**
+   * An estimate as many producers draw one: every cell its own four strokes,
+   * and each sum two runs a narrow gap apart — "1 250" and "000".
+   */
+  const estimate = (): Uint8Array => {
+    const rows: ReadonlyArray<readonly [string, string, string]> = [
+      ['Item', 'Sum', ''],
+      ['Roofing', '1 250', '000'],
+      ['Gutters', '50', '400'],
+      ['Insulation', '153', '000'],
+      ['Total', '1 481', '900'],
+    ];
+    const ops = ['0.5 w', 'BT /F0 12 Tf 1 0 0 1 50 740 Tm (Estimate 7) Tj ET'];
+    const xs = [50, 250, 400];
+    rows.forEach(([name, high, low], i) => {
+      const y = 700 - (i + 1) * 20 + 6;
+      ops.push(`BT /F0 10 Tf 1 0 0 1 54 ${String(y)} Tm (${name}) Tj ET`);
+      ops.push(`BT /F0 10 Tf 1 0 0 1 330 ${String(y)} Tm (${high}) Tj ET`);
+      if (low !== '') {
+        ops.push(
+          `BT /F0 10 Tf 1 0 0 1 ${String(330 + high.length * 5.6 + 4)} ${String(y)} Tm (${low}) Tj ET`,
+        );
+      }
+      for (let c = 0; c < 2; c++) {
+        const [x0, x1] = [xs[c]!, xs[c + 1]!];
+        const [y0, y1] = [700 - i * 20, 700 - (i + 1) * 20];
+        ops.push(
+          `${String(x0)} ${String(y0)} m ${String(x1)} ${String(y0)} l S`,
+          `${String(x1)} ${String(y0)} m ${String(x1)} ${String(y1)} l S`,
+          `${String(x1)} ${String(y1)} m ${String(x0)} ${String(y1)} l S`,
+          `${String(x0)} ${String(y1)} m ${String(x0)} ${String(y0)} l S`,
+        );
+      }
+    });
+    ops.push('BT /F0 10 Tf 1 0 0 1 50 560 Tm (Done in 30 days.) Tj ET');
+    return onePagePdf(
+      '/MediaBox [0 0 600 800] /Resources << /Font << /F0 5 0 R >> >>',
+      ops.join('\n'),
+      ['<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'],
+    );
+  };
+
+  it('keeps its rows, and its sums whole, where the page kept every cell apart', async () => {
+    // Forty rules to eight lines: kept a page for a paged medium, which then
+    // shows the table exactly. Markdown drops the rules, and from the page it
+    // had every cell a paragraph of its own and "1 250 000" as "1 250", "000".
+    const doc = Ream.parse(estimate());
+    expect(doc.losses.some((l) => /read as a PAGE/u.test(l.detail))).toBe(true);
+    const md = new TextDecoder().decode(await doc.convert('md'));
+    expect(md).toMatch(/Roofing\s+1 250 000/u);
+    expect(md).toMatch(/Total\s+1 481 900/u);
+    expect(md).not.toMatch(/^000$/mu);
+  });
+
+  it('leaves a page of rules and no words the drawing it is', () => {
+    const lines = Array.from(
+      { length: 20 },
+      (_, i) => `${String(50 + i * 10)} 100 m ${String(50 + i * 10)} 400 l S`,
+    ).join('\n');
+    expect(readPdf(onePagePdf('/MediaBox [0 0 600 800]', lines)).flowing).toBeUndefined();
+  });
+});
+
 describe('a paragraph keeps the indent the page set it with (§17.3.1.12)', () => {
   const parasOf = (content: string) => {
     const doc = reconstructByLayout(

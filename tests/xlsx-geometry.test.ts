@@ -35,6 +35,12 @@ interface PlacedText {
   readonly text: string;
   readonly x: number;
   readonly y: number;
+  /** Where the box that clips the line ends on the right, when one does. */
+  readonly clipRight?: number;
+  /** …and where it starts on the left. */
+  readonly clipLeft?: number;
+  /** The line's own width, all of it, shown or not. */
+  readonly width: number;
 }
 
 /** Every text line the layout placed, with its position. */
@@ -51,13 +57,22 @@ function placed(xlsx: Uint8Array): Array<PlacedText> {
       const c = command as unknown as {
         originX: number;
         baselineY: number;
-        line: { tokens: ReadonlyArray<{ text?: string }> };
+        line: { tokens: ReadonlyArray<{ text?: string }>; contentWidthPt: number };
+        clip?: { x: number; width: number };
       };
       const text = c.line.tokens
         .map((t) => t.text ?? '')
         .join('')
         .trim();
-      if (text.length > 0) out.push({ text, x: c.originX, y: c.baselineY });
+      if (text.length > 0) {
+        out.push({
+          text,
+          x: c.originX,
+          y: c.baselineY,
+          width: c.line.contentWidthPt,
+          ...(c.clip ? { clipLeft: c.clip.x, clipRight: c.clip.x + c.clip.width } : {}),
+        });
+      }
     }
   }
   return out;
@@ -309,11 +324,50 @@ describe('grid geometry', () => {
         columns: [{ min: 1, max: 2, widthChars: 9 }],
       }),
     );
-    const shown = at(items, items.find((i) => i.text.startsWith('Carta'))?.text ?? '').text;
-    expect(phrase.startsWith(shown)).toBe(true);
-    // More than the first word, and not the whole string either.
-    expect(shown.length).toBeGreaterThan('Carta'.length);
-    expect(shown.length).toBeLessThan(phrase.length);
+    // The whole of it is drawn, as Excel's own PDF draws it, and the column's
+    // box cuts it — at the glyph its edge falls on, wherever that is.
+    const cut = at(items, phrase);
+    expect(cut.clipRight).toBeDefined();
+    // The box ends where the neighbour's begins: the text runs right up to it.
+    const neighbour = at(items, 'x');
+    expect(cut.clipRight!).toBeLessThan(neighbour.x);
+    expect(cut.clipRight!).toBeGreaterThan(neighbour.x - 5);
+  });
+
+  it('cuts a centred cell on both sides and a right-aligned one on its left, as Excel does', () => {
+    // Excel sets an overrunning cell by its alignment and lets the box cut it:
+    // the middle of centred text shows, the end of right-aligned text (Excel's
+    // own PDF of a probe, 14.10.2026). Trimmed to the glyph at the right edge,
+    // both showed their START.
+    const stylesXml = `
+      <cellXfs count="3">
+        <xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>
+        <xf numFmtId="0" fontId="0" fillId="0" borderId="0" applyAlignment="1"><alignment horizontal="center"/></xf>
+        <xf numFmtId="0" fontId="0" fillId="0" borderId="0" applyAlignment="1"><alignment horizontal="right"/></xf>
+      </cellXfs>`;
+    const phrase = 'начало-середина-конец';
+    const items = placed(
+      buildXlsx({
+        rows: [
+          ['x', { value: phrase, styleIndex: 1 }, 'x'],
+          ['x', { value: phrase, styleIndex: 2 }, 'x'],
+        ],
+        columns: [{ min: 1, max: 3, widthChars: 8 }],
+        stylesXml,
+      }),
+    );
+    const [centred, right] = items.filter((i) => i.text === phrase);
+    expect(centred?.clipLeft).toBeDefined();
+    expect(right?.clipLeft).toBeDefined();
+    // Centred: as much runs out of the box on the left as on the right.
+    const outLeft = centred!.clipLeft! - centred!.x;
+    const outRight = centred!.x + centred!.width - centred!.clipRight!;
+    expect(outLeft).toBeGreaterThan(5);
+    expect(Math.abs(outLeft - outRight)).toBeLessThan(3);
+    // Right-aligned: it ends at the box's right, and its start is what is cut.
+    expect(right!.x).toBeLessThan(right!.clipLeft! - 5);
+    expect(right!.x + right!.width).toBeLessThanOrEqual(right!.clipRight!);
+    expect(right!.x + right!.width).toBeGreaterThan(right!.clipRight! - 6);
   });
 
   it('wraps a cell whose word is wider than the column, instead of one long line', () => {
@@ -462,8 +516,12 @@ describe('grid geometry', () => {
     const free = placed(
       buildXlsx({ rows: [[phrase], [null, null, null, 'anchor']], columns, stylesXml }),
     );
-    expect(free.map((i) => i.text)).toContain(phrase);
-    expect(blocked.map((i) => i.text)).not.toContain(phrase);
+    // Free, it runs across with nothing to cut it; blocked, the same words are
+    // cut at the edge of their own column — narrower by the green cell.
+    expect(at(free, phrase).clipRight).toBeUndefined();
+    const cut = at(blocked, phrase);
+    expect(cut.clipRight).toBeDefined();
+    expect(cut.clipRight! - cut.clipLeft!).toBeLessThan(80);
   });
 
   it('runs the text over the rule that CLOSES its band, taking it along', () => {
@@ -998,10 +1056,12 @@ describe('a vertical merge is ONE box (§18.3.1.55)', () => {
         columns: [{ min: 1, max: 3, widthChars: 6 }],
       }),
     );
-    const drawn = items.find((i) => long.startsWith(i.text))?.text ?? '';
-    expect(drawn.length).toBeGreaterThan(0);
-    expect(drawn.length).toBeLessThan(long.length);
-    expect(at(items, 'right').x).toBeGreaterThan(at(items, drawn).x);
+    // Drawn whole, and cut by the merge's box — two columns, not one, and not
+    // the row: the cell beside the merge starts where the box ends.
+    const cut = at(items, long);
+    expect(cut.clipRight).toBeDefined();
+    expect(at(items, 'right').x).toBeGreaterThan(cut.clipRight!);
+    expect(cut.clipRight! - cut.clipLeft!).toBeGreaterThan(60);
   });
 });
 

@@ -8152,7 +8152,7 @@ function layoutTableCell(
         const cutAt = widthPt - padLeftPt;
         if (noWrap && (block.lines[0]?.contentWidthPt ?? 0) > cutAt) clipped = true;
         const keep = noWrap
-          ? clipLineToWidth(block.lines, cutAt, cell.properties.hashOnOverflow === true)
+          ? oneLineInBox(block.lines, cutAt, cell.properties.hashOnOverflow === true)
           : block.lines;
         // §17.4.20 — a cell that hides its end-of-cell mark contributes no
         // height for an EMPTY paragraph: the mark is all such a line holds.
@@ -10866,7 +10866,10 @@ function emitRowChunk(
       textY -= cell.lineGaps?.get(lineIdx) ?? 0;
       const h = computeLineHeight(line, line.resolved);
       textY -= h;
-      const offset = alignmentOffset(
+      // A clipped cell's line may be wider than its box, and it is set the way
+      // its alignment says all the same — centred over the box, or ending at
+      // its right — for the box to cut it on the side Excel cuts it.
+      const offset = (cell.clipped === true ? overrunOffset : alignmentOffset)(
         line.resolved.alignment,
         line.contentWidthPt,
         cell.widthPt - cell.padLeftPt - cell.padRightPt,
@@ -11095,51 +11098,48 @@ function emitCellBorders(
 const NO_WRAP_MEASURE_WIDTH = 1e6;
 
 /**
- * One line, trimmed to the glyph that STRADDLES `widthPt` — what a non-wrapping
- * spreadsheet cell shows. Excel and LibreOffice paint that glyph and cut it
- * through the middle, and so do we now: the caller marks the cell and the
- * emitters clip the line to its box (TextLineItem.clip). Stopping at the last
- * glyph that wholly fits is what dropped a character off every cut cell.
+ * The one line a non-wrapping spreadsheet cell shows — WHOLE. Excel and
+ * LibreOffice set such a cell's text on one line and let its box cut it, through
+ * the glyph the edge falls on: on the right of left-aligned text, on both sides
+ * of centred text, on the left of right-aligned text. So the caller marks the
+ * cell, sets the line by its alignment (see {@link overrunOffset}) and the
+ * emitters clip it to the box (TextLineItem.clip).
+ *
+ * It was trimmed to the glyph that straddles the edge instead, which cut every
+ * centred and right-aligned cell on the wrong side and left the page's text
+ * holding only what showed — "Монтаж кровл" of "Монтаж кровли".
+ *
+ * @param lines          The cell paragraph's lines, laid out unbroken.
+ * @param widthPt        How far the cell's box reaches.
+ * @param hashOnOverflow Whether a number too wide for the box shows as `#`.
+ * @returns The first line, or the `#` that stand for it.
  */
-function clipLineToWidth(
+function oneLineInBox(
   lines: ReadonlyArray<Line>,
   widthPt: number,
   hashOnOverflow = false,
 ): Array<Line> {
   const line = lines[0];
   if (!line) return [];
-  if (line.contentWidthPt <= widthPt) return [line];
   // A number under its own format is never shown truncated — see
   // CellProperties.hashOnOverflow.
-  if (hashOnOverflow) return [hashFill(line, widthPt)];
-  const tokens: Array<Token> = [];
-  let used = 0;
-  for (const token of line.tokens) {
-    const advance = token.widthPt;
-    if (used + advance <= widthPt) {
-      tokens.push(token);
-      used += advance;
-      continue;
-    }
-    // The token that straddles the edge: keep the characters that fit. Only
-    // text can be cut — an image or a formula is atomic and simply drops.
-    if (token.kind === 'text') {
-      const room = widthPt - used;
-      let text = '';
-      let textWidth = 0;
-      for (const ch of token.text) {
-        if (textWidth >= room) break;
-        text += ch;
-        textWidth = token.font.measure.textWidthPt(text, token.fontSizePt);
-      }
-      if (text.length > 0) {
-        tokens.push({ ...token, text, widthPt: textWidth });
-        used += textWidth;
-      }
-    }
-    break;
-  }
-  return [{ ...line, tokens, contentWidthPt: used }];
+  if (hashOnOverflow && line.contentWidthPt > widthPt) return [hashFill(line, widthPt)];
+  return [line];
+}
+
+/**
+ * {@link alignmentOffset} for a line that may be wider than its room: the
+ * offset may go below zero, putting the start of a centred or right-aligned
+ * line before the box for the box's clip to cut.
+ */
+function overrunOffset(
+  alignment: ResolvedParagraphProperties['alignment'],
+  lineWidth: number,
+  available: number,
+): number {
+  if (alignment === 'right') return available - lineWidth;
+  if (alignment === 'center') return (available - lineWidth) / 2;
+  return 0;
 }
 
 /**

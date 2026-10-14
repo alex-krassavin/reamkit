@@ -1066,9 +1066,9 @@ describe('xlsx print-model rendering', () => {
   });
 
   it('clips cell text blocked by an occupied neighbour, overflows into empty ones', () => {
-    // Column A is 5 chars wide. Row 1: A1 long, B1 occupied → A1 clips to ~5
-    // chars. Row 2: A2 long, B2 empty → A2 overflows (full text kept). Repeated
-    // narrow chars (no kerning/ligatures) render each run as a single Tj.
+    // Column A is 5 chars wide. Row 1: A1 long, B1 occupied → A1 is cut at the
+    // column's edge. Row 2: A2 long, B2 empty → A2 overflows. Repeated narrow
+    // chars (no kerning/ligatures) render each run as a single Tj.
     const blocked = 'l'.repeat(18);
     const overflow = 'i'.repeat(18);
     const xlsx = buildXlsx({
@@ -1078,15 +1078,15 @@ describe('xlsx print-model rendering', () => {
     const text = asLatin1(convertXlsxToPdfSync(xlsx, { fonts: FONTS }));
     // A2 overflows into the empty B2 → full text kept.
     expect(text).toMatch(showPattern(parsed, overflow));
-    // A1 is clipped — its full text is gone, and what survives is a prefix.
-    expect(text).not.toMatch(showPattern(parsed, blocked));
-    // How MANY characters fit is a function of the column width, the cell inset
-    // and the glyph's advance; pinning an exact count here pins those three
-    // together and breaks whenever any of them is corrected. What matters is
-    // that a prefix survives and it is shorter than the whole.
-    const prefixes = Array.from({ length: blocked.length - 1 }, (_, i) => i + 1).filter((n) =>
-      showPattern(parsed, 'l'.repeat(n)).test(text),
-    );
-    expect(prefixes.length).toBeGreaterThan(0);
+    // A1 keeps its whole text as well: the page's text is the cell's, as
+    // Excel's own PDF has it, and what the column cannot show is cut by a CLIP
+    // the column's width — not by dropping the letters, which lost the rest of
+    // the value from every text the page gave up ("Монтаж кровл").
+    expect(text).toMatch(showPattern(parsed, blocked));
+    const clip = /([\d.]+) ([\d.]+) ([\d.]+) ([\d.]+) re W n\s+BT[^]*?Tj/u.exec(text);
+    expect(clip?.[0]).toMatch(showPattern(parsed, blocked));
+    // Five characters of Calibri's digit, as the column is wide.
+    expect(Number(clip?.[3])).toBeGreaterThan(20);
+    expect(Number(clip?.[3])).toBeLessThan(45);
   });
 });

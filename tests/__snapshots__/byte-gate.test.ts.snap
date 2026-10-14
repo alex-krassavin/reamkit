@@ -62,4 +62,4 @@ exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: scale 1`] = `"748
 
 exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: sheet-chart 1`] = `"e77278013abd3763ffb743a6468d27d5807f4ae84f96e214fbbec39de4b515c8"`;
 
-exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: tracks 1`] = `"8157034709bc68ff44dc0725e910626147b6a25593a898030252bebea4f8fe00"`;
+exports[`byte gate: xlsx feature surface (E-SHEET SA0) > xlsx: tracks 1`] = `"af6a24c8dc21d43a40dc66d95dbaa6c9b501f601ba6ba12c4ec3ae28621419db"`;

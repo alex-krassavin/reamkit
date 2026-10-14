@@ -9,12 +9,14 @@ import { collectPageVectors } from './vector';
 import { extractPageText } from './text';
 import { reconstructByLayout } from './layout';
 import { reconstructTaggedPdf } from './tagged';
+import type { PdfVector } from './vector';
 import type { StreamFilters } from './document';
 import type { DocumentReader, ReadResult } from '@/core/ir/adapters';
 import type { FlowDoc } from '@/core/ir/flow';
 import type { Loss } from '@/core/ir';
 
 import { FEATURES } from '@/core/ir';
+import { WrongPasswordError } from '@/core/crypto/password-error';
 
 // Sniff the %PDF- header, tolerating a few junk bytes before it (some producers
 // prepend a BOM or whitespace) — §7.5.2.
@@ -66,6 +68,8 @@ function endsLikePdf(bytes: Uint8Array): boolean {
  * @param filters  Decoders for `/Filter` names this reader does not implement
  *                 (§7.4); see {@link StreamFilters}.
  * @returns The reconstructed FlowDoc and its accumulated {@link Loss} report.
+ * @throws WrongPasswordError when the file is encrypted and the password opens
+ *         it neither as its user nor as its owner — none given included.
  *
  * Which of the two readings a file gets is the FILE's to decide and no
  * caller's: a page that is mostly marks is reproduced where it stands, one
@@ -80,21 +84,36 @@ export function readPdf(
   filters: StreamFilters = {},
 ): ReadResult<FlowDoc> {
   const file = PdfFile.parse(bytes, password, filters);
+  // §7.6.3.4 — every revision of the handler stores a verifier, so a password
+  // that opens the file as neither its user nor its owner is KNOWN to be wrong,
+  // and is refused as an Office package's is. It used to come back as a
+  // document with no text and a line in the losses, which a caller that reads
+  // the text and not the losses takes for an empty file.
+  if (file.passwordRefused) {
+    throw new WrongPasswordError(
+      password === ''
+        ? 'This PDF needs a password to open — pass it as `password`'
+        : 'The password opens this PDF neither as its user nor as its owner',
+    );
+  }
   // Which reading the file asks for. The FILE decides, always: a caller cannot
   // know whether the bytes it was handed are a paper or a form, and asking it
   // to choose only moved the guess outward — and left the choice the library
   // actually makes untested, because everything that measured it pinned the
   // other one.
-  const { reading, byLetters } = readingOf(file);
+  const { reading, forText } = readingOf(file);
   const read = readAs(file, reading);
-  if (!byLetters) return read;
+  if (!forText) return read;
   // Letters the file names no character for are DRAWN, and a page of them is
   // kept where they stand: that is the only place a medium that shows them —
-  // as pictures of words — can put them. Markdown shows none. It drops them,
-  // and from a page it had the readable lines left over a line to a paragraph:
-  // TAMReview.pdf sets its body in such letters, and its abstract — set in a
-  // face that does name its characters — came back cut at every line. So that
-  // medium reads the file again as the document it is without them.
+  // as pictures of words — can put them. A page ruled into a table is kept
+  // where its rules stand, and its cells with them, which is how a paged medium
+  // shows the table exactly. Markdown shows neither the letters nor the rules.
+  // It drops them, and from a page it had the readable lines left over a line
+  // to a paragraph: TAMReview.pdf, whose body is set in such letters, came back
+  // with its abstract cut at every line, and a ruled estimate with every cell a
+  // paragraph of its own and "1 250 000" as "1 250" and "000". So that medium
+  // reads the file again as the document it is without them.
   //
   // Only then. A form, a grid or a drawing is a page for its ARTWORK, which a
   // flowing reading reorders: read as a document, a form's fields came back
@@ -126,7 +145,7 @@ function readAs(
       severity: 'dropped',
       feature: FEATURES.text,
       detail:
-        'encrypted PDF — the user password was missing or incorrect, or the handler is unsupported',
+        'encrypted PDF — its security handler is not supported, or its /Encrypt dictionary cannot be read, so its content cannot be decrypted',
     });
   }
 
@@ -145,7 +164,7 @@ function readAs(
     severity: 'degraded',
     feature: FEATURES.text,
     detail: reflowed
-      ? 'PDF read as a DOCUMENT (flowing) for a medium that shows no drawn letters: the file is kept as a PAGE elsewhere, its words mostly glyphs it names no character for, which only a page can show where they stand'
+      ? 'PDF read as a DOCUMENT (flowing) for a medium that keeps only the text: the file is kept as a PAGE elsewhere for its drawn letters or its rules, which only a page can show where they stand'
       : reading === 'positional'
         ? 'PDF read as a PAGE (placed): its artwork outweighs its prose, so every line stands where its glyphs stand'
         : 'PDF read as a DOCUMENT (flowing): its prose outweighs its artwork, so the words re-set and the artwork takes its turn in reading order',
@@ -186,13 +205,17 @@ function readAs(
  * records which reading it took and why.
  *
  * A glyph the file names no character for is drawn, and counted as a mark like
- * any other path — it IS one, for every medium that has to place it. Whether
- * the page was a page for those letters alone is said as well: see `byLetters`.
+ * any other path — it IS one, for every medium that has to place it; so is a
+ * rule. Whether the page was a page for those alone is said as well: see
+ * `forText`.
  */
 function readingOf(file: PdfFile): {
   readonly reading: 'flow' | 'positional';
-  /** The file is a page only for its drawn letters: without them it would flow. */
-  readonly byLetters: boolean;
+  /**
+   * The file is a page only for marks a medium that keeps nothing but the text
+   * drops anyway — its drawn letters and its rules: without them it would flow.
+   */
+  readonly forText: boolean;
 } {
   /**
    * Below this many marks a page is prose with decoration, whatever the ratio.
@@ -209,6 +232,12 @@ function readingOf(file: PdfFile): {
   const DRAWN = 2;
   /** Below this many runs, an angle is a stamp or a watermark and not the page. */
   const ENOUGH_TURNED = 8;
+  /**
+   * How many rules a page may have for each mark of other artwork and still be
+   * a ruled document: an estimate shades its heading row and its total, and a
+   * dozen shaded cells under eighty rules are a table's, not a drawing's.
+   */
+  const RULES_PER_MARK = 4;
   const ratios: Array<number> = [];
   /** The same, the drawn letters left out. */
   const artwork: Array<number> = [];
@@ -217,6 +246,7 @@ function readingOf(file: PdfFile): {
   for (const page of file.pages()) {
     let marks = 0;
     let letters = 0;
+    let rules = 0;
     let lines = 0;
     let turned = 0;
     let runs = 0;
@@ -224,6 +254,7 @@ function readingOf(file: PdfFile): {
       const vectors = collectPageVectors(file, page, []).vectors;
       marks = vectors.length;
       letters = vectors.filter((v) => v.glyph === true).length;
+      rules = vectors.filter(isRule).length;
       // Baselines, not runs: a line broken into twenty runs is still one line,
       // and counting runs would make ordinary justified prose look drawn.
       const ys = new Set<number>();
@@ -247,14 +278,43 @@ function readingOf(file: PdfFile): {
       continue;
     }
     ratios.push(ratioOf(marks, lines));
-    artwork.push(ratioOf(marks - letters, lines));
+    // …and for a medium that keeps only the TEXT, which marks of the page are
+    // still a reason to keep it a page. Not its drawn letters (see `forText`).
+    // Not its RULES either: a rule is the text's punctuation — the lines round a
+    // table's cells, under a heading, over a total — and such a medium drops it.
+    // An estimate set as one ruled table is 84 strokes to 9 lines, where
+    // 160F-2019.pdf's form is 223 marks to 93; kept a page, every cell of it
+    // came back a line of its own and "1 250 000" as "1 250" and "000". A
+    // form's fields and a grid's swatches are boxes, and stay; a page with no
+    // text is a drawing, rules or not.
+    const ruled =
+      lines > 0 && marks - letters - rules < Math.max(ENOUGH_MARKS, rules / RULES_PER_MARK);
+    artwork.push(ruled ? 0 : ratioOf(marks - letters, lines));
   }
   const drawn = (rs: ReadonlyArray<number>): boolean => {
     const sorted = [...rs].sort((a, b) => a - b);
     return (sorted[Math.floor(sorted.length / 2)] ?? 0) >= DRAWN;
   };
-  if (!drawn(ratios)) return { reading: 'flow', byLetters: false };
-  return { reading: 'positional', byLetters: !drawn(artwork) };
+  if (!drawn(ratios)) return { reading: 'flow', forText: false };
+  return { reading: 'positional', forText: !drawn(artwork) };
+}
+
+/** Thinner than this a straight mark is a line, whatever it was drawn as. */
+const RULE_THICKNESS = 2.5;
+/** …and it is a rule rather than a dot or a tick from this long. */
+const RULE_LENGTH = 4;
+
+/**
+ * Whether a painted path is a RULE: straight, along the page, a line thin
+ * enough to be one — stroked as a line or filled as a hairline box, which is
+ * how many producers draw a table's grid.
+ */
+function isRule(v: PdfVector): boolean {
+  if (v.glyph === true || v.gradient !== undefined) return false;
+  if (v.segs.some((seg) => seg.op === 'cubic')) return false;
+  const w = v.maxX - v.minX;
+  const h = v.maxY - v.minY;
+  return Math.min(w, h) <= RULE_THICKNESS && Math.max(w, h) >= RULE_LENGTH;
 }
 
 /**

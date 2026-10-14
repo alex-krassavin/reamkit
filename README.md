@@ -59,8 +59,9 @@ and `doc.convertWithReport(...)` returns `{ bytes, losses }` (pass
 are plain `Uint8Array`s, so wiring this to files, the network, or disk is up
 to you.
 
-An encrypted source opens with its password — a PDF's user password, or an
-Office package's (MS-OFFCRYPTO, Agile and Standard):
+An encrypted source opens with its password — a PDF's user or owner password,
+or an Office package's (MS-OFFCRYPTO, Agile and Standard). A wrong one, or none
+where one is needed, throws `WrongPasswordError`:
 
 ```ts
 const doc = Ream.parse(bytes, { password: 'secret' });
@@ -253,14 +254,17 @@ itself whether a file is a document to re-flow or a page to keep — a paper is
 mostly lines, a form is mostly marks — and there is nothing to configure: a
 caller cannot know which of the two it was handed. It reads modern compressed
 files (cross-reference + object streams) and encrypted ones (RC4 / AES — the
-user password is passed to `Ream.parse(bytes, { password })`, defaulting to the
-permissions-only case); a filter it does not carry can be handed to it through
-`Ream.parse(bytes, { filters })`.
+user or owner password is passed to `Ream.parse(bytes, { password })`,
+defaulting to the permissions-only case, and one that opens the file as neither
+throws `WrongPasswordError`); a filter it does not carry can be handed to it
+through `Ream.parse(bytes, { filters })`.
 
 A form or a drawing is not a reflowable document, so the reader keeps it as a
 page instead: every line stands where its glyphs stand, beside the artwork, the
 way up the page is shown. Which of the two readings a file gets it decides
-itself and records in the losses.
+itself and records in the losses. Markdown, which places nothing, reads a page
+kept only for its table's rules, or for letters the file names no character
+for, as the document it is without them.
 
 **Reads PowerPoint, too.** `Ream.parse` accepts a `.pptx` and turns each slide
 into a page at the deck size — text boxes (with run formatting, alignment,

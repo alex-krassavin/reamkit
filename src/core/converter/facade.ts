@@ -198,7 +198,9 @@ export function createConverter(opts: CreateConverterOptions = {}): Converter {
       const { doc: flow, losses: readLosses } = readToFlow(
         reader,
         bytes,
-        rest.now ? { now: rest.now } : undefined,
+        // Each cell's text in its own column: markdown has no widths for it to
+        // run on over (ProjectSheetOptions.spill).
+        { ...(rest.now ? { now: rest.now } : {}), spill: false },
         true,
       );
       losses.push(...readLosses);
