@@ -15,6 +15,7 @@ import type { FlowDoc } from '@/core/ir/flow';
 import type { Loss } from '@/core/ir';
 
 import { FEATURES } from '@/core/ir';
+import { WrongPasswordError } from '@/core/crypto/password-error';
 
 // Sniff the %PDF- header, tolerating a few junk bytes before it (some producers
 // prepend a BOM or whitespace) — §7.5.2.
@@ -66,6 +67,8 @@ function endsLikePdf(bytes: Uint8Array): boolean {
  * @param filters  Decoders for `/Filter` names this reader does not implement
  *                 (§7.4); see {@link StreamFilters}.
  * @returns The reconstructed FlowDoc and its accumulated {@link Loss} report.
+ * @throws WrongPasswordError when the file is encrypted and the password opens
+ *         it neither as its user nor as its owner — none given included.
  *
  * Which of the two readings a file gets is the FILE's to decide and no
  * caller's: a page that is mostly marks is reproduced where it stands, one
@@ -80,6 +83,18 @@ export function readPdf(
   filters: StreamFilters = {},
 ): ReadResult<FlowDoc> {
   const file = PdfFile.parse(bytes, password, filters);
+  // §7.6.3.4 — every revision of the handler stores a verifier, so a password
+  // that opens the file as neither its user nor its owner is KNOWN to be wrong,
+  // and is refused as an Office package's is. It used to come back as a
+  // document with no text and a line in the losses, which a caller that reads
+  // the text and not the losses takes for an empty file.
+  if (file.passwordRefused) {
+    throw new WrongPasswordError(
+      password === ''
+        ? 'This PDF needs a password to open — pass it as `password`'
+        : 'The password opens this PDF neither as its user nor as its owner',
+    );
+  }
   // Which reading the file asks for. The FILE decides, always: a caller cannot
   // know whether the bytes it was handed are a paper or a form, and asking it
   // to choose only moved the guess outward — and left the choice the library
@@ -126,7 +141,7 @@ function readAs(
       severity: 'dropped',
       feature: FEATURES.text,
       detail:
-        'encrypted PDF — the user password was missing or incorrect, or the handler is unsupported',
+        'encrypted PDF — its security handler is not supported, or its /Encrypt dictionary cannot be read, so its content cannot be decrypted',
     });
   }
 

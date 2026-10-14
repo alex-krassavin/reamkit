@@ -136,6 +136,9 @@ describe('Ream.parse on an encrypted source', () => {
 
   it('says what to do when no password is given', () => {
     expect(() => Ream.parse(real(STANDARD))).toThrow(/password/iu);
+    // …as the same error a wrong one is, which a PDF throws as well: one
+    // `instanceof` asks for a password whatever the caller was handed.
+    expect(() => Ream.parse(real(STANDARD))).toThrow(WrongPasswordError);
   });
 
   it('…and reports a wrong one as a wrong password', () => {

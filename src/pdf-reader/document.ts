@@ -64,6 +64,8 @@ export class PdfFile {
   private readonly objStmCache = new Map<number, Map<number, PdfValue>>();
   // The standard security handler, when the document is encrypted (EP9).
   private decryptor: Decryptor | undefined;
+  // Why an encrypted document has none: its password was refused, or its handler.
+  private refused: 'password' | 'handler' | undefined;
   private encryptObjNum = -1;
 
   private constructor(
@@ -128,7 +130,9 @@ export class PdfFile {
     const enc = this.resolve(encVal);
     if (!(enc instanceof Map)) return;
     const id = this.trailer.get('ID');
-    this.decryptor = buildDecryptor(enc, Array.isArray(id) ? id : undefined, password);
+    const built = buildDecryptor(enc, Array.isArray(id) ? id : undefined, password);
+    if ('decryptor' in built) this.decryptor = built.decryptor;
+    else this.refused = built.refused;
   }
 
   /** Resolve a stream's `/Length` when it is an indirect reference. */
@@ -208,10 +212,18 @@ export class PdfFile {
 
   /**
    * The document is encrypted but no decryptor could be built (an unsupported
-   * handler, or a wrong/missing user password) — its content is unreadable.
+   * handler, or a refused password) — its content is unreadable.
    */
   get encryptionUnsupported(): boolean {
     return this.trailer.get('Encrypt') !== undefined && this.decryptor === undefined;
+  }
+
+  /**
+   * §7.6.3.4 — the document is encrypted and the password it was opened with is
+   * neither its user's nor its owner's, by the verifiers the file itself stores.
+   */
+  get passwordRefused(): boolean {
+    return this.refused === 'password';
   }
 
   /** The leaf pages, in document order, each with its inherited `/MediaBox` and `/Resources`. */

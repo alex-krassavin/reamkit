@@ -35,6 +35,7 @@ import { scriptsInFlow } from '@/core/fonts/scripts';
 import { familiesInFlow } from '@/core/fonts/families';
 import { ConversionLossError } from '@/core/ir';
 import { decryptPackage, isEncryptedPackage } from '@/core/crypto/offcrypto';
+import { WrongPasswordError } from '@/core/crypto/password-error';
 import { writeDocx } from '@/word/docx-writer';
 import { projectSheetDoc } from '@/excel/sheet-to-flow';
 import { writeXlsx } from '@/excel/xlsx-writer';
@@ -213,6 +214,9 @@ export class Ream {
    *                encrypted source.
    * @returns A reusable {@link Ream} instance.
    * @throws Error when no registered reader recognizes the bytes.
+   * @throws WrongPasswordError when the bytes are encrypted — an Office package
+   *         or a PDF — and the password does not open them, or none was given
+   *         where one is needed.
    */
   static parse(bytes: Uint8Array, options: ReamParseOptions = {}): Ream {
     const readers = options.readers ?? DEFAULT_READERS;
@@ -222,7 +226,7 @@ export class Ream {
     let source = bytes;
     if (isEncryptedPackage(bytes)) {
       if (options.password === undefined) {
-        throw new Error(
+        throw new WrongPasswordError(
           'Password-protected OOXML document (ECMA-376 §2.3 EncryptedPackage) — ' +
             'pass the password as `password`',
         );
