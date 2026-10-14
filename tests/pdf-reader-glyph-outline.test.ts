@@ -333,7 +333,7 @@ describe('a page of drawn letters, in Markdown (§9.6.6)', () => {
     const md = new TextDecoder().decode(bytes);
     expect(md).toContain('The first line of a paragraph set in a face that names its characters.');
     // The report names the reading the Markdown came from, and only that one.
-    expect(reading(losses)).toEqual([expect.stringMatching(/shows no drawn letters/u)]);
+    expect(reading(losses)).toEqual([expect.stringMatching(/keeps only the text/u)]);
     // The converter facade reads it the same way.
     const viaFacade = await createConverter().convert(drawnLettersPdf(), { to: 'md' });
     expect(new TextDecoder().decode(viaFacade.bytes)).toBe(md);
