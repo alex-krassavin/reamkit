@@ -1,6 +1,6 @@
 ---
 title: Examples
-description: 'Working recipes for Ream: PDF/A, digital signatures, font providers, SVG, HTML and Markdown output, strict mode and the document interlayer.'
+description: 'Working recipes for Ream: PDF/A, digital signatures, font providers, SVG and HTML, Markdown for language models, strict mode and the document interlayer.'
 ---
 
 Every snippet below is runnable as-is; they all start from document bytes
@@ -96,6 +96,37 @@ markdown's alone, and `{ sheetNames: false }` turns it off:
 const book = Ream.parse(xlsxBytes);
 const md = await book.convert('md'); // # Revenue, then its grid; # Costs, then its
 ```
+
+## Any attachment → Markdown for a language model
+
+A chat that takes a document and hands it to a model wants what the document
+says, not how its pages look — and one function serves all seven inputs, a PDF
+and the legacy binaries included:
+
+```ts
+import { Ream } from 'reamkit';
+
+/** An attached document as Markdown a model can read, whatever its format. */
+async function attachmentToMarkdown(bytes: Uint8Array): Promise<string> {
+  const doc = Ream.parse(bytes); // .docx .xlsx .pptx .pdf .doc .xls .ppt — sniffed
+  const deck = doc.format === 'pptx' || doc.format === 'ppt';
+  const md = await doc.convert('md', {
+    images: 'drop', // no base64 pictures in the prompt
+    pageBreaks: deck ? 'rule' : 'drop', // a deck's slides apart by ---
+  });
+  return new TextDecoder().decode(md);
+}
+```
+
+Markdown needs no fonts, so this touches neither the network nor a file system
+and runs as well in the page, before anything is uploaded, as on a server. A PDF
+comes back as the document it was — read from its structure tree when it is
+tagged, from where its glyphs stand when it is not: paragraphs, headings, lists,
+columns and tables. A form or a drawing comes back line by line instead, each
+line where it stands. Ream does no OCR, so a scan gives up its text only from a
+text layer OCR software left under the picture. What Markdown cannot carry —
+charts, math, headers and footers — is in `convertWithReport`'s losses, as with
+any other target.
 
 ## xlsx → HTML / SVG: a workbook as Excel shows it
 

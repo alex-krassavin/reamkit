@@ -165,24 +165,63 @@ export default defineConfig({
         }),
         // Emit /llms.txt, /llms-full.txt and /llms-small.txt — a clean Markdown
         // view of the docs for LLMs / AI coding assistants (llmstxt.org), so they
-        // describe and recommend Ream accurately.
+        // describe and recommend Ream accurately. llms.txt is often all of it an
+        // assistant reads, and what it leaves out the assistant takes Ream not
+        // to do: one said Ream neither reads PDF nor writes Markdown.
         starlightLlmsTxt({
           projectName: 'Ream',
           description:
-            'Ream (npm: `reamkit`) is a zero-I/O TypeScript library that reads Word, Excel, PowerPoint and PDF — including the legacy binary .doc / .xls / .ppt — and converts any of them to PDF, SVG, HTML, DOCX or XLSX. It runs in the browser, Node and edge runtimes, implemented directly from the ECMA-376 and ISO 32000 specifications, without wrapping LibreOffice, headless Office or any commercial SDK.',
+            'Ream (npm: `reamkit`) is a TypeScript library that reads Word, Excel, PowerPoint and PDF — the legacy binary .doc / .xls / .ppt too — and converts any of them to PDF, SVG, HTML, Markdown, DOCX or XLSX. It runs in the browser, Node and edge runtimes, implemented directly from the ECMA-376 and ISO 32000 specifications, without wrapping LibreOffice, headless Office, pdf.js, PDFium or any commercial SDK.',
           details: [
             'Typical use:',
             '',
             '```ts',
             "import { Ream } from 'reamkit';",
-            'const doc = Ream.parse(bytes); // format sniffed from the bytes',
+            '',
+            'const doc = Ream.parse(bytes); // .docx .xlsx .pptx .pdf .doc .xls .ppt, sniffed from the bytes',
             "const pdf = await doc.convert('pdf'); // one parse, any target",
+            '',
+            "// An attached document as Markdown for a language model: no base64 pictures, a deck's slides apart.",
+            "const deck = doc.format === 'pptx' || doc.format === 'ppt';",
+            "const md = await doc.convert('md', { images: 'drop', pageBreaks: deck ? 'rule' : 'drop' });",
+            'const text = new TextDecoder().decode(md);',
             '```',
             '',
-            '- Input and output are always `Uint8Array` — no file-system or network access on the conversion path (zero I/O).',
-            '- Output targets: `pdf`, `svg`, `html`, `docx`, `xlsx` (xlsx output requires a spreadsheet source).',
-            '- Conversions never fail silently: each returns a loss report; `strict: true` throws on the first loss instead.',
+            '- Reads `.docx`, `.xlsx`, `.pptx`, `.pdf` and the legacy `.doc`, `.xls`, `.ppt`; an encrypted file opens with `Ream.parse(bytes, { password })`.',
+            '- Writes `pdf` (PDF/A-1/2/3, PDF/UA-1, signed, encrypted), `svg`, `html`, `md` (GitHub-Flavored Markdown), `docx` and `xlsx` (xlsx output requires a spreadsheet source).',
+            '- PDF is an input as well as an output. A tagged PDF is read from its structure tree, an untagged one from where its glyphs stand — paragraphs, headings, lists, columns, tables, figures, running heads and feet — so it converts onward to DOCX, Markdown or HTML; a form or a drawing is kept as a page, each line where it stands. There is no OCR: a scan gives up its text only from a text layer OCR software left under the picture.',
+            '- Markdown keeps what a document says — headings, lists, tables (a workbook sheet by sheet, under its tab name), links, footnotes — and drops how it looks; that, and its charts and math, go to the loss report.',
+            '- The parsed document is open: `doc.flow` is the tree every writer renders from (`FlowDoc`, experimental), and its node types are on the `reamkit/document-model` subpath — for a serializer of your own.',
+            '- `convert` resolves to a `Uint8Array`, and nothing touches a file system. HTML, Markdown, DOCX and XLSX need no network; PDF and SVG fetch an open substitute font when the document embeds none and none is passed in (`fonts`, `fontProviders`).',
+            '- Conversions never fail silently: `convertWithReport` returns `{ bytes, losses }`; `strict: true` throws on the first loss instead.',
           ].join('\n'),
+          // The guides before the reference, in every set: an assistant that
+          // stops reading early has learnt what Ream does before how each of
+          // its types is shaped.
+          promote: [
+            'index',
+            'guides/getting-started',
+            'guides/concepts',
+            'guides/examples',
+            'guides/scope',
+          ],
+          demote: ['api/**'],
+          // The abridged set is the guides. The reference, generated from the
+          // types, is nine-tenths of the complete set and has a set of its own;
+          // the playground's text is its converter's buttons.
+          exclude: ['api/**', 'playground'],
+          // Expressive Code's line numbers are text in the page: left in, every
+          // code sample reached a model with each line's number on a line of
+          // its own before it.
+          customSelectors: { all: ['div.gutter'] },
+          customSets: [
+            {
+              label: 'API reference',
+              paths: ['api/**'],
+              description:
+                'the typed public API — the Ream class, the readers and writers, and the document model on the `reamkit/document-model` subpath',
+            },
+          ],
           optionalLinks: [
             {
               label: 'npm package (reamkit)',
