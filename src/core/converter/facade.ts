@@ -105,8 +105,12 @@ function readToFlow(
   reader: DocumentReader<SourceDoc>,
   bytes: Uint8Array,
   options: ProjectSheetOptions = {},
+  placesNothing = false,
 ): ReadResult<FlowDoc> {
-  const { doc, losses } = reader.read(bytes);
+  const read = reader.read(bytes);
+  // A medium that places nothing reads a source kept as a page for marks it
+  // drops anyway as the document it is without them (see ReadResult.flowing).
+  const { doc, losses } = (placesNothing ? read.flowing?.() : undefined) ?? read;
   return { doc: toFlowDoc(doc, options), losses };
 }
 
@@ -195,6 +199,7 @@ export function createConverter(opts: CreateConverterOptions = {}): Converter {
         reader,
         bytes,
         rest.now ? { now: rest.now } : undefined,
+        true,
       );
       losses.push(...readLosses);
       const markdown = writeMarkdown(flow);

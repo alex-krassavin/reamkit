@@ -70,7 +70,9 @@ function endsLikePdf(bytes: Uint8Array): boolean {
  * Which of the two readings a file gets is the FILE's to decide and no
  * caller's: a page that is mostly marks is reproduced where it stands, one
  * that is mostly lines is re-set as a document, and the reader records which
- * it chose. There is no override — see the note on {@link readingOf}.
+ * it chose. There is no override — see the note on {@link readingOf}. A file
+ * kept as a page also carries its `flowing` reading, for the one medium that
+ * can keep no page: see {@link ReadResult.flowing}.
  */
 export function readPdf(
   bytes: Uint8Array,
@@ -78,6 +80,45 @@ export function readPdf(
   filters: StreamFilters = {},
 ): ReadResult<FlowDoc> {
   const file = PdfFile.parse(bytes, password, filters);
+  // Which reading the file asks for. The FILE decides, always: a caller cannot
+  // know whether the bytes it was handed are a paper or a form, and asking it
+  // to choose only moved the guess outward — and left the choice the library
+  // actually makes untested, because everything that measured it pinned the
+  // other one.
+  const { reading, byLetters } = readingOf(file);
+  const read = readAs(file, reading);
+  if (!byLetters) return read;
+  // Letters the file names no character for are DRAWN, and a page of them is
+  // kept where they stand: that is the only place a medium that shows them —
+  // as pictures of words — can put them. Markdown shows none. It drops them,
+  // and from a page it had the readable lines left over a line to a paragraph:
+  // TAMReview.pdf sets its body in such letters, and its abstract — set in a
+  // face that does name its characters — came back cut at every line. So that
+  // medium reads the file again as the document it is without them.
+  //
+  // Only then. A form, a grid or a drawing is a page for its ARTWORK, which a
+  // flowing reading reorders: read as a document, a form's fields came back
+  // before their labels and a grid's repeated captions were taken for running
+  // heads, which markdown drops too. Parsed afresh rather than held: the
+  // file's caches would otherwise outlive every conversion that never asks.
+  return { ...read, flowing: () => readAs(PdfFile.parse(bytes, password, filters), 'flow', true) };
+}
+
+/**
+ * The file read the one way: the losses every reading reports, the reading's
+ * own, and its reconstruction.
+ *
+ * @param file     The parsed file.
+ * @param reading  Whether the words re-set as a document or stand where drawn.
+ * @param reflowed Whether this is the flowing reading of a file the reader
+ *                 keeps as a page, for a medium that places nothing.
+ * @returns The reconstructed FlowDoc and its losses.
+ */
+function readAs(
+  file: PdfFile,
+  reading: 'flow' | 'positional',
+  reflowed = false,
+): ReadResult<FlowDoc> {
   const losses: Array<Loss> = [];
 
   if (file.encryptionUnsupported) {
@@ -89,9 +130,6 @@ export function readPdf(
     });
   }
 
-  // A placed reconstruction never consults the structure tree: the tree names a
-  // reading order, and a reading order is the one thing a placed page does not
-  // have. The words go where the glyphs are.
   // §7.4 — a stream filter nothing here can undo leaves that stream unread.
   // Reported before anything else: when it is the cross-reference stream, every
   // page of the file is missing and no other loss explains why.
@@ -103,20 +141,18 @@ export function readPdf(
     });
   }
 
-  // Which reading the file asks for. The FILE decides, always: a caller cannot
-  // know whether the bytes it was handed are a paper or a form, and asking it
-  // to choose only moved the guess outward — and left the choice the library
-  // actually makes untested, because everything that measured it pinned the
-  // other one.
-  const reading = readingOf(file);
   losses.push({
     severity: 'degraded',
     feature: FEATURES.text,
-    detail:
-      reading === 'positional'
+    detail: reflowed
+      ? 'PDF read as a DOCUMENT (flowing) for a medium that shows no drawn letters: the file is kept as a PAGE elsewhere, its words mostly glyphs it names no character for, which only a page can show where they stand'
+      : reading === 'positional'
         ? 'PDF read as a PAGE (placed): its artwork outweighs its prose, so every line stands where its glyphs stand'
         : 'PDF read as a DOCUMENT (flowing): its prose outweighs its artwork, so the words re-set and the artwork takes its turn in reading order',
   });
+  // A placed reconstruction never consults the structure tree: the tree names a
+  // reading order, and a reading order is the one thing a placed page does not
+  // have. The words go where the glyphs are.
   const tagged = reading === 'positional' ? undefined : reconstructTaggedPdf(file);
   const reconstruction = tagged ?? reconstructByLayout(file, reading);
   if (!tagged && reading !== 'positional') {
@@ -147,9 +183,17 @@ export function readPdf(
  * folded into a report does not make the report a plan.
  *
  * A threshold is a guess, and this one is stated rather than hidden: the reader
- * records which reading it took and why, and the caller can name the other.
+ * records which reading it took and why.
+ *
+ * A glyph the file names no character for is drawn, and counted as a mark like
+ * any other path — it IS one, for every medium that has to place it. Whether
+ * the page was a page for those letters alone is said as well: see `byLetters`.
  */
-function readingOf(file: PdfFile): 'flow' | 'positional' {
+function readingOf(file: PdfFile): {
+  readonly reading: 'flow' | 'positional';
+  /** The file is a page only for its drawn letters: without them it would flow. */
+  readonly byLetters: boolean;
+} {
   /**
    * Below this many marks a page is prose with decoration, whatever the ratio.
    *
@@ -166,13 +210,20 @@ function readingOf(file: PdfFile): 'flow' | 'positional' {
   /** Below this many runs, an angle is a stamp or a watermark and not the page. */
   const ENOUGH_TURNED = 8;
   const ratios: Array<number> = [];
+  /** The same, the drawn letters left out. */
+  const artwork: Array<number> = [];
+  const ratioOf = (marks: number, lines: number): number =>
+    marks < ENOUGH_MARKS ? 0 : lines > 0 ? marks / lines : DRAWN;
   for (const page of file.pages()) {
     let marks = 0;
+    let letters = 0;
     let lines = 0;
     let turned = 0;
     let runs = 0;
     try {
-      marks = collectPageVectors(file, page, []).vectors.length;
+      const vectors = collectPageVectors(file, page, []).vectors;
+      marks = vectors.length;
+      letters = vectors.filter((v) => v.glyph === true).length;
       // Baselines, not runs: a line broken into twenty runs is still one line,
       // and counting runs would make ordinary justified prose look drawn.
       const ys = new Set<number>();
@@ -192,18 +243,18 @@ function readingOf(file: PdfFile): 'flow' | 'positional' {
     // prose its columns interleaved — "adipiscinnon luctus eleipsum dolor sit".
     if (runs >= ENOUGH_TURNED && turned > runs * 0.5) {
       ratios.push(DRAWN);
+      artwork.push(DRAWN);
       continue;
     }
-    if (marks < ENOUGH_MARKS) {
-      ratios.push(0);
-      continue;
-    }
-    ratios.push(lines > 0 ? marks / lines : DRAWN);
+    ratios.push(ratioOf(marks, lines));
+    artwork.push(ratioOf(marks - letters, lines));
   }
-  if (ratios.length === 0) return 'flow';
-  const sorted = [...ratios].sort((a, b) => a - b);
-  const median = sorted[Math.floor(sorted.length / 2)] ?? 0;
-  return median >= DRAWN ? 'positional' : 'flow';
+  const drawn = (rs: ReadonlyArray<number>): boolean => {
+    const sorted = [...rs].sort((a, b) => a - b);
+    return (sorted[Math.floor(sorted.length / 2)] ?? 0) >= DRAWN;
+  };
+  if (!drawn(ratios)) return { reading: 'flow', byLetters: false };
+  return { reading: 'positional', byLetters: !drawn(artwork) };
 }
 
 /**

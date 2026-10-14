@@ -21,7 +21,7 @@ import type { FontBytesByVariant } from '@/core/font';
 import type { FamilyKey, FetchLike, SubstituteKey } from '@/core/fonts';
 import type { FontProvider } from '@/core/fonts/provider';
 import type { Loss } from '@/core/ir';
-import type { DocumentReader } from '@/core/ir/adapters';
+import type { DocumentReader, ReadResult } from '@/core/ir/adapters';
 import type { FlowDoc } from '@/core/ir/flow';
 import type { SheetDoc } from '@/core/ir/sheet';
 import type { StreamFilters } from '@/pdf-reader/document';
@@ -189,6 +189,9 @@ export class Ream {
    * @param source   The original source bytes (kept only for docx auto-fonts and
    *                 PDF/A-3 `embedSource`).
    * @param readerId The id of the reader that parsed the source.
+   * @param flowing  The source read as a document that flows, where the reader
+   *                 kept it as a page for marks Markdown drops anyway (see
+   *                 {@link ReadResult.flowing}).
    */
   private constructor(
     readonly flow: FlowDoc,
@@ -196,7 +199,11 @@ export class Ream {
     readonly losses: ReadonlyArray<Loss>,
     private readonly source: Uint8Array,
     private readonly readerId: string,
+    private readonly flowing?: () => ReadResult<FlowDoc>,
   ) {}
+
+  /** The flowing reading, once Markdown has asked for it. */
+  private flowingRead: ReadResult<FlowDoc> | undefined;
 
   /**
    * Sniff the format and parse the bytes once into the {@link FlowDoc} interlayer.
@@ -228,14 +235,20 @@ export class Ream {
         `Unrecognized document format (readers: ${readers.map((r) => r.id).join(', ')})`,
       );
     }
-    const { doc, losses } = reader.read(source, {
+    const { doc, losses, flowing } = reader.read(source, {
       password: options.password,
       ...(options.filters ? { filters: options.filters } : {}),
     });
     // The reader's native tree — a SheetDoc for spreadsheets — is projected to
     // the FlowDoc the render path consumes; the SheetDoc is kept for inspection.
     const sheet = doc.kind === 'sheet' ? doc : undefined;
-    return new Ream(toFlowDoc(doc), sheet, losses, bytes, reader.id);
+    const reflow = flowing
+      ? (): ReadResult<FlowDoc> => {
+          const read = flowing();
+          return { doc: toFlowDoc(read.doc), losses: read.losses };
+        }
+      : undefined;
+    return new Ream(toFlowDoc(doc), sheet, losses, bytes, reader.id, reflow);
   }
 
   /** The source format id (`'docx'`, `'xlsx'`, …). */
@@ -313,6 +326,14 @@ export class Ream {
       // A workbook re-projects, because markdown has no pages to tell one sheet
       // from the next by: the projection is asked for the tab NAMES, which it
       // withholds from a printed page because Excel and Calc print none.
+      //
+      // A source the reader kept as a PAGE only for marks markdown drops anyway
+      // comes here as the document it reads as without them, with that
+      // reading's losses in place of the page's (see ReadResult.flowing).
+      if (this.flowing) {
+        this.flowingRead ??= this.flowing();
+        losses.splice(0, this.losses.length, ...this.flowingRead.losses);
+      }
       const source =
         this.sheet && options.sheetNames !== false
           ? projectSheetDoc(this.sheet, {
@@ -320,7 +341,7 @@ export class Ream {
               ...(options.fileName ? { fileName: options.fileName } : {}),
               sheetHeadings: true,
             })
-          : flow;
+          : (this.flowingRead?.doc ?? flow);
       const markdown = writeMarkdown(source, {
         ...(options.images ? { images: options.images } : {}),
         ...(options.pageBreaks ? { pageBreaks: options.pageBreaks } : {}),
