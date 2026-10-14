@@ -12,6 +12,7 @@ const FMT = {
   pdf: '#c8341f',
   svg: '#7a4db8',
   html: '#e36209',
+  md: '#3a3327',
   legacy: '#9a8d74',
 };
 
@@ -29,6 +30,7 @@ const outputs = [
   ['pdf', 'pdf'],
   ['svg', 'svg'],
   ['html', 'html'],
+  ['md', 'md'],
   ['docx', 'word'],
   ['xlsx', 'excel'],
 ] as const;
@@ -136,7 +138,7 @@ const ICONS: Record<string, string> = {
     </div>
 
     <div class="rk-panel">
-      <div class="rk-panel-label">Writes · five formats out</div>
+      <div class="rk-panel-label">Writes · six formats out</div>
       <div class="rk-chips">
         {
           outputs.map(([ext, fam]) => (
