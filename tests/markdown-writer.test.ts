@@ -673,6 +673,50 @@ describe('markdown writer — a workbook names its sheets', () => {
   });
 });
 
+describe('markdown writer — a workbook cell is its value, whole', () => {
+  it('keeps the text a narrow column only shows part of', async () => {
+    // A page cuts "Монтаж кровли" at the column's edge, as Excel does. The cut
+    // was made in the TEXT, by an estimate, and Markdown printed "Монтаж кр" —
+    // a different value, with nothing to say a word was missing.
+    const book = buildXlsx({
+      rows: [
+        ['Монтаж кровли', 'шт', 1250000],
+        ['Устройство водосточной системы', 'м', 42],
+      ],
+      columns: [{ min: 1, max: 1, widthChars: 10 }],
+    });
+    const out = decode(
+      await createConverter()
+        .convert(book, { to: 'md' })
+        .then((r) => r.bytes),
+    );
+    expect(out).toContain('| Монтаж кровли | шт | 1250000 |');
+    expect(out).toContain('| Устройство водосточной системы | м | 42 |');
+    expect(decode(await Ream.parse(book).convert('md'))).toContain('| Монтаж кровли | шт |');
+  });
+
+  it('keeps a right-aligned label in its own column though a page runs it left', async () => {
+    // A page runs a right-aligned label out over the empty cell before it, and
+    // that is modelled as a span starting THERE: in Markdown, which has no
+    // spans, the label moved into the column before its own.
+    const styles = `
+      <cellXfs count="2">
+        <xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>
+        <xf numFmtId="0" fontId="0" fillId="0" borderId="0" applyAlignment="1"><alignment horizontal="right"/></xf>
+      </cellXfs>`;
+    const book = buildXlsx({
+      rows: [
+        ['a', 'b', 'c'],
+        [null, { value: 'Итого по смете:', styleIndex: 1 }, 1250000],
+      ],
+      columns: [{ min: 1, max: 3, widthChars: 8 }],
+      stylesXml: styles,
+    });
+    const out = decode(await Ream.parse(book).convert('md'));
+    expect(out).toContain('|  | Итого по смете: | 1250000 |');
+  });
+});
+
 describe('markdown writer — the md target', () => {
   it('converts through Ream with no fonts and no I/O', async () => {
     const docx = buildDocxFromBody(

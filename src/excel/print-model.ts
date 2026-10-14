@@ -839,6 +839,9 @@ interface PrintModelOptions {
   // column's edge instead of given columns to run on into, as LibreOffice's
   // whole-sheet export cuts it. A window scrolls; a picture has an edge.
   readonly image?: boolean;
+  // Whether a cell's text may run on over its empty neighbours (a span over
+  // them). Off for markdown, which has no widths. See ProjectSheetOptions.spill.
+  readonly spill?: boolean;
   // ECMA-376 §18.2.5 — _xlnm.Print_Area: render only this range (clipped to the
   // used range). Absent ⇒ the whole used range.
   readonly printArea?: CellRange;
@@ -1811,6 +1814,7 @@ function gridBody(
       // that fits, dropping the rest. We mirror that for string cells (a wrapText,
       // rotated or shrinkToFit cell is exempt) so the rendered text matches Calc's.
       if (
+        print.spill !== false &&
         text.length > 0 &&
         !merge &&
         !wrapText &&
@@ -1831,7 +1835,6 @@ function gridBody(
         // for right-aligned cells below has had this predicate all along.
         estimateChars(text) * charTwips(xf, styles, textTwipsUnit) > columnWidths[c]!
       ) {
-        let availTwips = columnWidths[c]!;
         let cc = c + 1;
         // What blocks Excel's overflow is CONTENT — the text is drawn straight
         // across a filled or bordered neighbour, which keeps everything it
@@ -1860,10 +1863,7 @@ function gridBody(
         // A hidden column is not on the page: it neither blocks the text nor
         // gives it any room, and — crucially — it is not one of the columns a
         // colSpan counts (see below).
-        while (cc <= bandEnd && (hiddenCols.has(cc) || neighbourIsFree(cc))) {
-          if (!hiddenCols.has(cc)) availTwips += columnWidths[cc]!;
-          cc++;
-        }
+        while (cc <= bandEnd && (hiddenCols.has(cc) || neighbourIsFree(cc))) cc++;
         // And one more when the only thing in the way is that cell's own right
         // rule — the closing edge of the band, which the span takes over. See
         // absorbableRightRule.
@@ -1875,24 +1875,17 @@ function gridBody(
         ) {
           const rule = absorbableRightRule(cellMatrix[r]?.[cc], styles, shading, borders);
           if (rule) {
-            availTwips += columnWidths[cc]!;
             overflowRightRule = rule;
             cc++;
           }
         }
-        // Cut to the width the cell will have. The estimate cannot be exact —
-        // the font is not known here — so CellProperties.noWrap below makes the
-        // layout drop whatever still spills onto a second line. The cut is what
-        // handles the case the layout cannot: a single unbreakable word, which
-        // has no line break to drop and would otherwise run past the cell.
+        // The text is NOT cut here, whatever runs past the box. The cell is
+        // marked noWrap (below) and the layout cuts it at the glyph, against
+        // the font it draws in; an HTML page clips it in CSS. Cut here, by an
+        // estimate, the STRING was lost in every medium that has no box to
+        // clip against: Markdown and DOCX printed a column's "Монтаж кровли"
+        // as "Монтаж кр", and an estimate in that medium is the value itself.
         //
-        // It gets 10 % of headroom, for the same reason `tooWideToShow` does:
-        // the per-character buckets over-charge, and a cut here is final while
-        // the layout still has an exact-metric clip to fall back on. Without it
-        // 50755_workday_formula_example.xlsx lost the last letter of "Inflow
-        // Date" — the estimate charged 986 twips for a heading the font draws
-        // in 889, against a column of 960.
-        text = clipToWidth(text, availTwips * 1.1, charTwips(xf, styles, textTwipsUnit));
         // Claim the empty neighbours the text runs over. Without this the cell
         // keeps its single column's width and the layout WRAPS the text inside
         // it — three stacked lines where Excel and LibreOffice draw one. The
@@ -1920,20 +1913,12 @@ function gridBody(
             paintColumns++;
           }
         }
-      } else if (text.length > 0 && merge && !wrapText && !rotated && !shrinkToFit) {
-        // A merge is a box like any other and its text is cut at ITS edge — not
-        // at its first column's, and not never. The pass above is really two
-        // rules in one: the neighbour-claiming a merge must not do, and the clip
-        // every cell needs. Excluded from both, `$R[]{A,hideDuplicate=true}` ran
-        // out of a 48pt merge and straight across the three cells beside it on
-        // 50299.xlsx, where LibreOffice shows `$R[]{A,hide`.
-        const lastCol = Math.min(merge.endColumn - colStart, bandEndOfCol.get(c) ?? colCount - 1);
-        let availTwips = 0;
-        for (let k = c; k <= lastCol; k++) {
-          if (!hiddenCols.has(k)) availTwips += columnWidths[k] ?? 0;
-        }
-        text = clipToWidth(text, availTwips * 1.1, charTwips(xf, styles, textTwipsUnit));
       }
+      // A merge is a box like any other and its text is cut at ITS edge — not at
+      // its first column's, and not never: 50299.xlsx's
+      // `$R[]{A,hideDuplicate=true}` ran out of a 48pt merge and across the three
+      // cells beside it, where LibreOffice shows `$R[]{A,hide`. Cut, like every
+      // cell's, by the layout at the merge's edge (noWrap below), not here.
 
       // §18.8.1 shrinkToFit (E-SHEET W6): instead of clipping, scale the font down
       // so the text fits its own column on one line. The grid auto-sizes columns to
@@ -2107,6 +2092,7 @@ function gridBody(
       // row is built, because the free space is to the LEFT of a cell the loop
       // has already emitted.
       if (
+        print.spill !== false &&
         text.length > 0 &&
         !merge &&
         !wrapText &&
@@ -3493,21 +3479,6 @@ function estimateChars(text: string): number {
   let n = 0;
   for (const ch of text) n += charWidthUnits(ch);
   return n;
-}
-
-/** The longest prefix of `text` that fits `availTwips`, by the same estimate. */
-function clipToWidth(text: string, availTwips: number, perChar: number): string {
-  if (perChar <= 0) return text;
-  const budget = availTwips / perChar;
-  let used = 0;
-  let i = 0;
-  for (const ch of text) {
-    const w = charWidthUnits(ch);
-    if (used + w > budget) break;
-    used += w;
-    i += ch.length;
-  }
-  return i >= text.length ? text : text.slice(0, Math.max(1, i));
 }
 
 /** A right-aligned cell that needs room to its left, recorded as its row is built. */

@@ -66,9 +66,14 @@ describe('wrapText (E-SHEET W6)', () => {
     expect(cellText(firstCell(xlsx))).toBe(LONG);
   });
 
-  it('still clips the same text without wrapText', () => {
+  it('still clips the same text without wrapText — at its box, keeping every letter', () => {
+    // The cell does not wrap, so its box cuts what overruns it; the layout and
+    // HTML do the cutting. The TEXT is the cell's, whole: cut here, by an
+    // estimate, Markdown and DOCX printed "Монтаж кр" for "Монтаж кровли".
     const xlsx = buildXlsx({ rows: [[{ value: LONG, styleIndex: 0 }, 'X']], stylesXml: STYLES });
-    expect(cellText(firstCell(xlsx)).length).toBeLessThan(LONG.length);
+    const cell = firstCell(xlsx);
+    expect(cellText(cell)).toBe(LONG);
+    expect(cell.properties.noWrap).toBe(true);
   });
 });
 
@@ -292,22 +297,20 @@ describe('a full-width character is one em (UAX #11)', () => {
   it('costs two digit widths, not one', () => {
     // §18.3.1.13 measures a column in Maximum Digit Widths, and a CJK ideograph
     // is a full em — two of them. Falling through to the Latin default charged
-    // 1.18 apiece, so 51519.xlsx's 201-character report was cut at 73 where
-    // LibreOffice cuts at 47 and Excel at about 40: we were the only one of the
-    // three showing nearly twice what the column holds.
-    const clip = (text: string): number => {
+    // 1.18 apiece, so 51519.xlsx's 201-character report was judged to hold 73
+    // characters where LibreOffice cuts at 47 and Excel at about 40. Whether a
+    // cell's text overruns its column decides whether it runs on over the empty
+    // one beside it, so the estimate shows there: six ideographs need twelve
+    // digits of a ten-digit column, six Latin letters do not.
+    const spill = (text: string): number => {
       const xlsx = buildXlsx({
-        rows: [[text, 'blocker']],
-        columns: [{ min: 1, max: 1, widthChars: 10 }],
+        rows: [[text, null, 'far']],
+        columns: [{ min: 1, max: 3, widthChars: 10 }],
       });
-      return cellText(firstCell(xlsx)).length;
+      return firstCell(xlsx).properties.colSpan ?? 1;
     };
-    const latin = clip('nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn');
-    const cjk = clip('豊田製品戦略事業統括本部とよたかいしゃトヨタコメント');
-    expect(latin).toBeGreaterThan(8);
-    // Half the Latin count, give or take the bucket the Latin letters land in.
-    expect(cjk).toBeLessThan(latin * 0.65);
-    expect(cjk).toBeGreaterThan(3);
+    expect(spill('nnnnnn')).toBe(1);
+    expect(spill('豊田製品戦略')).toBeGreaterThan(1);
   });
 });
 
