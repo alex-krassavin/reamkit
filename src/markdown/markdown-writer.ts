@@ -278,7 +278,11 @@ function emitParagraph(out: Array<string>, p: Paragraph, ctx: EmitCtx): void {
   // the whole of its text would be typeset as source. The indent itself has no
   // markdown expression either way, and is already reported as dropped.
   const anchors = bookmarkAnchors(p, ctx);
-  const text = inlineRuns(p.runs, p, ctx).replace(/^[ \t]+/, '');
+  const level = headingLevelOf(resolved);
+  // A heading in a cell is flattened to its text (see below), and its bold is
+  // then all that is left to set it apart from the cell's other lines.
+  const asHeading = level !== undefined && !ctx.inCell;
+  const text = inlineRuns(p.runs, p, ctx, asHeading).replace(/^[ \t]+/, '');
   const inline = anchors + text;
   const marker = markerText(p, ctx);
   reportParagraphLosses(resolved, ctx);
@@ -290,7 +294,6 @@ function emitParagraph(out: Array<string>, p: Paragraph, ctx: EmitCtx): void {
   // A heading outranks a list: §17.9.24 numbers Word's own Heading styles, and
   // demoting "1 Introduction" to a list item would cost the document its whole
   // outline. The chapter number rides along in the heading's text instead.
-  const level = headingLevelOf(resolved);
   if (level !== undefined) {
     if (empty) return;
     ctx.list.length = 0;
@@ -910,7 +913,7 @@ function cellInline(cell: TableCell, ctx: EmitCtx): string {
 // ---------------------------------------------------------------------------
 
 /** One span of the paragraph: either finished text, or text still to be dressed. */
-type Piece = { readonly literal: string } | { readonly marks: Marks; text: string };
+type Piece = { readonly literal: string } | { marks: Marks; text: string };
 
 /**
  * The paragraph's runs as one inline string.
@@ -919,8 +922,11 @@ type Piece = { readonly literal: string } | { readonly marks: Marks; text: strin
  * characters on either side of it (§6.2), and those belong to the NEIGHBOURING
  * spans: the first pass coalesces runs into spans, the second dresses each
  * span knowing what stands beside it.
+ *
+ * @param heading Whether the paragraph is a heading, which every renderer of
+ *                one sets strong already.
  */
-function inlineRuns(runs: ReadonlyArray<Run>, p: Paragraph, ctx: EmitCtx): string {
+function inlineRuns(runs: ReadonlyArray<Run>, p: Paragraph, ctx: EmitCtx, heading = false): string {
   const pieces: Array<Piece> = [];
   // Consecutive runs that carry the same emphasis are one span: emitted
   // separately they would read `**a****b**` — legal, and unreadable.
@@ -941,24 +947,79 @@ function inlineRuns(runs: ReadonlyArray<Run>, p: Paragraph, ctx: EmitCtx): strin
     const resolved = resolveRunProperties(run.properties, p.properties, EMPTY_STYLE_SHEET);
     reportRunLosses(resolved, ctx);
     const marks = marksOf(resolved, run);
-    if (pending && sameMarks(pending.marks, marks)) pending.text += run.text;
-    else {
+    const joined = pending && joinedMarks(pending, marks, run.text);
+    if (pending && joined) {
+      pending.marks = joined;
+      pending.text += run.text;
+    } else {
       flush();
       pending = { marks, text: run.text };
     }
   }
   flush();
 
+  // Bold over the WHOLE of a heading says twice what the `#` says: every
+  // renderer sets a heading strong, and `# **Introduction**` only adds the
+  // asterisks. Over part of a heading the bold singles that part out, and stays.
+  const spans = pieces.filter(
+    (piece): piece is { marks: Marks; text: string } =>
+      'marks' in piece && !isWhitespace(piece.text),
+  );
+  const plain =
+    heading && spans.length > 0 && spans.every((piece) => piece.marks.bold)
+      ? pieces.map((piece) =>
+          'marks' in piece ? { ...piece, marks: { ...piece.marks, bold: false } } : piece,
+        )
+      : pieces;
+
   let out = '';
-  for (let i = 0; i < pieces.length; i++) {
-    const piece = pieces[i]!;
+  for (let i = 0; i < plain.length; i++) {
+    const piece = plain[i]!;
     if ('literal' in piece) {
       out += piece.literal;
       continue;
     }
-    out += applyMarks(piece.text, piece.marks, ctx, out.slice(-1), leadOf(pieces, i + 1));
+    out += applyMarks(piece.text, piece.marks, ctx, out.slice(-1), leadOf(plain, i + 1));
   }
   return out;
+}
+
+/**
+ * The marks a span keeps when the next run joins it, or nothing where the two
+ * must stay apart.
+ *
+ * The same marks join, as they always did. And a run of WHITESPACE joins its
+ * neighbour whatever its emphasis, for emphasis does not show on a space: a
+ * PDF from TeX sets no space between two words at all, the reader writes one
+ * in the plain face, and a bold title came back `**Trace-based**
+ * **Just-in-Time** **Type**`, broken at every word. A line under or through a
+ * space does show, and so does a link over it — those must still agree.
+ *
+ * @param span The span so far.
+ * @param next The next run's marks.
+ * @param text The next run's text.
+ * @returns The marks the joined span carries, or `undefined`.
+ */
+function joinedMarks(
+  span: { readonly marks: Marks; readonly text: string },
+  next: Marks,
+  text: string,
+): Marks | undefined {
+  if (sameMarks(span.marks, next)) return span.marks;
+  const showsOnSpace =
+    span.marks.strike !== next.strike ||
+    span.marks.underline !== next.underline ||
+    span.marks.href !== next.href ||
+    span.marks.anchor !== next.anchor;
+  if (showsOnSpace) return undefined;
+  if (isWhitespace(text)) return span.marks;
+  if (isWhitespace(span.text)) return next;
+  return undefined;
+}
+
+/** Whether the text is whitespace and nothing else — a space, a tab, a break. */
+function isWhitespace(text: string): boolean {
+  return /^\s+$/u.test(text);
 }
 
 /**

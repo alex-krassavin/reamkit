@@ -269,6 +269,37 @@ describe('markdown writer — emphasis that has to flank', () => {
   });
 });
 
+describe('markdown writer — emphasis across a space', () => {
+  const b = (text: string) => `<w:r><w:rPr><w:b/></w:rPr><w:t>${text}</w:t></w:r>`;
+
+  it('lets a space join the emphasis around it, whatever its own', () => {
+    // A PDF from TeX sets no space between two words at all, the reader writes
+    // one in the plain face, and a bold title came back
+    // `**Trace-based** **Just-in-Time**`, broken at every word.
+    expect(md(p(b('Trace-based') + t(' ') + b('Just-in-Time') + t(' and after')))).toBe(
+      '**Trace-based Just-in-Time** and after\n',
+    );
+    // …and a span that OPENS on a space takes the emphasis of what follows it.
+    expect(md(p(t('a') + b(' ') + b('bold')))).toBe('a **bold**\n');
+  });
+
+  it('keeps the spans apart where what they differ in shows on a space', () => {
+    // A line under a space is drawn under it: an unlined space between two
+    // underlined words is a gap in the line, and stays one.
+    const u = (text: string) => `<w:r><w:rPr><w:u w:val="single"/></w:rPr><w:t>${text}</w:t></w:r>`;
+    expect(md(p(u('a') + t(' ') + u('b')))).toBe('<u>a</u> <u>b</u>\n');
+  });
+
+  it('drops bold that covers a whole heading and keeps it over part of one', () => {
+    // Every renderer sets a heading strong, so `# **Title**` says it twice.
+    const h = (inner: string) => p('<w:pPr><w:outlineLvl w:val="0"/></w:pPr>' + inner);
+    expect(md(h(b('Whole') + t(' ') + b('title')))).toBe('# Whole title\n');
+    expect(md(h(t('A ') + b('bold') + t(' word')))).toBe('# A **bold** word\n');
+    // A paragraph that is not a heading keeps its bold, all of it.
+    expect(md(p(b('Whole') + t(' ') + b('line')))).toBe('**Whole line**\n');
+  });
+});
+
 describe('markdown writer — what counts as empty', () => {
   const numbering =
     '<w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:start w:val="1"/>' +
@@ -397,6 +428,15 @@ describe('markdown writer — tables', () => {
       '<w:tc><w:p><w:pPr><w:outlineLvl w:val="0"/></w:pPr>' + t('Title') + '</w:p></w:tc>';
     const out = md(tbl(`<w:tr>${head}${cell('b')}</w:tr>`));
     expect(out).toBe('| Title | b |\n| --- | --- |\n');
+    // …and flattened, it keeps its bold: there is no `#` left to say it twice,
+    // and the bold is all that sets it apart from the cell's other lines.
+    const bold =
+      '<w:tc><w:p><w:pPr><w:outlineLvl w:val="0"/></w:pPr>' +
+      '<w:r><w:rPr><w:b/></w:rPr><w:t>Title</w:t></w:r></w:p>' +
+      `<w:p>${t('line')}</w:p></w:tc>`;
+    expect(md(tbl(`<w:tr>${bold}${cell('b')}</w:tr>`))).toBe(
+      '| **Title**<br>line | b |\n| --- | --- |\n',
+    );
   });
 
   it('renders a list inside a cell as text — a row is one line', () => {
