@@ -56,7 +56,7 @@ An encrypted `.docx`/`.xlsx`/`.pptx` is not a zip: ECMA-376 §2.3 puts the whole
 inside an OLE container, so it has to be decrypted before anything can read it.
 Pass the password to `parse` and that happens for you — both Office schemes
 (the 2007 standard one and the agile one 2010 and later write), and the same
-option carries a PDF's user password:
+option carries a PDF's user or owner password:
 
 ```ts
 const doc = Ream.parse(bytes, { password: 'letmein' });
@@ -80,7 +80,7 @@ try {
 
 A document that needs a password and gets none throws as well, saying so. To
 ask before that happens — to put up a password prompt instead of an error —
-`isEncryptedPackage` answers from the bytes alone:
+`isEncryptedPackage` answers from the bytes alone for an Office package:
 
 ```ts
 import { isEncryptedPackage } from 'reamkit';

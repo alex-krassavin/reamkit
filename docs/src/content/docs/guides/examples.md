@@ -179,10 +179,10 @@ const doc = Ream.parse(docxBytes, { password: 'letmein' });
 const pdf = await doc.convert('pdf');
 ```
 
-Unlike a PDF, here a wrong password is an **error**, not a loss: every scheme
-stores a verifier, so the file can say the password is wrong instead of handing
-back rubbish. It comes as `WrongPasswordError` — a class, so a corrupt file is
-not mistaken for a bad password:
+A wrong password is an **error**, not a loss — here and in a PDF alike: every
+scheme stores a verifier, so the file can say the password is wrong instead of
+handing back rubbish. It comes as `WrongPasswordError` — a class, so a corrupt
+file is not mistaken for a bad password:
 
 ```ts
 import { Ream, WrongPasswordError } from 'reamkit';
@@ -307,44 +307,44 @@ const { bytes, losses } = await doc.convertWithReport('html');
 
 ### Encrypted PDFs
 
-A PDF locked with a **user password** is opened by passing it to `Ream.parse`.
-The empty-string default unlocks the common permissions-only encryption (where
-the owner set restrictions but no open password), so most encrypted PDFs need no
-password at all:
+A locked PDF opens with its password — the **user** password, or the
+**owner's**, which opens it as well. The empty-string default unlocks the common
+permissions-only encryption (where the owner set restrictions but no open
+password), so most encrypted PDFs need no password at all:
 
 ```ts
 const doc = Ream.parse(pdfBytes, { password: 'letmein' });
 ```
 
-A **wrong or missing** password is not thrown — `Ream.parse` still succeeds, but
-the encrypted content can't be decrypted, so it's recorded as a read-time **loss**
-and the text simply doesn't come back. Inspect `doc.losses`:
+Every revision of the PDF security handler stores a verifier, so a **wrong**
+password — or **none**, where one is needed — is refused rather than decrypted
+into rubbish, with the same `WrongPasswordError` an Office package throws:
 
 ```ts
-const doc = Ream.parse(lockedPdf); // no/incorrect password
-doc.losses;
-// [
-//   {
-//     severity: 'dropped',
-//     feature: 'text',
-//     detail: 'encrypted PDF — the user password was missing or incorrect, or the handler is unsupported',
-//   },
-// ]
+import { Ream, WrongPasswordError } from 'reamkit';
+
+try {
+  Ream.parse(lockedPdf); // no password
+} catch (err) {
+  if (err instanceof WrongPasswordError) {
+    err.message; // 'This PDF needs a password to open — pass it as `password`'
+  }
+}
 ```
 
-To make that loss fatal instead, convert in **strict** mode: the first loss
-throws a `ConversionLossError`, with the offending `Loss` on its `.loss`
-property.
+A file locked by a security handler Ream does not implement is not a password
+problem: it parses, and what could not be decrypted is a read-time **loss**. In
+**strict** mode that loss throws a `ConversionLossError`, with the offending
+`Loss` on its `.loss` property:
 
 ```ts
 import { Ream, ConversionLossError } from 'reamkit';
 
 try {
-  await Ream.parse(lockedPdf).convert('html', { strict: true });
+  await Ream.parse(otherHandlerPdf).convert('html', { strict: true });
 } catch (err) {
   if (err instanceof ConversionLossError) {
-    err.loss.feature; // 'text'
-    err.loss.detail; // 'encrypted PDF — the user password was missing or incorrect, …'
+    err.loss.detail; // 'encrypted PDF — its security handler is not supported, …'
   }
 }
 ```

@@ -26,8 +26,9 @@ parts whether or not the file cached a drawing. Not read (a graceful loss):
 alpha/roman list numbering.
 PDF input handles classic and modern compressed files
 (cross-reference streams, object streams) and encrypted files (RC4 / AES; the
-user password is passed to `Ream.parse`, defaulting to the empty permissions-only
-case). A **tagged** PDF (including the ones Ream writes) is rebuilt from
+user or owner password is passed to `Ream.parse`, defaulting to the empty
+permissions-only case, and one that opens the file as neither is refused with
+`WrongPasswordError`). A **tagged** PDF (including the ones Ream writes) is rebuilt from
 its structure tree — headings, paragraphs, tables, list items, reading order,
 the elements a document names for itself followed through its `/RoleMap` to the
 standard ones they stand for, and an inline element (a span, a link, a formula
@@ -272,7 +273,10 @@ not make the report a plan; the reader records which reading it took and why.
 There is no option to override it. A caller holding a `Uint8Array` cannot know
 whether it is a paper or a form, so asking it to choose only moved the guess
 outward — and left the choice the library actually makes untested, because
-everything that measured it pinned the other one.
+everything that measured it pinned the other one. Markdown, which places
+nothing, reads a page kept only for its table's rules — or for letters the file
+names no character for — as the document it is without them: a ruled estimate
+comes back as its rows, its sums whole.
 
 **Markdown (`convert('md')`)** — GitHub-Flavored Markdown, a flow medium like
 HTML: no pagination, no layout, no fonts, zero I/O. It keeps what a document
@@ -284,7 +288,8 @@ HTML writer uses), pictures, footnotes and endnotes as GFM footnotes, review
 comments as footnotes attributed to their author, bookmarks as inline anchors,
 and the text inside shapes. A spreadsheet opens each sheet with a heading
 carrying its tab name — markdown has no pages to tell one sheet from the next
-by, so `{ sheetNames: false }` is there for the bare tables. Underline and super/subscript survive as `<u>` /
+by, so `{ sheetNames: false }` is there for the bare tables — and every cell
+whole and in its own column, however narrow the column a page cuts it to. Underline and super/subscript survive as `<u>` /
 `<sup>` / `<sub>`, which GFM parses as inline html.
 
 Dropped, each reported once in the loss report rather than silently: alignment,
@@ -423,7 +428,10 @@ yourself, or `{ images: 'drop' }` to omit them.
   colours Excel starts from. A number is shown as Excel shows it: General fits the
   column's room to at most 15 significant digits, rounded or in scientific notation,
   and fills the cell with `#` when no way of writing it fits; a format gets as many
-  places as it asks, the digits past a double's fifteen written as zeros.
+  places as it asks, the digits past a double's fifteen written as zeros. Text a
+  column is too narrow for is cut by the cell's box, not shortened: the page holds
+  the whole of it under a clip, as Excel's own PDF does, and shows its start, its
+  middle or its end as the cell is aligned left, centred or right.
 - **On a screen — HTML and SVG — a workbook is what Excel's window shows**, not its
   printed pages: every visible tab, an empty one too; one grid a sheet, all of its
   columns at full size; no print area, repeated titles, page breaks, printed headings
