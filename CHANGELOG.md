@@ -3,6 +3,70 @@
 All notable changes to **Ream** (`reamkit`) are documented here. The project
 follows [Semantic Versioning](https://semver.org/).
 
+## 1.33.1
+
+A patch about what a document gives up as text — to Markdown, to a language
+model, to a caller that reads the text and not the losses.
+
+It started with Markdown made for a language model from Word, Excel and PDF
+attachments, and with three reports from that use: a workbook's cell came back
+cut to its column, a locked PDF came back empty instead of saying so, and a PDF
+of ruled tables came back a cell to a paragraph with its sums broken in two.
+Each was a mark of the page — a column's edge, a table's rules — standing in
+for the text it framed. Excel's own PDF of a probe workbook settled what a cut
+cell is: its whole text under a clip.
+
+### Fixed
+
+- **A cell's text is never cut — its box clips it.** A non-wrapping cell whose
+  text overran its column was cut in the print model, by an estimate of its
+  width, and the cut text was what every target got: Markdown, DOCX and HTML
+  printed "Монтаж кровли" as "Монтаж кр". The text stays whole now, and the
+  page clips it at the cell's box, as Excel's own PDF does — on the side Excel
+  cuts it: the start of left-aligned text shows, the middle of centred text,
+  the end of right-aligned text. HTML clips it in CSS. In the corpus 9 361
+  cells of 86 workbooks come back whole in Markdown.
+
+- **A workbook's cell stays in its own column in Markdown.** A page runs a
+  cell's text on over its empty neighbours, and a right-aligned label running
+  left came back in the column before its own.
+
+- **Bold runs across a space in Markdown.** A PDF from TeX sets no space
+  between two words and the reader writes one in the plain face, so a bold
+  title came back `**Trace-based** **Just-in-Time** **Type**`. Whitespace now
+  joins the emphasis around it — a line under or through it, or a link over it,
+  still keeps two spans apart — and bold over the whole of a heading goes,
+  since the `#` says it already. 94 of the corpus's documents change only these
+  marks.
+
+- **Markdown reads a PDF kept as a page for marks it drops as the document it
+  is.** The reader keeps a page where its marks stand when it is mostly marks,
+  which is what a paged target wants. Two kinds of mark are only the text's:
+  letters the file names no character for, drawn because nothing else can be
+  done with them, and the rules of a ruled table — an estimate drawn cell by
+  cell is 84 strokes to 9 lines. Markdown drops both, and from such a page it
+  had every line a paragraph and every sum cut where its groups stood apart:
+  "1 250" and "000". It reads the file again, flowing, and gets the rows and
+  the sums whole. DOCX, PDF, SVG and HTML keep the page.
+
+### Changed
+
+- **A PDF's wrong password is refused with `WrongPasswordError`**, as an Office
+  package's is, and so is a locked PDF opened with no password; an Office
+  package opened with none throws that class too, so one `instanceof` asks for
+  a password whatever the file. A PDF used to come back as a document with no
+  text and a line in the losses. Every revision of the Standard handler stores
+  a verifier: RC4 and AES-128 files (R2–R4) were not checked at all, and a
+  wrong password decrypted rubbish with nothing said. The owner password opens
+  a file as well, and streams and strings are decrypted by their own crypt
+  filters — a file that keys only its embedded files opens without one.
+
+### Internals
+
+- The documentation site's llms.txt says what Ream reads and writes — PDF in,
+  Markdown out — and its abridged set is the guides; the site has one sitemap,
+  states its content signals and carries the copyright in full.
+
 ## 1.33.0
 
 A release about charts, set and drawn as Excel sets and draws them.
