@@ -15,6 +15,7 @@ import { PdfDocument } from '@/pdf/writer';
 import { Ream } from '@/core/converter/ream';
 import { OpcPackage } from '@/core/opc';
 import { PdfFile } from '@/pdf-reader/document';
+import { readPdf } from '@/pdf-reader/reader';
 import { BASELINE_AT, FLOAT_CARRIER, positionedText } from '@/pdf-reader/flow-build';
 import { drawnWords, endedParagraph, reconstructByLayout } from '@/pdf-reader/layout';
 import { extractPageText } from '@/pdf-reader/text';
@@ -194,6 +195,39 @@ describe('a page of turned words is a page, not prose (§9.4.2)', () => {
       ),
     );
     expect(doc.losses.some((l) => /read as a PAGE/u.test(l.detail))).toBe(true);
+  });
+});
+
+describe('a page drawn for its artwork stays a page in Markdown too', () => {
+  /** calgray.pdf in small: five rows of four swatches, a label in each — a page. */
+  const swatches = (): Uint8Array => {
+    const cells: Array<string> = [];
+    for (let row = 0; row < 5; row++) {
+      for (let col = 0; col < 4; col++) {
+        const x = 20 + col * 65;
+        const y = 30 + row * 50;
+        cells.push(`0.${String(row + 3)} g ${String(x)} ${String(y)} 60 45 re f`);
+        cells.push(
+          `0 g BT /F0 8 Tf 1 0 0 1 ${String(x + 4)} ${String(y + 6)} Tm (A=0.${String(row)}${String(col)}) Tj ET`,
+        );
+      }
+    }
+    return onePagePdf(
+      '/MediaBox [0 0 300 300] /Resources << /Font << /F0 5 0 R >> >>',
+      cells.join('\n'),
+      ['<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'],
+    );
+  };
+
+  it('offers no flowing reading to a page made by its artwork', async () => {
+    // A form, a grid or a drawing is a page for its ARTWORK, which a flowing
+    // reading reorders: read as a document, a form's fields came back before
+    // their labels and calgray.pdf's repeated captions were taken for running
+    // heads, which markdown drops. Only a page made by its drawn LETTERS reads
+    // again for Markdown (see pdf-reader-glyph-outline.test.ts).
+    expect(readPdf(swatches()).flowing).toBeUndefined();
+    const { losses } = await Ream.parse(swatches()).convertWithReport('md');
+    expect(losses.some((l) => /read as a PAGE/u.test(l.detail))).toBe(true);
   });
 });
 

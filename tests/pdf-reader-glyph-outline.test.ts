@@ -13,8 +13,10 @@ import { describe, expect, it } from 'vitest';
 import { EMPTY_TO_UNICODE, numberedProgram, robotoGlyph } from './fixtures/numbered-truetype';
 import type { PdfDict } from '@/pdf/objects';
 import type { ContentFont, PathSeg } from '@/pdf-reader/content';
+import { createConverter } from '@/core/converter/facade';
 import { Ream } from '@/core/converter/ream';
 import { PdfFile } from '@/pdf-reader/document';
+import { readPdf } from '@/pdf-reader/reader';
 import { buildContentFont } from '@/pdf-reader/font';
 import { extractPageText } from '@/pdf-reader/text';
 import { cffOutlineSource } from '@/pdf-reader/cff-outline';
@@ -282,6 +284,69 @@ describe('glyph outlines (§9.6.6)', () => {
     expect(contours(doc.flow.body.filter((b) => b.kind === 'shape'))).toBe(
       contoursOf('A') + contoursOf('B'),
     );
+  });
+});
+
+describe('a page of drawn letters, in Markdown (§9.6.6)', () => {
+  /**
+   * TAMReview.pdf in small: four lines of letters the file names no character
+   * for — drawn, and a page for them — over a paragraph set in a face that
+   * names its own.
+   */
+  function drawnLettersPdf(): Uint8Array {
+    const word = [...'ABCDEFGH'].map((ch) => hex4(glyphFor(ch))).join('');
+    const drawn = [150, 130, 110, 90]
+      .map((y) => `BT /F0 12 Tf 20 ${String(y)} Td <${word}> Tj ET`)
+      .join('\n');
+    const prose =
+      'BT /F1 10 Tf 20 250 Td (The first line of a paragraph set in a face) Tj ' +
+      '0 -12 Td (that names its characters.) Tj ET';
+    const content = `${prose}\n${drawn}`;
+    return assemble([
+      '<< /Type /Catalog /Pages 2 0 R >>',
+      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Contents 4 0 R ' +
+        '/Resources << /Font << /F0 5 0 R /F1 9 0 R >> >> >>',
+      `<< /Length ${String(content.length)} >>\nstream\n${content}\nendstream`,
+      '<< /Type /Font /Subtype /Type0 /BaseFont /Roboto /Encoding /Identity-H ' +
+        '/DescendantFonts [6 0 R] >>',
+      '<< /Type /Font /Subtype /CIDFontType2 /BaseFont /Roboto /DW 600 ' +
+        '/CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> ' +
+        '/FontDescriptor 7 0 R /CIDToGIDMap /Identity >>',
+      '<< /Type /FontDescriptor /FontName /Roboto /Flags 4 /ItalicAngle 0 /StemV 80 ' +
+        '/Ascent 900 /Descent -200 /CapHeight 700 /FontBBox [-500 -300 1500 1000] /FontFile2 8 0 R >>',
+      fontStreamObject(withoutCmap()),
+      '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+    ]);
+  }
+  const reading = (losses: ReadonlyArray<{ detail: string }>): Array<string> =>
+    losses.filter((l) => /^PDF read as/u.test(l.detail)).map((l) => l.detail);
+
+  it('reads the page as the document it is without them', async () => {
+    // A page of drawn letters is kept where they stand, the only place a
+    // medium that shows them can put them. Markdown shows none — and from the
+    // page it had the readable lines left over a line to a paragraph:
+    // TAMReview.pdf's abstract came back cut at every line.
+    const doc = Ream.parse(drawnLettersPdf());
+    expect(reading(doc.losses)).toEqual([expect.stringMatching(/read as a PAGE/u)]);
+    const { bytes, losses } = await doc.convertWithReport('md');
+    const md = new TextDecoder().decode(bytes);
+    expect(md).toContain('The first line of a paragraph set in a face that names its characters.');
+    // The report names the reading the Markdown came from, and only that one.
+    expect(reading(losses)).toEqual([expect.stringMatching(/shows no drawn letters/u)]);
+    // The converter facade reads it the same way.
+    const viaFacade = await createConverter().convert(drawnLettersPdf(), { to: 'md' });
+    expect(new TextDecoder().decode(viaFacade.bytes)).toBe(md);
+  });
+
+  it('keeps the page for every medium that shows the letters', async () => {
+    const doc = Ream.parse(drawnLettersPdf());
+    expect(readPdf(drawnLettersPdf()).flowing).toBeTypeOf('function');
+    await doc.convert('md');
+    // Asking for Markdown changes nothing the document already is.
+    expect(reading(doc.losses)).toEqual([expect.stringMatching(/read as a PAGE/u)]);
+    const html = await doc.convertWithReport('html');
+    expect(reading(html.losses)).toEqual([expect.stringMatching(/read as a PAGE/u)]);
   });
 });
 

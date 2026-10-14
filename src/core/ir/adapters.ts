@@ -19,6 +19,15 @@ export interface ReadResult<TDoc> {
   readonly doc: TDoc;
   /** Losses recorded while reading. */
   readonly losses: LossReport;
+  /**
+   * The same source read again as a document that flows, for a medium that
+   * places nothing — Markdown. Present only where the reader kept the source as
+   * a page for marks such a medium drops anyway: a PDF whose words are mostly
+   * glyphs it names no character for, kept where they are drawn so that a paged
+   * medium can show them. Called only by that medium, so the source is read
+   * twice only when it asks.
+   */
+  readonly flowing?: () => ReadResult<TDoc>;
 }
 
 /**
