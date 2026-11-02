@@ -24,6 +24,7 @@ import type {
   HeaderFooterReference,
   HeaderFooterType,
   ImageBlock,
+  NumberingFormat,
   PageMargins,
   ParagraphProperties,
   Run,
@@ -252,10 +253,15 @@ export function readDoc(bytes: Uint8Array): ReadResult<FlowDoc> {
   // A section's page size (SEP sprmSXaPage/sprmSYaPage), US Letter when it gives
   // none, where it starts (sprmSBkc), its margins and its headers and footers:
   // the first page's own when the section asks (sprmSFTitlePage), the even
-  // pages' own when the document does (Dop.fFacingPages).
+  // pages' own when the document does (Dop.fFacingPages). Its page numbers are
+  // what a PAGE field prints: Word numbers a section that starts its count
+  // again (sprmSFPgnRestart) from sprmSPgnStart97, in the numerals sprmSNfcPgn
+  // names.
   const sectionProperties = (sec: DocSection | undefined, index: number): SectionProperties => {
     const ps = sec?.pageSize;
     const sectionStart = sec?.bkc !== undefined ? sectionStartOf(sec.bkc) : undefined;
+    const pageNumberFormat =
+      sec?.pageNumberNfc !== undefined ? pageNumberFormatOf(sec.pageNumberNfc) : undefined;
     return {
       pageSize: ps
         ? {
@@ -269,6 +275,8 @@ export function readDoc(bytes: Uint8Array): ReadResult<FlowDoc> {
       ...(sec?.titlePage ? { titlePg: true } : {}),
       ...(content.facingPages ? { evenAndOddHeaders: true } : {}),
       ...(sectionStart ? { sectionStart } : {}),
+      ...(sec?.pageNumberStart !== undefined ? { pageNumberStart: sec.pageNumberStart } : {}),
+      ...(pageNumberFormat ? { pageNumberFormat } : {}),
     };
   };
   // §2.8.26 — a document of more than one section is laid out section by
@@ -533,12 +541,13 @@ function mapParagraph(
   const textRuns = p.runs.filter((r) => r.picture === undefined);
   const ilvl = p.props.listIlvl ?? 0;
   const isList = (p.props.listIlfo ?? 0) > 0;
-  if (textRuns.some((r) => r.text.length > 0 || r.pageBreak) || isList) {
+  if (textRuns.some((r) => r.text.length > 0 || r.pageBreak || r.field) || isList) {
     const runs: Array<Run> = textRuns.map((r) => ({
       text: r.text,
       properties: toRunProperties(r.props),
       ...(r.pageBreak ? { pageBreak: true } : {}),
       ...(r.columnBreak ? { columnBreak: true } : {}),
+      ...(r.field ? { field: r.field } : {}),
     }));
     // A paragraph that ends in a page or column break has its mark set on a
     // line of its own at the head of the next page or column, in Word's .doc
@@ -685,6 +694,23 @@ function sectionStartOf(bkc: number): SectionProperties['sectionStart'] {
       return 'oddPage';
     default:
       return 'nextPage';
+  }
+}
+
+// The MSONFC numerals Word offers for page numbers (sprmSNfcPgn) → the model's;
+// any other is left to print arabic.
+function pageNumberFormatOf(nfc: number): NumberingFormat | undefined {
+  switch (nfc) {
+    case 1:
+      return 'upperRoman';
+    case 2:
+      return 'lowerRoman';
+    case 3:
+      return 'upperLetter';
+    case 4:
+      return 'lowerLetter';
+    default:
+      return undefined;
   }
 }
 

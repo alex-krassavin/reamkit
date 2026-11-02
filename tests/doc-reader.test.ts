@@ -870,6 +870,85 @@ describe('doc reader: sections', () => {
     expect(pageTexts(single).map((lines) => lines[0])).toEqual(['Odd', 'Odd', 'Odd']);
   });
 
+  it("numbers each page in a footer's PAGE and NUMPAGES fields, not as Word cached them", () => {
+    // The codes LibreOffice writes; Word saved "9" and "9" as the results.
+    // Word: "Page 1 of 3", "Page 2 of 3", "Page 3 of 3".
+    const footer = `Page ${F13} PAGE ${F14}9${F15} of ${F13} NUMPAGES \\* MERGEFORMAT ${F14}9${F15}`;
+    const doc = readDoc(
+      buildDoc([{ text: `one${PB}two${PB}three\r`, compressed: false }], {
+        headerFooter: { defaultFooter: footer },
+      }),
+    ).doc;
+    expect(pageTexts(doc).map((lines) => lines[lines.length - 1])).toEqual([
+      'Page 1 of 3',
+      'Page 2 of 3',
+      'Page 3 of 3',
+    ]);
+    const id = doc.section!.footers[0]!.relationshipId;
+    const [band] = doc.headersFooters!.get(id)!;
+    const runs = band?.kind === 'paragraph' ? band.paragraph.runs : [];
+    expect(runs.map((r) => [r.text, r.field])).toEqual([
+      ['Page ', undefined],
+      ['9', 'PAGE'],
+      [' of ', undefined],
+      ['9', 'NUMPAGES'],
+    ]);
+  });
+
+  it("numbers a section's pages again where its SEP starts the count again", () => {
+    // LibreOffice writes `w:pgNumType w:start="1" w:fmt="lowerRoman"` on the
+    // second section as sprmSFPgnRestart, sprmSPgnStart97 1 and sprmSNfcPgn 2.
+    // Word: "p1", "p2", then "pi", "pii".
+    const page = `p${F13} PAGE ${F14}9${F15}`;
+    const doc = readDoc(
+      buildDoc([{ text: `one${PB}two${PB}three${PB}four\r`, compressed: false }], {
+        sections: [{ length: 8 }, { length: 11, pageNumbers: { nfc: 2, restartAt: 1 } }],
+        headerFooter: [{ defaultFooter: page }, { defaultFooter: page }],
+      }),
+    ).doc;
+    expect(pageTexts(doc).map((lines) => lines[lines.length - 1])).toEqual([
+      'p1',
+      'p2',
+      'pi',
+      'pii',
+    ]);
+  });
+
+  it('keeps the cached result of every other field in a band', () => {
+    // SECTIONPAGES, a date, and a PAGE inside another field's code: what Word
+    // cached is all the reader has of them.
+    const footer =
+      `${F13} SECTIONPAGES ${F14}5${F15}/${F13} DATE ${F14}1.2.99${F15}/` +
+      `${F13} IF ${F13} PAGE ${F14}1${F15} = 1 "a" "b" ${F14}a${F15}`;
+    const doc = readDoc(
+      buildDoc([{ text: `one${PB}two\r`, compressed: false }], {
+        headerFooter: { defaultFooter: footer },
+      }),
+    ).doc;
+    expect(pageTexts(doc).map((lines) => lines[lines.length - 1])).toEqual([
+      '5/1.2.99/a',
+      '5/1.2.99/a',
+    ]);
+    const id = doc.section!.footers[0]!.relationshipId;
+    const [band] = doc.headersFooters!.get(id)!;
+    expect(band?.kind === 'paragraph' && band.paragraph.runs.some((r) => r.field)).toBe(false);
+  });
+
+  it('marks a PAGE field in the body, in the formatting of its cached result', () => {
+    // The body keeps the cached number, as it does from a docx.
+    const doc = readDoc(
+      buildDoc([{ text: `Page ${F13} page ${F14}7${F15}\r`, compressed: false }], {
+        formatRuns: [{ length: 13 }, { length: 1, bold: true }, { length: 2 }],
+      }),
+    ).doc;
+    expect(
+      firstParagraphRuns(doc).map((r) => [r.text, r.field, r.properties.bold === true]),
+    ).toEqual([
+      ['Page ', undefined, false],
+      ['7', 'PAGE', true],
+    ]);
+  });
+
   it('keeps an inch on every side where the SEP states no margin, as Word does', () => {
     const doc = sectioned(`one${PB}two\r`, [{ length: 4 }, { length: 4 }]);
     expect(doc.sections[0]!.properties.margins).toEqual({

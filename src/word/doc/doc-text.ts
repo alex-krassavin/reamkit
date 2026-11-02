@@ -82,6 +82,9 @@ const SPRM_P_ILVL = 0x260a; // list level (0–8)
 const SPRM_P_ILFO = 0x460b; // list-format override index (>0 ⇒ the paragraph is a list item)
 const SPRM_S_BKC = 0x3009; // where the section starts (bkc)
 const SPRM_S_F_TITLE_PAGE = 0x300a; // the section's first page has its own header/footer
+const SPRM_S_NFC_PGN = 0x300e; // the numerals of the section's page numbers (MSONFC)
+const SPRM_S_F_PGN_RESTART = 0x3011; // the section's page numbers start again
+const SPRM_S_PGN_START_97 = 0x501c; // the number they start again at
 const SPRM_S_XA_PAGE = 0xb01f; // section page width in twips (xaPage)
 const SPRM_S_YA_PAGE = 0xb020; // section page height in twips (yaPage)
 const SPRM_S_DXA_LEFT = 0xb021; // left margin (twips)
@@ -100,9 +103,10 @@ const CELL_MARK = 0x07; // ends a table cell (and, on the TTP, a row)
 const PAGE_BREAK = 0x0c; // a manual page break — or, closing a section, its section mark
 const COLUMN_BREAK = 0x0e; // a manual column break
 const LINE_BREAK = 0x0b; // a manual line break, within the paragraph
-const FIELD_BEGIN = 0x13; // a field begins; its code (suppressed) follows
-const FIELD_SEPARATOR = 0x14; // the code ends; the cached result (kept) follows
+const FIELD_BEGIN = 0x13; // a field begins; its code (read, never shown) follows
+const FIELD_SEPARATOR = 0x14; // the code ends; the cached result (shown) follows
 const FIELD_END = 0x15; // the field ends
+const MAX_FIELD_INSTR = 64; // how much of a field's code is read for its keyword
 
 const MAX_TEXT = 1 << 24; // 16M-char guard against a crafted piece table
 
@@ -211,6 +215,11 @@ export interface DocRun {
   readonly pageBreak?: boolean;
   /** The run is a manual column break (0x0E), alone in a run whose text is `\n`. */
   readonly columnBreak?: boolean;
+  /**
+   * The run is the result of a PAGE or NUMPAGES field, whose `text` is the
+   * number Word cached when it last saved.
+   */
+  readonly field?: 'PAGE' | 'NUMPAGES';
 }
 
 /** One paragraph: its runs plus the decoded paragraph properties. */
@@ -245,6 +254,14 @@ export interface DocSection {
   readonly titlePage?: boolean;
   /** The margins the SEP states, in twips; each absent one is Word's default. */
   readonly margins?: DocMargins;
+  /**
+   * `sprmSFPgnRestart` with `sprmSPgnStart97` — the number the section's first
+   * page is printed with, when the section starts its count again; absent, the
+   * count runs on from the section before.
+   */
+  readonly pageNumberStart?: number;
+  /** `sprmSNfcPgn` — the MSONFC the section's page numbers print in; absent, arabic. */
+  readonly pageNumberNfc?: number;
 }
 
 /**
@@ -359,8 +376,8 @@ const EMPTY: DocContent = { paragraphs: [], encrypted: false };
 // next section starts a page is that section's own bkc.
 //
 // Each SED's fcSepx points at a Sepx in the WordDocument stream, whose grpprl
-// carries sprmSBkc, sprmSXaPage/sprmSYaPage (page width/height in twips) and the
-// margins.
+// carries sprmSBkc, sprmSXaPage/sprmSYaPage (page width/height in twips), the
+// margins and how the pages are numbered.
 // Word stores already-swapped dimensions for a landscape section (xaPage >
 // yaPage), so they map straight to the page size — no orientation fix-up. A
 // SED with no Sepx (fcSepx 0xFFFFFFFF) is a section with every default.
@@ -388,6 +405,9 @@ function readSections(
     const grpprl = wd.subarray(fcSepx + 2, Math.min(wd.length, fcSepx + 2 + cb));
     let bkc: number | undefined;
     let titlePage: boolean | undefined;
+    let nfcPgn: number | undefined;
+    let restart = false;
+    let pgnStart = 1;
     let xa = 0;
     let ya = 0;
     const margins: { -readonly [K in keyof DocMargins]: number } = {};
@@ -398,6 +418,9 @@ function readSections(
     for (const { sprm, op } of sprms(grpprl)) {
       if (sprm === SPRM_S_BKC) bkc = grpprl[op];
       else if (sprm === SPRM_S_F_TITLE_PAGE) titlePage = grpprl[op] !== 0;
+      else if (sprm === SPRM_S_NFC_PGN) nfcPgn = grpprl[op];
+      else if (sprm === SPRM_S_F_PGN_RESTART) restart = grpprl[op] !== 0;
+      else if (sprm === SPRM_S_PGN_START_97) pgnStart = u16(grpprl, op);
       else if (sprm === SPRM_S_XA_PAGE) xa = u16(grpprl, op);
       else if (sprm === SPRM_S_YA_PAGE) ya = u16(grpprl, op);
       else if (sprm === SPRM_S_DXA_LEFT) margin('leftTwips', u16(grpprl, op));
@@ -414,6 +437,9 @@ function readSections(
       ...(sane ? { pageSize: { widthPt: xa / 20, heightPt: ya / 20 } } : {}),
       ...(titlePage ? { titlePage } : {}),
       ...(Object.keys(margins).length > 0 ? { margins } : {}),
+      // The start is read only where the count starts again, as Word reads it.
+      ...(restart ? { pageNumberStart: pgnStart } : {}),
+      ...(nfcPgn ? { pageNumberNfc: nfcPgn } : {}),
     });
   }
   return { sections, ends };
@@ -1193,11 +1219,25 @@ function buildParagraphs(
   let cur = '';
   let curChpx: BteRun<DocCharProps> | undefined;
   let lastFc = 0;
-  // Field nesting: a field is `0x13 code 0x14 result 0x15`; the code is dropped,
-  // the cached result kept. codeDepth counts fields currently inside their code
-  // portion (which may nest), so any text there is suppressed.
+  // Field nesting: a field is `0x13 code 0x14 result 0x15`; nothing inside a
+  // code shows, the cached result does. codeDepth counts fields currently inside
+  // their code portion (which may nest), so any text there is suppressed. The
+  // code of a field opened in view is read for its keyword (`instr`), and only
+  // its start: the first word is all that is asked of it.
   let fieldDepth = 0;
   let codeDepth = 0;
+  let instr = '';
+  // The PAGE or NUMPAGES field whose result is being read: how deep it is, and
+  // the paragraph and run its result starts at.
+  let page:
+    | {
+        field: 'PAGE' | 'NUMPAGES';
+        depth: number;
+        paragraph: number;
+        at: number;
+        sep?: BteRun<DocCharProps>;
+      }
+    | undefined;
 
   const push = (run: DocRun, from: BteRun<DocCharProps> | undefined): void => {
     runs.push(run);
@@ -1263,23 +1303,58 @@ function buildParagraphs(
         endParagraph(fc, code === CELL_MARK, sectionEnd);
         continue;
       }
-      // Field delimiters: enter the code (suppress), reach the separator (the
-      // result follows, kept), or end the field. The markers themselves are dropped.
+      // Field delimiters: enter the code, reach the separator (the result
+      // follows), or end the field. The markers themselves are dropped.
       if (code === FIELD_BEGIN) {
+        if (codeDepth === 0) instr = '';
         fieldDepth++;
         codeDepth++;
         continue;
       }
       if (code === FIELD_SEPARATOR) {
-        if (codeDepth > 0) codeDepth--;
+        const ended = codeDepth > 0;
+        if (ended) codeDepth--;
+        // A PAGE or NUMPAGES field prints the number of the page it is set on
+        // and the count of pages, which the layout knows and Word's cache does
+        // not: kept as the cached result, 53446.doc's footer read "Page 9" on
+        // all twelve pages. Its result becomes one run that says which field it
+        // is, the way the docx reader gives it.
+        const field = ended && codeDepth === 0 && !page ? pageField(instr) : undefined;
+        if (field) {
+          flushRun();
+          const sep = lookupRun(chpx, fc);
+          page = {
+            field,
+            depth: fieldDepth,
+            paragraph: paragraphs.length,
+            at: runs.length,
+            ...(sep ? { sep } : {}),
+          };
+        }
         continue;
       }
       if (code === FIELD_END) {
+        // A page field's result that runs on past its paragraph stays as it was.
+        if (page?.depth === fieldDepth) {
+          if (page.paragraph === paragraphs.length) {
+            flushRun();
+            const result = runs.splice(page.at);
+            const from = chpxOf.splice(page.at)[0] ?? page.sep;
+            const text = result.map((r) => r.text).join('');
+            push({ text, props: from?.props ?? {}, field: page.field }, from);
+          }
+          page = undefined;
+        }
         if (fieldDepth > 0) fieldDepth--;
         if (codeDepth > fieldDepth) codeDepth = fieldDepth; // a field with no separator
         continue;
       }
-      if (codeDepth > 0) continue; // inside a field's code — suppress everything
+      if (codeDepth > 0) {
+        // Inside a field's code — suppress everything, and read the start of
+        // the code of a field opened in view.
+        if (codeDepth === 1 && instr.length < MAX_FIELD_INSTR) instr += String.fromCharCode(code);
+        continue;
+      }
       // A picture occupies a special 0x01 character whose CHPX points (via
       // sprmCPicLocation) at a PICF in the Data stream.
       if (code === PIC_CHAR) {
@@ -1361,7 +1436,15 @@ function lookupRun<TProps>(
 
 // A run of nothing but text, which may join the one beside it.
 function plainText(run: DocRun): boolean {
-  return !run.picture && !run.pageBreak && !run.columnBreak;
+  return !run.picture && !run.pageBreak && !run.columnBreak && !run.field;
+}
+
+// The page field a field's code names: its first word, in any case, whatever
+// switches follow (" PAGE ", "NUMPAGES \* MERGEFORMAT"). Any other field keeps
+// its cached result.
+function pageField(code: string): 'PAGE' | 'NUMPAGES' | undefined {
+  const keyword = /^\s*([A-Za-z]+)/.exec(code)?.[1]?.toUpperCase();
+  return keyword === 'PAGE' || keyword === 'NUMPAGES' ? keyword : undefined;
 }
 
 function sameProps(a: DocCharProps, b: DocCharProps): boolean {

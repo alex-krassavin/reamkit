@@ -100,6 +100,9 @@ export function buildDoc(
       readonly pageSizeTwips?: { readonly width: number; readonly height: number };
       readonly marginsTwips?: DocSepMargins;
       readonly titlePage?: boolean; // sprmSFTitlePage
+      // sprmSNfcPgn (the MSONFC of its page numbers) and, with restartAt,
+      // sprmSFPgnRestart + sprmSPgnStart97 (the number its first page is given).
+      readonly pageNumbers?: { readonly nfc?: number; readonly restartAt?: number };
     }>;
     readonly data?: Uint8Array; // the Data stream (embedded pictures: see buildPicf)
     // The header/footer stories: one set for the first section, or one per section.
@@ -256,6 +259,7 @@ export function buildDoc(
         section.pageSizeTwips ?? opts.pageSizeTwips,
         section.marginsTwips,
         section.titlePage,
+        section.pageNumbers,
       );
       const sepxBytes = new Uint8Array(2 + grpprl.length); // cb + grpprl
       new DataView(sepxBytes.buffer).setUint16(0, grpprl.length, true);
@@ -319,13 +323,15 @@ export interface DocSepMargins {
   readonly gutter?: number; // sprmSDzaGutter
 }
 
-// A section's grpprl: sprmSBkc (its break kind, a 1-byte operand), then
-// sprmSXaPage/sprmSYaPage (the page size in twips), then the margins (2 bytes each).
+// A section's grpprl: sprmSBkc (its break kind, a 1-byte operand), the title
+// page and page numbering, then sprmSXaPage/sprmSYaPage (the page size in
+// twips), then the margins (2 bytes each).
 function buildSepGrpprl(
   bkc: number | undefined,
   page: { readonly width: number; readonly height: number } | undefined,
   margins?: DocSepMargins,
   titlePage?: boolean,
+  pageNumbers?: { readonly nfc?: number; readonly restartAt?: number },
 ): Uint8Array {
   const bytes: Array<number> = [];
   const word = (sprm: number, v: number): void => {
@@ -333,6 +339,11 @@ function buildSepGrpprl(
   };
   if (bkc !== undefined) bytes.push(0x09, 0x30, bkc); // sprmSBkc
   if (titlePage !== undefined) bytes.push(0x0a, 0x30, titlePage ? 1 : 0); // sprmSFTitlePage
+  if (pageNumbers?.nfc !== undefined) bytes.push(0x0e, 0x30, pageNumbers.nfc); // sprmSNfcPgn
+  if (pageNumbers?.restartAt !== undefined) {
+    bytes.push(0x11, 0x30, 1); // sprmSFPgnRestart
+    word(0x501c, pageNumbers.restartAt); // sprmSPgnStart97
+  }
   if (page) {
     word(0xb01f, page.width); // sprmSXaPage
     word(0xb020, page.height); // sprmSYaPage
