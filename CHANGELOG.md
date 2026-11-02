@@ -3,6 +3,34 @@
 All notable changes to **Ream** (`reamkit`) are documented here. The project
 follows [Semantic Versioning](https://semver.org/).
 
+## 1.33.2
+
+A patch for a slide's lines, from the first fixes contributed to Ream from
+outside — by Chinmay Singh (@Chinmay67), #116 and #117.
+
+### Fixed
+
+- **A slide's connectors and straight lines are drawn.** A connector,
+  PresentationML's `p:cxnSp`, had no reader, so every connector on a slide was
+  dropped: the elbow arrows between a diagram's boxes, the axes and vectors of
+  a drawn chart, a dash-dot rule. A connector carries the same `p:spPr` and `p:style`
+  as a shape and is read as one; and a box with no width or no height — which
+  is what a horizontal or a vertical line is — is no longer thrown away as
+  empty, so the rule a layout draws under every title comes back too. Fixes
+  #112.
+
+- **An outline with no colour is not drawn black.** An `a:ln` that sets only a
+  width says nothing about the colour; with no style line to take one from it
+  was stroked black all the same. It now takes its fill from the nearest
+  layout or master shape that states one, keeping its own width, and with
+  nothing to inherit the shape has no outline. Fixes #114.
+
+### Internals
+
+- The development toolchain's vite, markdown-it and fast-uri are at their
+  current patch releases, and the documentation site's dependencies with them;
+  the site describes 1.33.1. The runtime dependencies are unchanged.
+
 ## 1.33.1
 
 A patch about what a document gives up as text — to Markdown, to a language
