@@ -64,8 +64,9 @@ export function parsePh(sp: PoNode): PlaceholderRef | undefined {
 /**
  * An xfrm node (`a:off` + `a:ext` children) → the EMU box. Works for both
  * `a:xfrm` (in `p:spPr`) and `p:xfrm` (on a `p:graphicFrame`), whose children are
- * identical. Returns `undefined` for a missing or degenerate (non-positive)
- * extent.
+ * identical. Returns `undefined` for a missing or negative extent, or one that is
+ * empty both ways. A single zero is a real box: a horizontal line has `cy="0"` and
+ * a vertical one `cx="0"`.
  */
 export function boxFromXfrm(xfrm: PoNode | undefined): ShapeBoxEmu | undefined {
   if (!xfrm) return undefined;
@@ -73,7 +74,8 @@ export function boxFromXfrm(xfrm: PoNode | undefined): ShapeBoxEmu | undefined {
   const ext = poChildren(xfrm).find((c) => poIs(c, 'a:ext'));
   const cx = ext ? poIntAttr(ext, 'cx') : undefined;
   const cy = ext ? poIntAttr(ext, 'cy') : undefined;
-  if (cx === undefined || cy === undefined || cx <= 0 || cy <= 0) return undefined;
+  if (cx === undefined || cy === undefined || cx < 0 || cy < 0) return undefined;
+  if (cx === 0 && cy === 0) return undefined;
   const x = (off ? poIntAttr(off, 'x') : undefined) ?? 0;
   const y = (off ? poIntAttr(off, 'y') : undefined) ?? 0;
   return { x, y, cx, cy };
