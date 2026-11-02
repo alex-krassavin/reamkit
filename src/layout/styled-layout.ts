@@ -64,7 +64,7 @@ import type { FamilyKey, SubstituteKey } from '@/core/fonts';
 import type { Hyphenator } from '@/core/hyphenation';
 import type { PreparedImage } from '@/core/images';
 import type { Item } from '@/core/line-breaker';
-import type { Pt, ResourceId } from '@/core/ir';
+import type { Loss, Pt, ResourceId } from '@/core/ir';
 import type { ResolvedParagraphProperties, ResolvedRunProperties } from '@/core/style-cascade';
 import type { ShapeGradient, StrokeStyle, VectorPath } from '@/core/vector';
 import type {
@@ -140,6 +140,7 @@ import {
 } from '@/core/drawingml/shape-render';
 import { StructTreeBuilder } from '@/pdf/struct-tree';
 import { floatIntoFrame, turnOntoSheet } from '@/layout/turned-section';
+import { undrawnLoss } from '@/layout/undrawn';
 
 /**
  * PDF/A conformance string: part 1 (ISO 19005-1, PDF 1.4) / 2 (ISO 19005-2) / 3
@@ -477,6 +478,13 @@ export interface StyledRenderOptions {
    * signature.
    */
   readonly signaturePlaceholder?: SignaturePlaceholder;
+  /**
+   * Sink the layout writes its {@link Loss} entries into: the characters no
+   * face on hand has a glyph for, which the page draws as empty boxes (see
+   * `undrawnLoss`). The converter always supplies one and returns it with the
+   * output; omitted ⇒ the boxes are drawn all the same, and nothing says so.
+   */
+  readonly losses?: Array<Loss>;
 }
 
 // Re-exported from the document model (moved there so FlowDoc can carry it).
@@ -1594,6 +1602,10 @@ export function layoutStyledDocument(
     collapsesSpacing(options),
     options.compatibilityMode,
   );
+  if (options.losses) {
+    const undrawn = undrawnLoss(pages);
+    if (undrawn) options.losses.push(undrawn);
+  }
 
   return {
     pages,
