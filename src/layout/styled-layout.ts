@@ -5249,7 +5249,9 @@ function syntheticFace(
  */
 function splitByFace(plan: RunPlan, text: string): Array<{ text: string; face: RunFace }> {
   const first = faceOf(plan, text.codePointAt(0) ?? 0);
-  if (!plan.faceFor || plan.faceFor.size === 0) return [{ text, face: first }];
+  // A tab is a token with no text, and it still has to reach the line: cut
+  // into nothing, the tab after a list marker set in two faces was lost.
+  if (text === '' || !plan.faceFor || plan.faceFor.size === 0) return [{ text, face: first }];
   const out: Array<{ text: string; face: RunFace }> = [];
   let buf = '';
   let face = first;

@@ -344,3 +344,23 @@ describe('numbering a paragraph carries through its style (§17.9.24)', () => {
     expect(markers).toEqual(['Chapter 1.\t', 'Chapter 2.\t']);
   });
 });
+
+describe('a list marker takes its fonts slot by slot (§17.3.2.26)', () => {
+  it('lays the level’s ASCII font over the paragraph mark’s other slots', () => {
+    const numberingXml =
+      '<w:abstractNum w:abstractNumId="0">' +
+      '<w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/>' +
+      '<w:lvlText w:val="Глава %1."/><w:rPr><w:rFonts w:ascii="Arial"/></w:rPr></w:lvl>' +
+      '</w:abstractNum>' +
+      '<w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>';
+    const body =
+      '<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr>' +
+      '<w:rPr><w:rFonts w:ascii="Georgia" w:hAnsi="Georgia"/></w:rPr></w:pPr>' +
+      '<w:r><w:t>Текст</w:t></w:r></w:p>';
+    const { doc } = readDocx(buildDocxFromBody(body, { numberingXml }));
+    const marker = doc.body.flatMap((b) =>
+      b.kind === 'paragraph' ? b.paragraph.runs.filter((r) => r.listMarker) : [],
+    )[0];
+    expect(marker?.properties.fontFamily).toEqual({ ascii: 'Arial', hAnsi: 'Georgia' });
+  });
+});

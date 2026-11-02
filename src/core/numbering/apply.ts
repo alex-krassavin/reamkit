@@ -17,7 +17,7 @@ import type {
 } from '@/core/document-model';
 import { pt } from '@/core/ir';
 import { NumberingState, effectiveAbstract } from '@/core/numbering/state';
-import { resolveParagraphProperties } from '@/core/style-cascade';
+import { mergeRunPartial, resolveParagraphProperties } from '@/core/style-cascade';
 
 /** The height a picture bullet takes when neither the level nor the paragraph
  * mark states a font size — Word's own default text size. */
@@ -112,7 +112,10 @@ export function applyNumbering(
             // marker at whatever size the paragraph's STYLE lends: fdo78420's
             // bullets are 9pt text under an 11pt list style, and an 11pt bullet
             // made every one of its lines 4pt taller — 41 pages against 23.
-            properties: { ...p.properties.runProperties, ...level?.runProperties },
+            properties: mergeRunPartial(
+              p.properties.runProperties ?? {},
+              level?.runProperties ?? {},
+            ),
             listMarker: true,
           },
         ];

@@ -217,6 +217,29 @@ describe('the default paragraph style (§17.7.4.17)', () => {
   });
 });
 
+describe('a conditional layer names one font slot (§17.3.2.26)', () => {
+  // The slots of `w:rFonts` are inherited one by one in a table style as
+  // anywhere: a first-row layer that names only the ASCII font keeps the
+  // base layer's font for the rest.
+  it('keeps the base layer’s other slots', () => {
+    const stylesXml =
+      '<w:style w:type="table" w:styleId="Fonts">' +
+      '<w:rPr><w:rFonts w:ascii="Georgia" w:hAnsi="Georgia" w:cs="Georgia"/></w:rPr>' +
+      '<w:tblStylePr w:type="firstRow"><w:rPr><w:rFonts w:ascii="Arial"/></w:rPr></w:tblStylePr>' +
+      '</w:style>';
+    const docx = buildDocxFromBody(
+      '<w:tbl><w:tblPr><w:tblStyle w:val="Fonts"/><w:tblLook w:firstRow="1"/></w:tblPr>' +
+        '<w:tblGrid><w:gridCol w:w="2000"/></w:tblGrid>' +
+        '<w:tr><w:tc><w:p><w:r><w:t>Шапка</w:t></w:r></w:p></w:tc></w:tr></w:tbl>',
+      { stylesXml },
+    );
+    const p = firstTable(docx).rows[0]!.cells[0]!.content[0];
+    expect(
+      p?.kind === 'paragraph' ? p.paragraph.runs[0]!.properties.fontFamily : undefined,
+    ).toEqual({ ascii: 'Arial', hAnsi: 'Georgia', cs: 'Georgia' });
+  });
+});
+
 describe('a conditional layer reaches the paragraph mark too', () => {
   // conditionalstyles-tbllook.docx sets its first column in 36pt: the cells
   // with a letter in them are that tall in every reader, and so are the EMPTY

@@ -12,6 +12,7 @@ import { describe, expect, it } from 'vitest';
 import { buildDoc } from './fixtures/build-doc';
 import { buildDocxFromBody } from './fixtures/build-docx';
 import type { FamilyKey } from '@/core/fonts';
+import type { RunProperties } from '@/core/document-model';
 import type { FlowDoc } from '@/core/ir/flow';
 import type { TextLineItem, TextToken } from '@/layout/page-doc';
 import { Ream } from '@/core/converter/ream';
@@ -133,6 +134,85 @@ describe('a run’s characters are set in the face their slot of w:rFonts names'
       docx('w:ascii="Verdana" w:hAnsi="Verdana" w:cs="Times New Roman"', 'abc', '<w:rtl/>'),
     ).flow;
     expect(faces(flow)).toEqual([['abc', 'tinos']]);
+  });
+
+  it('takes a slot the run does not name from the styles under it', () => {
+    // Word for Mac sets the Cyrillic of a run that names only `w:ascii` in the
+    // hAnsi font of the defaults (the theme's body font there), not in Verdana.
+    const flow = Ream.parse(
+      buildDocxFromBody(
+        '<w:p><w:r><w:rPr><w:rFonts w:ascii="Verdana"/></w:rPr><w:t>split Кириллица</w:t></w:r></w:p>',
+        {
+          stylesXml:
+            '<w:docDefaults><w:rPrDefault><w:rPr>' +
+            '<w:rFonts w:ascii="Times New Roman" w:hAnsi="Courier New"/>' +
+            '</w:rPr></w:rPrDefault></w:docDefaults>',
+        },
+      ),
+    ).flow;
+    expect(faces(flow)).toEqual([
+      ['split', 'arimo'],
+      ['Кириллица', 'cousine'],
+    ]);
+  });
+
+  it('reads a DrawingML a:latin as the font of every slot it covers', () => {
+    // §21.1.2.3.7 — `a:latin` sets everything neither East Asian nor complex
+    // script, so the Cyrillic of a .docx's own shape is not left to the
+    // document's hAnsi: tdf143476_lockedCanvas_position.docx's WordArt.
+    // A member of a group states its words in an `a:txBody`, as the canvas's do.
+    const shape =
+      '<w:p><w:r><w:drawing><wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing">' +
+      '<wp:extent cx="1828800" cy="914400"/><wp:docPr id="1" name="Group 1"/>' +
+      '<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">' +
+      '<a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingGroup">' +
+      '<wpg:wgp xmlns:wpg="http://schemas.microsoft.com/office/word/2010/wordprocessingGroup">' +
+      '<wpg:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1828800" cy="914400"/>' +
+      '<a:chOff x="0" y="0"/><a:chExt cx="1828800" cy="914400"/></a:xfrm></wpg:grpSpPr>' +
+      '<wps:wsp xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">' +
+      '<wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="1828800" cy="914400"/></a:xfrm>' +
+      '<a:prstGeom prst="rect"/></wps:spPr>' +
+      '<a:txBody><a:bodyPr/><a:p><a:r><a:rPr><a:latin typeface="Courier New"/></a:rPr>' +
+      '<a:t>split Кириллица</a:t></a:r></a:p></a:txBody>' +
+      '<wps:bodyPr/></wps:wsp></wpg:wgp></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>';
+    const flow = Ream.parse(
+      buildDocxFromBody(shape, {
+        stylesXml:
+          '<w:docDefaults><w:rPrDefault><w:rPr>' +
+          '<w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/>' +
+          '</w:rPr></w:rPrDefault></w:docDefaults>',
+      }),
+    ).flow;
+    // The shape's own text, wherever the reader keeps it.
+    const runs: Array<{ text: string; properties: RunProperties }> = [];
+    const seen = new Set<object>();
+    const find = (node: unknown): void => {
+      if (typeof node !== 'object' || node === null || seen.has(node)) return;
+      seen.add(node);
+      const run = node as { text?: unknown; properties?: RunProperties };
+      if (run.text === 'split Кириллица' && run.properties) {
+        runs.push({ text: run.text, properties: run.properties });
+      }
+      for (const value of Object.values(node)) find(value);
+    };
+    find(flow.body);
+    expect(runs.map((r) => r.properties.fontFamily)).toEqual([
+      { ascii: 'Courier New', hAnsi: 'Courier New' },
+    ]);
+  });
+
+  it('keeps a tab in a run set in two faces', () => {
+    const flow = Ream.parse(docx(VERDANA_COURIER, 'Ж1.\tX')).flow;
+    const laid = layoutStyledDocument(flow.body, {
+      registry: ALL.get('arimo')!,
+      registriesByFamily: ALL,
+      ...flowRenderOptions(flow),
+    });
+    const tokens = laid.pages
+      .flatMap((page) => page.commands.filter((c): c is TextLineItem => c.type === 'line'))
+      .flatMap((l) => l.line.tokens)
+      .filter((t): t is TextToken => t.kind === 'text');
+    expect(tokens.map((t) => (t.tab ? 'TAB' : t.text))).toEqual(['Ж', '1.', 'TAB', 'X']);
   });
 
   it('leaves a slot to the ascii face where nothing was fetched for its family', () => {

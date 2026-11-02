@@ -1,5 +1,6 @@
 export {
   EMPTY_STYLE_SHEET,
+  mergeRunPartial,
   resolveBodyStyles,
   resolveHeadersFootersStyles,
   resolveParagraphProperties,
