@@ -27,6 +27,7 @@ import type {
   ShapeBlock,
   ShapeFill,
   ShapeGeometry,
+  ShapeLine,
   ShapeTextBody,
   Table,
   TableCell,
@@ -253,6 +254,26 @@ function pictureAsShape(pic: PoNode): PoNode | undefined {
   };
 }
 
+/** Whether a shape properties node has an `a:ln` that states its own fill. */
+function statesLineFill(spPr: PoNode): boolean {
+  const ln = poChildren(spPr).find((c) => poIs(c, 'a:ln'));
+  return (
+    ln !== undefined &&
+    poChildren(ln).some(
+      (c) =>
+        poIs(c, 'a:noFill') ||
+        poIs(c, 'a:solidFill') ||
+        poIs(c, 'a:gradFill') ||
+        poIs(c, 'a:pattFill'),
+    )
+  );
+}
+
+/** A line's stated properties, ready to spread over the ones it inherits. */
+function definedProps(line: ShapeLine): Partial<ShapeLine> {
+  return Object.fromEntries(Object.entries(line).filter(([, v]) => v !== undefined));
+}
+
 /**
  * Whether a shape is a placeholder — `p:ph` in its OWN non-visual properties.
  * Read as "anywhere below", a group holding one would take the whole group
@@ -383,16 +404,16 @@ function parseSp(sp: PoNode, ctx: SlideContext, transform: GroupTransform): Shap
   const styled = withStatedDirection(resolved, spPr);
   const lineFrom = from((n) => poChildren(n).some((c) => poIs(c, 'a:ln')));
   let line = lineFrom ? parseLine(lineFrom, colors) : undefined;
-  if (style) {
-    const fromStyle = styleRefLine(style, colors, ctx.themeLineWidths);
-    if (fromStyle) {
-      line = line
-        ? {
-            ...fromStyle,
-            ...Object.fromEntries(Object.entries(line).filter(([, v]) => v !== undefined)),
-          }
-        : fromStyle;
-    }
+  const fromStyle = style ? styleRefLine(style, colors, ctx.themeLineWidths) : undefined;
+  if (fromStyle) {
+    line = line ? { ...fromStyle, ...definedProps(line) } : fromStyle;
+  } else if (line && lineFrom && !statesLineFill(lineFrom)) {
+    // §20.1.2.2.24 — an `a:ln` with no fill of its own, such as a bare width, says
+    // nothing about the colour. It comes from further up, and with nothing up
+    // there the shape has no outline: drawn anyway, it came out black.
+    const lentLine = protos.find(statesLineFill);
+    const lentProps = lentLine ? parseLine(lentLine, colors) : undefined;
+    line = lentProps ? { ...lentProps, ...definedProps(line) } : undefined;
   }
   // §20.1.8.40 `a:outerShdw` — the shadow a shape casts, which the pptx path
   // read for a diagram's nodes and nowhere else: 547 of them across 37 decks
