@@ -274,6 +274,8 @@ export function warpGlyphMatrix(
 /** One glyph of a shaped run, set on a warp's curve: its id and its {@link warpGlyphMatrix}. */
 export interface WarpedGlyph {
   readonly gid: number;
+  /** Where the glyph stands in the run it came from. */
+  readonly index: number;
   readonly matrix: readonly [number, number, number, number, number, number];
 }
 
@@ -324,6 +326,7 @@ export function warpGlyphRun(
     const dy = (run.yOffsets?.[i] ?? 0) * emPt;
     out.push({
       gid: run.gids[i]!,
+      index: i,
       matrix: [m[0], m[1], m[2], m[3], m[4] + m[2] * dy, m[5] + m[3] * dy],
     });
   }

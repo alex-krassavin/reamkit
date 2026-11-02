@@ -350,12 +350,16 @@ describe('ink measurement', () => {
 const shapingFace = (script: string): Uint8Array<ArrayBuffer> =>
   new Uint8Array(readFileSync(`tests/fixtures/fonts/NotoSans${script}-shaping.ttf`));
 
-/** One slide holding one WordArt shape of `text`, in PDF or SVG, drawn in `regular`. */
+/**
+ * One slide holding one WordArt shape of `text`, in PDF or SVG, drawn in
+ * `regular` — or of `runs`, the paragraph's own runs, where they are given.
+ */
 async function warpedDeck(
   fmt: 'pdf' | 'svg',
   prst: string,
   text: string,
   regular: Uint8Array,
+  runs = `<a:r><a:rPr lang="hi-IN" sz="5400"/><a:t>${text}</a:t></a:r>`,
 ): Promise<string> {
   const sp =
     `<p:sp><p:nvSpPr><p:cNvPr id="2" name="W"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>` +
@@ -363,8 +367,7 @@ async function warpedDeck(
     `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></p:spPr>` +
     `<p:txBody><a:bodyPr wrap="none" lIns="0" tIns="0" rIns="0" bIns="0">` +
     `<a:prstTxWarp prst="${prst}"><a:avLst/></a:prstTxWarp></a:bodyPr>` +
-    `<a:lstStyle/><a:p><a:r><a:rPr lang="hi-IN" sz="5400"/>` +
-    `<a:t>${text}</a:t></a:r></a:p></p:txBody></p:sp>`;
+    `<a:lstStyle/><a:p>${runs}</a:p></p:txBody></p:sp>`;
   const bytes = await Ream.parse(buildPptx([sp])).convert(fmt, { fonts: { regular } });
   return new TextDecoder(fmt === 'pdf' ? 'latin1' : 'utf-8').decode(bytes);
 }
@@ -442,5 +445,25 @@ describe('the scripts of India on a curve', () => {
     const sMark = svg[i]!.m;
     expect(sMark[5]! - sBase[5]!).toBeCloseTo((sMark[3]! / 54) * lift, 1);
     expect(sMark[5]!).toBeLessThan(sBase[5]!);
+  });
+
+  it('draws each glyph of a syllable coloured apart in its own run’s colour', async () => {
+    // कृ with its vowel sign red: one syllable, shaped whole, in two colours.
+    const COLOUR = new Uint8Array(
+      readFileSync('tests/fixtures/fonts/NotoSansDevanagari-colour.ttf'),
+    );
+    const run = (text: string, fill = ''): string =>
+      `<a:r><a:rPr lang="hi-IN" sz="5400">${fill}</a:rPr><a:t>${text}</a:t></a:r>`;
+    const runs = run('क') + run('ृ', '<a:solidFill><a:srgbClr val="FF0000"/></a:solidFill>');
+    const [ka, r] = shapeIndic(parseTtf(COLOUR), 'कृ')!.gids;
+    const hex4 = (gid: number): string => gid.toString(16).padStart(4, '0').toUpperCase();
+
+    const pdf = await warpedDeck('pdf', 'textWave1', '', COLOUR, runs);
+    expect(pdf).toMatch(
+      new RegExp(`<${hex4(ka!)}> Tj\\s+1 0 0 rg\\s+[-\\d. ]+ Tm\\s+<${hex4(r!)}>`),
+    );
+    const svg = await warpedDeck('svg', 'textWave1', '', COLOUR, runs);
+    expect(svg).toMatch(new RegExp(`fill="#000000"><use href="#g\\d+-${ka}"/>`));
+    expect(svg).toMatch(new RegExp(`fill="#FF0000"><use href="#g\\d+-${r}"/>`));
   });
 });

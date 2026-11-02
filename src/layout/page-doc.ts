@@ -102,6 +102,15 @@ export interface TextToken {
    * fills a soft highlight behind it (E-COMMENTS CM2c).
    */
   readonly highlight?: true;
+  /**
+   * Per code point of `text`, the colour it is drawn in, where the token holds
+   * a syllable of the scripts of India that a run boundary cut: the syllable
+   * is shaped whole in the run it begins in, and each character keeps the
+   * colour of the run it was typed in. A glyph standing for several characters
+   * takes the colour of the first. Absent when every character takes
+   * `resolvedRun.colorHex`.
+   */
+  readonly charColorsHex?: ReadonlyArray<string>;
   readonly resolvedRun: ResolvedRunProperties;
   readonly font: FontResource;
   /** What the chosen face lacks and the emitter must fake (see {@link SyntheticFace}). */

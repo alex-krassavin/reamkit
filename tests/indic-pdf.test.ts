@@ -158,7 +158,10 @@ describe('a word of the scripts of India on a PDF page', () => {
     const pdf = await pdfOf(body, DEVANAGARI);
     const dotted = hex4(parsed.glyphForCodepoint(0x25cc));
     expect(pdf).not.toContain(dotted);
-    expect(pdf).toMatch(shownPattern(shapeIndic(parsed, 'कि')!.gids));
+    // In the shaper's order, the short i first: the colour switches between
+    // the two glyphs, not the syllable between two shows.
+    const [shortI, ka] = shapeIndic(parsed, 'कि')!.gids.map((g) => hex4(g));
+    expect(pdf).toMatch(new RegExp(`<${shortI}> Tj [\\d. ]+ rg <${ka}>`, 'u'));
   });
 });
 
@@ -193,5 +196,83 @@ describe('a word of the scripts of India in an SVG', () => {
     );
     const dy = shapeIndic(parseTtf(BENGALI), 'কোথায়')!.yOffsets.find((y) => y !== 0)!;
     expect(svg).toContain(`y="${String(dy / 1000)}"`);
+  });
+});
+
+describe('a syllable a run boundary cuts, in its runs’ colours', () => {
+  // Cut to क ि ृ ष ् ण र and the dotted circle (see fixtures/fonts/NOTICE.md).
+  const COLOUR = fixture('NotoSansDevanagari-colour');
+  const parsed = parseTtf(COLOUR);
+  const run = (text: string, colour?: string): string =>
+    `<w:r>${colour ? `<w:rPr><w:color w:val="${colour}"/></w:rPr>` : ''}<w:t>${text}</w:t></w:r>`;
+  // कृष्ण with each sign in a colour of its own, as font issues.docx has it:
+  // the half form of ष् is one glyph made of a green ष and a blue virama.
+  const krishna =
+    `<w:p>${run('क')}${run('ृ', 'FF0000')}${run('ष', '00FF00')}` +
+    `${run('्', '0000FF')}${run('ण')}</w:p>`;
+  const svgOf = async (body: string): Promise<string> =>
+    new TextDecoder().decode(
+      await Ream.parse(buildDocxFromBody(body)).convert('svg', { fonts: { regular: COLOUR } }),
+    );
+
+  it('names, per glyph, the first character it stands for', () => {
+    const measure = createFontMeasure(parsed);
+    // The short i is drawn first and stands for the second character.
+    expect(measure.glyphSources('कि')).toEqual([1, 0]);
+    expect(measure.glyphSources('ki')).toBeUndefined();
+  });
+
+  it('switches the fill colour around the glyph of a vowel sign coloured apart', async () => {
+    const pdf = await pdfOf(`<w:p>${run('क')}${run('ि', 'FF0000')}</w:p>`, COLOUR);
+    const [shortI, ka] = shapeIndic(parsed, 'कि')!.gids;
+    const word = pdf.slice(pdf.indexOf('/ActualText'), pdf.indexOf('EMC'));
+    // Inside the word's one bracket: the short i red, the ka black again.
+    expect(word).toMatch(
+      new RegExp(`BDC\\s+1 0 0 rg <${hex4(shortI!)}> Tj 0 0 0 rg <${hex4(ka!)}> Tj\\s*$`, 'u'),
+    );
+    expect(pdf).not.toContain(hex4(parsed.glyphForCodepoint(0x25cc)));
+  });
+
+  it('paints each glyph of कृष्ण in the colour of its first character', async () => {
+    const pdf = await pdfOf(krishna, COLOUR);
+    const [ka, r, ssa, nna] = shapeIndic(parsed, 'कृष्ण')!.gids.map((g) => hex4(g));
+    expect(pdf.match(/BDC/gu)).toHaveLength(1);
+    expect(pdf).toMatch(
+      new RegExp(
+        `0 0 0 rg[^]*?<${ka}[^]*?1 0 0 rg[^]*?<${r}>[^]*?0 1 0 rg[^]*?<${ssa}>` +
+          `[^]*?0 0 0 rg[^]*?<${nna}>[^]*?EMC`,
+        'u',
+      ),
+    );
+    // The virama's blue has no glyph of its own to paint.
+    expect(pdf).not.toContain('0 0 1 rg');
+  });
+
+  it('fills each glyph of an SVG in the colour of its first character', async () => {
+    const svg = await svgOf(krishna);
+    const [ka, r, ssa, nna] = shapeIndic(parsed, 'कृष्ण')!.gids;
+    const use = (gid: number, fill?: string): RegExp =>
+      new RegExp(`<use href="#g\\d+-${gid}"[^>]*?${fill ? ` fill="#${fill}"` : ''}/>`, 'u');
+    // कृ in a black group, its vowel sign red; ष्ण in a green one, its ण black.
+    expect(svg).toMatch(/fill="#000000"><use href="#g\d+-\d+"\/>/u);
+    expect(svg).toMatch(use(ka!));
+    expect(svg).toMatch(use(r!, 'FF0000'));
+    expect(svg).toMatch(new RegExp(`fill="#00FF00"><use href="#g\\d+-${ssa}"/>`, 'u'));
+    expect(svg).toMatch(use(nna!, '000000'));
+    expect(svg).not.toContain('0000FF');
+  });
+
+  it('strokes a faked bold in the colour of each glyph, the weight being its own', async () => {
+    // A green bold ष् and a black ण: the face has no bold, so the page fakes it.
+    const bold = '<w:rPr><w:b/><w:color w:val="00FF00"/></w:rPr>';
+    const svg = await svgOf(`<w:p><w:r>${bold}<w:t>ष्</w:t></w:r>${run('ण')}</w:p>`);
+    const [ssa, nna] = shapeIndic(parsed, 'ष्ण')!.gids;
+    expect(svg).toMatch(
+      new RegExp(
+        `fill="#00FF00" stroke="#00FF00"[^>]*><use href="#g\\d+-${ssa}"/>` +
+          `<use href="#g\\d+-${nna}"[^>]*? fill="#000000" stroke="#000000"/>`,
+        'u',
+      ),
+    );
   });
 });

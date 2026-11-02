@@ -38,8 +38,17 @@ export interface FontMeasure {
    * position and off the baseline, and takes its letter spacing after each
    * cluster rather than each glyph: give it the size it is set at and that
    * spacing, and leave the text state's `Tc` at 0 for it.
+   *
+   * For such text, `before` puts an operator of the writer's own — a colour,
+   * say — before a glyph, keyed by the glyph's index in {@link glyphRun}'s
+   * order: the show is cut there, its pen moves and rise kept.
    */
-  readonly showText: (text: string, fontSizePt?: number, clusterSpacingPt?: number) => string;
+  readonly showText: (
+    text: string,
+    fontSizePt?: number,
+    clusterSpacingPt?: number,
+    before?: ReadonlyMap<number, string>,
+  ) => string;
   /**
    * The glyphs `text` is drawn with and the advance each one takes, in font
    * units — exactly what {@link showText} shows, kerning and ligatures
@@ -60,6 +69,12 @@ export interface FontMeasure {
    * spacing must not split.
    */
   readonly clustered: (text: string) => boolean;
+  /**
+   * For text the Indic shaper set, per glyph in {@link glyphRun}'s order, the
+   * index in code points of the first character it stands for: the one a
+   * writer takes a glyph's formatting from. Undefined for any other text.
+   */
+  readonly glyphSources: (text: string) => ReadonlyArray<number> | undefined;
   /** How many places letter spacing goes in `text`: one per character, or per cluster. */
   readonly spacingSlots: (text: string) => number;
 }
@@ -345,9 +360,14 @@ export function createFontMeasure(parsed: ParsedTtf, kern = true): FontMeasure {
   // where each token lands at the measured width of the ones before it. It
   // did: HeaderFooterUnicode.docx printed "L'Avareou l'École du mensonge",
   // its space eaten by the L-apostrophe pair kern in the token before it.
-  const showText = (text: string, fontSizePt?: number, clusterSpacingPt?: number): string => {
+  const showText = (
+    text: string,
+    fontSizePt?: number,
+    clusterSpacingPt?: number,
+    before?: ReadonlyMap<number, string>,
+  ): string => {
     const shaped = shape(text);
-    if (shaped.indic) return showPlaced(shaped.indic, fontSizePt, clusterSpacingPt ?? 0);
+    if (shaped.indic) return showPlaced(shaped.indic, fontSizePt, clusterSpacingPt ?? 0, before);
     const parts: Array<string> = [];
     let hex = '';
     let kerned = false;
@@ -374,8 +394,15 @@ export function createFontMeasure(parsed: ParsedTtf, kern = true): FontMeasure {
   // `TJ` array, and a glyph raised or lowered off the baseline is shown with
   // the text rise (`Ts`, §9.3.7) set to its y offset and put back to 0. Letter
   // spacing goes after the last glyph of each cluster, where `Tc` would put it
-  // after every glyph and pull a vowel sign off its consonant.
-  const showPlaced = (run: IndicRun, fontSizePt: number | undefined, spacingPt: number): string => {
+  // after every glyph and pull a vowel sign off its consonant. An operator the
+  // writer puts before a glyph ends the show there, the pen moves owed so far
+  // with it, and the next show carries on from where that one left the pen.
+  const showPlaced = (
+    run: IndicRun,
+    fontSizePt: number | undefined,
+    spacingPt: number,
+    before: ReadonlyMap<number, string> | undefined,
+  ): string => {
     const upem = parsed.unitsPerEm;
     const ops: Array<string> = [];
     let parts: Array<string> = [];
@@ -404,6 +431,12 @@ export function createFontMeasure(parsed: ParsedTtf, kern = true): FontMeasure {
       const gid = run.gids[i]!;
       const dx = run.xOffsets[i] ?? 0;
       const dy = fontSizePt === undefined ? 0 : ((run.yOffsets[i] ?? 0) * fontSizePt) / upem;
+      const op = before?.get(i);
+      if (op !== undefined) {
+        flushShift();
+        flushShow();
+        ops.push(op);
+      }
       if (dy !== rise) {
         flushShift();
         flushShow();
@@ -448,6 +481,12 @@ export function createFontMeasure(parsed: ParsedTtf, kern = true): FontMeasure {
     };
   };
   const clustered = (text: string): boolean => shape(text).indic !== undefined;
+  const glyphSources = (text: string): ReadonlyArray<number> | undefined => {
+    const run = shape(text).indic;
+    // A dotted circle the shaper put in stands for nothing: it goes with the
+    // sign it carries, which begins its cluster.
+    return run?.sources.map((s, i) => s[0] ?? run.clusters[i]!);
+  };
   const spacingSlots = (text: string): number => {
     const run = shape(text).indic;
     return run ? new Set(run.clusters).size : [...text].length;
@@ -499,6 +538,7 @@ export function createFontMeasure(parsed: ParsedTtf, kern = true): FontMeasure {
     showText,
     glyphRun,
     clustered,
+    glyphSources,
     spacingSlots,
   };
 }

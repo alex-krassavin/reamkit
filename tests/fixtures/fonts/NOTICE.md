@@ -63,3 +63,10 @@ two-part vowel sign among them:
 | `NotoSansTelugu-shaping.ttf` | `c07847a3af772da0` | A reph asked for with ZWJ, ksha, shri, the ai length mark. |
 | `NotoSansKannada-shaping.ttf` | `b3aeb9c110441786` | A reph after the post-base forms, o, ai and ii in two parts, two below-base forms, Ra-virama-ZWJ, a nukta inside a ligature. |
 | `NotoSansMalayalam-shaping.ttf` | `50843d3cd1059eba` | O and ai around their consonant, a pre-base ra, the dot reph, a chillu. |
+
+For `tests/indic-pdf.test.ts`, a syllable whose signs are coloured apart — क ि ृ
+ष ् ण र and the dotted circle:
+
+| File | sha256 (16) | What it is cut to |
+|---|---|---|
+| `NotoSansDevanagari-colour.ttf` | `283bee12256dccb3` | कृष्ण with the half form of ष्, the short i before its consonant, and the reph that joins it. |

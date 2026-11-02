@@ -44,6 +44,7 @@ import type {
   PictureOutline,
   RelativeSize,
   Run,
+  RunProperties,
   Section,
   SectionColumns,
   SectionProperties,
@@ -5957,6 +5958,12 @@ interface RunPlan {
    * Absent when the run's face covers all of its text, which is nearly always.
    */
   readonly faceFor?: ReadonlyMap<number, RunFace>;
+  /**
+   * Per code point of `run.text`, the colour it is drawn in, where a split
+   * syllable brought characters of other runs into this one (see
+   * {@link LaidRun}) and one of them is coloured otherwise.
+   */
+  readonly charColorsHex?: ReadonlyArray<string>;
   readonly fontSizePt: number;
   /** How far off the baseline this run draws (super/subscript), in points. */
   readonly risePt?: number;
@@ -6029,7 +6036,7 @@ function resolveMathItems(
 function displayCapsRuns(
   paragraph: Paragraph,
   options: StyledRenderOptions,
-): ReadonlyArray<Paragraph['runs'][number]> {
+): ReadonlyArray<LaidRun> {
   let any = false;
   const out: Array<Paragraph['runs'][number]> = [];
   for (const raw of paragraph.runs) {
@@ -6098,17 +6105,38 @@ function plainTextRun(run: Paragraph['runs'][number]): boolean {
 const SYLLABLE_REACH = 32;
 
 /**
+ * A run as the page sets it: a run of the paragraph, or one that a syllable a
+ * run boundary cut was given whole to (see {@link mendSplitSyllables}).
+ */
+type LaidRun = Paragraph['runs'][number] & {
+  /**
+   * Per code point of `text`, the properties of the run the character was
+   * typed in — its own, except for the characters a split syllable brought
+   * here from the runs after it. Absent when nothing was brought.
+   */
+  readonly charProperties?: ReadonlyArray<RunProperties>;
+};
+
+/** Per code point of a run's text, the properties of the run each character was typed in. */
+function charPropertiesOf(run: LaidRun): ReadonlyArray<RunProperties> {
+  return run.charProperties ?? [...run.text].map(() => run.properties);
+}
+
+/**
  * A syllable of the scripts of India that a run boundary cuts, given whole to
  * the run it begins in. Word sets runs apart for a colour, a weight, a tracked
  * change or a spelling mark, and nothing stops one from starting at a vowel
  * sign: font issues.docx colours each sign of कृष्ण apart, and
  * Untitled 2.docx ends a bold run on the र् of a reph. Shaped run by run,
  * each sign stood alone on a dotted circle and the reph stayed a Ra and a
- * virama. The syllable now takes the formatting of the run it begins in.
+ * virama. The syllable now takes the formatting of the run it begins in…
+ *
+ * …all but its colour. Word draws each sign of कृष्ण in the colour of its
+ * own run, on the one shaped syllable, so each character brought along keeps
+ * the properties of the run it came from (`charProperties`), and the glyphs
+ * are painted from them.
  */
-function mendSplitSyllables(
-  runs: ReadonlyArray<Paragraph['runs'][number]>,
-): ReadonlyArray<Paragraph['runs'][number]> {
+function mendSplitSyllables(runs: ReadonlyArray<LaidRun>): ReadonlyArray<LaidRun> {
   if (!runs.some((r) => hasIndic(r.text))) return runs;
   const out = [...runs];
   let prev = -1;
@@ -6127,13 +6155,101 @@ function mendSplitSyllables(
       while (moved < head.length && !starts[tail.length + moved]) moved++;
       if (moved > 0) {
         const take = head.slice(0, moved).join('');
-        out[prev] = { ...before, text: before.text + take };
-        out[k] = { ...run, text: run.text.slice(take.length) };
+        const brought = charPropertiesOf(run);
+        out[prev] = {
+          ...before,
+          text: before.text + take,
+          charProperties: [...charPropertiesOf(before), ...brought.slice(0, moved)],
+        };
+        out[k] = {
+          ...run,
+          text: run.text.slice(take.length),
+          ...(run.charProperties ? { charProperties: brought.slice(moved) } : {}),
+        };
       }
     }
     if (out[k]!.text.length > 0) prev = k;
   }
   return out;
+}
+
+/**
+ * The colour each character of a run is drawn in, where a split syllable
+ * brought characters of other runs into it: each takes its own run's colour,
+ * resolved through the styles as that run's would be.
+ *
+ * @param options  The render options (for the style cascade and the faces).
+ * @param paragraph The paragraph the run is in.
+ * @param primary  The run's own face.
+ * @param resolved The run's resolved properties.
+ * @param run      The run, as {@link mendSplitSyllables} left it.
+ * @param drawn    Its text as drawn ({@link drawableText}).
+ * @returns Per code point of `drawn`, its colour — or nothing when every
+ *          character is in the run's own.
+ */
+function charColours(
+  options: StyledRenderOptions,
+  paragraph: Paragraph,
+  primary: ParsedTtf,
+  resolved: ResolvedRunProperties,
+  run: LaidRun,
+  drawn: string,
+): ReadonlyArray<string> | undefined {
+  const from = run.charProperties;
+  if (!from) return undefined;
+  const hexOf = new Map<RunProperties, string>([[run.properties, resolved.colorHex]]);
+  const out: Array<string> = [];
+  let i = 0;
+  for (const ch of run.text) {
+    const props = from[i++] ?? run.properties;
+    let hex = hexOf.get(props);
+    if (hex === undefined) {
+      hex = resolveRunProperties(props, paragraph.properties, options.styles).colorHex;
+      hexOf.set(props, hex);
+    }
+    // A ligature no face can draw is set as its letters, each in its colour.
+    const letters =
+      drawn === run.text ? 1 : [...drawableText(options, primary, resolved, ch)].length;
+    for (let k = 0; k < letters; k++) out.push(hex);
+  }
+  return out.some((hex) => hex !== resolved.colorHex) ? out : undefined;
+}
+
+/**
+ * A token's share of the per-character colours it was cut from: the code
+ * points [from, to) of them, kept only when one differs from the token's own.
+ *
+ * @param colours  The colours of what the token was cut from, if any.
+ * @param ownHex   The token's own colour.
+ * @param from     The first code point the token takes.
+ * @param to       The code point after its last.
+ * @returns `{ charColorsHex }` when the token needs them, `{}` when not.
+ */
+function charColoursOf(
+  colours: ReadonlyArray<string> | undefined,
+  ownHex: string,
+  from: number,
+  to: number,
+): { charColorsHex?: ReadonlyArray<string> } {
+  if (!colours) return {};
+  const own = colours.slice(from, to);
+  return own.some((hex) => hex !== ownHex) ? { charColorsHex: own } : {};
+}
+
+/**
+ * A piece cut out of a text token — its code points [from, from + its text's
+ * length) — with the token's formatting and its own share of the per-character
+ * colours.
+ */
+function tokenPiece(tok: TextToken, text: string, from: number, widthPt: number): TextToken {
+  const { charColorsHex, ...rest } = tok;
+  if (!charColorsHex) return { ...tok, text, widthPt };
+  return {
+    ...rest,
+    text,
+    widthPt,
+    ...charColoursOf(charColorsHex, tok.resolvedRun.colorHex, from, from + [...text].length),
+  };
 }
 
 function tokenizeParagraph(
@@ -6275,11 +6391,13 @@ function tokenizeParagraph(
       return text === run.text ? run : { ...run, text };
     })();
     const faceFor = facesForRun(options, fontResources, own.parsed, resolvedRun, drawn.text);
+    const charColorsHex = charColours(options, paragraph, own.parsed, resolvedRun, run, drawn.text);
     return {
       run: drawn,
       resolvedRun,
       font: own,
       ...(faceFor ? { faceFor } : {}),
+      ...(charColorsHex ? { charColorsHex } : {}),
       ...(synthetic ? { synthetic } : {}),
       fontSizePt: script === 0 ? resolvedRun.fontSizePt : resolvedRun.fontSizePt * SCRIPT_SCALE,
       ...(script === 0 ? {} : { risePt: resolvedRun.fontSizePt * script }),
@@ -6420,16 +6538,22 @@ function tokenizePlansLtr(plans: ReadonlyArray<RunPlan>): Array<Token> {
       continue;
     }
     const highlight = (plan.run.commentRangeRefs?.length ?? 0) > 0;
+    // The code point of the run's text the next token starts at, for its share
+    // of the per-character colours (counted only where there are some).
+    let at = 0;
     for (const t of tokenizeText(plan.run.text)) {
       // …and split again wherever the face changes: a token carries one font,
       // and a Latin substitute cannot draw the Han beside it.
       for (const piece of splitByFace(plan, t.text)) {
         const text =
           plan.run.listMarker === true ? markerText(piece.text, plan.font.parsed) : piece.text;
+        const from = at;
+        if (plan.charColorsHex) at += t.tab ? 1 : [...piece.text].length;
         tokens.push({
           kind: 'text',
           text,
           isSpace: t.isSpace,
+          ...charColoursOf(plan.charColorsHex, plan.resolvedRun.colorHex, from, at),
           ...(t.tab ? { tab: true as const } : {}),
           ...(plan.run.href !== undefined ? { href: plan.run.href } : {}),
           ...(plan.run.footnoteRef !== undefined ? { footnoteRef: plan.run.footnoteRef } : {}),
@@ -6590,6 +6714,7 @@ function tokenizePlansBidi(
         kind: 'text',
         text,
         isSpace: curSpace,
+        ...charColoursOf(plan.charColorsHex, plan.resolvedRun.colorHex, bufStart, endExclusive),
         ...(plan.run.href !== undefined ? { href: plan.run.href } : {}),
         ...(plan.run.footnoteRef !== undefined ? { footnoteRef: plan.run.footnoteRef } : {}),
         ...(plan.run.anchor !== undefined ? { anchor: plan.run.anchor } : {}),
@@ -6862,6 +6987,14 @@ function paragraphItemStream(
         fontSizePt: tok.fontSizePt,
         widthPt: fragWidth,
         bidiLevel: tok.bidiLevel,
+        ...(tok.charColorsHex
+          ? charColoursOf(
+              tok.charColorsHex,
+              tok.resolvedRun.colorHex,
+              [...tok.text.slice(0, prev)].length,
+              [...tok.text.slice(0, end)].length,
+            )
+          : {}),
       };
       entries.push({ item: { type: 'box', width: fragWidth }, token: fragTok });
       if (pi < positions.length) {
@@ -7034,11 +7167,12 @@ function splitAtHyphens(tok: Token): Array<Token> | undefined {
   }
   if (parts.length === 0) return undefined;
   parts.push(tok.text.slice(start));
-  return parts.map((text) => ({
-    ...tok,
-    text,
-    widthPt: tok.font.measure.textWidthPt(text, tok.fontSizePt),
-  }));
+  let from = 0;
+  return parts.map((text) => {
+    const piece = tokenPiece(tok, text, from, tok.font.measure.textWidthPt(text, tok.fontSizePt));
+    if (tok.charColorsHex) from += [...text].length;
+    return piece;
+  });
 }
 
 function splitToWidth(tok: Token, widthPt: number): Array<Token> | undefined {
@@ -7068,7 +7202,7 @@ function splitToWidth(tok: Token, widthPt: number): Array<Token> | undefined {
       width = nextWidth;
       end++;
     }
-    out.push({ ...tok, text, widthPt: width });
+    out.push(tokenPiece(tok, text, start, width));
     start = end;
   }
   return out.length > 1 ? out : undefined;

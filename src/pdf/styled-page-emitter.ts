@@ -911,12 +911,37 @@ function emitPageContent(
     );
     return (tok.resolvedRun.letterSpacingPt ?? 0) / (tz > 0 ? tz / 100 : 1);
   };
-  /** The show operators for a token's text, with what the Indic shaper needs passed on. */
-  const showTextOf = (tok: TextToken, text: string): string => {
+  /** The `rg` that makes `hex` the fill colour, when it is not already. */
+  const fillTo = (hex: string): string | undefined => {
+    if (hex === lastColor) return undefined;
+    lastColor = hex;
+    const [r, g, b] = hexToRgb01(hex);
+    return `${formatNumber(r)} ${formatNumber(g)} ${formatNumber(b)} rg`;
+  };
+  /**
+   * The show operators for a token's text, with what the Indic shaper needs
+   * passed on. A syllable a run boundary cut is drawn in its runs' colours: the
+   * fill colour switches between its glyphs, each glyph in the colour of the
+   * first character it stands for, and the text state is left in the last.
+   *
+   * @param colours Per code point of `text`, its colour (the token's own,
+   *                reversed with the text where it is).
+   */
+  const showTextOf = (
+    tok: TextToken,
+    text: string,
+    colours: ReadonlyArray<string> | undefined = tok.charColorsHex,
+  ): string => {
     const measure = tok.font.measure;
-    return measure.clustered(text)
-      ? measure.showText(text, tok.fontSizePt, spacingOf(tok))
-      : measure.showText(text);
+    if (!measure.clustered(text)) return measure.showText(text);
+    const sources = colours ? measure.glyphSources(text) : undefined;
+    if (!colours || !sources) return measure.showText(text, tok.fontSizePt, spacingOf(tok));
+    const before = new Map<number, string>();
+    sources.forEach((s, i) => {
+      const op = fillTo(colours[s] ?? tok.resolvedRun.colorHex);
+      if (op !== undefined) before.set(i, op);
+    });
+    return measure.showText(text, tok.fontSizePt, spacingOf(tok), before);
   };
   const switchFontIfNeeded = (tok: TextToken) => {
     const fontKey = tok.font.resourceName;
@@ -1387,8 +1412,8 @@ function emitPageContent(
       tok.kind === 'text' && (tok.resolvedRun.underline !== 'none' || tok.resolvedRun.strike);
 
     const showToken = (tok: TextToken): string => {
-      const text = tok.bidiLevel % 2 === 1 ? reverseByCodePoint(tok.text) : tok.text;
-      return showTextOf(tok, text);
+      if (tok.bidiLevel % 2 === 0) return showTextOf(tok, tok.text);
+      return showTextOf(tok, reverseByCodePoint(tok.text), tok.charColorsHex?.slice().reverse());
     };
     // ISO 32000-1 §14.9.4 — text the Indic shaper set is drawn in an order of
     // its own (the short i of हि before the ha), and a glyph it formed may
@@ -1605,7 +1630,14 @@ function emitPageContent(
             tok.fontSizePt / tok.font.parsed.unitsPerEm,
             cmd.baselineY,
           );
+          // A syllable a run boundary cut: each glyph in its first character's colour.
+          const colours = tok.charColorsHex;
+          const sources = colours ? tok.font.measure.glyphSources(tok.text) : undefined;
           for (const g of glyphs) {
+            const fill = sources
+              ? fillTo(colours?.[sources[g.index]!] ?? tok.resolvedRun.colorHex)
+              : undefined;
+            if (fill !== undefined) out.push(fill);
             out.push(placeGlyph(g.matrix));
             out.push(`<${g.gid.toString(16).padStart(4, '0').toUpperCase()}> Tj`);
           }
