@@ -76,6 +76,49 @@ export function scriptForCodepoint(cp: number, hanFace: ScriptKey = 'sc'): Scrip
 }
 
 /**
+ * §17.3.2.26 — the slot of `w:rFonts` a character is set in: `ascii`,
+ * `hAnsi` (high ANSI), `eastAsia` or `cs` (complex script).
+ */
+export type FontSlot = 'ascii' | 'hAnsi' | 'eastAsia' | 'cs';
+
+/** The scripts Word sets in a run's complex-script font, `w:cs`. */
+const COMPLEX_SCRIPTS: ReadonlySet<ScriptKey> = new Set<ScriptKey>([
+  'hebrew',
+  'arabic',
+  'thai',
+  'devanagari',
+  'bengali',
+  'gurmukhi',
+  'gujarati',
+  'oriya',
+  'tamil',
+  'telugu',
+  'kannada',
+  'malayalam',
+]);
+
+/**
+ * §17.3.2.26 — the slot of a run's fonts Word sets a character in: ASCII in
+ * `ascii`, East Asian text in `eastAsia`, complex script in `cs`, and the rest
+ * above ASCII — Cyrillic, Greek, accented Latin, curly quotes — in `hAnsi`. A
+ * `w:rtl` run is complex script whole (§17.3.2.30), its digits and Latin too.
+ *
+ * Measured in Word for Mac on a run whose ascii font is Verdana and whose
+ * hAnsi one is Courier New: "split" reports Verdana, "Кириллица" Courier New.
+ *
+ * @param cp  The code point.
+ * @param rtl Whether the run is right-to-left.
+ * @returns The slot.
+ */
+export function fontSlotOf(cp: number, rtl = false): FontSlot {
+  if (rtl) return 'cs';
+  if (cp <= 0x7f) return 'ascii';
+  const script = scriptForCodepoint(cp);
+  if (script !== undefined && COMPLEX_SCRIPTS.has(script)) return 'cs';
+  return script === 'kr' || script === 'jp' || script === 'sc' ? 'eastAsia' : 'hAnsi';
+}
+
+/**
  * The writing systems a document holds text in, beside the Latin one.
  *
  * Unified Han is written the same in Japanese, Korean and Chinese and drawn

@@ -61,7 +61,8 @@ import type {
   TableRow,
 } from '@/core/document-model';
 import type { FontRegistry, FontVariant, ParsedTtf } from '@/core/font';
-import type { FamilyKey, ScriptKey, SubstituteKey } from '@/core/fonts';
+import type { FamilyKey, SubstituteKey } from '@/core/fonts';
+import type { FontSlot } from '@/core/fonts/scripts';
 import type { Hyphenator } from '@/core/hyphenation';
 import type { PreparedImage } from '@/core/images';
 import type { Item } from '@/core/line-breaker';
@@ -106,7 +107,7 @@ import { headingLevelOf } from '@/core/outline';
 import { createFontMeasure, hasSubstitutable, shapeGlyphs, substituteLetters } from '@/core/font';
 import { hasIndic, syllableStarts } from '@/core/font/indic-shaper';
 import { resolveFamilyStyle } from '@/core/fonts';
-import { scriptForCodepoint } from '@/core/fonts/scripts';
+import { fontSlotOf, scriptForCodepoint } from '@/core/fonts/scripts';
 import { prepareImage } from '@/core/images';
 import { isEmf, readEmf } from '@/core/metafile/emf';
 import { isWmf, readWmf } from '@/core/metafile/wmf';
@@ -5190,27 +5191,17 @@ function fallbackFaceKey(
  * Only where nobody can draw the character itself: one a face DOES carry is
  * drawn as written.
  *
- * @param options  The render options (the loaded registries).
- * @param primary  The run's own face.
- * @param resolved Its resolved properties (weight and slant).
- * @param text     The run's text.
+ * @param faces The face each character of the run is drawn with ({@link runFaces}).
+ * @param text  The run's text.
  * @returns The text to set, which is `text` itself unless something was undrawable.
  */
-function drawableText(
-  options: StyledRenderOptions,
-  primary: ParsedTtf,
-  resolved: ResolvedRunProperties,
-  text: string,
-): string {
+function drawableText(faces: (cp: number) => KeyedFace, text: string): string {
   if (!hasSubstitutable(text)) return text;
   let out = '';
   for (const ch of text) {
     const cp = ch.codePointAt(0)!;
     const letters = substituteLetters(cp);
-    const drawable =
-      letters === undefined ||
-      primary.glyphForCodepoint(cp) !== 0 ||
-      fallbackFaceKey(options, cp, resolved.bold, resolved.italic) !== undefined;
+    const drawable = letters === undefined || faces(cp).parsed.glyphForCodepoint(cp) !== 0;
     out += drawable ? ch : letters;
   }
   return out;
@@ -5301,106 +5292,173 @@ interface RunFace {
 // in two and neither half shapes.
 const INDIC_JOINS = new Set([0x200c, 0x200d, 0x25cc, 0x00a0, 0x0964, 0x0965]);
 
+/** A face by its key among the font resources, as {@link runFontKeyAndParsed} gives it. */
+interface KeyedFace {
+  readonly fontKey: string;
+  readonly parsed: ParsedTtf;
+  readonly synthetic?: SyntheticFace;
+}
+
 /**
- * The face that draws the letters of the scripts of India in `text`, when the
- * run's own face does not.
+ * Whether a family has a face of its OWN on hand — embedded, or a substitute
+ * fetched for it — rather than the first registry, which is where
+ * {@link runFontKeyAndParsed} sends a family nothing was fetched for.
+ *
+ * @param options The render options (the loaded faces).
+ * @param family  The family's name.
  */
-function indicFace(
+function hasOwnFace(options: StyledRenderOptions, family: string): boolean {
+  if (options.embeddedFonts?.has(family.trim().toLowerCase()) === true) return true;
+  return options.registriesByFamily?.has(resolveFamilyStyle(family).key) === true;
+}
+
+/**
+ * §17.3.2.26 — the faces a run's other slots name, where one is on hand and is
+ * not the face its ascii slot names.
+ *
+ * @param options  The render options (the loaded faces).
+ * @param resolved The run's resolved properties.
+ * @param primary  The run's own face, its ascii slot's.
+ * @returns The face per slot, or `undefined` when every slot draws in `primary`.
+ */
+function slotFaces(
   options: StyledRenderOptions,
-  primary: ParsedTtf,
   resolved: ResolvedRunProperties,
+  primary: KeyedFace,
+): Map<FontSlot, KeyedFace> | undefined {
+  let out: Map<FontSlot, KeyedFace> | undefined;
+  for (const slot of ['hAnsi', 'eastAsia', 'cs'] as const) {
+    const family = resolved.fontFamily[slot];
+    if (family === undefined || !hasOwnFace(options, family)) continue;
+    const face = runFontKeyAndParsed(options, family, resolved.bold, resolved.italic);
+    if (face.fontKey !== primary.fontKey) (out ??= new Map()).set(slot, face);
+  }
+  return out;
+}
+
+/**
+ * {@link fallbackFaceKey}, with what the face lacks of the run's weight and
+ * slant: a script face is fetched in the regular weight only, and a bold run in
+ * it is stroked, which is what F3's synthesis is for.
+ */
+function fallbackFace(
+  options: StyledRenderOptions,
+  cp: number,
+  resolved: ResolvedRunProperties,
+): KeyedFace | undefined {
+  const face = fallbackFaceKey(options, cp, resolved.bold, resolved.italic);
+  if (!face) return undefined;
+  const variant = face.fontKey.split(':')[1];
+  const got: FontVariant =
+    variant === 'bold' || variant === 'boldItalic' || variant === 'italic' ? variant : 'regular';
+  return { ...face, ...syntheticFace(got, resolved.bold, resolved.italic) };
+}
+
+/**
+ * §17.3.2.26 — the face each character of a run is drawn with: the one its
+ * slot names ({@link fontSlotOf}), else the run's own, else whichever face on
+ * hand has the glyph ({@link fallbackFaceKey}).
+ *
+ * A run names a face per slot, and Word sets each character in its slot's:
+ * "split" in a run's ascii Verdana and "Кириллица" beside it in its hAnsi
+ * Courier New. We drew both in Verdana's substitute, and the hAnsi face was
+ * read for nothing but the line's height. A slot whose family has no face on
+ * hand leaves its characters to the run's own, as before.
+ *
+ * Called from every walk that needs it — the glyph-subset collection, the
+ * tokenizer, a table cell's measure — so the face a character is measured,
+ * subset and drawn with is one decision made once.
+ *
+ * @param options  The render options (the loaded faces).
+ * @param resolved The run's resolved properties (its faces, weight, slant, direction).
+ * @param primary  The run's own face, the one its ascii slot names.
+ * @param text     The run's text, for the scripts of India (see {@link INDIC_JOINS}).
+ * @returns The face a code point of the run is drawn with.
+ */
+function runFaces(
+  options: StyledRenderOptions,
+  resolved: ResolvedRunProperties,
+  primary: KeyedFace,
   text: string,
-): { fontKey: string; parsed: ParsedTtf } | undefined {
+): (cp: number) => KeyedFace {
+  const slots = slotFaces(options, resolved, primary);
+  const drawing = (cp: number): KeyedFace => {
+    const own = slots?.get(fontSlotOf(cp, resolved.rtl)) ?? primary;
+    if (own.parsed.glyphForCodepoint(cp) !== 0) return own;
+    if (own !== primary && primary.parsed.glyphForCodepoint(cp) !== 0) return primary;
+    return fallbackFace(options, cp, resolved) ?? own;
+  };
+  const indic = indicFace(drawing, text);
+  if (!indic) return drawing;
+  return (cp) =>
+    INDIC_JOINS.has(cp) && indic.parsed.glyphForCodepoint(cp) !== 0 ? indic : drawing(cp);
+}
+
+/** The face that draws the first letter of the scripts of India in `text`. */
+function indicFace(drawing: (cp: number) => KeyedFace, text: string): KeyedFace | undefined {
   for (const ch of text) {
     const cp = ch.codePointAt(0)!;
     if (cp < 0x0900 || cp > 0x0d7f || cp === 0x0964 || cp === 0x0965) continue;
-    if (primary.glyphForCodepoint(cp) !== 0) return undefined;
-    return fallbackFaceKey(options, cp, resolved.bold, resolved.italic);
+    return drawing(cp);
   }
   return undefined;
 }
 
 /**
  * `text` cut into the stretches ONE face draws, by the same decision the
- * tokenizer makes — the whole string as a single span when the run's own face
- * covers it, which is nearly always.
+ * tokenizer makes — the whole string as a single span when one face draws all
+ * of it, which is nearly always.
  *
- * @param options  The render options (the loaded registries).
- * @param primary  The run's own face.
- * @param resolved Its resolved properties (weight and slant).
- * @param text     The run's text.
+ * @param faces The face each character of the run is drawn with ({@link runFaces}).
+ * @param text  The run's text.
  */
 function faceSpans(
-  options: StyledRenderOptions,
-  primary: { fontKey: string; parsed: ParsedTtf },
-  resolved: ResolvedRunProperties,
+  faces: (cp: number) => KeyedFace,
   text: string,
-): Array<{ fontKey: string; parsed: ParsedTtf; text: string }> {
-  const out: Array<{ fontKey: string; parsed: ParsedTtf; text: string }> = [];
-  const indic = indicFace(options, primary.parsed, resolved, text);
-  let cur = primary;
+): Array<KeyedFace & { readonly text: string }> {
+  const out: Array<KeyedFace & { readonly text: string }> = [];
+  let cur: KeyedFace | undefined;
   let buf = '';
   for (const ch of text) {
-    const cp = ch.codePointAt(0)!;
-    const face =
-      indic && INDIC_JOINS.has(cp) && indic.parsed.glyphForCodepoint(cp) !== 0
-        ? indic
-        : primary.parsed.glyphForCodepoint(cp) !== 0
-          ? primary
-          : (fallbackFaceKey(options, cp, resolved.bold, resolved.italic) ?? primary);
-    if (buf !== '' && face.fontKey !== cur.fontKey) {
+    const face = faces(ch.codePointAt(0)!);
+    if (cur && face.fontKey !== cur.fontKey) {
       out.push({ ...cur, text: buf });
       buf = '';
     }
     cur = face;
     buf += ch;
   }
-  if (buf !== '') out.push({ ...cur, text: buf });
+  if (cur) out.push({ ...cur, text: buf });
   return out;
 }
 
 /**
- * The face for every character of `text` the run's own cannot draw.
+ * The face for every character of `text` the run's own does not draw.
  *
- * @param options       The render options (the loaded registries).
  * @param fontResources The faces the document embeds, by key.
  * @param primary       The run's own face.
- * @param resolved      Its resolved properties (weight and slant).
+ * @param faces         The face each character is drawn with ({@link runFaces}).
  * @param text          The run's text.
  * @returns A map from code point to face, or `undefined` when the run's own
  *          face draws all of it.
  */
 function facesForRun(
-  options: StyledRenderOptions,
   fontResources: ReadonlyMap<string, FontResource>,
-  primary: ParsedTtf,
-  resolved: ResolvedRunProperties,
+  primary: KeyedFace,
+  faces: (cp: number) => KeyedFace,
   text: string,
 ): ReadonlyMap<number, RunFace> | undefined {
   let out: Map<number, RunFace> | undefined;
-  const indic = indicFace(options, primary, resolved, text);
   for (const ch of text) {
     const cp = ch.codePointAt(0)!;
     if (out?.has(cp) === true) continue;
-    const joins = indic && INDIC_JOINS.has(cp) && indic.parsed.glyphForCodepoint(cp) !== 0;
-    if (!joins && primary.glyphForCodepoint(cp) !== 0) continue;
-    const fallback = joins ? indic : fallbackFaceKey(options, cp, resolved.bold, resolved.italic);
-    if (!fallback) continue;
-    const font = fontResources.get(fallback.fontKey);
+    const face = faces(cp);
+    if (face.fontKey === primary.fontKey) continue;
+    const font = fontResources.get(face.fontKey);
     if (!font) continue;
-    out ??= new Map<number, RunFace>();
-    // A script face is fetched in the regular weight only — a bold run in it is
-    // stroked, which is what F3's synthesis is for.
-    const { variant } = { variant: fallback.fontKey.split(':')[1] ?? '' };
-    out.set(cp, {
+    (out ??= new Map<number, RunFace>()).set(cp, {
       font,
-      ...syntheticFace(
-        variant === 'bold' || variant === 'boldItalic' || variant === 'italic'
-          ? variant
-          : 'regular',
-        resolved.bold,
-        resolved.italic,
-      ),
+      ...(face.synthetic ? { synthetic: face.synthetic } : {}),
     });
   }
   return out;
@@ -5442,12 +5500,13 @@ function collectFontResources(
     para: Paragraph,
   ) => {
     const resolved = resolveRunProperties(run.properties, para.properties, options.styles);
-    const { fontKey, parsed } = runFontKeyAndParsed(
+    const primary = runFontKeyAndParsed(
       options,
       resolved.fontFamily.ascii,
       resolved.bold,
       resolved.italic,
     );
+    const { fontKey, parsed } = primary;
     let bucket = used.get(fontKey);
     if (!bucket) {
       bucket = { parsed, gids: new Set<number>() };
@@ -5461,20 +5520,17 @@ function collectFontResources(
     // (see {@link markerText}), so the subset must reserve THAT one.
     // A ligature nobody can draw is set as its letters (see
     // {@link drawableText}), so it is those letters the subset must reserve.
-    const text = drawableText(
-      options,
-      parsed,
-      resolved,
-      run.listMarker === true ? markerText(run.text, parsed) : run.text,
-    );
-    // A character this face cannot draw is drawn by ANOTHER one (see
-    // {@link fallbackFaceKey}), and its glyphs have to be reserved in THAT
-    // face's subset — the walk that measures and the walk that embeds must
-    // agree, or the page draws a glyph the font object does not carry. Each
-    // stretch is shaped by the face that draws it: an Arabic letter's medial
-    // form is a different glyph from its isolated one, so reserving the code
-    // point alone would embed the wrong ones.
-    for (const span of faceSpans(options, { fontKey, parsed }, resolved, text)) {
+    const shown = run.listMarker === true ? markerText(run.text, parsed) : run.text;
+    const faces = runFaces(options, resolved, primary, shown);
+    const text = drawableText(faces, shown);
+    // A character another slot names a face for, or this face cannot draw, is
+    // drawn by ANOTHER one (see {@link runFaces}), and its glyphs have to be
+    // reserved in THAT face's subset — the walk that measures and the walk that
+    // embeds must agree, or the page draws a glyph the font object does not
+    // carry. Each stretch is shaped by the face that draws it: an Arabic
+    // letter's medial form is a different glyph from its isolated one, so
+    // reserving the code point alone would embed the wrong ones.
+    for (const span of faceSpans(faces, text)) {
       let sink = used.get(span.fontKey);
       if (!sink) {
         sink = { parsed: span.parsed, gids: new Set<number>() };
@@ -6178,9 +6234,9 @@ function mendSplitSyllables(runs: ReadonlyArray<LaidRun>): ReadonlyArray<LaidRun
  * brought characters of other runs into it: each takes its own run's colour,
  * resolved through the styles as that run's would be.
  *
- * @param options  The render options (for the style cascade and the faces).
+ * @param options  The render options (for the style cascade).
  * @param paragraph The paragraph the run is in.
- * @param primary  The run's own face.
+ * @param faces    The face each character of the run is drawn with ({@link runFaces}).
  * @param resolved The run's resolved properties.
  * @param run      The run, as {@link mendSplitSyllables} left it.
  * @param drawn    Its text as drawn ({@link drawableText}).
@@ -6190,7 +6246,7 @@ function mendSplitSyllables(runs: ReadonlyArray<LaidRun>): ReadonlyArray<LaidRun
 function charColours(
   options: StyledRenderOptions,
   paragraph: Paragraph,
-  primary: ParsedTtf,
+  faces: (cp: number) => KeyedFace,
   resolved: ResolvedRunProperties,
   run: LaidRun,
   drawn: string,
@@ -6208,8 +6264,7 @@ function charColours(
       hexOf.set(props, hex);
     }
     // A ligature no face can draw is set as its letters, each in its colour.
-    const letters =
-      drawn === run.text ? 1 : [...drawableText(options, primary, resolved, ch)].length;
+    const letters = drawn === run.text ? 1 : [...drawableText(faces, ch)].length;
     for (let k = 0; k < letters; k++) out.push(hex);
   }
   return out.some((hex) => hex !== resolved.colorHex) ? out : undefined;
@@ -6372,26 +6427,28 @@ function tokenizeParagraph(
       };
     }
     const resolvedRun = resolveRunProperties(run.properties, paragraph.properties, options.styles);
-    const { fontKey, synthetic } = runFontKeyAndParsed(
+    const primary = runFontKeyAndParsed(
       options,
       resolvedRun.fontFamily.ascii,
       resolvedRun.bold,
       resolvedRun.italic,
     );
+    const { fontKey, synthetic } = primary;
     // §17.3.2.42 / §18.4.2 `vertAlign` — a super/subscript run draws SMALLER and
     // off the baseline. The model carried the flag and the HTML writer honoured
     // it; the PDF layout did neither, so a footnote marker and a cell's
     // "Salary⁽²⁾" came out full size, on the line (45540_classic_Header.xlsx).
     const script = SCRIPT_OFFSET[resolvedRun.verticalAlign] ?? 0;
     const own = lookupFont(fontResources, fontKey);
+    const faces = runFaces(options, resolvedRun, primary, run.text);
     // A ligature nobody can draw is set as its letters — before the plans are
     // built, because everything downstream measures and draws what it is given.
     const drawn = ((): typeof run => {
-      const text = drawableText(options, own.parsed, resolvedRun, run.text);
+      const text = drawableText(faces, run.text);
       return text === run.text ? run : { ...run, text };
     })();
-    const faceFor = facesForRun(options, fontResources, own.parsed, resolvedRun, drawn.text);
-    const charColorsHex = charColours(options, paragraph, own.parsed, resolvedRun, run, drawn.text);
+    const faceFor = facesForRun(fontResources, primary, faces, drawn.text);
+    const charColorsHex = charColours(options, paragraph, faces, resolvedRun, run, drawn.text);
     return {
       run: drawn,
       resolvedRun,
@@ -7474,29 +7531,14 @@ function wrap(
   return lines;
 }
 
-/** The scripts Word sets in a run's complex-script font, `w:cs`. */
-const COMPLEX_SCRIPTS: ReadonlySet<ScriptKey> = new Set<ScriptKey>([
-  'hebrew',
-  'arabic',
-  'thai',
-  'devanagari',
-  'bengali',
-  'gurmukhi',
-  'gujarati',
-  'oriya',
-  'tamil',
-  'telugu',
-  'kannada',
-  'malayalam',
-]);
-
 /**
  * §17.3.2.26 — the family Word sets a token's characters in: East Asian text
  * in the run's `eastAsia` font, complex-script text (and a `w:rtl` run) in its
- * `cs` one, the rest in `ascii` — `hAnsi` above ASCII. The layout draws a run
- * with its ascii face and hands what that face lacks to another, so the name
- * the run gives for THESE characters is the one Word's line is looked up by:
- * a Chinese sentence in a Calibri run does not stand on Calibri's line.
+ * `cs` one, the rest in `ascii` — `hAnsi` above ASCII (see {@link fontSlotOf}).
+ * The layout draws each character in its slot's face where that face is
+ * loaded, and in what it falls back to where not, so the name the run gives for
+ * THESE characters is the one Word's line is looked up by: a Chinese sentence
+ * in a Calibri run does not stand on Calibri's line.
  *
  * @param t The text token.
  * @returns The family's name, when the run gives one for that slot.
@@ -7506,12 +7548,9 @@ function wordFamilyOf(t: TextToken): string | undefined {
   if (t.resolvedRun.rtl) return fonts.cs;
   let high = false;
   for (const ch of t.text) {
-    const cp = ch.codePointAt(0) ?? 0;
-    if (cp <= 0x7f) continue;
-    high = true;
-    const script = scriptForCodepoint(cp);
-    if (script !== undefined && COMPLEX_SCRIPTS.has(script)) return fonts.cs;
-    if (script === 'kr' || script === 'jp' || script === 'sc') return fonts.eastAsia;
+    const slot = fontSlotOf(ch.codePointAt(0) ?? 0);
+    if (slot === 'cs' || slot === 'eastAsia') return fonts[slot];
+    if (slot === 'hAnsi') high = true;
   }
   return high ? (fonts.hAnsi ?? fonts.ascii) : fonts.ascii;
 }
@@ -8142,18 +8181,22 @@ function measureSingleLine(
     // base registry). The old direct registry lookup keyed fontResources by
     // bare variant — with registriesByFamily/embeddedFonts those keys do not
     // exist, so table auto-layout measured with the wrong font or crashed.
-    const { fontKey, synthetic } = runFontKeyAndParsed(
+    const primary = runFontKeyAndParsed(
       options,
       resolved.fontFamily.ascii,
       resolved.bold,
       resolved.italic,
     );
-    const font = lookupFont(fontResources, fontKey);
-    const fontSizePt = resolved.fontSizePt;
-    total +=
-      font.measure.textWidthPt(run.text, fontSizePt) *
-      (synthetic?.widthScale ?? 1) *
-      (resolved.widthScale ?? 1);
+    // …and each character in the face that draws it (see {@link runFaces}).
+    for (const span of faceSpans(runFaces(options, resolved, primary, run.text), run.text)) {
+      total +=
+        lookupFont(fontResources, span.fontKey).measure.textWidthPt(
+          span.text,
+          resolved.fontSizePt,
+        ) *
+        (span.synthetic?.widthScale ?? 1) *
+        (resolved.widthScale ?? 1);
+    }
   }
   return total;
 }
