@@ -271,6 +271,65 @@ export function warpGlyphMatrix(
   return envelopeMatrix(frame, u, v, glyphX, advance);
 }
 
+/** One glyph of a shaped run, set on a warp's curve: its id and its {@link warpGlyphMatrix}. */
+export interface WarpedGlyph {
+  readonly gid: number;
+  readonly matrix: readonly [number, number, number, number, number, number];
+}
+
+/**
+ * The glyphs of a run the Indic shaper set, each placed on the warp's curve.
+ *
+ * Such a run cannot be set character by character the way other text on a
+ * curve is: its glyphs stand in an order of their own (the short i of हि
+ * before the ha), one glyph may stand for several characters, and a mark is
+ * set off its pen position by the face's anchors. So the curve takes the
+ * shaper's glyphs. Each advances by its shaped advance, the run rescaled to
+ * the width the layout measured it at. A glyph's x offset moves it along the
+ * line before the warp maps it, and its y offset lifts it off the baseline in
+ * its own frame, so a mark rises and leans with the letter it sits on.
+ *
+ * @param frame     The two frames, from the laid-out line.
+ * @param run       The run's glyphs, advances and offsets, in font units.
+ * @param x         Where the run starts in the un-warped block.
+ * @param widthPt   The width the layout measured the run at.
+ * @param emPt      Points per font unit at the run's size: the size over the em.
+ * @param baselineY The line's baseline in the un-warped block.
+ * @returns Each glyph and its matrix, in the shaper's order; a glyph the warp
+ *          leaves no room for is left out.
+ */
+export function warpGlyphRun(
+  frame: WarpFrame,
+  run: {
+    readonly gids: ReadonlyArray<number>;
+    readonly advances: ReadonlyArray<number>;
+    readonly xOffsets?: ReadonlyArray<number>;
+    readonly yOffsets?: ReadonlyArray<number>;
+  },
+  x: number,
+  widthPt: number,
+  emPt: number,
+  baselineY: number,
+): Array<WarpedGlyph> {
+  let total = 0;
+  for (const a of run.advances) total += a;
+  const along = total > 0 ? widthPt / total : emPt;
+  const out: Array<WarpedGlyph> = [];
+  let pen = x;
+  for (let i = 0; i < run.gids.length; i++) {
+    const adv = (run.advances[i] ?? 0) * along;
+    const m = warpGlyphMatrix(frame, pen + (run.xOffsets?.[i] ?? 0) * along, adv, baselineY);
+    pen += adv;
+    if (!m) continue;
+    const dy = (run.yOffsets?.[i] ?? 0) * emPt;
+    out.push({
+      gid: run.gids[i]!,
+      matrix: [m[0], m[1], m[2], m[3], m[4] + m[2] * dy, m[5] + m[3] * dy],
+    });
+  }
+  return out;
+}
+
 /** The glyph matrix for a warp that hangs text between a top and a bottom edge. */
 function envelopeMatrix(
   frame: WarpFrame,

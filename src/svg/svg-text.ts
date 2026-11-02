@@ -28,7 +28,7 @@ import type { ImageCrop } from '@/core/document-model';
 import type { VectorShape } from '@/core/vector';
 import type { OutlineSource } from '@/pdf-reader/glyf-outline';
 import { reverseByCodePoint } from '@/core/bidi';
-import { warpGlyphMatrix } from '@/core/drawingml/text-warp';
+import { warpGlyphMatrix, warpGlyphRun } from '@/core/drawingml/text-warp';
 import { sanitizeHref } from '@/core/links';
 import { svgPathData } from '@/core/vector';
 import { FAUX_ITALIC_SHEAR, computeJustifyExtra, lineVisualOrder } from '@/layout/line-paint';
@@ -480,6 +480,30 @@ function emitWarped(out: Array<string>, item: TextLineItem, ctx: SvgLineCtx): vo
       continue;
     }
     const size = tok.fontSizePt;
+    // The warp's matrix maps the glyph's text space (y up) into the page's
+    // top-left frame; the em is the size.
+    const group = (m: readonly [number, number, number, number, number, number], uses: string) =>
+      `<g transform="matrix(${fmt(m[0] * size)} ${fmt(m[1] * size)} ${fmt(m[2] * size)} ` +
+      `${fmt(m[3] * size)} ${fmt(m[4])} ${fmt(m[5])})" fill="#${tok.resolvedRun.colorHex}">` +
+      `${uses}</g>`;
+    // The scripts of India go onto the curve as the shaper set them, glyph by
+    // glyph in its order, a mark lifted off the baseline in its own matrix.
+    if (tok.font.measure.clustered(tok.text)) {
+      const glyphs = warpGlyphRun(
+        warp,
+        tok.font.measure.glyphRun(tok.text),
+        cursor,
+        tok.widthPt,
+        size / tok.font.parsed.unitsPerEm,
+        item.baselineY,
+      );
+      for (const g of glyphs) {
+        const id = ctx.glyphs.use(tok.font, g.gid);
+        if (id) out.push(group(g.matrix, `<use href="#${id}"/>`));
+      }
+      cursor += tok.widthPt;
+      continue;
+    }
     const chars = [...tok.text];
     const raw = chars.map((c) => tok.font.measure.textWidthPt(c, size));
     const total = raw.reduce((a, b) => a + b, 0);
@@ -499,13 +523,7 @@ function emitWarped(out: Array<string>, item: TextLineItem, ctx: SvgLineCtx): vo
         pen += (run.advances[g] ?? 0) / upem;
       }
       if (uses.length === 0) continue;
-      // The warp's matrix maps the glyph's text space (y up) into the page's
-      // top-left frame; the em is the size.
-      out.push(
-        `<g transform="matrix(${fmt(m[0] * size)} ${fmt(m[1] * size)} ${fmt(m[2] * size)} ` +
-          `${fmt(m[3] * size)} ${fmt(m[4])} ${fmt(m[5])})" fill="#${tok.resolvedRun.colorHex}">` +
-          `${uses.join('')}</g>`,
-      );
+      out.push(group(m, uses.join('')));
     }
   }
 }

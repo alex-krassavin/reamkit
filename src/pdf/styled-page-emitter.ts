@@ -46,7 +46,7 @@ import {
 import { emitClipPath, emitVectorShape, shadowBlurLayers } from '@/pdf/vector-graphics';
 import { buildGradientAlphaMask, buildGradientPattern, shapeBbox } from '@/pdf/shading';
 import { reverseByCodePoint } from '@/core/bidi';
-import { warpGlyphMatrix } from '@/core/drawingml/text-warp';
+import { warpGlyphMatrix, warpGlyphRun } from '@/core/drawingml/text-warp';
 import { sanitizeHref } from '@/core/links';
 import { embedTtfFont } from '@/pdf/cid-font';
 import { embedAssociatedFile } from '@/pdf/embedded-file';
@@ -1578,13 +1578,41 @@ function emitPageContent(
         out.push('BT');
         inBT = true;
       }
+      // The warp's matrix works in the page's top-left frame; PDF's is y-up, so
+      // the two terms that carry y flip and the origin reflects.
+      const placeGlyph = (m: readonly [number, number, number, number, number, number]) =>
+        `${formatNumber(m[0])} ${formatNumber(-m[1])} ${formatNumber(m[2])} ` +
+        `${formatNumber(-m[3])} ${formatNumber(m[4])} ${formatNumber(H - m[5])} Tm`;
+      const at = actualText(line.tokens);
       let cursor: number = originX;
-      for (const tok of line.tokens) {
+      for (let ti = 0; ti < line.tokens.length; ti++) {
+        const tok = line.tokens[ti]!;
         if (tok.kind !== 'text' || tok.isSpace) {
           cursor += tok.widthPt;
           continue;
         }
         switchFontIfNeeded(tok);
+        // The scripts of India go onto the curve as the shaper set them, glyph
+        // by glyph in its order, and the word stays bracketed with the text it
+        // was written as.
+        if (tok.font.measure.clustered(tok.text)) {
+          if (at.open[ti]) out.push(at.open[ti] ?? '');
+          const glyphs = warpGlyphRun(
+            warp,
+            tok.font.measure.glyphRun(tok.text),
+            cursor,
+            tok.widthPt,
+            tok.fontSizePt / tok.font.parsed.unitsPerEm,
+            cmd.baselineY,
+          );
+          for (const g of glyphs) {
+            out.push(placeGlyph(g.matrix));
+            out.push(`<${g.gid.toString(16).padStart(4, '0').toUpperCase()}> Tj`);
+          }
+          if (at.close[ti]) out.push('EMC');
+          cursor += tok.widthPt;
+          continue;
+        }
         // Per-glyph placement drops the shaper's kerning, which the line was
         // measured WITH: the token's own glyphs are rescaled to the width it
         // was measured at, so the block still ends where the layout said.
@@ -1597,12 +1625,7 @@ function emitPageContent(
           const m = warpGlyphMatrix(warp, cursor, adv, cmd.baselineY);
           cursor += adv;
           if (!m) continue;
-          // The warp works in the page's top-left frame; PDF's is y-up, so the
-          // two terms that carry y flip and the origin reflects.
-          out.push(
-            `${formatNumber(m[0])} ${formatNumber(-m[1])} ${formatNumber(m[2])} ` +
-              `${formatNumber(-m[3])} ${formatNumber(m[4])} ${formatNumber(H - m[5])} Tm`,
-          );
+          out.push(placeGlyph(m));
           out.push(tok.font.measure.showText(chars[i]!));
         }
       }
