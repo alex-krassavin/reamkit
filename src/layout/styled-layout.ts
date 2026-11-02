@@ -6596,6 +6596,10 @@ function tokenizePlansLtr(plans: ReadonlyArray<RunPlan>): Array<Token> {
       });
       continue;
     }
+    if (plan.run.listMarkerSpace === true) {
+      tokens.push(markerSpaceToken(plan, 0));
+      continue;
+    }
     const highlight = (plan.run.commentRangeRefs?.length ?? 0) > 0;
     // The code point of the run's text the next token starts at, for its share
     // of the per-character colours (counted only where there are some).
@@ -6655,6 +6659,33 @@ function pageBreakToken(plan: RunPlan): TextToken {
     fontSizePt: plan.fontSizePt,
     widthPt: 0,
     bidiLevel: 0,
+  };
+}
+
+/** Arial's space, as a fraction of the em: 569 of its 2048 units. */
+const MARKER_SPACE_EM = 569 / 2048;
+
+/**
+ * §17.9.29 — the space a list level's `w:suff="space"` puts after its marker,
+ * as Word sets it: a gap of 0.278 em of the marker's size, whatever the
+ * marker's face — Arial's space, though the marker is in none of it. Measured
+ * in Word for Mac at 48pt, Courier New, Verdana, Times New Roman, Georgia,
+ * Calibri, Tahoma, Impact and Songti markers all leave the same 13.4pt before
+ * the text; a space of each face would have ranged from 8.5 to 28.8. Nothing is
+ * drawn in it, and a justified line does not stretch it.
+ */
+function markerSpaceToken(plan: RunPlan, bidiLevel: number): TextToken {
+  return {
+    kind: 'text',
+    text: '',
+    isSpace: false,
+    listMarker: true,
+    listMarkerSpace: true,
+    resolvedRun: plan.resolvedRun,
+    font: plan.font,
+    fontSizePt: plan.fontSizePt,
+    widthPt: MARKER_SPACE_EM * plan.fontSizePt,
+    bidiLevel,
   };
 }
 
@@ -6755,6 +6786,11 @@ function tokenizePlansBidi(
         bidiLevel: realLevels[realIdx] ?? 0,
       });
       realIdx++;
+      continue;
+    }
+    if (plan.run.listMarkerSpace === true) {
+      tokens.push(markerSpaceToken(plan, realLevels[realIdx] ?? 0));
+      realIdx += [...plan.run.text].length;
       continue;
     }
     // Iterate code points, grouping by (isSpace, level, face) — a character the

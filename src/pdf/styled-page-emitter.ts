@@ -1413,8 +1413,11 @@ function emitPageContent(
     // it draws: with no leader it draws none at all. The simple path below
     // sets the text matrix once and lets the font's own advances carry the
     // cursor, which loses that distance entirely — a numbered list printed
-    // "1.First item". Position such a line token by token instead.
-    const hasTab = line.tokens.some((t) => t.kind === 'text' && t.tab === true);
+    // "1.First item". Position such a line token by token instead; the space
+    // after a list marker (§17.9.29) is a distance of its own the same way.
+    const hasTab = line.tokens.some(
+      (t) => t.kind === 'text' && (t.tab === true || t.listMarkerSpace === true),
+    );
 
     // Encode a token's text, reversing code points for RTL (odd-level) runs
     // so glyphs lay out right-to-left as our cursor advances left-to-right.

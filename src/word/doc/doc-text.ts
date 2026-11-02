@@ -321,6 +321,8 @@ export interface DocLvl {
   readonly nfc: number;
   readonly iStartAt: number;
   readonly xst: ReadonlyArray<number>;
+  /** `ixchFollow` — what follows the number text: 0 a tab, 1 a space, 2 nothing. */
+  readonly follow: number;
 }
 
 /**
@@ -744,13 +746,15 @@ function parseListTables(wd: Uint8Array, table: Uint8Array): DocListTables | und
   return lfoLsids.length > 0 || lists.size > 0 ? { lfoLsids, lists } : undefined;
 }
 
-// One LVL = LVLF (28 bytes: iStartAt i32 @0, nfc u8 @4, cbGrpprlChpx @24,
-// cbGrpprlPapx @25) + grpprlPapx + grpprlChpx + the Xst number-text template
-// (u16 cch then cch UTF-16LE code units). Returns the level + the next offset.
+// One LVL = LVLF (28 bytes: iStartAt i32 @0, nfc u8 @4, ixchFollow u8 @15,
+// cbGrpprlChpx @24, cbGrpprlPapx @25) + grpprlPapx + grpprlChpx + the Xst
+// number-text template (u16 cch then cch UTF-16LE code units). Returns the
+// level + the next offset.
 function readLvl(d: Uint8Array, off: number): { info: DocLvl; next: number } | undefined {
   if (off + 28 > d.length) return undefined;
   const iStartAt = u32(d, off) | 0;
   const nfc = d[off + 4]!;
+  const follow = d[off + 15]!;
   const cbChpx = d[off + 24]!;
   const cbPapx = d[off + 25]!;
   let p = off + 28 + cbPapx + cbChpx;
@@ -762,7 +766,7 @@ function readLvl(d: Uint8Array, off: number): { info: DocLvl; next: number } | u
     xst.push(u16(d, p));
     p += 2;
   }
-  return { info: { nfc, iStartAt, xst }, next: p };
+  return { info: { nfc, iStartAt, xst, follow }, next: p };
 }
 
 // The [MS-DOC] Ico colour index (§2.9.59) → "RRGGBB" (0 = auto → black for a

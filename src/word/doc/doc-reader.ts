@@ -77,10 +77,15 @@ const TABLE_BORDERS: CellBorders = {
   insideV: TABLE_BORDER,
 };
 
+// What each LVLF ixchFollow puts after the number text: 0 a tab, 1 a space,
+// 2 nothing.
+const LVL_FOLLOW: ReadonlyArray<string> = ['\t', ' ', ''];
+
 // A list marker resolver (DOC-10): maps a list paragraph's (ilfo, ilvl) to its
-// rendered marker text — a real number ("1.", "a)", "iii.") or a bullet glyph —
-// keeping per-(lsid, level) running counters across the body. Returns undefined
-// when the list tables can't resolve the level (the caller uses a generic bullet).
+// rendered marker text — a real number ("1.", "a)", "iii.") or a bullet glyph,
+// with whatever the level puts after it — keeping per-(lsid, level) running
+// counters across the body. Returns undefined when the list tables can't
+// resolve the level (the caller uses a generic bullet).
 function createListMarkers(tables: DocListTables | undefined) {
   const counters = new Map<number, Array<number | undefined>>();
   const resolve = (ilfo: number, ilvl: number): { lsid: number; lvl: DocLvl } | undefined => {
@@ -95,9 +100,14 @@ function createListMarkers(tables: DocListTables | undefined) {
       const r = resolve(ilfo, ilvl);
       if (!r) return undefined;
       const { lsid, lvl } = r;
+      // [MS-DOC] §2.9.150 ixchFollow — what parts the number from the text: a
+      // tab, a space, or nothing. The note under 53379.doc's Table 6 asks for
+      // the tab, which carries its first line out to the hanging indent its
+      // second line hangs at; the space we always wrote stopped it short.
+      const follow = LVL_FOLLOW[lvl.follow] ?? '\t';
       // A bullet (nfc 23) / none (0xFF) / placeholder-less template renders literally.
       if (lvl.nfc === 23 || lvl.nfc === 0xff || !lvl.xst.some((cu) => cu <= 8)) {
-        return lvl.xst.map((cu) => String.fromCharCode(cu)).join('');
+        return lvl.xst.map((cu) => String.fromCharCode(cu)).join('') + follow;
       }
       // Advance this level's counter; reset the deeper levels (they re-seed later).
       const col = counters.get(lsid) ?? [];
@@ -114,7 +124,7 @@ function createListMarkers(tables: DocListTables | undefined) {
           out += String.fromCharCode(cu);
         }
       }
-      return out;
+      return out + follow;
     },
   };
 }
@@ -563,11 +573,12 @@ function mapParagraph(
     }
     let properties = toParaProperties(p.props);
     if (isList) {
-      // The LST/LVL number format (DOC-10) → a real "1." / "a)" / bullet marker;
-      // an unresolved list falls back to a generic per-level bullet. + a per-level indent.
+      // The LST/LVL number format (DOC-10) → a real "1." / "a)" / bullet marker
+      // and what follows it; an unresolved list falls back to a generic
+      // per-level bullet and a space. + a per-level indent.
       const marker =
-        markers?.marker(p.props.listIlfo!, ilvl) ?? LIST_BULLETS[ilvl % LIST_BULLETS.length];
-      runs.unshift({ text: `${marker} `, properties: {} });
+        markers?.marker(p.props.listIlfo!, ilvl) ?? `${LIST_BULLETS[ilvl % LIST_BULLETS.length]} `;
+      runs.unshift({ text: marker, properties: {} });
       properties = { ...properties, indentLeft: pt((ilvl + 1) * LIST_INDENT_PT) };
     }
     out.push({

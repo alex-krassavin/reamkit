@@ -81,6 +81,12 @@ export interface TextToken {
    */
   readonly listMarker?: true;
   /**
+   * §17.9.29 — the token is the space a list level's `w:suff="space"` puts
+   * after its marker: a gap of fixed width with nothing drawn in it, which a
+   * justified line does not stretch.
+   */
+  readonly listMarkerSpace?: true;
+  /**
    * §17.3.3.1 — the token is the break of a `w:br w:type="column"`: what
    * follows it belongs in the next column.
    */

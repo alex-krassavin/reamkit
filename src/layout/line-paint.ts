@@ -86,10 +86,11 @@ export function computeJustifyExtra(line: Line): number {
 
 /**
  * Whether a line is ONE text matrix and a run of glyphs: nothing in it placed
- * on its own — a tab, a stretched space, a picture, a formula, a right-to-left
- * run, a rise, a faked italic — and nothing drawn beside its glyphs, a run's
- * shading, a highlight or a rule. Only such a line can be turned by its matrix
- * alone; any other is placed token by token in page space.
+ * on its own — a tab, a list marker's space, a stretched space, a picture, a
+ * formula, a right-to-left run, a rise, a faked italic — and nothing drawn
+ * beside its glyphs, a run's shading, a highlight or a rule. Only such a line
+ * can be turned by its matrix alone; any other is placed token by token in
+ * page space.
  *
  * @param line The laid-out line.
  * @returns True when a single text matrix sets the whole of it.
@@ -101,6 +102,7 @@ export function settableInOneMatrix(line: Line): boolean {
       (t) =>
         t.kind === 'text' &&
         t.tab !== true &&
+        t.listMarkerSpace !== true &&
         t.bidiLevel % 2 === 0 &&
         t.risePt === undefined &&
         t.synthetic?.italic !== true &&

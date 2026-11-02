@@ -118,7 +118,8 @@ export function buildDoc(
     readonly headerFooter?: DocBands | ReadonlyArray<DocBands>;
     readonly facingPages?: boolean; // Dop.fFacingPages — even pages have their own bands
     // List tables (DOC-10): `lfos` maps each 1-based ilfo to a list's lsid; `lstfs`
-    // gives each list its levels (nfc + iStartAt + the xst number-text code units).
+    // gives each list its levels (nfc + iStartAt + the xst number-text code units
+    // + the ixchFollow after it).
     // The style sheet (STSH): each style at its istd, based on `base`, with the
     // paragraph and run properties it gives.
     readonly styles?: ReadonlyArray<DocStyleDef>;
@@ -141,6 +142,7 @@ export function buildDoc(
           readonly nfc: number;
           readonly iStartAt?: number;
           readonly xst: ReadonlyArray<number>;
+          readonly follow?: number; // LVLF.ixchFollow — 0 tab (the default), 1 space, 2 nothing
         }>;
       }>;
     };
@@ -391,6 +393,7 @@ function buildListTables(lists: {
       readonly nfc: number;
       readonly iStartAt?: number;
       readonly xst: ReadonlyArray<number>;
+      readonly follow?: number;
     }>;
   }>;
 }): { plfLst: Uint8Array; lcbLstfs: number; plfLfo: Uint8Array } {
@@ -418,6 +421,7 @@ function buildListTables(lists: {
       const lvlf = new Uint8Array(28); // cbGrpprlChpx @24 / cbGrpprlPapx @25 = 0
       new DataView(lvlf.buffer).setInt32(0, lvl.iStartAt ?? 1, true);
       lvlf[4] = lvl.nfc;
+      lvlf[15] = lvl.follow ?? 0; // ixchFollow
       const xst = new Uint8Array(2 + lvl.xst.length * 2);
       const xv = new DataView(xst.buffer);
       xv.setUint16(0, lvl.xst.length, true);

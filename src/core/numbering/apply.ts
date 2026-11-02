@@ -85,6 +85,11 @@ export function applyNumbering(
       p.properties.runProperties?.fontSizePt ??
       DEFAULT_BULLET_HEIGHT_PT;
     const bulletScale = pic ? Math.min(1, bulletCapPt / Math.max(1, pic.heightPt)) : 1;
+    // §17.9.29 — what parts the marker from the text: a tab unless the level
+    // asks for one space or nothing. chtoutline.docx's chapters read "第 1 章
+    // Test" with a single space in Word, and the tab we always put there stood
+    // each heading's text off at the next stop.
+    const suffix = level?.suffix ?? 'tab';
     const markerRuns: Array<Run> = pic
       ? [
           {
@@ -97,7 +102,7 @@ export function applyNumbering(
               height: pt(pic.heightPt * bulletScale),
             },
           },
-          { text: '\t', properties: {}, listMarker: true },
+          ...(suffix === 'tab' ? [{ text: '\t', properties: {}, listMarker: true as const }] : []),
         ]
       : [
           {
@@ -106,7 +111,7 @@ export function applyNumbering(
             // break but the dash the author meant. Dropped as a break would be
             // (the page never takes one), tdf101626.docx's every bullet
             // vanished and its list read as unmarked text.
-            text: `${marker.replaceAll(SOFT_HYPHEN, '-')}\t`,
+            text: `${marker.replaceAll(SOFT_HYPHEN, '-')}${suffix === 'tab' ? '\t' : ''}`,
             // §17.9.6 — the marker is formatted like the PARAGRAPH MARK, with
             // the level's own `w:rPr` on top. Taking the level's alone left the
             // marker at whatever size the paragraph's STYLE lends: fdo78420's
@@ -119,6 +124,16 @@ export function applyNumbering(
             listMarker: true,
           },
         ];
+    // The space is a run of its own: Word sets it at a width of its own too
+    // (see `listMarkerSpace`), not as a space of the marker's face.
+    if (suffix === 'space') {
+      markerRuns.push({
+        text: ' ',
+        properties: markerRuns[0]!.properties,
+        listMarker: true,
+        listMarkerSpace: true,
+      });
+    }
     const newProps: ParagraphProperties = mergeIndentFromLevel(
       p.properties,
       level?.paragraphProperties,

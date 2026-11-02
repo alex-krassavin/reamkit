@@ -527,9 +527,9 @@ describe('doc reader (DOC-1)', () => {
       }),
     ).doc;
     const ps = paragraphs(doc);
-    expect(ps[0]?.paragraph.runs.map((r) => r.text)).toEqual(['1. ', 'A']);
-    expect(ps[1]?.paragraph.runs.map((r) => r.text)).toEqual(['2. ', 'B']);
-    expect(ps[2]?.paragraph.runs.map((r) => r.text)).toEqual(['3. ', 'C']);
+    expect(ps[0]?.paragraph.runs.map((r) => r.text)).toEqual(['1.\t', 'A']);
+    expect(ps[1]?.paragraph.runs.map((r) => r.text)).toEqual(['2.\t', 'B']);
+    expect(ps[2]?.paragraph.runs.map((r) => r.text)).toEqual(['3.\t', 'C']);
   });
 
   it('renders a lower-letter list (nfc 4) (DOC-10)', () => {
@@ -548,8 +548,8 @@ describe('doc reader (DOC-1)', () => {
       }),
     ).doc;
     const ps = paragraphs(doc);
-    expect(ps[0]?.paragraph.runs[0]?.text).toBe('a) ');
-    expect(ps[1]?.paragraph.runs[0]?.text).toBe('b) ');
+    expect(ps[0]?.paragraph.runs[0]?.text).toBe('a)\t');
+    expect(ps[1]?.paragraph.runs[0]?.text).toBe('b)\t');
   });
 
   it('renders a multi-level "1.1." numbered list (DOC-10)', () => {
@@ -575,8 +575,8 @@ describe('doc reader (DOC-1)', () => {
       }),
     ).doc;
     const ps = paragraphs(doc);
-    expect(ps[0]?.paragraph.runs[0]?.text).toBe('1. ');
-    expect(ps[1]?.paragraph.runs[0]?.text).toBe('1.1. ');
+    expect(ps[0]?.paragraph.runs[0]?.text).toBe('1.\t');
+    expect(ps[1]?.paragraph.runs[0]?.text).toBe('1.1.\t');
   });
 
   it('keeps a bullet (nfc 23) as its glyph, not a number (DOC-10)', () => {
@@ -589,7 +589,36 @@ describe('doc reader (DOC-1)', () => {
         },
       }),
     ).doc;
-    expect(paragraphs(doc)[0]?.paragraph.runs[0]?.text).toBe('• ');
+    expect(paragraphs(doc)[0]?.paragraph.runs[0]?.text).toBe('•\t');
+  });
+
+  it('ends each marker in what its level puts after it (ixchFollow)', () => {
+    // [MS-DOC] §2.9.150 — 0 a tab, 1 a space, 2 nothing; a bullet as a number.
+    const doc = readDoc(
+      buildDoc([{ text: 'A\rB\rC\rD\r', compressed: false }], {
+        paraRuns: [
+          { length: 2, listIlfo: 1, listIlvl: 0 },
+          { length: 2, listIlfo: 2, listIlvl: 0 },
+          { length: 2, listIlfo: 3, listIlvl: 0 },
+          { length: 2, listIlfo: 4, listIlvl: 0 },
+        ],
+        lists: {
+          lfos: [1, 2, 3, 4],
+          lstfs: [
+            { lsid: 1, simple: true, levels: [{ nfc: 0, xst: [0x0000, 0x2e], follow: 0 }] },
+            { lsid: 2, simple: true, levels: [{ nfc: 0, xst: [0x0000, 0x2e], follow: 1 }] },
+            { lsid: 3, simple: true, levels: [{ nfc: 0, xst: [0x0000, 0x2e], follow: 2 }] },
+            { lsid: 4, simple: true, levels: [{ nfc: 23, xst: [0x2022], follow: 1 }] },
+          ],
+        },
+      }),
+    ).doc;
+    expect(paragraphs(doc).map((p) => p.paragraph.runs.map((r) => r.text))).toEqual([
+      ['1.\t', 'A'],
+      ['1. ', 'B'],
+      ['1.', 'C'],
+      ['• ', 'D'],
+    ]);
   });
 
   it('renders a .doc with a table to a valid PDF', async () => {

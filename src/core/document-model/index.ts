@@ -64,6 +64,7 @@ export type {
   NumberingFormat,
   NumberingInstance,
   NumberingLevel,
+  NumberingSuffix,
   PictureBullet,
   PictureOutline,
   NumberingReference,

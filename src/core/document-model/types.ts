@@ -572,6 +572,13 @@ export interface Run {
    * `"•"`). Tagged PDF wraps its glyphs in a Lbl structure element (§14.8.4.3.3).
    */
   readonly listMarker?: true;
+  /**
+   * §17.9.29 `w:suff="space"` — the run (a `listMarker` one, its text a single
+   * space) is the space a list level puts after its marker. Word sets it at a
+   * fixed width for the marker's size, whatever the marker's face, and never
+   * stretches it in a justified line.
+   */
+  readonly listMarkerSpace?: true;
   /** When set, the run renders this image inline in the line; `text` is ignored. */
   readonly inlineImage?: InlineImage;
   /** When set, the run is an inline OfficeMath object; `text` is ignored. */
@@ -688,9 +695,18 @@ export interface NumberingLevel {
    * numbering: "Sect I.01" becomes "Sect 1.01".
    */
   readonly isLegal?: boolean;
+  /**
+   * §17.9.29 `w:suff` — what separates the marker from the paragraph's text:
+   * a tab (the default, and what an absent value means), one space, or
+   * nothing at all.
+   */
+  readonly suffix?: NumberingSuffix;
   readonly paragraphProperties: ParagraphProperties;
   readonly runProperties: RunProperties;
 }
+
+/** §17.18.53 `ST_LevelSuffix` — the character between a list marker and its text. */
+export type NumberingSuffix = 'tab' | 'space' | 'nothing';
 
 /** §17.9.21 `w:numPicBullet` — the image a level uses in place of a bullet. */
 export interface PictureBullet {
