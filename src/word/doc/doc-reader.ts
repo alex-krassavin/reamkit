@@ -560,7 +560,10 @@ function mapParagraph(
   for (const r of p.runs) {
     if (r.picture) out.push(imageBlock(r.picture, resources, toParaProperties(p.props)));
   }
-  if (out.length === 0) out.push(emptyParagraph()); // preserve the (empty) line
+  // Preserve the (empty) line: in its paragraph's spacing and indents, and in
+  // its mark's size, as Word sets it. Without them a run of empty Normal
+  // paragraphs lost the style's space after each.
+  if (out.length === 0) out.push(emptyParagraph(toParaProperties(p.props), p.mark));
   return out;
 }
 
@@ -578,10 +581,16 @@ function imageBlock(
   return { kind: 'image', image };
 }
 
-function emptyParagraph(): BodyElement {
+function emptyParagraph(
+  properties: ParagraphProperties = {},
+  mark: DocCharProps | undefined = undefined,
+): BodyElement {
   return {
     kind: 'paragraph',
-    paragraph: { properties: {}, runs: [{ text: ZERO_WIDTH_SPACE, properties: {} }] },
+    paragraph: {
+      properties,
+      runs: [{ text: ZERO_WIDTH_SPACE, properties: mark ? toRunProperties(mark) : {} }],
+    },
   };
 }
 

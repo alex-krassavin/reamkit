@@ -29,6 +29,8 @@ const OFF_FCPLCFHDD = 0xf2; // fibRgFcLcb97.fcPlcfHdd — header/footer story di
 const OFF_LCBPLCFHDD = 0xf6;
 const OFF_FCDOP = 0x192; // fibRgFcLcb97.fcDop — the document properties (Dop)
 const OFF_LCBDOP = 0x196;
+const OFF_FCSTSHF = 0xa2; // fibRgFcLcb97.fcStshf — the style sheet (STSH)
+const OFF_LCBSTSHF = 0xa6;
 const OFF_FCPLCFBTECHPX = 0xfa; // fibRgFcLcb97.fcPlcfBteChpx — CHPX bin table
 const OFF_LCBPLCFBTECHPX = 0xfe;
 const OFF_FCPLCFBTEPAPX = 0x102; // fibRgFcLcb97.fcPlcfBtePapx — PAPX bin table
@@ -59,6 +61,7 @@ const SPRM_C_KUL = 0x2a3e; // underline kind
 const SPRM_C_HPS = 0x4a43; // font size, half-points
 const SPRM_C_FSPEC = 0x0855; // fSpec — special character (e.g. a picture placeholder)
 const SPRM_C_PIC_LOCATION = 0x6a03; // picture data offset into the Data stream
+const SPRM_C_ISTD = 0x4a30; // the run's character style
 const PIC_CHAR = 0x01; // the special character a picture occupies in the text
 const SPRM_P_JC = 0x2403; // paragraph justification
 const SPRM_P_DXA_RIGHT = 0x840e; // right indent (twips)
@@ -102,6 +105,11 @@ const FIELD_SEPARATOR = 0x14; // the code ends; the cached result (kept) follows
 const FIELD_END = 0x15; // the field ends
 
 const MAX_TEXT = 1 << 24; // 16M-char guard against a crafted piece table
+
+const STK_PARAGRAPH = 1; // a paragraph style (Stdf.stk)
+const STK_CHARACTER = 2; // a character style
+const ISTD_NIL = 0x0fff; // no style: the istdBase of a style based on none
+const MAX_STYLE_DEPTH = 16; // a chain of bases longer than this is a loop
 
 /** Run (character) formatting decoded from a CHPX grpprl. */
 export interface DocCharProps {
@@ -219,6 +227,8 @@ export interface DocParagraph {
    * is the last of — the index into {@link DocContent.sections}.
    */
   readonly sectionEnd?: number;
+  /** The paragraph mark's own character properties: what an empty line is set in. */
+  readonly mark?: DocCharProps;
 }
 
 /** One section of the main document (§2.8.26 PlcfSed): what its SEP says. */
@@ -320,6 +330,23 @@ interface BteRun<TProps> {
   readonly fcStart: number;
   readonly fcEnd: number;
   readonly props: TProps;
+  /** The grpprl `props` were read from, read again over a style's. */
+  readonly grpprl?: Uint8Array;
+  /** A PAPX's paragraph style. */
+  readonly istd?: number;
+}
+
+/**
+ * The style sheet (§2.9.271 STSH), resolved along each style's bases. A
+ * paragraph style gives its paragraphs paragraph properties and their runs
+ * character properties; a character style lays its own over a run's.
+ */
+interface DocStyles {
+  readonly paragraph: (istd: number) => {
+    readonly para: DocParaProps;
+    readonly chars: DocCharProps;
+  };
+  readonly character: (istd: number, base: DocCharProps) => DocCharProps;
 }
 
 const EMPTY: DocContent = { paragraphs: [], encrypted: false };
@@ -432,7 +459,8 @@ export function extractDocContent(bytes: Uint8Array): DocContent {
   const ccpText = u32(wd, OFF_CCPTEXT);
   const data = cfb.readStream('Data'); // embedded picture store (PICF + image)
   const { sections, ends } = readSections(wd, table);
-  const main = buildParagraphs(wd, pieces, chpx, papx, 0, ccpText, data, ends);
+  const styles = parseStyles(wd, table);
+  const main = buildParagraphs(wd, pieces, chpx, papx, 0, ccpText, data, ends, styles);
   const headerFooters = extractHeaderFooters(
     wd,
     table,
@@ -442,6 +470,7 @@ export function extractDocContent(bytes: Uint8Array): DocContent {
     data,
     ccpText,
     Math.max(1, sections.length),
+    styles,
   );
   const listTables = parseListTables(wd, table);
   // Dop.fFacingPages, the first bit of the Dop.
@@ -456,6 +485,111 @@ export function extractDocContent(bytes: Uint8Array): DocContent {
     ...(sections.length > 0 ? { sections } : {}),
     encrypted: false,
   };
+}
+
+// One style of the STSH, as far as the reader takes it: its kind, the style it
+// is based on and the grpprls it lays over that one's.
+interface Std {
+  readonly stk: number;
+  readonly base: number;
+  readonly papx?: Uint8Array;
+  readonly chpx?: Uint8Array;
+}
+
+// §2.9.271 STSH — the style sheet in the table stream: a u16 cbStshi and the
+// Stshi (cstd, the count of styles, and cbSTDBaseInFile, the size of each
+// STD's Stdf), then one LPStd per istd: a u16 cbStd and the STD, none when 0.
+// An STD is its Stdf (stk and istdBase in its second u16, cupx in its third),
+// its name (an Xstz: u16 cch, the characters, a u16 terminator) and cupx
+// LPUpx: a u16 cbUpx, the UPX, a pad byte when cbUpx is odd. A paragraph
+// style's UPXs are its PAPX (the istd, then a grpprl) and its CHPX; a character
+// style's, its CHPX.
+//
+// Without it every paragraph read as if styled by nothing: the heading styles'
+// size and weight, and the Normal style's size, never reached a run, and a
+// style's spacing, indents and keeps never reached a paragraph.
+function parseStyles(wd: Uint8Array, table: Uint8Array): DocStyles | undefined {
+  const fc = u32(wd, OFF_FCSTSHF);
+  const lcb = u32(wd, OFF_LCBSTSHF);
+  if (lcb < 6 || fc + lcb > table.length) return undefined;
+  const stsh = table.subarray(fc, fc + lcb);
+  const cbStshi = u16(stsh, 0);
+  if (cbStshi < 4 || 2 + cbStshi > stsh.length) return undefined;
+  const cstd = u16(stsh, 2);
+  const cbStdBase = u16(stsh, 4);
+  const stds: Array<Std | undefined> = [];
+  let p = 2 + cbStshi;
+  for (let istd = 0; istd < cstd && p + 2 <= stsh.length; istd++) {
+    const cbStd = u16(stsh, p);
+    p += 2;
+    stds.push(
+      cbStd > 0 && p + cbStd <= stsh.length
+        ? parseStd(stsh.subarray(p, p + cbStd), cbStdBase)
+        : undefined,
+    );
+    p += cbStd;
+  }
+
+  const none = { para: {}, chars: {} };
+  const memo = new Map<number, { readonly para: DocParaProps; readonly chars: DocCharProps }>();
+  const paragraph = (istd: number, depth = 0): { para: DocParaProps; chars: DocCharProps } => {
+    const hit = memo.get(istd);
+    if (hit) return hit;
+    const std = stds[istd];
+    let out: { para: DocParaProps; chars: DocCharProps };
+    if (depth >= MAX_STYLE_DEPTH) out = none;
+    else if (std?.stk !== STK_PARAGRAPH)
+      out = istd !== 0 ? paragraph(0, depth + 1) : none; // read as Normal
+    else {
+      const base =
+        std.base !== ISTD_NIL && std.base !== istd ? paragraph(std.base, depth + 1) : none;
+      out = {
+        para: std.papx ? { ...base.para, ...decodePapxGrpprl(std.papx) } : base.para,
+        chars: std.chpx ? { ...base.chars, ...decodeChpxGrpprl(std.chpx, base.chars) } : base.chars,
+      };
+    }
+    memo.set(istd, out);
+    return out;
+  };
+  const character = (istd: number, under: DocCharProps, depth = 0): DocCharProps => {
+    const std = stds[istd];
+    if (std?.stk !== STK_CHARACTER || depth >= MAX_STYLE_DEPTH) return under;
+    const base =
+      std.base !== ISTD_NIL && std.base !== istd ? character(std.base, under, depth + 1) : under;
+    return std.chpx ? { ...base, ...decodeChpxGrpprl(std.chpx, base) } : base;
+  };
+  return { paragraph: (istd) => paragraph(istd), character: (istd, base) => character(istd, base) };
+}
+
+function parseStd(std: Uint8Array, cbStdBase: number): Std | undefined {
+  if (std.length < 6) return undefined;
+  const stk = u16(std, 2) & 0x0f;
+  const base = u16(std, 2) >> 4;
+  const cupx = u16(std, 4) & 0x0f;
+  let q = cbStdBase;
+  if (q + 2 > std.length) return { stk, base };
+  q += 2 + u16(std, q) * 2 + 2; // the name and its terminator
+  const upx: Array<Uint8Array> = [];
+  for (let k = 0; k < cupx && q + 2 <= std.length; k++) {
+    const cb = u16(std, q);
+    q += 2;
+    if (q + cb > std.length) break;
+    upx.push(std.subarray(q, q + cb));
+    q += cb + (cb & 1);
+  }
+  if (stk === STK_PARAGRAPH) {
+    const papx = upx[0] && upx[0].length >= 2 ? upx[0].subarray(2) : undefined; // past its istd
+    return { stk, base, ...(papx ? { papx } : {}), ...(upx[1] ? { chpx: upx[1] } : {}) };
+  }
+  if (stk === STK_CHARACTER) return { stk, base, ...(upx[0] ? { chpx: upx[0] } : {}) };
+  return { stk, base };
+}
+
+// The character style a run's CHPX names (sprmCIstd), if it names one.
+function charStyleOf(grpprl: Uint8Array): number | undefined {
+  let istd: number | undefined;
+  for (const s of sprms(grpprl)) if (s.sprm === SPRM_C_ISTD) istd = u16(grpprl, s.op);
+  return istd;
 }
 
 // The list tables (DOC-10): PlfLfo (LFO → lsid) and PlfLst (the LSTFs + the LVL
@@ -612,6 +746,7 @@ function extractHeaderFooters(
   data: Uint8Array | undefined,
   ccpText: number,
   sectionCount: number,
+  styles: DocStyles | undefined,
 ): ReadonlyArray<DocHeaderFooters> | undefined {
   if (u32(wd, OFF_CCPHDD) === 0) return undefined;
   const fc = u32(wd, OFF_FCPLCFHDD);
@@ -629,7 +764,7 @@ function extractHeaderFooters(
     const a = hddStart + u32(plc, i * 4);
     const b = hddStart + u32(plc, (i + 1) * 4);
     if (b <= a) return 'inherit';
-    const paras = buildParagraphs(wd, pieces, chpx, papx, a, b, data);
+    const paras = buildParagraphs(wd, pieces, chpx, papx, a, b, data, undefined, styles);
     const last = paras[paras.length - 1];
     if (last && last.runs.length === 0) paras.pop(); // the story's closing mark
     const hasContent = paras.some((p) => p.runs.some((r) => r.text.length > 0 || r.picture));
@@ -740,16 +875,17 @@ function parseChpxFkp(page: Uint8Array, out: Array<BteRun<DocCharProps>>): void 
     const fcStart = u32(page, i * 4);
     const fcEnd = u32(page, (i + 1) * 4);
     if (fcEnd <= fcStart) continue;
-    let props: DocCharProps = {};
     const wordOff = page[(crun + 1) * 4 + i]!;
     if (wordOff !== 0) {
       const chpxOff = wordOff * 2;
       const cb = chpxOff < FKP_SIZE ? page[chpxOff]! : 0;
       if (cb > 0 && chpxOff + 1 + cb <= FKP_SIZE) {
-        props = decodeChpxGrpprl(page.subarray(chpxOff + 1, chpxOff + 1 + cb));
+        const grpprl = page.subarray(chpxOff + 1, chpxOff + 1 + cb);
+        out.push({ fcStart, fcEnd, props: decodeChpxGrpprl(grpprl), grpprl });
+        continue;
       }
     }
-    out.push({ fcStart, fcEnd, props });
+    out.push({ fcStart, fcEnd, props: {} });
   }
 }
 
@@ -765,23 +901,26 @@ function parsePapxFkp(page: Uint8Array, out: Array<BteRun<DocParaProps>>): void 
     const fcStart = u32(page, i * 4);
     const fcEnd = u32(page, (i + 1) * 4);
     if (fcEnd <= fcStart) continue;
-    let props: DocParaProps = {};
     const papxOff = page[bxBase + i * 13]! * 2;
     if (papxOff !== 0 && papxOff < FKP_SIZE) {
       const cb = page[papxOff]!;
       const size = cb !== 0 ? 2 * cb - 1 : 2 * (page[papxOff + 1] ?? 0);
       const start = cb !== 0 ? papxOff + 1 : papxOff + 2;
       if (size >= 2 && start + size <= FKP_SIZE) {
-        props = decodePapxGrpprl(page.subarray(start + 2, start + size)); // skip the istd
+        const grpprl = page.subarray(start + 2, start + size);
+        const istd = u16(page, start);
+        out.push({ fcStart, fcEnd, props: decodePapxGrpprl(grpprl), grpprl, istd });
+        continue;
       }
     }
-    out.push({ fcStart, fcEnd, props });
+    out.push({ fcStart, fcEnd, props: {} });
   }
 }
 
 // §2.6.1 — pick the character sprms out of a grpprl, skipping the rest by their
 // spra-derived operand size so the walk stays aligned.
-function decodeChpxGrpprl(d: Uint8Array): DocCharProps {
+// `style` is what the run's style gives it: a toggle (0x80, 0x81) is read against it.
+function decodeChpxGrpprl(d: Uint8Array, style: DocCharProps = {}): DocCharProps {
   let bold: boolean | undefined;
   let italic: boolean | undefined;
   let underlineKul: number | undefined;
@@ -791,10 +930,10 @@ function decodeChpxGrpprl(d: Uint8Array): DocCharProps {
   for (const s of sprms(d)) {
     switch (s.sprm) {
       case SPRM_C_FBOLD:
-        bold = toggleBool(d[s.op]!);
+        bold = toggleBool(d[s.op]!, style.bold);
         break;
       case SPRM_C_FITALIC:
-        italic = toggleBool(d[s.op]!);
+        italic = toggleBool(d[s.op]!, style.italic);
         break;
       case SPRM_C_KUL:
         underlineKul = d[s.op]!;
@@ -896,7 +1035,9 @@ function decodePapxGrpprl(d: Uint8Array): DocParaProps {
         break;
       }
       case SPRM_P_ILVL:
-        listIlvl = d[s.op]!;
+        // A level past the ninth is none a list has: Word 97's "List Bullet"
+        // says 10, over a list of the old kind (ilfo 2047).
+        listIlvl = d[s.op]! <= 8 ? d[s.op]! : 0;
         break;
       case SPRM_T_DEF_TABLE_SHD: {
         // §2.6.3 sprmTDefTableShd — an array of Shd (cvFore[4] cvBack[4] ipat[2]),
@@ -964,10 +1105,13 @@ function* sprms(d: Uint8Array): Generator<{ sprm: number; op: number }> {
   }
 }
 
-// A toggle sprm operand: 0 off, 1 on, 0x81 toggle (no base ⇒ on), 0x80 inherit.
-function toggleBool(v: number): boolean | undefined {
+// A toggle sprm operand: 0 off, 1 on, 0x80 what the style says, 0x81 the
+// opposite of what it says (a style that says nothing is off).
+function toggleBool(v: number, style: boolean | undefined): boolean | undefined {
   if (v === 0) return false;
-  if (v === 1 || v === 0x81) return true;
+  if (v === 1) return true;
+  if (v === 0x80) return style;
+  if (v === 0x81) return style !== true;
   return undefined;
 }
 
@@ -1026,7 +1170,9 @@ function magicAt(d: Uint8Array, off: number, magic: ReadonlyArray<number>): bool
 // split paragraphs at the CR mark (attaching each paragraph's PAPX, also by FC),
 // clean the in-paragraph control characters, and coalesce same-formatting runs.
 // `sectionEnds` maps the CP past each section mark of the main document to the
-// index of the section the mark closes.
+// index of the section the mark closes. With `styles`, a paragraph's properties
+// are its style's with its PAPX over them, and a run's are its paragraph style's
+// with its character style's and its CHPX over them.
 function buildParagraphs(
   wd: Uint8Array,
   pieces: ReadonlyArray<Piece>,
@@ -1036,12 +1182,16 @@ function buildParagraphs(
   cpEnd: number,
   data: Uint8Array | undefined,
   sectionEnds: ReadonlyMap<number, number> = new Map(),
+  styles?: DocStyles,
 ): Array<DocParagraph> {
   const end = Math.min(cpEnd, cpStart + MAX_TEXT);
   const paragraphs: Array<DocParagraph> = [];
+  // The paragraph's runs so far, each beside the CHPX it was read from: what
+  // they look like depends on the paragraph's style, known only at its end.
   let runs: Array<DocRun> = [];
+  let chpxOf: Array<BteRun<DocCharProps> | undefined> = [];
   let cur = '';
-  let curProps: DocCharProps = {};
+  let curChpx: BteRun<DocCharProps> | undefined;
   let lastFc = 0;
   // Field nesting: a field is `0x13 code 0x14 result 0x15`; the code is dropped,
   // the cached result kept. codeDepth counts fields currently inside their code
@@ -1049,21 +1199,48 @@ function buildParagraphs(
   let fieldDepth = 0;
   let codeDepth = 0;
 
+  const push = (run: DocRun, from: BteRun<DocCharProps> | undefined): void => {
+    runs.push(run);
+    chpxOf.push(from);
+  };
   const flushRun = (): void => {
     if (cur.length > 0) {
-      runs.push({ text: cur, props: curProps });
+      push({ text: cur, props: curChpx?.props ?? {} }, curChpx);
       cur = '';
     }
   };
+  // A run's properties over what its paragraph's style gives it: its character
+  // style's (sprmCIstd), then its own CHPX.
+  const runProps = (from: BteRun<DocCharProps> | undefined, base: DocCharProps): DocCharProps => {
+    if (!from?.grpprl) return base;
+    const cistd = charStyleOf(from.grpprl);
+    const under = cistd !== undefined && styles ? styles.character(cistd, base) : base;
+    return { ...under, ...decodeChpxGrpprl(from.grpprl, under) };
+  };
   const endParagraph = (fc: number, cellMark: boolean, sectionEnd?: number): void => {
     flushRun();
+    const pap = lookupRun(papx, fc);
+    const style = styles?.paragraph(pap?.istd ?? 0);
+    // Each run read over the style, and runs of text that come out alike as one.
+    const settled: Array<DocRun> = [];
+    runs.forEach((run, i) => {
+      const props = style && !run.picture ? runProps(chpxOf[i], style.chars) : run.props;
+      const prev = settled[settled.length - 1];
+      if (prev && plainText(prev) && plainText(run) && sameProps(prev.props, props)) {
+        settled[settled.length - 1] = { text: prev.text + run.text, props: prev.props };
+      } else settled.push({ ...run, props });
+    });
+    const markChpx = lookupRun(chpx, fc);
+    const mark = style ? runProps(markChpx, style.chars) : markChpx?.props;
     paragraphs.push({
-      runs,
-      props: lookup(papx, fc) ?? {},
+      runs: settled,
+      props: style ? { ...style.para, ...(pap?.props ?? {}) } : (pap?.props ?? {}),
       ...(cellMark ? { cellMark: true } : {}),
       ...(sectionEnd !== undefined ? { sectionEnd } : {}),
+      ...(mark && Object.keys(mark).length > 0 ? { mark } : {}),
     });
     runs = [];
+    chpxOf = [];
   };
 
   for (const piece of pieces) {
@@ -1113,7 +1290,7 @@ function buildParagraphs(
             : undefined;
         if (picture) {
           flushRun();
-          runs.push({ text: '', props: {}, picture });
+          push({ text: '', props: {}, picture }, undefined);
         }
         continue; // the 0x01 placeholder itself is not text
       }
@@ -1124,11 +1301,13 @@ function buildParagraphs(
       // is a run of its own, the way the docx reader cuts a run at a `w:br`.
       if (code === PAGE_BREAK || code === COLUMN_BREAK) {
         flushRun();
-        const props = lookup(chpx, fc) ?? {};
-        runs.push(
+        const from = lookupRun(chpx, fc);
+        const props = from?.props ?? {};
+        push(
           code === PAGE_BREAK
             ? { text: '', props, pageBreak: true }
             : { text: '\n', props, columnBreak: true },
+          from,
         );
         continue;
       }
@@ -1143,11 +1322,11 @@ function buildParagraphs(
               ? ''
               : String.fromCharCode(code);
       if (ch.length === 0) continue; // drop the other control characters
-      const props = lookup(chpx, fc) ?? {};
-      if (cur.length === 0) curProps = props;
-      else if (!sameProps(props, curProps)) {
+      const from = lookupRun(chpx, fc);
+      if (cur.length === 0) curChpx = from;
+      else if (from !== curChpx) {
         flushRun();
-        curProps = props;
+        curChpx = from;
       }
       cur += ch;
     }
@@ -1161,6 +1340,13 @@ function buildParagraphs(
 
 // Binary search the FC-sorted runs for the one covering `fc`.
 function lookup<TProps>(runs: ReadonlyArray<BteRun<TProps>>, fc: number): TProps | undefined {
+  return lookupRun(runs, fc)?.props;
+}
+
+function lookupRun<TProps>(
+  runs: ReadonlyArray<BteRun<TProps>>,
+  fc: number,
+): BteRun<TProps> | undefined {
   let lo = 0;
   let hi = runs.length - 1;
   while (lo <= hi) {
@@ -1168,9 +1354,14 @@ function lookup<TProps>(runs: ReadonlyArray<BteRun<TProps>>, fc: number): TProps
     const r = runs[mid]!;
     if (fc < r.fcStart) hi = mid - 1;
     else if (fc >= r.fcEnd) lo = mid + 1;
-    else return r.props;
+    else return r;
   }
   return undefined;
+}
+
+// A run of nothing but text, which may join the one beside it.
+function plainText(run: DocRun): boolean {
+  return !run.picture && !run.pageBreak && !run.columnBreak;
 }
 
 function sameProps(a: DocCharProps, b: DocCharProps): boolean {

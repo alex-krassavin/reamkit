@@ -869,3 +869,118 @@ describe('doc reader: sections', () => {
     });
   });
 });
+
+describe('doc reader: styles', () => {
+  // §2.9.271 STSH. Measured in Word for Mac on a .doc LibreOffice wrote from a
+  // .docx of these styles: each word's size, weight and slant, and each
+  // paragraph's alignment, spacing and keep, as Word reports them.
+  const NORMAL = {
+    istd: 0,
+    kind: 'paragraph',
+    para: { spaceAfterTwips: 240 },
+    chars: { sizeHalfPts: 24 },
+  } as const;
+  const HEADING = {
+    istd: 1,
+    kind: 'paragraph',
+    base: 0,
+    para: { jc: 1, spaceBeforeTwips: 480, keepNext: true },
+    chars: { bold: true, sizeHalfPts: 32 },
+  } as const;
+  const EMPH = { istd: 10, kind: 'character', chars: { italic: true, sizeHalfPts: 20 } } as const;
+  const runsOf = (doc: FlowDoc) =>
+    paragraphs(doc).map((el) =>
+      el.paragraph.runs.map((r) => [
+        r.text,
+        r.properties.fontSizePt,
+        r.properties.bold === true,
+        r.properties.italic === true,
+      ]),
+    );
+
+  it('gives a paragraph the properties of its style and of the one that is based on', () => {
+    // Word: "Title" 16 pt bold, centred, 24 pt before and 12 after (Normal's),
+    // kept with the next; "Body" 12 pt, 12 after.
+    const doc = readDoc(
+      buildDoc([{ text: 'Title\rBody\r', compressed: false }], {
+        styles: [NORMAL, HEADING],
+        paraRuns: [{ length: 6, istd: 1 }, { length: 5 }],
+      }),
+    ).doc;
+    const [title, body] = paragraphs(doc).map((el) => el.paragraph.properties);
+    expect(title).toMatchObject({
+      alignment: 'center',
+      spacingBefore: 24,
+      spacingAfter: 12,
+      keepNext: true,
+    });
+    expect(body).toMatchObject({ alignment: 'left', spacingAfter: 12 });
+    expect(runsOf(doc)).toEqual([[['Title', 16, true, false]], [['Body', 12, false, false]]]);
+  });
+
+  it('lays a character style over the paragraph style, and the run formatting over both', () => {
+    // Word: "Body " 12 pt, "emph" 10 pt italic, "bold" 12 pt bold.
+    const doc = readDoc(
+      buildDoc([{ text: 'Body emphbold\r', compressed: false }], {
+        styles: [NORMAL, EMPH],
+        paraRuns: [{ length: 14 }],
+        formatRuns: [{ length: 5 }, { length: 4, charStyle: 10 }, { length: 5, bold: true }],
+      }),
+    ).doc;
+    expect(runsOf(doc)).toEqual([
+      [
+        ['Body ', 12, false, false],
+        ['emph', 10, false, true],
+        ['bold', 12, true, false],
+      ],
+    ]);
+  });
+
+  it('reads a toggle against what the style says', () => {
+    // [MS-DOC] ToggleOperand: 0x80 is the style's value, 0x81 its opposite, the
+    // way Word 97's heading styles make themselves bold over Normal. "Head "
+    // bold and "plain" not in a bold heading; "body" bold in a Normal paragraph.
+    const doc = readDoc(
+      buildDoc([{ text: 'Head plain\rbody\r', compressed: false }], {
+        styles: [NORMAL, HEADING],
+        paraRuns: [{ length: 11, istd: 1 }, { length: 5 }],
+        formatRuns: [
+          { length: 5, bold: 0x80 },
+          { length: 6, bold: 0x81 },
+          { length: 5, bold: 0x81 },
+        ],
+      }),
+    ).doc;
+    expect(runsOf(doc)).toEqual([
+      [
+        ['Head ', 16, true, false],
+        ['plain', 16, false, false],
+      ],
+      [['body', 12, true, false]],
+    ]);
+  });
+
+  it('keeps an empty paragraph in the spacing of its style and the size of its mark', () => {
+    // Word: the empty paragraph between "one" and "two" has 12 pt after it, as
+    // they do.
+    const doc = readDoc(
+      buildDoc([{ text: 'one\r\rtwo\r', compressed: false }], {
+        styles: [NORMAL],
+        paraRuns: [{ length: 4 }, { length: 1 }, { length: 4 }],
+      }),
+    ).doc;
+    expect(paragraphs(doc).map((el) => el.paragraph.properties.spacingAfter)).toEqual([12, 12, 12]);
+    expect(runsOf(doc)[1]).toEqual([[ZWSP, 12, false, false]]);
+  });
+
+  it('reads a list level past the ninth as the first', () => {
+    // Word 97's "List Bullet" style says level 10 over a list of the old kind
+    // (53446.doc); read as it stands, it indented the item eleven levels.
+    const doc = readDoc(
+      buildDoc([{ text: 'item\r', compressed: false }], {
+        paraRuns: [{ length: 5, listIlfo: 1, listIlvl: 10 }],
+      }),
+    ).doc;
+    expect(paragraphs(doc)[0]!.paragraph.properties.indentLeft).toBe(18);
+  });
+});

@@ -22,8 +22,10 @@ export interface DocPiece {
 // A run of character formatting over `length` characters of the document text.
 export interface DocFormatRun {
   readonly length: number;
-  readonly bold?: boolean;
-  readonly italic?: boolean;
+  // On, off, or a toggle operand as Word stores it: 0x80 as the style, 0x81 its opposite.
+  readonly bold?: boolean | number;
+  readonly italic?: boolean | number;
+  readonly charStyle?: number; // sprmCIstd — the run's character style
   readonly underlineKul?: number; // Word `kul` code (0 = none, 1 = single, …)
   readonly sizeHalfPts?: number; // font size in half-points
   readonly picOffset?: number; // a picture: sprmCFSpec + sprmCPicLocation → Data offset
@@ -61,6 +63,7 @@ export interface DocParaFormat {
   readonly cellShadings?: ReadonlyArray<string | undefined>;
   readonly listIlfo?: number; // sprmPIlfo — list override (>0 ⇒ a list item)
   readonly listIlvl?: number; // sprmPIlvl — list level
+  readonly istd?: number; // the paragraph's style (the istd before its grpprl)
 }
 
 // One Brc80 edge for the fixture: width in eighths of a point, brcType (1 single /
@@ -106,6 +109,9 @@ export function buildDoc(
     readonly facingPages?: boolean; // Dop.fFacingPages — even pages have their own bands
     // List tables (DOC-10): `lfos` maps each 1-based ilfo to a list's lsid; `lstfs`
     // gives each list its levels (nfc + iStartAt + the xst number-text code units).
+    // The style sheet (STSH): each style at its istd, based on `base`, with the
+    // paragraph and run properties it gives.
+    readonly styles?: ReadonlyArray<DocStyleDef>;
     readonly lists?: {
       readonly lfos: ReadonlyArray<number>;
       readonly lstfs: ReadonlyArray<{
@@ -223,6 +229,10 @@ export function buildDoc(
     // A Dop of its first bits only: fFacingPages is bit 0 of byte 0.
     const dop = Uint8Array.from([0x01, 0x00, 0x00, 0x00]);
     fibFields.push({ fc: 0x192, off: addBinTable(dop), lcb: dop.length }); // fcDop/lcbDop
+  }
+  if (opts.styles) {
+    const stsh = buildStsh(opts.styles);
+    fibFields.push({ fc: 0xa2, off: addBinTable(stsh), lcb: stsh.length }); // fcStshf/lcbStshf
   }
   if (opts.lists) {
     const { plfLst, lcbLstfs, plfLfo } = buildListTables(opts.lists);
@@ -503,7 +513,7 @@ function buildPapxFkp(
   const bxBase = (cpara + 1) * 4;
   let blobOff = bxBase + cpara * 13;
   for (let i = 0; i < cpara; i++) {
-    const blob = buildPapxInFkp(buildPapxGrpprl(runs[i]!));
+    const blob = buildPapxInFkp(buildPapxGrpprl(runs[i]!), runs[i]!.istd ?? 0);
     if (blobOff % 2 !== 0) blobOff++; // PapxInFkp offsets are in 2-byte words
     page.set(blob, blobOff);
     page[bxBase + i * 13] = blobOff / 2; // BX bOffset; the rest of the BX is PHE (0)
@@ -514,13 +524,71 @@ function buildPapxFkp(
 }
 
 // §2.9.24 PapxInFkp — a u8 cb then GrpPrlAndIstd (istd + grpprl). cb≠0 ⇒ size is
-// 2·cb−1 (odd); cb=0 ⇒ a second u8 gives 2·cb2 (even). istd is always 0 here.
-function buildPapxInFkp(grpprl: Uint8Array): Uint8Array {
+// 2·cb−1 (odd); cb=0 ⇒ a second u8 gives 2·cb2 (even).
+function buildPapxInFkp(grpprl: Uint8Array, istd: number): Uint8Array {
   const size = 2 + grpprl.length; // GrpPrlAndIstd: istd (2 bytes) + grpprl
+  const id = [istd & 0xff, istd >> 8];
   if (size % 2 === 1) {
-    return Uint8Array.from([(size + 1) / 2, 0, 0, ...grpprl]); // cb, istd lo/hi, grpprl
+    return Uint8Array.from([(size + 1) / 2, ...id, ...grpprl]); // cb, istd lo/hi, grpprl
   }
-  return Uint8Array.from([0, size / 2, 0, 0, ...grpprl]); // cb=0, cb2, istd lo/hi, grpprl
+  return Uint8Array.from([0, size / 2, ...id, ...grpprl]); // cb=0, cb2, istd lo/hi, grpprl
+}
+
+// One style of the fixture's style sheet.
+export interface DocStyleDef {
+  readonly istd: number;
+  readonly kind: 'paragraph' | 'character';
+  readonly base?: number; // istdBase; absent ⇒ based on none
+  readonly para?: Omit<DocParaFormat, 'length'>;
+  readonly chars?: Omit<DocFormatRun, 'length'>;
+}
+
+// §2.9.271 STSH — a u16 cbStshi and an 18-byte Stshi (cstd, cbSTDBaseInFile 10,
+// the rest 0), then a u16 cbStd and the STD for each istd up to the last one
+// defined (0 for none). An STD: a 10-byte Stdf (sti, stk | istdBase << 4,
+// cupx | istdNext << 4, bchUpe, grfstd), the name as an Xstz, then its UPXs —
+// a paragraph style's PAPX (istd + grpprl) and CHPX, a character style's CHPX —
+// each a u16 cbUpx and the bytes, padded to an even length.
+function buildStsh(styles: ReadonlyArray<DocStyleDef>): Uint8Array {
+  const u16 = (v: number): Array<number> => [v & 0xff, (v >> 8) & 0xff];
+  const cstd = Math.max(...styles.map((st) => st.istd)) + 1;
+  const out: Array<number> = [
+    ...u16(18),
+    ...u16(cstd),
+    ...u16(10),
+    ...new Array<number>(14).fill(0),
+  ];
+  for (let istd = 0; istd < cstd; istd++) {
+    const st = styles.find((x) => x.istd === istd);
+    if (!st) {
+      out.push(...u16(0));
+      continue;
+    }
+    const para = st.kind === 'paragraph';
+    const upxs = para
+      ? [
+          Uint8Array.from([...u16(istd), ...buildPapxGrpprl({ length: 0, ...st.para })]),
+          buildChpxGrpprl({ length: 0, ...st.chars }),
+        ]
+      : [buildChpxGrpprl({ length: 0, ...st.chars })];
+    const name = `S${istd}`;
+    const std: Array<number> = [
+      ...u16(istd & 0x0fff),
+      ...u16((para ? 1 : 2) | ((st.base ?? 0x0fff) << 4)),
+      ...u16(upxs.length | (istd << 4)),
+      ...u16(0),
+      ...u16(0),
+      ...u16(name.length),
+      ...[...name].flatMap((c) => u16(c.charCodeAt(0))),
+      ...u16(0),
+    ];
+    for (const upx of upxs) {
+      std.push(...u16(upx.length), ...upx);
+      if (upx.length % 2 === 1) std.push(0);
+    }
+    out.push(...u16(std.length), ...std);
+  }
+  return Uint8Array.from(out);
 }
 
 // §2.6.1 — the character sprm list for a run.
@@ -529,8 +597,10 @@ function buildChpxGrpprl(run: DocFormatRun): Uint8Array {
   const sprm = (op: number, ...operand: Array<number>): void => {
     parts.push(op & 0xff, (op >> 8) & 0xff, ...operand);
   };
-  if (run.bold) sprm(0x0835, 0x01); // sprmCFBold
-  if (run.italic) sprm(0x0836, 0x01); // sprmCFItalic
+  const toggle = (v: boolean | number): number => (v === true ? 1 : v === false ? 0 : v);
+  if (run.charStyle !== undefined) sprm(0x4a30, run.charStyle & 0xff, run.charStyle >> 8); // sprmCIstd
+  if (run.bold !== undefined) sprm(0x0835, toggle(run.bold)); // sprmCFBold
+  if (run.italic !== undefined) sprm(0x0836, toggle(run.italic)); // sprmCFItalic
   if (run.underlineKul) sprm(0x2a3e, run.underlineKul & 0xff); // sprmCKul
   if (run.sizeHalfPts) sprm(0x4a43, run.sizeHalfPts & 0xff, (run.sizeHalfPts >> 8) & 0xff); // sprmCHps
   if (run.picOffset !== undefined) {
