@@ -86,6 +86,7 @@ const SPRM_LONG_OPERAND = new Set([0xd608, 0xc60d]); // sprmTDefTable, sprmPChgT
 const CELL_MARK = 0x07; // ends a table cell (and, on the TTP, a row)
 const PAGE_BREAK = 0x0c; // a manual page break — or, closing a section, its section mark
 const COLUMN_BREAK = 0x0e; // a manual column break
+const LINE_BREAK = 0x0b; // a manual line break, within the paragraph
 const FIELD_BEGIN = 0x13; // a field begins; its code (suppressed) follows
 const FIELD_SEPARATOR = 0x14; // the code ends; the cached result (kept) follows
 const FIELD_END = 0x15; // the field ends
@@ -1051,8 +1052,16 @@ function buildParagraphs(
         );
         continue;
       }
+      // A line break ends its line and goes on in the paragraph, as `\n` does in a
+      // docx run: read as a space, "Latin", a break and "Second" set one line.
       const ch =
-        code === 0x09 || code === 0x0b ? ' ' : code < 0x20 ? '' : String.fromCharCode(code);
+        code === LINE_BREAK
+          ? '\n'
+          : code === 0x09
+            ? ' '
+            : code < 0x20
+              ? ''
+              : String.fromCharCode(code);
       if (ch.length === 0) continue; // drop the other control characters
       const props = lookup(chpx, fc) ?? {};
       if (cur.length === 0) curProps = props;

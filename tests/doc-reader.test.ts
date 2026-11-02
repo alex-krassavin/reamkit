@@ -130,6 +130,17 @@ describe('doc reader (DOC-1)', () => {
     expect(paragraphTexts(doc)).toEqual(['a bc']); // tab → space
   });
 
+  it('reads a line break (0x0B) as the end of a line within the paragraph', () => {
+    // Word: "Latin" and "Second" on two lines of one paragraph; two breaks leave
+    // an empty line between them.
+    const LB = String.fromCharCode(0x0b);
+    const one = readDoc(buildDoc([{ text: `Latin${LB}Second\r`, compressed: false }])).doc;
+    expect(paragraphTexts(one)).toEqual(['Latin\nSecond']);
+    expect(pageTexts(one)).toEqual([['Latin', 'Second']]);
+    const two = readDoc(buildDoc([{ text: `Latin${LB}${LB}Second\r`, compressed: false }])).doc;
+    expect(pageTexts(two)).toEqual([['Latin', '', 'Second']]);
+  });
+
   it('reports the formatting loss and reads no text from an encrypted file', () => {
     const result = readDoc(
       buildDoc([{ text: 'secret\r', compressed: false }], { encrypted: true }),
