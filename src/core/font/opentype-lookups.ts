@@ -39,7 +39,20 @@ export interface OtlGlyph {
   ligId: number;
   /** For a mark skipped inside a ligature: the component it followed, from 1. */
   ligComp: number;
+  /**
+   * What substitution made it, as {@link SUBSTITUTED}, {@link LIGATED} and
+   * {@link MULTIPLIED} bits: a shaper asks whether a reph or a pre-base form
+   * actually formed. Absent ⇒ none.
+   */
+  props?: number;
 }
+
+/** {@link OtlGlyph.props}: a GSUB lookup replaced the glyph. */
+export const SUBSTITUTED = 0x1;
+/** {@link OtlGlyph.props}: …by a ligature, last of all. */
+export const LIGATED = 0x2;
+/** {@link OtlGlyph.props}: …by a multiple substitution, last of all. */
+export const MULTIPLIED = 0x4;
 
 /** Where a glyph is drawn, in font units: its advance, and its offset off the pen. */
 export interface OtlPosition {
@@ -448,8 +461,12 @@ function visible(face: OtlFace, g: OtlGlyph, flag: number, markSet: number): boo
   return true;
 }
 
-/** What a matcher wants of the glyph it lands on. */
-type Want = (g: OtlGlyph, nth: number) => boolean;
+/**
+ * What a matcher wants of the glyph it lands on. `undefined` takes any glyph,
+ * and only as a "maybe": a join control it could step over is stepped over,
+ * where a matcher that names its glyph takes it if it is the one named.
+ */
+type Want = ((g: OtlGlyph, nth: number) => boolean) | undefined;
 
 /**
  * Step from `from` towards `dir`, `count` times, onto the glyphs a match takes:
@@ -490,7 +507,7 @@ function walk<TGlyph extends OtlGlyph>(
       (ignoreZwj || g.joiner !== 'zwj');
     const eligible =
       (context || (g.mask & r.step.mask) !== 0) && (syllable === 0 || g.syllable === syllable);
-    if (eligible && want(g, out.length)) {
+    if (eligible && (want ? want(g, out.length) : !maybeSkip)) {
       out.push(i);
       continue;
     }
@@ -518,6 +535,7 @@ export function substitute<TGlyph extends OtlGlyph>(
   for (const step of steps) {
     const lookup = table.lookups[step.lookup];
     if (!lookup) continue;
+    const starts = firstGlyphs(face, table, step.lookup);
     const r: Run<TGlyph> = {
       face,
       table,
@@ -534,7 +552,8 @@ export function substitute<TGlyph extends OtlGlyph>(
     if (lookup.type === 8) {
       for (let i = buf.length - 1; i >= 0; i--) {
         const g = buf[i]!;
-        if (!(g.mask & step.mask) || !visible(face, g, lookup.flag, lookup.markSet)) continue;
+        if (!(g.mask & step.mask) || !starts.has(g.gid)) continue;
+        if (!visible(face, g, lookup.flag, lookup.markSet)) continue;
         r.idx = i;
         applyLookup(r);
       }
@@ -543,7 +562,11 @@ export function substitute<TGlyph extends OtlGlyph>(
     let i = 0;
     while (i < buf.length) {
       const g = buf[i]!;
-      if (g.mask & step.mask && visible(face, g, lookup.flag, lookup.markSet)) {
+      if (
+        g.mask & step.mask &&
+        starts.has(g.gid) &&
+        visible(face, g, lookup.flag, lookup.markSet)
+      ) {
         r.idx = i;
         r.lookup = lookup;
         const next = applyLookup(r);
@@ -586,6 +609,7 @@ export function position<TGlyph extends OtlGlyph>(
     for (const step of steps) {
       const lookup = table.lookups[step.lookup];
       if (!lookup) continue;
+      const starts = firstGlyphs(face, table, step.lookup);
       const r: Run<TGlyph> = {
         face,
         table,
@@ -601,7 +625,11 @@ export function position<TGlyph extends OtlGlyph>(
       let i = 0;
       while (i < buf.length) {
         const g = buf[i]!;
-        if (g.mask & step.mask && visible(face, g, lookup.flag, lookup.markSet)) {
+        if (
+          g.mask & step.mask &&
+          starts.has(g.gid) &&
+          visible(face, g, lookup.flag, lookup.markSet)
+        ) {
           r.idx = i;
           r.lookup = lookup;
           const next = applyLookup(r);
@@ -616,6 +644,43 @@ export function position<TGlyph extends OtlGlyph>(
   }
   for (let i = 0; i < pos.length; i++) settle(pos, i, MAX_NESTING * 4);
   return pos;
+}
+
+const firstGlyphCache = new WeakMap<LayoutTable, Map<number, ReadonlySet<number>>>();
+
+/**
+ * Every glyph a lookup can start at: the union of its subtables' first
+ * coverage. A glyph outside it is passed over without reading a subtable, as
+ * HarfBuzz's digests pass it over; most of a few hundred lookups touch none of
+ * a word's glyphs.
+ */
+function firstGlyphs(face: OtlFace, table: LayoutTable, index: number): ReadonlySet<number> {
+  let byLookup = firstGlyphCache.get(table);
+  if (!byLookup) {
+    byLookup = new Map();
+    firstGlyphCache.set(table, byLookup);
+  }
+  const had = byLookup.get(index);
+  if (had) return had;
+  const b = face.bytes;
+  const lookup = table.lookups[index]!;
+  const out = new Set<number>();
+  const contextual =
+    table.kind === 'GSUB' ? lookup.type === 5 || lookup.type === 6 : lookup.type >= 7;
+  for (const st of lookup.subtables) {
+    let cov = st + u16(b, st + 2);
+    if (contextual && u16(b, st) === 3) {
+      if (lookup.type === 6 || lookup.type === 8) {
+        const back = u16(b, st + 2);
+        cov = st + u16(b, st + 6 + 2 * back);
+      } else {
+        cov = st + u16(b, st + 6);
+      }
+    }
+    for (const g of face.coverage(cov).keys()) out.add(g);
+  }
+  byLookup.set(index, out);
+  return out;
 }
 
 /**
@@ -713,10 +778,16 @@ function applySubstitution<TGlyph extends OtlGlyph>(r: Run<TGlyph>, st: number):
       const seq = st + u16(b, st + 6 + 2 * index);
       const count = u16(b, seq);
       if (r.buf.length + count - 1 > r.maxLength) return -1;
+      // One glyph is a plain substitution, as HarfBuzz counts it.
+      if (count === 1) {
+        replace(r, r.idx, u16(b, seq + 2));
+        return r.idx + 1;
+      }
       const made: Array<TGlyph> = [];
+      const props = (g.props ?? 0) | SUBSTITUTED | MULTIPLIED;
       for (let k = 0; k < count; k++) {
         const gid = u16(b, seq + 2 + 2 * k);
-        made.push({ ...g, gid, cls: r.face.glyphClass(gid) });
+        made.push({ ...g, gid, cls: r.face.glyphClass(gid), props });
       }
       r.buf.splice(r.idx, 1, ...made);
       return r.idx + count;
@@ -748,6 +819,7 @@ function replace<TGlyph extends OtlGlyph>(r: Run<TGlyph>, at: number, gid: numbe
   const g = r.buf[at]!;
   g.gid = gid;
   g.cls = r.face.glyphClass(gid);
+  g.props = (g.props ?? 0) | SUBSTITUTED;
 }
 
 let nextLigId = 1;
@@ -756,8 +828,12 @@ let nextLigId = 1;
  * Make `buf[start..end)` one cluster, the least of theirs. A cluster cut at
  * either edge comes in whole, as HarfBuzz merges them: a vowel sign that was
  * one cluster with the last letter of a conjunct is one with the conjunct.
+ *
+ * @param buf   The glyphs.
+ * @param start The first glyph of the stretch.
+ * @param end   The glyph after its last.
  */
-function mergeClusters(buf: Array<OtlGlyph>, start: number, end: number): void {
+export function mergeClusters(buf: Array<OtlGlyph>, start: number, end: number): void {
   if (end - start < 2) return;
   let cluster = buf[start]!.cluster;
   for (let i = start + 1; i < end; i++) cluster = Math.min(cluster, buf[i]!.cluster);
@@ -802,6 +878,8 @@ function ligate<TGlyph extends OtlGlyph>(r: Run<TGlyph>, st: number): number {
     first.ligId = ligId;
     first.ligComp = 0;
     replace(r, r.idx, u16(b, lig));
+    // A ligature forgives an earlier multiplication: it is what the glyph is now.
+    first.props = ((first.props ?? 0) | LIGATED) & ~MULTIPLIED;
     for (let c = at.length - 1; c >= 0; c--) r.buf.splice(at[c]!, 1);
     return last + 1 - at.length;
   }
@@ -845,6 +923,35 @@ interface ContextRule {
  * may start on `first`, in the order they are tried.
  */
 function contextRules(
+  face: OtlFace,
+  type: number,
+  format: number,
+  st: number,
+  first: number,
+): ReadonlyArray<ContextRule> {
+  // Read once per subtable and first glyph: a rule is tried at every glyph a
+  // lookup passes over, and a face of India runs a few hundred of them.
+  let bySubtable = ruleCache.get(face);
+  if (!bySubtable) {
+    bySubtable = new Map();
+    ruleCache.set(face, bySubtable);
+  }
+  let byGlyph = bySubtable.get(st);
+  if (!byGlyph) {
+    byGlyph = new Map();
+    bySubtable.set(st, byGlyph);
+  }
+  let rules = byGlyph.get(first);
+  if (!rules) {
+    rules = readContextRules(face, type, format, st, first);
+    byGlyph.set(first, rules);
+  }
+  return rules;
+}
+
+const ruleCache = new WeakMap<OtlFace, Map<number, Map<number, ReadonlyArray<ContextRule>>>>();
+
+function readContextRules(
   face: OtlFace,
   type: number,
   format: number,
@@ -1094,7 +1201,7 @@ function pairPos<TGlyph extends OtlGlyph>(r: Run<TGlyph>, st: number, format: nu
   const first = r.buf[r.idx]!;
   const index = r.face.coverage(st + u16(b, st + 2)).get(first.gid);
   if (index === undefined) return -1;
-  const next = walk(r, r.idx, 1, 1, () => true, false);
+  const next = walk(r, r.idx, 1, 1, undefined, false);
   if (!next) return -1;
   const j = next[0]!;
   const second = r.buf[j]!.gid;
@@ -1145,7 +1252,7 @@ function cursivePos<TGlyph extends OtlGlyph>(r: Run<TGlyph>, st: number): number
   };
   const here = record(r.buf[r.idx]!.gid);
   if (here === undefined || !u16(b, here)) return -1;
-  const prev = walk(r, r.idx, -1, 1, () => true, false);
+  const prev = walk(r, r.idx, -1, 1, undefined, false);
   if (!prev) return -1;
   const i = prev[0]!;
   const there = record(r.buf[i]!.gid);
@@ -1210,13 +1317,13 @@ function markPos<TGlyph extends OtlGlyph>(r: Run<TGlyph>, st: number): number {
   let j = -1;
   if (r.lookup.type === 6) {
     // The mark before it, with the lookup's mark filtering but not its ignores.
-    const prev = walk(r, r.idx, -1, 1, () => true, false, r.lookup.flag & ~IGNORE_FLAGS);
+    const prev = walk(r, r.idx, -1, 1, undefined, false, r.lookup.flag & ~IGNORE_FLAGS);
     if (!prev) return -1;
     j = prev[0]!;
     if (r.buf[j]!.cls !== MARK) return -1;
   } else {
     // The nearest glyph before it that is not a mark.
-    const prev = walk(r, r.idx, -1, 1, () => true, false, IGNORE_MARKS);
+    const prev = walk(r, r.idx, -1, 1, undefined, false, IGNORE_MARKS);
     if (!prev) return -1;
     j = prev[0]!;
   }

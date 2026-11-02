@@ -1,6 +1,12 @@
 Copyright 2022 The Noto Project Authors (https://github.com/notofonts/devanagari)
 Copyright 2025 The Noto Project Authors (https://github.com/notofonts/bengali)
+Copyright 2022 The Noto Project Authors (https://github.com/notofonts/gurmukhi)
+Copyright 2022 The Noto Project Authors (https://github.com/notofonts/gujarati)
+Copyright 2022 The Noto Project Authors (https://github.com/notofonts/oriya)
+Copyright 2022 The Noto Project Authors (https://github.com/notofonts/tamil)
+Copyright 2022 The Noto Project Authors (https://github.com/notofonts/telugu)
 Copyright 2022 The Noto Project Authors (https://github.com/notofonts/kannada)
+Copyright 2022 The Noto Project Authors (https://github.com/notofonts/malayalam)
 Copyright 2022 The Noto Project Authors (https://github.com/notofonts/newa)
 
 This Font Software is licensed under the SIL Open Font License, Version 1.1.

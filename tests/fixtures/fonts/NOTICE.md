@@ -23,19 +23,22 @@ The licence is reproduced in `Arimo-OFL.txt`.
 |---|---|---|
 | `Arimo-Regular.ttf` | `02219a6ff8456d98` | `Arimo_400Regular.ttf` from `@expo-google-fonts/arimo` on jsDelivr — the face the library downloads for a document that names no font. `tests/ligatures.test.ts` turns on its coverage: no U+FB00, U+FB01/U+FB02 with their private-use twins U+F001/U+F002, and U+210E. |
 
-## Noto Sans Devanagari 2.007, Bengali 3.011, Kannada 2.006, Newa 2.007 — OFL-1.1
+## Noto Sans of the scripts of India, and of Newa — OFL-1.1
 
+Devanagari 2.007, Bengali 3.011, Gurmukhi 2.004, Gujarati 2.106, Oriya 2.007,
+Tamil 2.004, Telugu 2.005, Kannada 2.006, Malayalam 2.104, Newa 2.007.
 Copyright 2022–2025 The Noto Project Authors (<https://github.com/notofonts>).
 The licence, with each face's copyright line, is reproduced in `Noto-OFL.txt`;
-none of the four reserves its font name.
+none of them reserves its font name.
 
 Each is the `_400Regular.ttf` of its `@expo-google-fonts/noto-sans-*` package
-on jsDelivr — for the first three, the face the library downloads for that
-script — cut down with
-`hb-subset` (HarfBuzz 15.0.0) to the characters `tests/opentype-lookups.test.ts`
-sets, every layout feature kept: `hb-subset <face> --unicodes=<the characters>
---layout-features='*'`. The glyph ids, clusters and positions that test expects
+on jsDelivr — the face the library downloads for that script, Newa apart — cut
+down with `hb-subset` (HarfBuzz 15.0.0) to the characters its test sets, every
+layout feature kept: `hb-subset <face> --unicodes=<the characters>
+--layout-features='*'`. The glyph ids, clusters and positions those tests expect
 are what `hb-shape` 15.0.0 gives on these same files.
+
+For `tests/opentype-lookups.test.ts`, the lookups one at a time:
 
 | File | sha256 (16) | Why it is here |
 |---|---|---|
@@ -43,3 +46,19 @@ are what `hb-shape` 15.0.0 gives on these same files.
 | `NotoSansBengali-subset.ttf` | `5ec728f1d69f412d` | সংস্কৃতি হৃদয় চাঁদ ক্তৃ: a mark on a mark, and positioning by context. |
 | `NotoSansKannada-subset.ttf` | `38e777f33682f9dd` | ಙೈ and the two parts of its vowel sign, U+0CC6 U+0CD6: a pair whose second glyph starts the next pair. |
 | `NotoSansNewa-subset.ttf` | `53d77b12fd169a0c` | Four Newa syllables: cursive attachment. Of the faces the library downloads only Kannada's has a `curs` feature, and none of its joins moves a glyph. |
+
+For `tests/indic-shaper.test.ts`, a few words of each script shaped whole — the
+characters of the words in that test, the dotted circle, and the parts of every
+two-part vowel sign among them:
+
+| File | sha256 (16) | What it is cut to |
+|---|---|---|
+| `NotoSansDevanagari-shaping.ttf` | `09feb2d2736e109c` | A pre-base i, a reph, ksha, pa with ra under it, the nukta (written apart and as one code point), ZWJ and ZWNJ in a conjunct, a vowel sign on nothing, अ with a vowel sign it may not take. |
+| `NotoSansBengali-shaping.ttf` | `3cba78abe4c1e512` | O and au in two parts, a pre-base i, ya-phala, a reph, a ZWJ before two marks. |
+| `NotoSansGurmukhi-shaping.ttf` | `39a1046bfc4d80c7` | Sihari, a subjoined ra, a bindi before ii. |
+| `NotoSansGujarati-shaping.ttf` | `27410c182b3c91dc` | A pre-base i, a reph, a half form. |
+| `NotoSansOriya-shaping.ttf` | `e0e71f0620f62bbb` | O and ai in two parts, a reph after the main consonant, ksha. |
+| `NotoSansTamil-shaping.ttf` | `7db7a3fe8fa51dd7` | O, ai and au around their consonant, ksha, shri, a pair kerned across a ZWJ. |
+| `NotoSansTelugu-shaping.ttf` | `c07847a3af772da0` | A reph asked for with ZWJ, ksha, shri, the ai length mark. |
+| `NotoSansKannada-shaping.ttf` | `4847a4149b443459` | A reph after the post-base forms, o and ai in two parts, two below-base forms, Ra-virama-ZWJ. |
+| `NotoSansMalayalam-shaping.ttf` | `50843d3cd1059eba` | O and ai around their consonant, a pre-base ra, the dot reph, a chillu. |
