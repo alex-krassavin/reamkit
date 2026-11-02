@@ -689,4 +689,25 @@ describe('doc reader: page and column breaks', () => {
     ).doc;
     expect(paragraphTexts(doc)).toEqual(['one', ZWSP, 'two']);
   });
+
+  it('starts a new page at a paragraph marked to break before, unless it is the first', () => {
+    // sprmPFPageBreakBefore — how LibreOffice writes every page break into a .doc.
+    // Word: "Second" at the top of page 2; on the first paragraph, one page.
+    const doc = readDoc(
+      buildDoc([{ text: 'one\rSecond\r', compressed: false }], {
+        paraRuns: [{ length: 4 }, { length: 7, pageBreakBefore: true }],
+      }),
+    ).doc;
+    expect(paragraphs(doc).map((el) => el.paragraph.properties.pageBreakBefore === true)).toEqual([
+      false,
+      true,
+    ]);
+    expect(pageTexts(doc)).toEqual([['one'], ['Second']]);
+    const first = readDoc(
+      buildDoc([{ text: 'one\rtwo\r', compressed: false }], {
+        paraRuns: [{ length: 4, pageBreakBefore: true }, { length: 4 }],
+      }),
+    ).doc;
+    expect(pageTexts(first)).toEqual([['one', 'two']]);
+  });
 });

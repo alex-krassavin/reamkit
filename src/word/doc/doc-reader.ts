@@ -556,6 +556,7 @@ function toParaProperties(p: DocParaProps): ParagraphProperties {
     ...(p.widowControl !== undefined ? { widowControl: p.widowControl } : {}),
     ...(p.keepNext !== undefined ? { keepNext: p.keepNext } : {}),
     ...(p.keepLines !== undefined ? { keepLines: p.keepLines } : {}),
+    ...(p.pageBreakBefore !== undefined ? { pageBreakBefore: p.pageBreakBefore } : {}),
   };
 }
 

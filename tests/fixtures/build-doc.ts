@@ -44,6 +44,7 @@ export interface DocParaFormat {
   readonly widowControl?: boolean; // sprmPFWidowControl
   readonly keepNext?: boolean; // sprmPFKeepFollow
   readonly keepLines?: boolean; // sprmPFKeep
+  readonly pageBreakBefore?: boolean; // sprmPFPageBreakBefore
   readonly cellEdgesTwips?: ReadonlyArray<number>; // sprmTDefTable cell boundaries
   // Per-cell TC80 descriptors (DOC-11): borders (each a Brc80) + vertical merge.
   readonly cellTc?: ReadonlyArray<{
@@ -510,6 +511,7 @@ function buildPapxGrpprl(run: DocParaFormat): Uint8Array {
   if (run.widowControl !== undefined) sprm(0x2431, run.widowControl ? 1 : 0); // sprmPFWidowControl
   if (run.keepNext !== undefined) sprm(0x2406, run.keepNext ? 1 : 0); // sprmPFKeepFollow
   if (run.keepLines !== undefined) sprm(0x2405, run.keepLines ? 1 : 0); // sprmPFKeep
+  if (run.pageBreakBefore !== undefined) sprm(0x2407, run.pageBreakBefore ? 1 : 0); // sprmPFPageBreakBefore
   // sprmTDefTable (a long-operand sprm) goes before the table flags so the reader
   // must skip its 2-byte-length operand correctly to still reach sprmPFTtp.
   if (run.cellEdgesTwips) {
