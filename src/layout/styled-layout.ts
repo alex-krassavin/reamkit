@@ -5518,13 +5518,10 @@ function collectFontResources(
     // emit phase encodes — otherwise a ligature glyph (e.g. fi) would be
     // rendered but pruned from the subset / absent from the /CIDSet and
     // /ToUnicode (PDF/A §6.3.5 / §6.3.8).
-    // A marker whose glyph the font lacks is drawn as another character
-    // (see {@link markerText}), so the subset must reserve THAT one.
     // A ligature nobody can draw is set as its letters (see
     // {@link drawableText}), so it is those letters the subset must reserve.
-    const shown = run.listMarker === true ? markerText(run.text, parsed) : run.text;
-    const faces = runFaces(options, resolved, primary, shown);
-    const text = drawableText(faces, shown);
+    const faces = runFaces(options, resolved, primary, run.text);
+    const text = drawableText(faces, run.text);
     // A character another slot names a face for, or this face cannot draw, is
     // drawn by ANOTHER one (see {@link runFaces}), and its glyphs have to be
     // reserved in THAT face's subset — the walk that measures and the walk that
@@ -5538,7 +5535,10 @@ function collectFontResources(
         sink = { parsed: span.parsed, gids: new Set<number>() };
         used.set(span.fontKey, sink);
       }
-      const shaped = shapeGlyphs(span.parsed, span.text);
+      // A marker whose glyph the face drawing it lacks is drawn as another
+      // character (see {@link markerText}), so the subset must reserve THAT one.
+      const shown = run.listMarker === true ? markerText(span.text, span.parsed) : span.text;
+      const shaped = shapeGlyphs(span.parsed, shown);
       for (const g of shaped.gids) sink.gids.add(g);
       // A conjunct or a vowel sign's contextual form is reached by no
       // character, and the text layer has to be told what it stands for.
@@ -6609,7 +6609,9 @@ function tokenizePlansLtr(plans: ReadonlyArray<RunPlan>): Array<Token> {
       // and a Latin substitute cannot draw the Han beside it.
       for (const piece of splitByFace(plan, t.text)) {
         const text =
-          plan.run.listMarker === true ? markerText(piece.text, plan.font.parsed) : piece.text;
+          plan.run.listMarker === true
+            ? markerText(piece.text, piece.face.font.parsed)
+            : piece.text;
         const from = at;
         if (plan.charColorsHex) at += t.tab ? 1 : [...piece.text].length;
         tokens.push({
@@ -6700,8 +6702,15 @@ function markerSpaceToken(plan: RunPlan, bidiLevel: number): TextToken {
  * eleven slides. The marker is the one place where the shape matters more than
  * the code point, so it takes the nearest thing the font can draw.
  *
- * @param text The marker's text.
- * @param font The font it is set in.
+ * Asked of the face that DRAWS the character, not of the run's own: a marker
+ * may be set in two faces, and a character another face draws is no business
+ * of the run's. chtoutline.docx numbers its chapters "第 1 章" in a Latin
+ * heading face with the Han in a face of their own; asked of the Latin one, 第
+ * and 章 became dots set in the Han face's subset, which had reserved neither,
+ * and the heading printed nothing but its "1".
+ *
+ * @param text   The marker's text.
+ * @param parsed The face that draws it.
  * @returns The text to draw.
  */
 function markerText(text: string, parsed: ParsedTtf): string {
@@ -6804,7 +6813,7 @@ function tokenizePlansBidi(
     const flush = (endExclusive: number) => {
       if (endExclusive <= bufStart) return;
       const raw = chars.slice(bufStart, endExclusive).join('');
-      const text = plan.run.listMarker === true ? markerText(raw, plan.font.parsed) : raw;
+      const text = plan.run.listMarker === true ? markerText(raw, curFace.font.parsed) : raw;
       tokens.push({
         kind: 'text',
         text,

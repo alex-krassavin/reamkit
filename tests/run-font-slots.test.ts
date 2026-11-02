@@ -225,6 +225,53 @@ describe('a run’s characters are set in the face their slot of w:rFonts names'
   });
 });
 
+describe('a list marker set in two faces', () => {
+  // The marker's level names Verdana for ASCII, set here in Arimo, and Courier
+  // New for the rest, set in Roboto: Roboto has the Roman numeral Ⅳ and Arimo
+  // has not. chtoutline.docx's "第 1 章" is the same marker with the Han in a
+  // face of their own — asked of the ASCII face, they were swapped for dots.
+  const MIXED = new Map<FamilyKey, FontRegistry>([
+    ['arimo', FontRegistry.fromBytes({ regular: font('Arimo-Regular') })],
+    ['cousine', FontRegistry.fromBytes({ regular: STAND_INS.arimo })],
+  ]);
+  const numbered = (lvlText: string): Uint8Array =>
+    buildDocxFromBody(
+      '<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr>' +
+        '<w:r><w:t>Item</w:t></w:r></w:p>',
+      {
+        numberingXml:
+          '<w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:start w:val="1"/>' +
+          `<w:numFmt w:val="decimal"/><w:lvlText w:val="${lvlText}"/>` +
+          `<w:rPr><w:rFonts ${VERDANA_COURIER}/></w:rPr></w:lvl></w:abstractNum>` +
+          '<w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>',
+      },
+    );
+  const markerFaces = (lvlText: string): Array<[string, string]> =>
+    textTokens(Ream.parse(numbered(lvlText)).flow, MIXED)
+      .filter((t) => t.listMarker === true)
+      .map((t) => [t.text, familyOf(t, MIXED)]);
+
+  it('keeps a character the face drawing it has, though the run’s own face lacks it', () => {
+    expect(markerFaces('Ⅳ.%1')).toEqual([
+      ['Ⅳ', 'cousine'],
+      ['.1', 'arimo'],
+    ]);
+  });
+
+  it('puts it on the page and in the text layer', async () => {
+    const pdf = convertDocxToPdfSync(numbered('Ⅳ.%1'), {
+      fonts: { regular: font('Arimo-Regular') },
+      registriesByFamily: MIXED,
+    });
+    const md = new TextDecoder().decode(await Ream.parse(pdf).convert('md'));
+    expect(md).toContain('Ⅳ.1');
+  });
+
+  it('still swaps a bullet no face on hand draws for a dot', () => {
+    expect(markerFaces('❖')).toEqual([['•', 'cousine']]);
+  });
+});
+
 describe('the families fetched for a run’s slots', () => {
   const families = (bytes: Uint8Array): Array<string> =>
     [...familiesInFlow(Ream.parse(bytes).flow)].sort();
