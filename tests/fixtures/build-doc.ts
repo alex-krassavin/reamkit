@@ -28,6 +28,13 @@ export interface DocFormatRun {
   readonly charStyle?: number; // sprmCIstd — the run's character style
   readonly underlineKul?: number; // Word `kul` code (0 = none, 1 = single, …)
   readonly sizeHalfPts?: number; // font size in half-points
+  // The fonts, each an index into the font table (`fonts`): of ASCII characters
+  // (sprmCRgFtc0), East Asian ones (sprmCRgFtc1), the others (sprmCRgFtc2) and
+  // complex-script ones (sprmCFtcBi).
+  readonly fontAscii?: number;
+  readonly fontEastAsia?: number;
+  readonly fontOther?: number;
+  readonly fontBi?: number;
   readonly picOffset?: number; // a picture: sprmCFSpec + sprmCPicLocation → Data offset
 }
 
@@ -115,6 +122,16 @@ export function buildDoc(
     // The style sheet (STSH): each style at its istd, based on `base`, with the
     // paragraph and run properties it gives.
     readonly styles?: ReadonlyArray<DocStyleDef>;
+    // The style sheet's default fonts (Stshi ftcAsci, ftcFE, ftcOther, and the
+    // ftcBi after them, which lengthens the Stshi to 20 bytes), as font indices.
+    readonly styleFonts?: {
+      readonly ascii?: number;
+      readonly eastAsia?: number;
+      readonly other?: number;
+      readonly bi?: number;
+    };
+    // The font table (SttbfFfn): each font's name, at its index.
+    readonly fonts?: ReadonlyArray<string>;
     readonly lists?: {
       readonly lfos: ReadonlyArray<number>;
       readonly lstfs: ReadonlyArray<{
@@ -234,8 +251,12 @@ export function buildDoc(
     fibFields.push({ fc: 0x192, off: addBinTable(dop), lcb: dop.length }); // fcDop/lcbDop
   }
   if (opts.styles) {
-    const stsh = buildStsh(opts.styles);
+    const stsh = buildStsh(opts.styles, opts.styleFonts);
     fibFields.push({ fc: 0xa2, off: addBinTable(stsh), lcb: stsh.length }); // fcStshf/lcbStshf
+  }
+  if (opts.fonts) {
+    const sttbfFfn = buildSttbfFfn(opts.fonts);
+    fibFields.push({ fc: 0x112, off: addBinTable(sttbfFfn), lcb: sttbfFfn.length }); // fcSttbfFfn
   }
   if (opts.lists) {
     const { plfLst, lcbLstfs, plfLfo } = buildListTables(opts.lists);
@@ -555,19 +576,32 @@ export interface DocStyleDef {
 }
 
 // §2.9.271 STSH — a u16 cbStshi and an 18-byte Stshi (cstd, cbSTDBaseInFile 10,
-// the rest 0), then a u16 cbStd and the STD for each istd up to the last one
-// defined (0 for none). An STD: a 10-byte Stdf (sti, stk | istdBase << 4,
+// zeros, then ftcAsci, ftcFE and ftcOther), 20 bytes with an ftcBi after them,
+// then a u16 cbStd and the STD for each istd up to the last one defined (0 for
+// none). An STD: a 10-byte Stdf (sti, stk | istdBase << 4,
 // cupx | istdNext << 4, bchUpe, grfstd), the name as an Xstz, then its UPXs —
 // a paragraph style's PAPX (istd + grpprl) and CHPX, a character style's CHPX —
 // each a u16 cbUpx and the bytes, padded to an even length.
-function buildStsh(styles: ReadonlyArray<DocStyleDef>): Uint8Array {
+function buildStsh(
+  styles: ReadonlyArray<DocStyleDef>,
+  fonts: {
+    readonly ascii?: number;
+    readonly eastAsia?: number;
+    readonly other?: number;
+    readonly bi?: number;
+  } = {},
+): Uint8Array {
   const u16 = (v: number): Array<number> => [v & 0xff, (v >> 8) & 0xff];
   const cstd = Math.max(...styles.map((st) => st.istd)) + 1;
   const out: Array<number> = [
-    ...u16(18),
+    ...u16(fonts.bi !== undefined ? 20 : 18),
     ...u16(cstd),
     ...u16(10),
-    ...new Array<number>(14).fill(0),
+    ...new Array<number>(8).fill(0),
+    ...u16(fonts.ascii ?? 0),
+    ...u16(fonts.eastAsia ?? 0),
+    ...u16(fonts.other ?? 0),
+    ...(fonts.bi !== undefined ? u16(fonts.bi) : []),
   ];
   for (let istd = 0; istd < cstd; istd++) {
     const st = styles.find((x) => x.istd === istd);
@@ -602,6 +636,18 @@ function buildStsh(styles: ReadonlyArray<DocStyleDef>): Uint8Array {
   return Uint8Array.from(out);
 }
 
+// §2.9.286 SttbfFfn — a u16 count, a u16 cbExtra (0), then each FFN: its size
+// less one, then prq/ff, wWeight, chs, ixchSzAlt, PANOSE and FONTSIGNATURE (39
+// bytes, zero here) and the name, NUL-terminated UTF-16.
+function buildSttbfFfn(fonts: ReadonlyArray<string>): Uint8Array {
+  const out: Array<number> = [fonts.length & 0xff, fonts.length >> 8, 0, 0];
+  for (const name of fonts) {
+    const xsz = [...name, '\0'].flatMap((c) => [c.charCodeAt(0) & 0xff, c.charCodeAt(0) >> 8]);
+    out.push(39 + xsz.length, ...new Array<number>(39).fill(0), ...xsz);
+  }
+  return Uint8Array.from(out);
+}
+
 // §2.6.1 — the character sprm list for a run.
 function buildChpxGrpprl(run: DocFormatRun): Uint8Array {
   const parts: Array<number> = [];
@@ -614,6 +660,13 @@ function buildChpxGrpprl(run: DocFormatRun): Uint8Array {
   if (run.italic !== undefined) sprm(0x0836, toggle(run.italic)); // sprmCFItalic
   if (run.underlineKul) sprm(0x2a3e, run.underlineKul & 0xff); // sprmCKul
   if (run.sizeHalfPts) sprm(0x4a43, run.sizeHalfPts & 0xff, (run.sizeHalfPts >> 8) & 0xff); // sprmCHps
+  const ftc = (op: number, v: number | undefined): void => {
+    if (v !== undefined) sprm(op, v & 0xff, v >> 8);
+  };
+  ftc(0x4a4f, run.fontAscii); // sprmCRgFtc0
+  ftc(0x4a50, run.fontEastAsia); // sprmCRgFtc1
+  ftc(0x4a51, run.fontOther); // sprmCRgFtc2
+  ftc(0x4a5e, run.fontBi); // sprmCFtcBi
   if (run.picOffset !== undefined) {
     sprm(0x0855, 0x01); // sprmCFSpec — special character (picture)
     const fc = run.picOffset >>> 0;

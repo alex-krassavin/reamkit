@@ -15,8 +15,9 @@
 //
 // Spec: [MS-DOC] §2.5 (FIB), §2.8.35 (PlcPcd), §2.9.38 (Clx), §2.9.73
 // (FcCompressed), §2.8.6 (PlcBteChpx), §2.8.5 (PlcBtePapx), §2.9.55 (ChpxFkp),
-// §2.9.23 (PapxFkp), §2.8.26 (PlcfSed), §2.6.1 (sprm). Every offset is bounds-checked; a
-// structurally odd file yields no text rather than throwing.
+// §2.9.23 (PapxFkp), §2.8.26 (PlcfSed), §2.9.286 (SttbfFfn), §2.6.1 (sprm). Every
+// offset is bounds-checked; a structurally odd file yields no text rather than
+// throwing.
 
 import { openCfb } from '@/core/ole/cfb';
 
@@ -31,6 +32,8 @@ const OFF_FCDOP = 0x192; // fibRgFcLcb97.fcDop — the document properties (Dop)
 const OFF_LCBDOP = 0x196;
 const OFF_FCSTSHF = 0xa2; // fibRgFcLcb97.fcStshf — the style sheet (STSH)
 const OFF_LCBSTSHF = 0xa6;
+const OFF_FCSTTBFFFN = 0x112; // fibRgFcLcb97.fcSttbfFfn — the font table
+const OFF_LCBSTTBFFFN = 0x116;
 const OFF_FCPLCFBTECHPX = 0xfa; // fibRgFcLcb97.fcPlcfBteChpx — CHPX bin table
 const OFF_LCBPLCFBTECHPX = 0xfe;
 const OFF_FCPLCFBTEPAPX = 0x102; // fibRgFcLcb97.fcPlcfBtePapx — PAPX bin table
@@ -62,6 +65,10 @@ const SPRM_C_HPS = 0x4a43; // font size, half-points
 const SPRM_C_FSPEC = 0x0855; // fSpec — special character (e.g. a picture placeholder)
 const SPRM_C_PIC_LOCATION = 0x6a03; // picture data offset into the Data stream
 const SPRM_C_ISTD = 0x4a30; // the run's character style
+const SPRM_C_RG_FTC0 = 0x4a4f; // the font of ASCII characters (an index into the font table)
+const SPRM_C_RG_FTC1 = 0x4a50; // the font of East Asian characters
+const SPRM_C_RG_FTC2 = 0x4a51; // the font of the other characters
+const SPRM_C_FTC_BI = 0x4a5e; // the font of complex-script characters
 const PIC_CHAR = 0x01; // the special character a picture occupies in the text
 const SPRM_P_JC = 0x2403; // paragraph justification
 const SPRM_P_DXA_RIGHT = 0x840e; // right indent (twips)
@@ -123,11 +130,21 @@ export interface DocCharProps {
   readonly underlineKul?: number;
   /** Font size in half-points. */
   readonly sizeHalfPts?: number;
+  /** The font of ASCII characters, by name — `sprmCRgFtc0`. */
+  readonly fontAscii?: string;
+  /** The font of East Asian characters — `sprmCRgFtc1`. */
+  readonly fontEastAsia?: string;
+  /** The font of the characters neither ASCII nor East Asian — `sprmCRgFtc2`. */
+  readonly fontOther?: string;
+  /** The font of complex-script characters — `sprmCFtcBi`. */
+  readonly fontBi?: string;
   /** The character is special — `sprmCFSpec` (e.g. a picture placeholder). */
   readonly fSpec?: boolean;
   /** `sprmCPicLocation` — offset into the `Data` stream of the picture's PICF. */
   readonly picOffset?: number;
 }
+
+type FontKey = 'fontAscii' | 'fontEastAsia' | 'fontOther' | 'fontBi';
 
 /** An embedded picture: the extracted image bytes and its display size (twips). */
 export interface DocPicture {
@@ -480,13 +497,20 @@ export function extractDocContent(bytes: Uint8Array): DocContent {
   if (!plcPcd) return EMPTY;
 
   const pieces = parsePieces(plcPcd);
-  const chpx = parsePlcBte(wd, table, OFF_FCPLCFBTECHPX, OFF_LCBPLCFBTECHPX, parseChpxFkp);
+  const fonts = readFonts(wd, table);
+  const chpx = parsePlcBte<DocCharProps>(
+    wd,
+    table,
+    OFF_FCPLCFBTECHPX,
+    OFF_LCBPLCFBTECHPX,
+    (page, out) => parseChpxFkp(page, out, fonts),
+  );
   const papx = parsePlcBte(wd, table, OFF_FCPLCFBTEPAPX, OFF_LCBPLCFBTEPAPX, parsePapxFkp);
   const ccpText = u32(wd, OFF_CCPTEXT);
   const data = cfb.readStream('Data'); // embedded picture store (PICF + image)
   const { sections, ends } = readSections(wd, table);
-  const styles = parseStyles(wd, table);
-  const main = buildParagraphs(wd, pieces, chpx, papx, 0, ccpText, data, ends, styles);
+  const styles = parseStyles(wd, table, fonts);
+  const main = buildParagraphs(wd, pieces, chpx, papx, 0, ccpText, data, ends, styles, fonts);
   const headerFooters = extractHeaderFooters(
     wd,
     table,
@@ -497,6 +521,7 @@ export function extractDocContent(bytes: Uint8Array): DocContent {
     ccpText,
     Math.max(1, sections.length),
     styles,
+    fonts,
   );
   const listTables = parseListTables(wd, table);
   // Dop.fFacingPages, the first bit of the Dop.
@@ -511,6 +536,36 @@ export function extractDocContent(bytes: Uint8Array): DocContent {
     ...(sections.length > 0 ? { sections } : {}),
     encrypted: false,
   };
+}
+
+// §2.9.286 SttbfFfn — the font table, in the table stream: a u16 count and a
+// u16 cbExtra (0), then each FFN (§2.9.82) behind a byte of its length
+// (cbFfnM1, the FFN's size less that byte). A run's font sprms and the Stshi
+// name a font by its index here. An FFN's name, xszFfn, is a NUL-terminated
+// UTF-16 string after the 39 bytes that follow the length (prq/fTrueType/ff,
+// wWeight, chs, ixchSzAlt, the PANOSE and the FONTSIGNATURE); the alternate
+// name that may follow it is not read. An FFN too short to hold a name keeps
+// its index, named "".
+function readFonts(wd: Uint8Array, table: Uint8Array): Array<string> {
+  const fonts: Array<string> = [];
+  const fc = u32(wd, OFF_FCSTTBFFFN);
+  const lcb = u32(wd, OFF_LCBSTTBFFFN);
+  if (lcb < 4 || fc + lcb > table.length) return fonts;
+  const sttb = table.subarray(fc, fc + lcb);
+  const count = u16(sttb, 0);
+  let p = 4;
+  for (let i = 0; i < count && p < sttb.length; i++) {
+    const end = Math.min(sttb.length, p + 1 + sttb[p]!);
+    let name = '';
+    for (let q = p + 40; q + 1 < end; q += 2) {
+      const c = u16(sttb, q);
+      if (c === 0) break;
+      name += String.fromCharCode(c);
+    }
+    fonts.push(name);
+    p = end;
+  }
+  return fonts;
 }
 
 // One style of the STSH, as far as the reader takes it: its kind, the style it
@@ -534,7 +589,17 @@ interface Std {
 // Without it every paragraph read as if styled by nothing: the heading styles'
 // size and weight, and the Normal style's size, never reached a run, and a
 // style's spacing, indents and keeps never reached a paragraph.
-function parseStyles(wd: Uint8Array, table: Uint8Array): DocStyles | undefined {
+//
+// The Stshi's ftcAsci, ftcFE and ftcOther (§2.9.274, 12 bytes into it) and the
+// ftcBi after them are the fonts of a run that nothing else gives one, under
+// every style. Word writes its Normal style with no
+// font and names the document's font there: a .doc from Word 2007 on is in
+// Calibri or Cambria that way, and read without it, in no font at all.
+function parseStyles(
+  wd: Uint8Array,
+  table: Uint8Array,
+  fonts: ReadonlyArray<string>,
+): DocStyles | undefined {
   const fc = u32(wd, OFF_FCSTSHF);
   const lcb = u32(wd, OFF_LCBSTSHF);
   if (lcb < 6 || fc + lcb > table.length) return undefined;
@@ -543,6 +608,16 @@ function parseStyles(wd: Uint8Array, table: Uint8Array): DocStyles | undefined {
   if (cbStshi < 4 || 2 + cbStshi > stsh.length) return undefined;
   const cstd = u16(stsh, 2);
   const cbStdBase = u16(stsh, 4);
+  const font = (key: FontKey, off: number): DocCharProps => {
+    const name = cbStshi >= off ? fonts[u16(stsh, off)] : undefined;
+    return name ? { [key]: name } : {};
+  };
+  const defaults: DocCharProps = {
+    ...font('fontAscii', 14),
+    ...font('fontEastAsia', 16),
+    ...font('fontOther', 18),
+    ...font('fontBi', 20),
+  };
   const stds: Array<Std | undefined> = [];
   let p = 2 + cbStshi;
   for (let istd = 0; istd < cstd && p + 2 <= stsh.length; istd++) {
@@ -556,7 +631,7 @@ function parseStyles(wd: Uint8Array, table: Uint8Array): DocStyles | undefined {
     p += cbStd;
   }
 
-  const none = { para: {}, chars: {} };
+  const none = { para: {}, chars: defaults };
   const memo = new Map<number, { readonly para: DocParaProps; readonly chars: DocCharProps }>();
   const paragraph = (istd: number, depth = 0): { para: DocParaProps; chars: DocCharProps } => {
     const hit = memo.get(istd);
@@ -571,7 +646,9 @@ function parseStyles(wd: Uint8Array, table: Uint8Array): DocStyles | undefined {
         std.base !== ISTD_NIL && std.base !== istd ? paragraph(std.base, depth + 1) : none;
       out = {
         para: std.papx ? { ...base.para, ...decodePapxGrpprl(std.papx) } : base.para,
-        chars: std.chpx ? { ...base.chars, ...decodeChpxGrpprl(std.chpx, base.chars) } : base.chars,
+        chars: std.chpx
+          ? { ...base.chars, ...decodeChpxGrpprl(std.chpx, base.chars, fonts) }
+          : base.chars,
       };
     }
     memo.set(istd, out);
@@ -582,7 +659,7 @@ function parseStyles(wd: Uint8Array, table: Uint8Array): DocStyles | undefined {
     if (std?.stk !== STK_CHARACTER || depth >= MAX_STYLE_DEPTH) return under;
     const base =
       std.base !== ISTD_NIL && std.base !== istd ? character(std.base, under, depth + 1) : under;
-    return std.chpx ? { ...base, ...decodeChpxGrpprl(std.chpx, base) } : base;
+    return std.chpx ? { ...base, ...decodeChpxGrpprl(std.chpx, base, fonts) } : base;
   };
   return { paragraph: (istd) => paragraph(istd), character: (istd, base) => character(istd, base) };
 }
@@ -773,6 +850,7 @@ function extractHeaderFooters(
   ccpText: number,
   sectionCount: number,
   styles: DocStyles | undefined,
+  fonts: ReadonlyArray<string>,
 ): ReadonlyArray<DocHeaderFooters> | undefined {
   if (u32(wd, OFF_CCPHDD) === 0) return undefined;
   const fc = u32(wd, OFF_FCPLCFHDD);
@@ -790,7 +868,7 @@ function extractHeaderFooters(
     const a = hddStart + u32(plc, i * 4);
     const b = hddStart + u32(plc, (i + 1) * 4);
     if (b <= a) return 'inherit';
-    const paras = buildParagraphs(wd, pieces, chpx, papx, a, b, data, undefined, styles);
+    const paras = buildParagraphs(wd, pieces, chpx, papx, a, b, data, undefined, styles, fonts);
     const last = paras[paras.length - 1];
     if (last && last.runs.length === 0) paras.pop(); // the story's closing mark
     const hasContent = paras.some((p) => p.runs.some((r) => r.text.length > 0 || r.picture));
@@ -894,7 +972,11 @@ function parsePlcBte<TProps>(
 
 // §2.9.55 ChpxFkp — (crun+1) FCs, crun 1-byte word-offsets to each CHPX (0 = no
 // formatting), and crun in byte 511. A CHPX is a u8 length then grpprl bytes.
-function parseChpxFkp(page: Uint8Array, out: Array<BteRun<DocCharProps>>): void {
+function parseChpxFkp(
+  page: Uint8Array,
+  out: Array<BteRun<DocCharProps>>,
+  fonts: ReadonlyArray<string>,
+): void {
   const crun = page[FKP_SIZE - 1]!;
   if (crun === 0 || (crun + 1) * 4 + crun > FKP_SIZE - 1) return;
   for (let i = 0; i < crun; i++) {
@@ -907,7 +989,7 @@ function parseChpxFkp(page: Uint8Array, out: Array<BteRun<DocCharProps>>): void 
       const cb = chpxOff < FKP_SIZE ? page[chpxOff]! : 0;
       if (cb > 0 && chpxOff + 1 + cb <= FKP_SIZE) {
         const grpprl = page.subarray(chpxOff + 1, chpxOff + 1 + cb);
-        out.push({ fcStart, fcEnd, props: decodeChpxGrpprl(grpprl), grpprl });
+        out.push({ fcStart, fcEnd, props: decodeChpxGrpprl(grpprl, {}, fonts), grpprl });
         continue;
       }
     }
@@ -946,13 +1028,24 @@ function parsePapxFkp(page: Uint8Array, out: Array<BteRun<DocParaProps>>): void 
 // §2.6.1 — pick the character sprms out of a grpprl, skipping the rest by their
 // spra-derived operand size so the walk stays aligned.
 // `style` is what the run's style gives it: a toggle (0x80, 0x81) is read against it.
-function decodeChpxGrpprl(d: Uint8Array, style: DocCharProps = {}): DocCharProps {
+// A font sprm names its font by its index in `fonts`, the font table; one past
+// the end of it, or one with no name, names none.
+function decodeChpxGrpprl(
+  d: Uint8Array,
+  style: DocCharProps = {},
+  fonts: ReadonlyArray<string> = [],
+): DocCharProps {
   let bold: boolean | undefined;
   let italic: boolean | undefined;
   let underlineKul: number | undefined;
   let sizeHalfPts: number | undefined;
   let fSpec: boolean | undefined;
   let picOffset: number | undefined;
+  const named: { [K in FontKey]?: string } = {};
+  const font = (key: FontKey, ftc: number): void => {
+    const name = fonts[ftc];
+    if (name) named[key] = name;
+  };
   for (const s of sprms(d)) {
     switch (s.sprm) {
       case SPRM_C_FBOLD:
@@ -967,6 +1060,18 @@ function decodeChpxGrpprl(d: Uint8Array, style: DocCharProps = {}): DocCharProps
       case SPRM_C_HPS:
         sizeHalfPts = u16(d, s.op);
         break;
+      case SPRM_C_RG_FTC0:
+        font('fontAscii', u16(d, s.op));
+        break;
+      case SPRM_C_RG_FTC1:
+        font('fontEastAsia', u16(d, s.op));
+        break;
+      case SPRM_C_RG_FTC2:
+        font('fontOther', u16(d, s.op));
+        break;
+      case SPRM_C_FTC_BI:
+        font('fontBi', u16(d, s.op));
+        break;
       case SPRM_C_FSPEC:
         fSpec = d[s.op] !== 0;
         break;
@@ -980,6 +1085,7 @@ function decodeChpxGrpprl(d: Uint8Array, style: DocCharProps = {}): DocCharProps
     ...(italic !== undefined ? { italic } : {}),
     ...(underlineKul !== undefined ? { underlineKul } : {}),
     ...(sizeHalfPts !== undefined ? { sizeHalfPts } : {}),
+    ...named,
     ...(fSpec ? { fSpec } : {}),
     ...(picOffset !== undefined ? { picOffset } : {}),
   };
@@ -1209,6 +1315,7 @@ function buildParagraphs(
   data: Uint8Array | undefined,
   sectionEnds: ReadonlyMap<number, number> = new Map(),
   styles?: DocStyles,
+  fonts: ReadonlyArray<string> = [],
 ): Array<DocParagraph> {
   const end = Math.min(cpEnd, cpStart + MAX_TEXT);
   const paragraphs: Array<DocParagraph> = [];
@@ -1255,7 +1362,7 @@ function buildParagraphs(
     if (!from?.grpprl) return base;
     const cistd = charStyleOf(from.grpprl);
     const under = cistd !== undefined && styles ? styles.character(cistd, base) : base;
-    return { ...under, ...decodeChpxGrpprl(from.grpprl, under) };
+    return { ...under, ...decodeChpxGrpprl(from.grpprl, under, fonts) };
   };
   const endParagraph = (fc: number, cellMark: boolean, sectionEnd?: number): void => {
     flushRun();
@@ -1452,7 +1559,11 @@ function sameProps(a: DocCharProps, b: DocCharProps): boolean {
     a.bold === b.bold &&
     a.italic === b.italic &&
     a.underlineKul === b.underlineKul &&
-    a.sizeHalfPts === b.sizeHalfPts
+    a.sizeHalfPts === b.sizeHalfPts &&
+    a.fontAscii === b.fontAscii &&
+    a.fontEastAsia === b.fontEastAsia &&
+    a.fontOther === b.fontOther &&
+    a.fontBi === b.fontBi
   );
 }
 

@@ -6,8 +6,8 @@
 // .docx) works on a legacy `.doc` the way it already does for `.xls`. The shared
 // CFB container reader (`src/core/ole`) is the keystone both legacy formats reuse.
 //
-// Scope: paragraphs of formatted runs — bold / italic / underline / font size
-// (CHPX) on each run, alignment / indentation / spacing (PAPX) on each paragraph,
+// Scope: paragraphs of formatted runs — bold / italic / underline / font size /
+// fonts (CHPX) on each run, alignment / indentation / spacing (PAPX) on each paragraph,
 // tables (in-table paragraphs grouped into a row/cell grid, with per-column widths
 // from sprmTDefTable), inline images (the picture char's CHPX → a PICF in the Data
 // stream), fields (resolved to their cached result), the section's headers/footers
@@ -21,6 +21,7 @@ import type {
   Border,
   CellBorders,
   CellMerge,
+  FontFamilyMap,
   HeaderFooterReference,
   HeaderFooterType,
   ImageBlock,
@@ -625,12 +626,27 @@ function isEmptyParagraph(el: BodyElement): boolean {
 function toRunProperties(p: DocCharProps): RunProperties {
   const underline = p.underlineKul ? underlineStyle(p.underlineKul) : undefined;
   const size = p.sizeHalfPts && p.sizeHalfPts > 0 ? pt(p.sizeHalfPts / 2) : undefined;
+  const fontFamily = toFontFamily(p);
   return {
     ...(p.bold ? { bold: true } : {}),
     ...(p.italic ? { italic: true } : {}),
     ...(underline ? { underline } : {}),
     ...(size ? { fontSizePt: size } : {}),
+    ...(fontFamily ? { fontFamily } : {}),
   };
+}
+
+// A run's fonts in the slots of w:rFonts: the font of the characters neither
+// ASCII nor East Asian (sprmCRgFtc2) is the high-ANSI one, the one Word sets
+// Cyrillic in.
+function toFontFamily(p: DocCharProps): FontFamilyMap | undefined {
+  const fonts: FontFamilyMap = {
+    ...(p.fontAscii ? { ascii: p.fontAscii } : {}),
+    ...(p.fontOther ? { hAnsi: p.fontOther } : {}),
+    ...(p.fontEastAsia ? { eastAsia: p.fontEastAsia } : {}),
+    ...(p.fontBi ? { cs: p.fontBi } : {}),
+  };
+  return Object.keys(fonts).length > 0 ? fonts : undefined;
 }
 
 function toParaProperties(p: DocParaProps): ParagraphProperties {

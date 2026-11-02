@@ -1074,3 +1074,119 @@ describe('doc reader: styles', () => {
     expect(paragraphs(doc)[0]!.paragraph.properties.indentLeft).toBe(18);
   });
 });
+
+describe('doc reader: fonts', () => {
+  // [MS-DOC] SttbfFfn: a run's font sprms and the style sheet name a font by
+  // its index in the font table. Measured in Word for Mac on .docs LibreOffice
+  // wrote from a .docx of these fonts, some bytes patched in place: each word's
+  // ASCII, other, East Asian and complex-script font, as Word reports them.
+  const FACES = ['Times New Roman', 'Arial', 'Courier New', 'SimSun', 'Georgia'];
+  const fontsOf = (doc: FlowDoc) =>
+    paragraphs(doc).map((el) => el.paragraph.runs.map((r) => [r.text, r.properties.fontFamily]));
+
+  it("names each run's font from the font table, and parts runs that differ in it alone", () => {
+    // Word: "plain " in no font of its own, "arial " in Arial, "courier" in Courier New.
+    const doc = readDoc(
+      buildDoc([{ text: 'plain arial courier\r', compressed: false }], {
+        fonts: FACES,
+        formatRuns: [
+          { length: 6 },
+          { length: 6, fontAscii: 1, fontOther: 1 },
+          { length: 8, fontAscii: 2, fontOther: 2 },
+        ],
+      }),
+    ).doc;
+    expect(fontsOf(doc)).toEqual([
+      [
+        ['plain ', {}],
+        ['arial ', { ascii: 'Arial', hAnsi: 'Arial' }],
+        ['courier', { ascii: 'Courier New', hAnsi: 'Courier New' }],
+      ],
+    ]);
+  });
+
+  it('reads the font of each kind of character into its slot of w:rFonts', () => {
+    // Word: a word in Verdana for ASCII and Courier New for the other
+    // characters sets its Cyrillic in Courier New, which is w:hAnsi; East Asian
+    // characters take sprmCRgFtc1's font, complex-script ones sprmCFtcBi's.
+    const doc = readDoc(
+      buildDoc([{ text: 'mixed\r', compressed: false }], {
+        fonts: FACES,
+        formatRuns: [{ length: 6, fontAscii: 4, fontOther: 2, fontEastAsia: 3, fontBi: 1 }],
+      }),
+    ).doc;
+    expect(fontsOf(doc)).toEqual([
+      [['mixed', { ascii: 'Georgia', hAnsi: 'Courier New', eastAsia: 'SimSun', cs: 'Arial' }]],
+    ]);
+  });
+
+  it('takes the font of the paragraph style, then of the character style, then of the run', () => {
+    // Word: "Title words" in heading 1's Arial, "body " in Normal's Times New
+    // Roman, "code " in the Code style's Courier New, "override" in its own
+    // Georgia; each in Normal's East Asian font.
+    const doc = readDoc(
+      buildDoc([{ text: 'Title words\rbody code override\r', compressed: false }], {
+        fonts: FACES,
+        styles: [
+          { istd: 0, kind: 'paragraph', chars: { fontAscii: 0, fontOther: 0, fontEastAsia: 3 } },
+          { istd: 1, kind: 'paragraph', base: 0, chars: { fontAscii: 1, fontOther: 1 } },
+          { istd: 10, kind: 'character', chars: { fontAscii: 2, fontOther: 2 } },
+        ],
+        paraRuns: [{ length: 12, istd: 1 }, { length: 19 }],
+        formatRuns: [
+          { length: 12 },
+          { length: 5 },
+          { length: 5, charStyle: 10 },
+          { length: 9, charStyle: 10, fontAscii: 4, fontOther: 4 },
+        ],
+      }),
+    ).doc;
+    const face = (name: string) => ({ ascii: name, hAnsi: name, eastAsia: 'SimSun' });
+    expect(fontsOf(doc)).toEqual([
+      [['Title words', face('Arial')]],
+      [
+        ['body ', face('Times New Roman')],
+        ['code ', face('Courier New')],
+        ['override', face('Georgia')],
+      ],
+    ]);
+  });
+
+  it("sets a run in the style sheet's default fonts where no style or run names one", () => {
+    // Word: with a Normal style that names no ASCII or other font and a Stshi
+    // that names Georgia and Courier New, "plain" is in Georgia, in Courier New
+    // past ASCII, and so is the empty line; "Title" in its style's Arial. Word
+    // 2007 on writes its .docs so, with Calibri there. The complex-script
+    // default (ftcBi, a Stshi longer than LibreOffice writes) is the spec's.
+    const doc = readDoc(
+      buildDoc([{ text: 'plain\r\rTitle\r', compressed: false }], {
+        fonts: FACES,
+        styles: [
+          { istd: 0, kind: 'paragraph' },
+          { istd: 1, kind: 'paragraph', base: 0, chars: { fontAscii: 1, fontOther: 1 } },
+        ],
+        styleFonts: { ascii: 4, eastAsia: 3, other: 2, bi: 1 },
+        paraRuns: [{ length: 6 }, { length: 1 }, { length: 6, istd: 1 }],
+      }),
+    ).doc;
+    const defaults = { ascii: 'Georgia', hAnsi: 'Courier New', eastAsia: 'SimSun', cs: 'Arial' };
+    expect(fontsOf(doc)).toEqual([
+      [['plain', defaults]],
+      [[ZWSP, defaults]],
+      [['Title', { ...defaults, ascii: 'Arial', hAnsi: 'Arial' }]],
+    ]);
+  });
+
+  it('names no font for an index past the end of the table, nor for one with no name', () => {
+    const doc = readDoc(
+      buildDoc([{ text: 'past nameless\r', compressed: false }], {
+        fonts: ['Arial', ''],
+        formatRuns: [
+          { length: 5, fontAscii: 7 },
+          { length: 9, fontAscii: 1 },
+        ],
+      }),
+    ).doc;
+    expect(fontsOf(doc)).toEqual([[['past nameless', {}]]]);
+  });
+});
