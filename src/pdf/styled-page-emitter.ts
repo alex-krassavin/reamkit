@@ -1421,6 +1421,19 @@ function emitPageContent(
     // text it stands for: copied or searched, it reads as it was written. A
     // word cut into runs — a vowel sign coloured apart — is one bracket, or a
     // reader takes each run for a word of its own.
+    //
+    // The word, and not less, though MuPDF (1.28.5) misreads it: its
+    // `do_extract_within_actualtext` keeps the glyphs whose /ToUnicode matches
+    // the text at either end of a bracket and counts in bytes, not characters,
+    // what is left of the text for them, so a tail that matched comes out
+    // twice — हिन्दी reads "हिन्दीन्दी". Bracketing only the glyphs drawn out of
+    // order (हि, and न्दी from /ToUnicode) read right in MuPDF, but poppler
+    // takes a bracket that ends on a mark set back over its letter, the reph
+    // of कर्कश or the rakar of राष्ट्र, for the end of a word ("कर्क श"), and
+    // a bracket that keeps the mark with the letter after it ends on a tail
+    // that matches again ("कर्कशश"). LibreOffice escapes MuPDF by giving no
+    // Unicode value to any glyph of a cluster but the first, which PDF/A-2u
+    // (§6.2.11.7.2) and PDF/UA (§7.21.7) forbid.
     const actualText = (tokens: ReadonlyArray<(typeof line.tokens)[number]>) => {
       const open = tokens.map(() => '');
       const close = tokens.map(() => false);
