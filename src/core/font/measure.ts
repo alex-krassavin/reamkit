@@ -103,34 +103,177 @@ export function shapeGlyphs(
     );
     return { gids: shaped.gids };
   }
-  return { gids: run.gids, glyphText: clusterGlyphText(parsed, text, run) };
+  return { gids: run.gids, glyphText: shapedGlyphText(parsed, text, run) };
 }
 
-/**
- * Each glyph of a cluster that no character of it maps to, with the
- * cluster's text less the characters that do map to its other glyphs: the
- * short i of हि is a contextual form no character reaches, and it stands for
- * the i once the ha is accounted for.
- */
-function clusterGlyphText(parsed: ParsedTtf, text: string, run: IndicRun): Map<number, string> {
-  const cps = [...text].map((ch) => ch.codePointAt(0)!);
-  const starts = [...new Set(run.clusters)].sort((a, b) => a - b);
-  const out = new Map<number, string>();
-  for (let s = 0; s < starts.length; s++) {
-    const from = starts[s]!;
-    const to = starts[s + 1] ?? cps.length;
-    const left = cps.slice(from, to);
-    const glyphs = run.gids.filter((_, i) => run.clusters[i] === from);
-    const unmapped: Array<number> = [];
-    for (const gid of glyphs) {
-      const at = left.findIndex((cp) => parsed.glyphForCodepoint(cp) === gid);
-      if (at >= 0) left.splice(at, 1);
-      else unmapped.push(gid);
+/** The characters a face's cmap gives each glyph, scanned as /ToUnicode scans them: U+0009 to U+FFFF. */
+const cmapNames = new WeakMap<ParsedTtf, ReadonlyMap<number, ReadonlyArray<number>>>();
+
+function namesOf(parsed: ParsedTtf): ReadonlyMap<number, ReadonlyArray<number>> {
+  let names = cmapNames.get(parsed);
+  if (!names) {
+    const map = new Map<number, Array<number>>();
+    for (let cp = 0x0009; cp <= 0xffff; cp++) {
+      if (cp >= 0xd800 && cp <= 0xdfff) continue;
+      const gid = parsed.glyphForCodepoint(cp);
+      if (gid === 0) continue;
+      const had = map.get(gid);
+      if (had) had.push(cp);
+      else map.set(gid, [cp]);
     }
-    const rest = String.fromCodePoint(...left);
-    if (rest === '') continue;
-    for (const gid of unmapped) if (!out.has(gid)) out.set(gid, rest);
+    names = map;
+    cmapNames.set(parsed, names);
   }
+  return names;
+}
+
+/** A character's canonical parts: क़ is क and the nukta, ো is ে and া. */
+const partsOf = (cp: number): Array<number> =>
+  [...String.fromCodePoint(cp).normalize('NFD')].map((ch) => ch.codePointAt(0)!);
+
+const IGNORABLE_RE = /\p{Default_Ignorable_Code_Point}/u;
+
+/**
+ * Each glyph the shaper made that no character maps to, with the characters
+ * it was made from, in the order they were written: the reph of पार्श्व
+ * stands for र्, the conjunct it rides on for श्व, the short i of हि for ि.
+ * Each pair is one cluster, and a glyph given the cluster's text less what
+ * its other glyphs are named after read the tail of पार्श्व twice: once for
+ * the conjunct and once for the reph.
+ *
+ * A cluster is read glyph by glyph:
+ * - A glyph a character maps to is named after it by /ToUnicode, and reads
+ *   that much of what it was made from — or, where a face moved a glyph by
+ *   swapping two (Noto Sans Bengali sets a reph after a vowel sign so), of
+ *   the rest of its cluster.
+ * - A made glyph reads what is left of the characters it was made from. Of a
+ *   character drawn in several, each takes a part: a two-part vowel sign
+ *   whose first part joined the consonant stands there for its first part,
+ *   and the glyph of the second part for the second.
+ * - What is left of the cluster goes to a made glyph that read nothing, or
+ *   else to the one after the glyph it was drawn as: the o of कों is set as
+ *   the glyph of the aa, its top in the anusvara's, and the anusvara stands
+ *   for both. Left out, a reader lost the o of a plural.
+ * - A made glyph that still reads nothing — one of the pieces a face draws a
+ *   letter in — stands for its letter, so that every glyph drawn reads.
+ */
+function shapedGlyphText(parsed: ParsedTtf, text: string, run: IndicRun): Map<number, string> {
+  const cps = [...text].map((ch) => ch.codePointAt(0)!);
+  const names = namesOf(parsed);
+  // The missing glyph stands for whatever the face lacks, and is named after nothing.
+  const made = run.gids.map((gid) => gid !== 0 && !names.has(gid));
+  // The characters of each cluster, and the cluster each character is in.
+  const starts = [...new Set(run.clusters)].sort((a, b) => a - b);
+  const members = new Map<number, Array<number>>();
+  const clusterOf: Array<number> = [];
+  starts.forEach((c, k) => {
+    const all: Array<number> = [];
+    for (let s = k === 0 ? 0 : c; s < (starts[k + 1] ?? cps.length); s++) {
+      all.push(s);
+      clusterOf[s] = c;
+    }
+    members.set(c, all);
+  });
+  // The glyphs each character went into, and the made glyphs of each
+  // cluster, in the order they are drawn.
+  const carriers = cps.map((): Array<number> => []);
+  const madeIn = new Map<number, Array<number>>();
+  run.sources.forEach((own, i) => {
+    for (const s of own) carriers[s]?.push(i);
+    if (!made[i]) return;
+    const had = madeIn.get(run.clusters[i]!);
+    if (had) had.push(i);
+    else madeIn.set(run.clusters[i]!, [i]);
+  });
+  // What of each character is still to be read, as its canonical parts.
+  const unread = cps.map(partsOf);
+  // Take the parts of a name out of what some characters have unread, each
+  // from the first that has it — or the last, `late`. False if one is missing.
+  const take = (
+    parts: ReadonlyArray<number>,
+    from: ReadonlyArray<number>,
+    late: boolean,
+  ): boolean => {
+    const pool = from.map((s) => [...unread[s]!]);
+    for (const part of parts) {
+      let q = -1;
+      pool.forEach((have, at) => {
+        if (have.includes(part) && (q < 0 || late)) q = at;
+      });
+      if (q < 0) return false;
+      pool[q]!.splice(pool[q]!.indexOf(part), 1);
+    }
+    from.forEach((s, at) => (unread[s] = pool[at]!));
+    return true;
+  };
+
+  // The characters the made glyphs drawn so far were made from.
+  const madeFrom = new Set<number>();
+  run.gids.forEach((gid, j) => {
+    const own = run.sources[j]!;
+    if (made[j]) for (const s of own) madeFrom.add(s);
+    const said = names.get(gid);
+    if (!said) return;
+    // Of two characters with the part, a glyph drawn after a made glyph of
+    // the same ones reads the later: of ડ્ડ cut in two, the half form drawn
+    // first is the first ડ, and the full ડ after it the second.
+    const late = own.some((s) => madeFrom.has(s));
+    if (said.some((name) => take(partsOf(name), own, late))) return;
+    const others = (members.get(run.clusters[j]!) ?? []).filter((s) => !own.includes(s));
+    if (said.some((name) => take(partsOf(name), others, late))) return;
+    // A ligature named after another spelling of its letters — ত্‍ as ৎ —
+    // reads them all.
+    if (own.length > 1 && !said.some((name) => IGNORABLE_RE.test(String.fromCodePoint(name)))) {
+      for (const s of own) unread[s] = [];
+    }
+  });
+
+  // What each made glyph reads, piece by piece, with the character each is from.
+  const pieces = run.gids.map((): Array<readonly [number, string]> => []);
+  // What is left of a character, its parts put back together: ಯೋ less the ೕ
+  // its own glyph reads is ಯೊ, as where it was written ಯೊ.
+  const rest = (s: number): string => {
+    const left = unread[s]!;
+    if (left.length === partsOf(cps[s]!).length) return String.fromCodePoint(cps[s]!);
+    return String.fromCodePoint(...left).normalize('NFC');
+  };
+  cps.forEach((_, s) => {
+    const left = unread[s]!;
+    const mine = carriers[s]!.filter((i) => made[i]);
+    if (left.length === 0 || mine.length === 0) return;
+    if (mine.length === 1) pieces[mine[0]!]!.push([s, rest(s)]);
+    else {
+      // One part each, in the order the parts are written and drawn; the last
+      // takes what is left over.
+      mine.forEach((i, k) => {
+        const part = k === mine.length - 1 ? left.slice(k) : left.slice(k, k + 1);
+        if (part.length > 0) pieces[i]!.push([s, String.fromCodePoint(...part).normalize('NFC')]);
+      });
+    }
+    unread[s] = [];
+  });
+  cps.forEach((cp, s) => {
+    if (unread[s]!.length === 0 || IGNORABLE_RE.test(String.fromCodePoint(cp))) return;
+    const near = madeIn.get(clusterOf[s]!) ?? [];
+    const after = carriers[s]![0] ?? -1;
+    const to =
+      near.find((i) => pieces[i]!.length === 0) ?? near.find((i) => i > after) ?? near.at(-1);
+    if (to !== undefined) pieces[to]!.push([s, rest(s)]);
+  });
+
+  const out = new Map<number, string>();
+  run.gids.forEach((gid, i) => {
+    if (!made[i] || out.has(gid)) return;
+    const read =
+      pieces[i]!.length > 0
+        ? pieces[i]!
+        : run.sources[i]!.map((s) => [s, String.fromCodePoint(cps[s]!)] as const);
+    const said = [...read]
+      .sort((a, b) => a[0] - b[0])
+      .map(([, t]) => t)
+      .join('');
+    if (said !== '') out.set(gid, said);
+  });
   return out;
 }
 

@@ -29,6 +29,7 @@ import {
   MULTIPLIED,
   OtlFace,
   SUBSTITUTED,
+  joinSources,
   mergeClusters,
   pickScript,
   planLookups,
@@ -455,6 +456,8 @@ export function syllableStarts(text: string): Array<boolean> {
 interface Glyph extends OtlGlyph {
   /** The character it was mapped from (for a ligature, its first). */
   cp: number;
+  /** Kept for every glyph here (see {@link OtlGlyph.sources}). */
+  sources: ReadonlyArray<number>;
   cat: number;
   pos: number;
   /** The syllable's type, from the grammar. */
@@ -593,6 +596,13 @@ export interface IndicRun {
   readonly gids: Array<number>;
   /** Per glyph: the index, in code points, of the first character of its cluster. */
   readonly clusters: Array<number>;
+  /**
+   * Per glyph: the indices, in code points, of the characters it stands for,
+   * least first. A conjunct stands for its letters and viramas, a reph for its
+   * Ra and virama, each part of a vowel sign drawn in two for the sign, and a
+   * dotted circle the shaper put in for nothing.
+   */
+  readonly sources: Array<ReadonlyArray<number>>;
   /** Per glyph, in font units. */
   readonly advances: Array<number>;
   readonly xOffsets: Array<number>;
@@ -622,7 +632,7 @@ export function shapeIndic(parsed: ParsedTtf, text: string, kern = true): IndicR
   });
   if (runs.length === 0) return undefined;
   runs[runs.length - 1]!.to = cps.length;
-  const out: IndicRun = { gids: [], clusters: [], advances: [], xOffsets: [], yOffsets: [] };
+  const out = emptyRun();
   let shapedAny = false;
   for (const run of runs) {
     const plan = planFor(parsed, run.config);
@@ -633,11 +643,17 @@ export function shapeIndic(parsed: ParsedTtf, text: string, kern = true): IndicR
     shapedAny ||= plan !== undefined;
     out.gids.push(...shaped.gids);
     out.clusters.push(...shaped.clusters.map((c) => c + run.from));
+    out.sources.push(...shaped.sources.map((s) => s.map((c) => c + run.from)));
     out.advances.push(...shaped.advances);
     out.xOffsets.push(...shaped.xOffsets);
     out.yOffsets.push(...shaped.yOffsets);
   }
   return shapedAny ? out : undefined;
+}
+
+/** A run with no glyphs yet. */
+function emptyRun(): IndicRun {
+  return { gids: [], clusters: [], sources: [], advances: [], xOffsets: [], yOffsets: [] };
 }
 
 /** Each character its own glyph, at its own advance. */
@@ -646,6 +662,7 @@ function unshaped(parsed: ParsedTtf, cps: ReadonlyArray<number>): IndicRun {
   return {
     gids,
     clusters: cps.map((_, i) => i),
+    sources: cps.map((_, i) => [i]),
     advances: gids.map((g) => parsed.advanceWidths[g] ?? 0),
     xOffsets: gids.map(() => 0),
     yOffsets: gids.map(() => 0),
@@ -691,11 +708,12 @@ function shapeRun(
   const pos = position(plan.face, gpos, buf);
   removeIgnorables(buf, pos);
 
-  const out: IndicRun = { gids: [], clusters: [], advances: [], xOffsets: [], yOffsets: [] };
+  const out = emptyRun();
   buf.forEach((g, i) => {
     const p = pos[i]!;
     out.gids.push(g.gid);
     out.clusters.push(g.cluster);
+    out.sources.push(g.sources);
     out.advances.push(p.xAdvance);
     out.xOffsets.push(p.xOffset);
     out.yOffsets.push(p.yOffset);
@@ -783,28 +801,33 @@ const VOWEL_CONSTRAINTS: ReadonlyMap<number, ReadonlySet<number>> = new Map(
 
 /**
  * The characters with a dotted circle put into each sequence that spells one
- * vowel as another (see {@link VOWEL_CONSTRAINTS}), each with its cluster: the
- * circle takes the cluster of the sign it carries.
+ * vowel as another (see {@link VOWEL_CONSTRAINTS}), each with its cluster and
+ * its index in the text: the circle takes the cluster of the sign it carries,
+ * and stands for no character.
  */
 function constrainVowels(
   cps: ReadonlyArray<number>,
   clusters: ReadonlyArray<number>,
-): Array<readonly [number, number]> {
-  const out: Array<readonly [number, number]> = [];
+): Array<readonly [number, number, ReadonlyArray<number>]> {
+  const out: Array<readonly [number, number, ReadonlyArray<number>]> = [];
+  const take = (i: number): void => {
+    out.push([cps[i]!, clusters[i]!, [i]]);
+  };
   let i = 0;
   while (i < cps.length) {
     const cp = cps[i]!;
     let matched = i + 1 < cps.length && VOWEL_CONSTRAINTS.get(cp)?.has(cps[i + 1]!) === true;
     // Ra, virama, I reads as vocalic R.
     if (cp === 0x0930 && cps[i + 1] === 0x094d && cps[i + 2] === 0x0907) {
-      out.push([cp, clusters[i]!]);
+      take(i);
       i++;
       matched = true;
     }
-    out.push([cps[i]!, clusters[i]!]);
+    take(i);
     i++;
     if (matched && i < cps.length) {
-      out.push([0x25cc, clusters[i]!], [cps[i]!, clusters[i]!]);
+      out.push([0x25cc, clusters[i]!, []]);
+      take(i);
       i++;
     }
   }
@@ -819,10 +842,12 @@ function constrainVowels(
  * its parts (a nukta letter becomes its letter and the nukta, a two-part vowel
  * sign its two parts); marks in canonical order; and a letter and a mark put
  * back together where the face draws the composite and Unicode allows it.
+ * Each glyph stands for its own character, the parts of a composite each for
+ * the composite, and a letter put back together for both of its characters.
  */
 function normalize(parsed: ParsedTtf, face: OtlFace, cps: ReadonlyArray<number>): Array<Glyph> {
   const glyph = (cp: number): number => parsed.glyphForCodepoint(cp);
-  const make = (cp: number, cluster: number): Glyph => {
+  const make = (cp: number, cluster: number, sources: ReadonlyArray<number>): Glyph => {
     const gid = glyph(cp);
     return {
       gid,
@@ -832,6 +857,7 @@ function normalize(parsed: ParsedTtf, face: OtlFace, cps: ReadonlyArray<number>)
       syllable: 0,
       ligId: 0,
       ligComp: 0,
+      sources,
       cp,
       cat: X,
       pos: END,
@@ -864,10 +890,10 @@ function normalize(parsed: ParsedTtf, face: OtlFace, cps: ReadonlyArray<number>)
     return true;
   };
   const buf: Array<Glyph> = [];
-  for (const [cp, cluster] of constrainVowels(cps, clusters)) {
+  for (const [cp, cluster, sources] of constrainVowels(cps, clusters)) {
     const parts: Array<number> = [];
-    if (decompose(cp, parts)) for (const p of parts) buf.push(make(p, cluster));
-    else buf.push(make(cp, cluster));
+    if (decompose(cp, parts)) for (const p of parts) buf.push(make(p, cluster, sources));
+    else buf.push(make(cp, cluster, sources));
   }
 
   // Reorder marks by combining class, stable, merging what moves.
@@ -901,6 +927,7 @@ function normalize(parsed: ParsedTtf, face: OtlFace, cps: ReadonlyArray<number>)
         glyph(composed) !== 0
       ) {
         s.cluster = Math.min(s.cluster, g.cluster);
+        s.sources = joinSources([s, g]) ?? [];
         s.cp = composed;
         s.gid = glyph(composed);
         s.cls = face.glyphClass(s.gid);
@@ -981,6 +1008,8 @@ function insertDottedCircles(parsed: ParsedTtf, face: OtlFace, buf: Array<Glyph>
       syllable: g.syllable,
       ligId: 0,
       ligComp: 0,
+      // It stands for no character: it is there because one is missing.
+      sources: [],
       cp: 0x25cc,
       cat: DOTTEDCIRCLE,
       pos: END,

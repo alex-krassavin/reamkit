@@ -20,10 +20,10 @@ const CASES: Readonly<Record<string, ReadonlyArray<Case>>> = {
     [
       'हिन्दी',
       [
-        [105, 0, 259, 0, 0],
-        [17, 0, 531, 0, 0],
-        [26, 2, 309, 0, 0],
-        [8, 4, 531, 0, 0],
+        [125, 0, 259, 0, 0],
+        [20, 0, 531, 0, 0],
+        [30, 2, 309, 0, 0],
+        [10, 4, 531, 0, 0],
         [5, 4, 259, 0, 0],
       ],
     ],
@@ -31,17 +31,17 @@ const CASES: Readonly<Record<string, ReadonlyArray<Case>>> = {
     [
       'धर्म',
       [
-        [9, 0, 615, 0, 0],
-        [12, 1, 598, 0, 0],
-        [99, 1, 0, 0, 0],
+        [11, 0, 615, 0, 0],
+        [14, 1, 598, 0, 0],
+        [113, 1, 0, 0, 0],
       ],
     ],
     // ksha, a ligature
     [
       'क्षमा',
       [
-        [18, 0, 717, 0, 0],
-        [12, 3, 598, 0, 0],
+        [21, 0, 717, 0, 0],
+        [14, 3, 598, 0, 0],
         [3, 3, 259, 0, 0],
       ],
     ],
@@ -49,36 +49,36 @@ const CASES: Readonly<Record<string, ReadonlyArray<Case>>> = {
     [
       'प्रधान',
       [
-        [47, 0, 569, 0, 0],
-        [9, 3, 615, 0, 0],
+        [53, 0, 569, 0, 0],
+        [11, 3, 615, 0, 0],
         [3, 3, 259, 0, 0],
-        [10, 5, 555, 0, 0],
+        [12, 5, 555, 0, 0],
       ],
     ],
     // qa: ka and a nukta, one glyph
     [
       'क़लम',
       [
-        [21, 0, 768, 0, 0],
-        [14, 2, 678, 0, 0],
-        [12, 3, 598, 0, 0],
+        [25, 0, 768, 0, 0],
+        [16, 2, 678, 0, 0],
+        [14, 3, 598, 0, 0],
       ],
     ],
     // ka, virama, ZWJ: a half ka
     [
       'क्\u200dष',
       [
-        [24, 0, 550, 0, 0],
-        [16, 3, 578, 0, 0],
+        [28, 0, 550, 0, 0],
+        [19, 3, 578, 0, 0],
       ],
     ],
     // ka, virama, ZWNJ: the virama stays
     [
       'क्\u200cष',
       [
-        [7, 0, 768, 0, 0],
-        [19, 0, 0, -221, 0],
-        [16, 3, 578, 0, 0],
+        [9, 0, 768, 0, 0],
+        [23, 0, 0, -221, 0],
+        [19, 3, 578, 0, 0],
       ],
     ],
     // a vowel sign on nothing sits on a dotted circle
@@ -86,7 +86,7 @@ const CASES: Readonly<Record<string, ReadonlyArray<Case>>> = {
       'ि',
       [
         [4, 0, 259, 0, 0],
-        [146, 0, 510, 0, 0],
+        [202, 0, 510, 0, 0],
       ],
     ],
     // a, short e: written as one vowel that is not one
@@ -94,15 +94,15 @@ const CASES: Readonly<Record<string, ReadonlyArray<Case>>> = {
       'अॆ',
       [
         [2, 0, 764, 0, 0],
-        [146, 0, 510, 0, 0],
-        [6, 0, 0, 6, 0],
+        [202, 0, 510, 0, 0],
+        [8, 0, 0, 6, 0],
       ],
     ],
     // shri
     [
       'श्री',
       [
-        [50, 0, 708, 0, 0],
+        [57, 0, 708, 0, 0],
         [5, 0, 259, 0, 0],
       ],
     ],
@@ -110,22 +110,32 @@ const CASES: Readonly<Record<string, ReadonlyArray<Case>>> = {
     [
       'र्कि',
       [
-        [121, 0, 259, 0, 0],
-        [7, 0, 768, 0, 0],
-        [143, 0, 0, 0, 0],
+        [156, 0, 259, 0, 0],
+        [9, 0, 768, 0, 0],
+        [199, 0, 0, 0, 0],
       ],
     ],
     // a ZWJ before a letter: its cluster goes forward to the letter
-    ['\u200dक', [[7, 0, 768, 0, 0]]],
+    ['\u200dक', [[9, 0, 768, 0, 0]]],
     // qa as one code point, taken apart into ka and the nukta
-    ['क़', [[21, 0, 768, 0, 0]]],
+    ['क़', [[25, 0, 768, 0, 0]]],
+    // a reph over sha-va, a conjunct of three letters
+    [
+      'पार्श्व',
+      [
+        [13, 0, 568, 0, 0],
+        [3, 0, 259, 0, 0],
+        [100, 2, 688, 0, 0],
+        [113, 2, 0, 0, 0],
+      ],
+    ],
   ],
   Bengali: [
     // o, written once and drawn on both sides
     [
       'কোথায়',
       [
-        [72, 0, 361, 0, 0],
+        [73, 0, 361, 0, 0],
         [6, 0, 807, 0, 0],
         [14, 0, 266, 0, 0],
         [7, 2, 645, 0, 0],
@@ -147,7 +157,7 @@ const CASES: Readonly<Record<string, ReadonlyArray<Case>>> = {
       'ক্য',
       [
         [6, 0, 807, 0, 0],
-        [23, 0, 270, 0, 0],
+        [24, 0, 270, 0, 0],
       ],
     ],
     // a reph, after the base
@@ -155,16 +165,16 @@ const CASES: Readonly<Record<string, ReadonlyArray<Case>>> = {
       'র্ক',
       [
         [6, 0, 807, 0, 0],
-        [22, 0, 0, -361, 0],
+        [23, 0, 0, -361, 0],
       ],
     ],
     // shiksha
     [
       'শিক্ষা',
       [
-        [63, 0, 266, 0, 0],
+        [64, 0, 266, 0, 0],
         [11, 0, 681, 0, 0],
-        [24, 2, 859, 0, 0],
+        [25, 2, 859, 0, 0],
         [14, 2, 266, 0, 0],
       ],
     ],
@@ -172,16 +182,16 @@ const CASES: Readonly<Record<string, ReadonlyArray<Case>>> = {
     [
       'কৌ',
       [
-        [72, 0, 361, 0, 0],
+        [73, 0, 361, 0, 0],
         [6, 0, 807, 0, 0],
-        [20, 0, 266, 0, 0],
+        [21, 0, 266, 0, 0],
       ],
     ],
     // o with nothing to sit on: taken apart, on a dotted circle
     [
       'ো',
       [
-        [72, 0, 361, 0, 0],
+        [73, 0, 361, 0, 0],
         [3, 0, 510, 0, 0],
         [14, 0, 266, 0, 0],
       ],
@@ -191,8 +201,17 @@ const CASES: Readonly<Record<string, ReadonlyArray<Case>>> = {
       '\u200dৣঁ',
       [
         [3, 0, 510, 0, 0],
-        [21, 0, 0, 0, 0],
+        [22, 0, 0, 0, 0],
         [5, 0, 0, 0, 0],
+      ],
+    ],
+    // a reph set after the ii: the face swaps their glyphs
+    [
+      'র্ক্ষী',
+      [
+        [25, 0, 859, 0, 0],
+        [16, 0, 266, 0, 0],
+        [77, 0, 0, -215, 38],
       ],
     ],
   ],
@@ -390,42 +409,51 @@ const CASES: Readonly<Record<string, ReadonlyArray<Case>>> = {
     [
       'ಧರ್ಮ',
       [
-        [8, 0, 765, 0, 0],
-        [9, 1, 1156, 0, 0],
-        [28, 1, 567, 0, 0],
+        [24, 0, 765, 0, 0],
+        [30, 1, 1156, 0, 0],
+        [59, 1, 567, 0, 0],
       ],
     ],
     // o, in two parts
     [
       'ಕೊ',
       [
-        [85, 0, 574, 0, 0],
-        [16, 0, 746, 0, 0],
+        [206, 0, 574, 0, 0],
+        [46, 0, 746, 0, 0],
       ],
     ],
     // stri: two below-base forms
     [
       'ಸ್ತ್ರೀ',
       [
-        [11, 0, 709, 0, 0],
-        [14, 0, 728, 0, 0],
-        [105, 0, 208, 0, 0],
+        [202, 0, 705, 0, 0],
+        [265, 0, 105, 0, 0],
+        [54, 0, 408, 0, 0],
       ],
     ],
     // Ra, virama, ZWJ: read as Ra, ZWJ, virama
     [
       'ರ್\u200dಕ',
       [
-        [10, 0, 651, 0, 0],
-        [29, 0, 175, 0, 0],
+        [32, 0, 651, 0, 0],
+        [62, 0, 175, 0, 0],
       ],
     ],
     // ai, in two parts
     [
       'ಕೈ',
       [
-        [85, 0, 574, 0, 0],
-        [25, 0, 183, 0, 0],
+        [206, 0, 574, 0, 0],
+        [55, 0, 183, 0, 0],
+      ],
+    ],
+    // ii in two parts, its first joined to ka over the nukta
+    [
+      'ಕ಼ೀ',
+      [
+        [172, 0, 574, 0, 0],
+        [41, 0, 0, -8, 0],
+        [54, 0, 408, 0, 0],
       ],
     ],
   ],
@@ -522,7 +550,37 @@ describe('what it leaves to the caller', () => {
     const devanagari = face('Devanagari');
     const run = shapeIndic(devanagari, 'हिক')!;
     // हि shaped (the i sign first), then the Bengali ka as the face's notdef.
-    expect(run.gids).toEqual([105, 17, 0]);
+    expect(run.gids).toEqual([125, 20, 0]);
     expect(run.clusters).toEqual([0, 0, 2]);
+    expect(run.sources).toEqual([[1], [0], [2]]);
+  });
+});
+
+describe('the characters each glyph stands for', () => {
+  const sources = (script: string, text: string) => shapeIndic(face(script), text)!.sources;
+
+  it('go with a glyph wherever the syllable is reordered', () => {
+    // हि: the short i is drawn before the ha, and is still the second character.
+    expect(sources('Devanagari', 'हि')).toEqual([[1], [0]]);
+  });
+
+  it('are, for a ligature, the characters of what it joined', () => {
+    // A reph is its Ra and virama, and a conjunct its letters and viramas:
+    // in पार्श्व the conjunct श्व is drawn first and the reph over it after.
+    expect(sources('Devanagari', 'धर्म')).toEqual([[0], [3], [1, 2]]);
+    expect(sources('Devanagari', 'पार्श्व')).toEqual([[0], [1], [4, 5, 6], [2, 3]]);
+    // …and not a mark the match stepped over: ka and the first part of ii
+    // are one glyph, and the nukta written between them is its own.
+    expect(sources('Kannada', 'ಕ಼ೀ')).toEqual([[0, 2], [1], [2]]);
+  });
+
+  it('are, for each part of a vowel sign taken apart, the sign', () => {
+    // কো: the e part before ka and the aa part after it are both the o.
+    expect(sources('Bengali', 'কো')).toEqual([[1], [0], [1]]);
+  });
+
+  it('are none for a dotted circle the shaper put in', () => {
+    expect(sources('Devanagari', 'ि')).toEqual([[0], []]);
+    expect(sources('Devanagari', 'अॆ')).toEqual([[0], [], [1]]);
   });
 });

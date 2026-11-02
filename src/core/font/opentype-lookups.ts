@@ -45,6 +45,14 @@ export interface OtlGlyph {
    * actually formed. Absent ⇒ none.
    */
   props?: number;
+  /**
+   * The characters it stands for, as indices into the text, least first. A
+   * ligature stands for the characters of its components, and each glyph of
+   * a multiple substitution for those of the glyph it replaced; a reader of
+   * the page is told the text of a glyph no character maps to from this.
+   * Absent where the shaper does not keep it.
+   */
+  sources?: ReadonlyArray<number>;
 }
 
 /** {@link OtlGlyph.props}: a GSUB lookup replaced the glyph. */
@@ -783,6 +791,7 @@ function applySubstitution<TGlyph extends OtlGlyph>(r: Run<TGlyph>, st: number):
         replace(r, r.idx, u16(b, seq + 2));
         return r.idx + 1;
       }
+      // Each glyph made stands for what the glyph it replaces stood for.
       const made: Array<TGlyph> = [];
       const props = (g.props ?? 0) | SUBSTITUTED | MULTIPLIED;
       for (let k = 0; k < count; k++) {
@@ -861,6 +870,9 @@ function ligate<TGlyph extends OtlGlyph>(r: Run<TGlyph>, st: number): number {
         : walk(r, r.idx, 1, count - 1, (g, nth) => g.gid === u16(b, lig + 4 + 2 * nth), false);
     if (!at) continue;
     const last = at.length > 0 ? at[at.length - 1]! : r.idx;
+    // The ligature stands for its components' characters; a mark the match
+    // stepped over is still a glyph of its own, and keeps its own.
+    const sources = joinSources([r.buf[r.idx]!, ...at.map((i) => r.buf[i]!)]);
     // The whole stretch is one cluster now, the marks the match stepped over
     // with it, and each of those marks remembers which component it followed.
     mergeClusters(r.buf, r.idx, last + 1);
@@ -880,10 +892,23 @@ function ligate<TGlyph extends OtlGlyph>(r: Run<TGlyph>, st: number): number {
     replace(r, r.idx, u16(b, lig));
     // A ligature forgives an earlier multiplication: it is what the glyph is now.
     first.props = ((first.props ?? 0) | LIGATED) & ~MULTIPLIED;
+    if (sources) first.sources = sources;
     for (let c = at.length - 1; c >= 0; c--) r.buf.splice(at[c]!, 1);
     return last + 1 - at.length;
   }
   return -1;
+}
+
+/**
+ * The characters a run of glyphs stands for together, each once, least first;
+ * `undefined` when none of them keeps its characters.
+ *
+ * @param glyphs The glyphs.
+ * @returns Their sources, merged.
+ */
+export function joinSources(glyphs: ReadonlyArray<OtlGlyph>): ReadonlyArray<number> | undefined {
+  if (glyphs.every((g) => g.sources === undefined)) return undefined;
+  return [...new Set(glyphs.flatMap((g) => g.sources ?? []))].sort((a, b) => a - b);
 }
 
 /** GSUB LookupType 8: one substitution, by context, from the end backwards. */

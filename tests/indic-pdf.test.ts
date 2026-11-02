@@ -20,11 +20,12 @@ const fixture = (name: string): Uint8Array<ArrayBuffer> =>
   new Uint8Array(readFileSync(`tests/fixtures/fonts/${name}.ttf`));
 const DEVANAGARI = fixture('NotoSansDevanagari-shaping');
 const BENGALI = fixture('NotoSansBengali-shaping');
+const KANNADA = fixture('NotoSansKannada-shaping');
 
 const latin1 = new TextDecoder('latin1');
 const hex4 = (gid: number): string => gid.toString(16).padStart(4, '0').toUpperCase();
-const utf16 = (text: string): string =>
-  'FEFF' + [...text].map((c) => hex4(c.codePointAt(0)!)).join('');
+const ucs = (text: string): string => [...text].map((c) => hex4(c.codePointAt(0)!)).join('');
+const utf16 = (text: string): string => 'FEFF' + ucs(text);
 
 const para = (text: string, rPr = ''): string =>
   `<w:p><w:r>${rPr ? `<w:rPr>${rPr}</w:rPr>` : ''}<w:t xml:space="preserve">${text}</w:t></w:r></w:p>`;
@@ -78,6 +79,54 @@ describe('a word of the scripts of India on a PDF page', () => {
     expect(parsed.glyphForCodepoint(0x093f)).not.toBe(shortI);
     const cmap = inflated(pdf).find((s) => s.includes('beginbfchar'))!;
     expect(cmap).toContain(`<${hex4(shortI)}> <093F>`);
+  });
+
+  /** The /ToUnicode CMap of the PDF of a paragraph, set in one face. */
+  async function toUnicode(text: string, regular: Uint8Array): Promise<string> {
+    const pdf = await pdfBytes(para(text), regular);
+    return inflated(pdf).find((s) => s.includes('beginbfchar'))!;
+  }
+
+  it('names each glyph only shaping reaches by the characters it was made from', async () => {
+    // पार्श्व: the conjunct श्व and the reph drawn over it are one cluster,
+    // and named each after the whole of it, a reader that does not read
+    // /ActualText read पार्श्वर्श्व.
+    const cmap = await toUnicode('पार्श्व पक्षों', DEVANAGARI);
+    const [, , conjunct, reph] = shapeIndic(parsed, 'पार्श्व')!.gids;
+    expect(cmap).toContain(`<${hex4(conjunct!)}> <${ucs('श्व')}>`);
+    expect(cmap).toContain(`<${hex4(reph!)}> <${ucs('र्')}>`);
+    // पक्षों: the face draws the o as the aa's glyph, which the cmap names
+    // aa, and its top in the anusvara's. Ksha stands for its own letters, and
+    // the anusvara for the o and itself, so that the o is not lost.
+    const [, ksha, aa, anusvara] = shapeIndic(parsed, 'पक्षों')!.gids;
+    expect(parsed.glyphForCodepoint(0x093e)).toBe(aa);
+    expect(cmap).toContain(`<${hex4(ksha!)}> <${ucs('क्ष')}>`);
+    expect(cmap).toContain(`<${hex4(anusvara!)}> <${ucs('ों')}>`);
+  });
+
+  it('names a glyph of half a vowel sign by that half', async () => {
+    // ಕೊ and ಕೈ draw ka with the first half of their vowel sign as one glyph,
+    // and the second halves are characters of their own. Named after the
+    // first word's ಕೊ, the glyph read ಕೊ in ಕೈ too, and the o twice.
+    const kannada = parseTtf(KANNADA);
+    const [kaE, uu] = shapeIndic(kannada, 'ಕೊ')!.gids;
+    expect(shapeIndic(kannada, 'ಕೈ')!.gids[0]).toBe(kaE);
+    expect(kannada.glyphForCodepoint(0x0cc2)).toBe(uu);
+    expect(await toUnicode('ಕೊ ಕೈ', KANNADA)).toContain(`<${hex4(kaE!)}> <${ucs('ಕೆ')}>`);
+    // কো: the e half is drawn before ka in a form of its own.
+    const e = shapeIndic(parseTtf(BENGALI), 'কো')!.gids[0]!;
+    expect(await toUnicode('কো', BENGALI)).toContain(`<${hex4(e)}> <${ucs('ে')}>`);
+  });
+
+  it('names a glyph a face moved by swapping two by what it stands for', async () => {
+    // Noto Sans Bengali sets a reph after the ii by swapping their glyphs:
+    // the reph's place takes the ii, the ii's a form of the reph.
+    const bengali = parseTtf(BENGALI);
+    const [ksha, ii, reph] = shapeIndic(bengali, 'র্ক্ষী')!.gids;
+    expect(bengali.glyphForCodepoint(0x09c0)).toBe(ii);
+    const cmap = await toUnicode('র্ক্ষী', BENGALI);
+    expect(cmap).toContain(`<${hex4(ksha!)}> <${ucs('ক্ষ')}>`);
+    expect(cmap).toContain(`<${hex4(reph!)}> <${ucs('র্')}>`);
   });
 
   it('sets a mark off the baseline with the text rise, and puts the rise back', async () => {

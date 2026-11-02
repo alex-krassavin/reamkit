@@ -48,17 +48,18 @@ For `tests/opentype-lookups.test.ts`, the lookups one at a time:
 | `NotoSansNewa-subset.ttf` | `53d77b12fd169a0c` | Four Newa syllables: cursive attachment. Of the faces the library downloads only Kannada's has a `curs` feature, and none of its joins moves a glyph. |
 
 For `tests/indic-shaper.test.ts`, a few words of each script shaped whole — the
-characters of the words in that test, the dotted circle, and the parts of every
+characters of the words in that test and of those whose text layer
+`tests/indic-pdf.test.ts` reads, the dotted circle, and the parts of every
 two-part vowel sign among them:
 
 | File | sha256 (16) | What it is cut to |
 |---|---|---|
-| `NotoSansDevanagari-shaping.ttf` | `09feb2d2736e109c` | A pre-base i, a reph, ksha, pa with ra under it, the nukta (written apart and as one code point), ZWJ and ZWNJ in a conjunct, a vowel sign on nothing, अ with a vowel sign it may not take. |
-| `NotoSansBengali-shaping.ttf` | `3cba78abe4c1e512` | O and au in two parts, a pre-base i, ya-phala, a reph, a ZWJ before two marks. |
+| `NotoSansDevanagari-shaping.ttf` | `e17528dacc9eb8e2` | A pre-base i, a reph, ksha, pa with ra under it, the nukta (written apart and as one code point), ZWJ and ZWNJ in a conjunct, a vowel sign on nothing, अ with a vowel sign it may not take, a reph over श्व, an o with an anusvara drawn as the aa and a mark. |
+| `NotoSansBengali-shaping.ttf` | `39bc10f1af1ced75` | O and au in two parts, a pre-base i, ya-phala, a reph, a ZWJ before two marks, a reph the face sets after the ii by swapping their glyphs. |
 | `NotoSansGurmukhi-shaping.ttf` | `39a1046bfc4d80c7` | Sihari, a subjoined ra, a bindi before ii. |
 | `NotoSansGujarati-shaping.ttf` | `27410c182b3c91dc` | A pre-base i, a reph, a half form. |
 | `NotoSansOriya-shaping.ttf` | `e0e71f0620f62bbb` | O and ai in two parts, a reph after the main consonant, ksha. |
 | `NotoSansTamil-shaping.ttf` | `7db7a3fe8fa51dd7` | O, ai and au around their consonant, ksha, shri, a pair kerned across a ZWJ. |
 | `NotoSansTelugu-shaping.ttf` | `c07847a3af772da0` | A reph asked for with ZWJ, ksha, shri, the ai length mark. |
-| `NotoSansKannada-shaping.ttf` | `4847a4149b443459` | A reph after the post-base forms, o and ai in two parts, two below-base forms, Ra-virama-ZWJ. |
+| `NotoSansKannada-shaping.ttf` | `b3aeb9c110441786` | A reph after the post-base forms, o, ai and ii in two parts, two below-base forms, Ra-virama-ZWJ, a nukta inside a ligature. |
 | `NotoSansMalayalam-shaping.ttf` | `50843d3cd1059eba` | O and ai around their consonant, a pre-base ra, the dot reph, a chillu. |
