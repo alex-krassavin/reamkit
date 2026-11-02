@@ -647,6 +647,70 @@ describe('what a slide shape states about its own box', () => {
   });
 });
 
+// A rectangle with the given a:ln, and optionally a p:style naming a line colour.
+function outlinedRect(ln: string, lnRefColor?: string, ph = ''): string {
+  const style = lnRefColor
+    ? `<p:style><a:lnRef idx="1"><a:srgbClr val="${lnRefColor}"/></a:lnRef>` +
+      `<a:fillRef idx="0"><a:srgbClr val="000000"/></a:fillRef>` +
+      `<a:effectRef idx="0"><a:srgbClr val="000000"/></a:effectRef>` +
+      `<a:fontRef idx="minor"><a:srgbClr val="000000"/></a:fontRef></p:style>`
+    : '';
+  return (
+    `<p:sp><p:nvSpPr><p:cNvPr id="2" name="Rectangle"/><p:cNvSpPr/><p:nvPr>${ph}</p:nvPr></p:nvSpPr>` +
+    `<p:spPr><a:xfrm><a:off x="914400" y="914400"/><a:ext cx="1828800" cy="914400"/></a:xfrm>` +
+    `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>` +
+    `<a:solidFill><a:srgbClr val="DDDDDD"/></a:solidFill>${ln}</p:spPr>${style}</p:sp>`
+  );
+}
+
+describe('pptx shape outlines', () => {
+  const lineOf = (xml: string, layoutSpTree?: string) =>
+    firstShape(Ream.parse(buildPptx([xml], layoutSpTree ? { layoutMaster: { layoutSpTree } } : {})))
+      ?.line;
+  const BLACK = `<a:ln w="76200"><a:solidFill><a:srgbClr val="000000"/></a:solidFill></a:ln>`;
+  const TITLE = `<p:ph type="title"/>`;
+
+  it('draws no outline for an a:ln with no fill and no style', () => {
+    expect(lineOf(outlinedRect(`<a:ln w="76200"/>`))).toBeUndefined();
+  });
+
+  it('keeps the shape when its fill is still visible', () => {
+    const shp = firstShape(Ream.parse(buildPptx([outlinedRect(`<a:ln w="76200"/>`)])));
+    expect(shp?.fill.colorHex).toBe('DDDDDD');
+  });
+
+  it('keeps an outline that states its own fill', () => {
+    expect(lineOf(outlinedRect(BLACK))?.colorHex).toBe('000000');
+  });
+
+  it('keeps an explicit a:noFill', () => {
+    expect(lineOf(outlinedRect(`<a:ln w="76200"><a:noFill/></a:ln>`))?.fill).toBe('none');
+  });
+
+  it("takes the colour from the style, and keeps the a:ln's own width", () => {
+    const line = lineOf(outlinedRect(`<a:ln w="76200"/>`, 'FF00FF'));
+    expect(line?.colorHex).toBe('FF00FF');
+    expect(line?.width).toBe(6);
+  });
+
+  it("takes the colour from the layout's prototype, and keeps its own width", () => {
+    const line = lineOf(
+      outlinedRect(`<a:ln w="76200"/>`, undefined, TITLE),
+      outlinedRect(BLACK.replace('76200', '12700').replace('000000', '00AA00'), undefined, TITLE),
+    );
+    expect(line?.colorHex).toBe('00AA00');
+    expect(line?.width).toBe(6);
+  });
+
+  it('draws no outline when the layout has only a bare a:ln too', () => {
+    const line = lineOf(
+      outlinedRect(`<a:ln w="76200"/>`, undefined, TITLE),
+      outlinedRect(`<a:ln w="12700"/>`, undefined, TITLE),
+    );
+    expect(line).toBeUndefined();
+  });
+});
+
 // One p:sp at a fixed box with the given inner p:spPr children (geometry/fill/…).
 function shapeDeck(spPrInner: string): Uint8Array {
   return buildPptx([
