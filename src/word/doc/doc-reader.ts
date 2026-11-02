@@ -25,6 +25,7 @@ import type {
   HeaderFooterType,
   ImageBlock,
   ParagraphProperties,
+  Run,
   RunProperties,
   Table,
   TableCell,
@@ -459,9 +460,9 @@ function isBlank(p: DocParagraph): boolean {
   return p.runs.every((r) => r.text.length === 0 && r.picture === undefined);
 }
 
-// A paragraph → its text paragraph (if it has text) followed by an image block per
-// embedded picture. A picture occupies its own run, so a picture-only paragraph
-// yields just the image(s).
+// A paragraph → its text paragraph (if it has text or a break) followed by an
+// image block per embedded picture. A picture occupies its own run, so a
+// picture-only paragraph yields just the image(s).
 function mapParagraph(
   p: DocParagraph,
   resources: ResourceStore,
@@ -471,8 +472,13 @@ function mapParagraph(
   const textRuns = p.runs.filter((r) => r.picture === undefined);
   const ilvl = p.props.listIlvl ?? 0;
   const isList = (p.props.listIlfo ?? 0) > 0;
-  if (textRuns.some((r) => r.text.length > 0) || isList) {
-    const runs = textRuns.map((r) => ({ text: r.text, properties: toRunProperties(r.props) }));
+  if (textRuns.some((r) => r.text.length > 0 || r.pageBreak) || isList) {
+    const runs: Array<Run> = textRuns.map((r) => ({
+      text: r.text,
+      properties: toRunProperties(r.props),
+      ...(r.pageBreak ? { pageBreak: true } : {}),
+      ...(r.columnBreak ? { columnBreak: true } : {}),
+    }));
     let properties = toParaProperties(p.props);
     if (isList) {
       // The LST/LVL number format (DOC-10) → a real "1." / "a)" / bullet marker;

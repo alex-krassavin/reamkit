@@ -9,12 +9,13 @@
 //   - PAPX runs (in FKP pages, found through PlcBtePapx) carry paragraph
 //     formatting, one run per paragraph.
 // This walks the text character by character, attaches each character's CHPX,
-// splits paragraphs at the CR mark (and the 0x07 table cell mark), attaches each
-// paragraph's PAPX, and emits maximal same-formatting runs.
+// splits paragraphs at the CR mark (and the 0x07 table cell mark, and a section's
+// closing mark), attaches each paragraph's PAPX, and emits maximal same-formatting
+// runs.
 //
 // Spec: [MS-DOC] §2.5 (FIB), §2.8.35 (PlcPcd), §2.9.38 (Clx), §2.9.73
 // (FcCompressed), §2.8.6 (PlcBteChpx), §2.8.5 (PlcBtePapx), §2.9.55 (ChpxFkp),
-// §2.9.23 (PapxFkp), §2.6.1 (sprm). Every offset is bounds-checked; a
+// §2.9.23 (PapxFkp), §2.8.26 (PlcfSed), §2.6.1 (sprm). Every offset is bounds-checked; a
 // structurally odd file yields no text rather than throwing.
 
 import { openCfb } from '@/core/ole/cfb';
@@ -81,6 +82,8 @@ const SPRA_LEN = [1, 1, 2, 4, 2, 2, 0, 3];
 const SPRM_LONG_OPERAND = new Set([0xd608, 0xc60d]); // sprmTDefTable, sprmPChgTabs
 
 const CELL_MARK = 0x07; // ends a table cell (and, on the TTP, a row)
+const PAGE_BREAK = 0x0c; // a manual page break — or, closing a section, its section mark
+const COLUMN_BREAK = 0x0e; // a manual column break
 const FIELD_BEGIN = 0x13; // a field begins; its code (suppressed) follows
 const FIELD_SEPARATOR = 0x14; // the code ends; the cached result (kept) follows
 const FIELD_END = 0x15; // the field ends
@@ -181,6 +184,10 @@ export interface DocRun {
   readonly props: DocCharProps;
   /** Set instead of `text` when the run is an embedded picture. */
   readonly picture?: DocPicture;
+  /** The run is a manual page break (0x0C), alone in a run with no text. */
+  readonly pageBreak?: boolean;
+  /** The run is a manual column break (0x0E), alone in a run whose text is `\n`. */
+  readonly columnBreak?: boolean;
 }
 
 /** One paragraph: its runs plus the decoded paragraph properties. */
@@ -293,6 +300,21 @@ function readSectionPageSize(
   return { widthPt: xa / 20, heightPt: ya / 20 };
 }
 
+// Where each section but the last closes (§2.8.26 PlcfSed): the CP just past its
+// last character, which is its section mark. The mark is the same character as a
+// manual page break (0x0C) and is told from one only by standing there. It ends
+// the section's last paragraph the way a CR would, and breaks no page of itself.
+function readSectionEnds(wd: Uint8Array, table: Uint8Array): ReadonlySet<number> {
+  const fc = u32(wd, OFF_FCPLCFSED);
+  const lcb = u32(wd, OFF_LCBPLCFSED);
+  const ends = new Set<number>();
+  if (lcb < 4 + 16 || fc + lcb > table.length) return ends;
+  const n = Math.floor((lcb - 4) / 16);
+  // aCP[n] is no section's end of text: it may lie past the main document.
+  for (let i = 1; i < n; i++) ends.add(u32(table, fc + i * 4));
+  return ends;
+}
+
 /**
  * Extract a `.doc`'s `WordDocument` stream into its main-document paragraphs plus
  * the section's header/footer stories, list tables and first-section page size.
@@ -332,7 +354,8 @@ export function extractDocContent(bytes: Uint8Array): DocContent {
   const papx = parsePlcBte(wd, table, OFF_FCPLCFBTEPAPX, OFF_LCBPLCFBTEPAPX, parsePapxFkp);
   const ccpText = u32(wd, OFF_CCPTEXT);
   const data = cfb.readStream('Data'); // embedded picture store (PICF + image)
-  const main = buildParagraphs(wd, pieces, chpx, papx, 0, ccpText, data);
+  const sectionEnds = readSectionEnds(wd, table);
+  const main = buildParagraphs(wd, pieces, chpx, papx, 0, ccpText, data, sectionEnds);
   const headerFooters = extractHeaderFooters(wd, table, pieces, chpx, papx, data, ccpText);
   const listTables = parseListTables(wd, table);
   const pageSize = readSectionPageSize(wd, table);
@@ -891,6 +914,7 @@ function magicAt(d: Uint8Array, off: number, magic: ReadonlyArray<number>): bool
 // Walk the pieces character by character: attach each character's CHPX (by FC),
 // split paragraphs at the CR mark (attaching each paragraph's PAPX, also by FC),
 // clean the in-paragraph control characters, and coalesce same-formatting runs.
+// `sectionEnds` holds the CP past each section mark of the main document.
 function buildParagraphs(
   wd: Uint8Array,
   pieces: ReadonlyArray<Piece>,
@@ -899,6 +923,7 @@ function buildParagraphs(
   cpStart: number,
   cpEnd: number,
   data: Uint8Array | undefined,
+  sectionEnds: ReadonlySet<number> = new Set(),
 ): Array<DocParagraph> {
   const end = Math.min(cpEnd, cpStart + MAX_TEXT);
   const paragraphs: Array<DocParagraph> = [];
@@ -940,8 +965,11 @@ function buildParagraphs(
       const code = piece.compressed ? byteCode(wd, fc) : unitCode(wd, fc);
       if (code < 0) continue;
       // A CR ends a paragraph; a cell mark (0x07) ends a table cell (and, on the
-      // TTP, a row) — both terminate the current paragraph.
-      if (code === CR || code === CELL_MARK) {
+      // TTP, a row); a section mark ends the section's last paragraph — all three
+      // terminate the current paragraph. Word's PAPX runs end at a section mark,
+      // after text or alone in a paragraph, and never at a page break.
+      const sectionMark = code === PAGE_BREAK && sectionEnds.has(piece.cpStart + k + 1);
+      if (code === CR || code === CELL_MARK || sectionMark) {
         endParagraph(fc, code === CELL_MARK);
         continue;
       }
@@ -975,6 +1003,21 @@ function buildParagraphs(
           runs.push({ text: '', props: {}, picture });
         }
         continue; // the 0x01 placeholder itself is not text
+      }
+      // A manual page or column break stands where it is in the paragraph: what
+      // comes before it ends its line there, what comes after starts the next
+      // page or column. Dropped with the other control characters, a page break
+      // printed "Latin", the break and "Second" as "LatinSecond" on one page. It
+      // is a run of its own, the way the docx reader cuts a run at a `w:br`.
+      if (code === PAGE_BREAK || code === COLUMN_BREAK) {
+        flushRun();
+        const props = lookup(chpx, fc) ?? {};
+        runs.push(
+          code === PAGE_BREAK
+            ? { text: '', props, pageBreak: true }
+            : { text: '\n', props, columnBreak: true },
+        );
+        continue;
       }
       const ch =
         code === 0x09 || code === 0x0b ? ' ' : code < 0x20 ? '' : String.fromCharCode(code);

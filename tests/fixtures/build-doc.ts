@@ -85,6 +85,10 @@ export function buildDoc(
     // First section's page size in twips → a SEP (sprmSXaPage/sprmSYaPage) plus
     // the PlcfSed that points at it. Landscape is just width > height.
     readonly pageSizeTwips?: { readonly width: number; readonly height: number };
+    // The main text's sections, in order: each `length` characters long, counting
+    // the section mark (0x0C) every section but the last ends with, and breaking
+    // as `bkc` says (sprmSBkc: 0 continuous, 2 new page). Each gets its own SEP.
+    readonly sections?: ReadonlyArray<{ readonly length: number; readonly bkc?: number }>;
     readonly data?: Uint8Array; // the Data stream (embedded pictures: see buildPicf)
     readonly headerFooter?: {
       readonly defaultHeader?: string;
@@ -213,27 +217,29 @@ export function buildDoc(
     fibFields.push({ fc: 0x2ea, off: addBinTable(plfLfo), lcb: plfLfo.length }); // fcPlfLfo/lcb
   }
 
-  // Section page size (F4): a Sepx (sprmSXaPage/sprmSYaPage) appended to the
-  // WordDocument stream, addressed by a one-section PlcfSed in the table stream.
-  let sepx: { offset: number; bytes: Uint8Array } | undefined;
-  if (opts.pageSizeTwips) {
-    const grpprl = new Uint8Array(8);
-    const gv = new DataView(grpprl.buffer);
-    gv.setUint16(0, 0xb01f, true); // sprmSXaPage
-    gv.setUint16(2, opts.pageSizeTwips.width, true);
-    gv.setUint16(4, 0xb020, true); // sprmSYaPage
-    gv.setUint16(6, opts.pageSizeTwips.height, true);
-    const sepxBytes = new Uint8Array(2 + grpprl.length); // cb + grpprl
-    new DataView(sepxBytes.buffer).setUint16(0, grpprl.length, true);
-    sepxBytes.set(grpprl, 2);
-    sepx = { offset: wdEnd, bytes: sepxBytes };
-    wdEnd += sepxBytes.length;
-    // PlcfSed: 2 CPs (0, mainChars) then one 12-byte SED whose fcSepx → the Sepx.
-    const plcfSed = new Uint8Array(8 + 12);
+  // Sections (F4): a Sepx per section (sprmSBkc, and sprmSXaPage/sprmSYaPage
+  // for the page size) appended to the WordDocument stream, addressed by a
+  // PlcfSed in the table stream. A page size alone makes one section.
+  const sections = opts.sections ?? (opts.pageSizeTwips ? [{ length: mainChars }] : []);
+  const sepxs: Array<{ offset: number; bytes: Uint8Array }> = [];
+  if (sections.length > 0) {
+    // PlcfSed: n+1 CPs (0, then each section's end) then n 12-byte SEDs.
+    const plcfSed = new Uint8Array((sections.length + 1) * 4 + sections.length * 12);
     const sv = new DataView(plcfSed.buffer);
-    sv.setUint32(4, mainChars, true);
-    sv.setUint32(8 + 2, sepx.offset, true); // SED.fcSepx
-    sv.setUint32(8 + 8, 0xffffffff, true); // SED.fcMpr (none)
+    let cp = 0;
+    sections.forEach((section, i) => {
+      const grpprl = buildSepGrpprl(section.bkc, opts.pageSizeTwips);
+      const sepxBytes = new Uint8Array(2 + grpprl.length); // cb + grpprl
+      new DataView(sepxBytes.buffer).setUint16(0, grpprl.length, true);
+      sepxBytes.set(grpprl, 2);
+      const sed = (sections.length + 1) * 4 + i * 12;
+      sv.setUint32(sed + 2, wdEnd, true); // SED.fcSepx
+      sv.setUint32(sed + 8, 0xffffffff, true); // SED.fcMpr (none)
+      sepxs.push({ offset: wdEnd, bytes: sepxBytes });
+      wdEnd += sepxBytes.length;
+      cp += section.length;
+      sv.setUint32((i + 1) * 4, cp, true);
+    });
     fibFields.push({ fc: 0xca, off: addBinTable(plcfSed), lcb: plcfSed.length }); // fcPlcfSed/lcb
   }
 
@@ -265,13 +271,28 @@ export function buildDoc(
   wv.setUint32(0x1a6, clx.length, true); // lcbClx
   for (const p of placed) wd.set(p.bytes, p.offset);
   for (const f of fkpPages) wd.set(f.page, f.offset);
-  if (sepx) wd.set(sepx.bytes, sepx.offset);
+  for (const sepx of sepxs) wd.set(sepx.bytes, sepx.offset);
 
   return buildCfb([
     { name: 'WordDocument', data: wd },
     { name: whichTable, data: table },
     ...(opts.data ? [{ name: 'Data', data: opts.data }] : []),
   ]);
+}
+
+// A section's grpprl: sprmSBkc (its break kind, a 1-byte operand), then
+// sprmSXaPage/sprmSYaPage (the page size in twips).
+function buildSepGrpprl(
+  bkc: number | undefined,
+  page: { readonly width: number; readonly height: number } | undefined,
+): Uint8Array {
+  const bytes: Array<number> = [];
+  if (bkc !== undefined) bytes.push(0x09, 0x30, bkc); // sprmSBkc
+  if (page) {
+    bytes.push(0x1f, 0xb0, page.width & 0xff, page.width >> 8); // sprmSXaPage
+    bytes.push(0x20, 0xb0, page.height & 0xff, page.height >> 8); // sprmSYaPage
+  }
+  return Uint8Array.from(bytes);
 }
 
 // The list tables (DOC-10): PlfLfo (lfoMac + 16-byte LFOs, lsid @0) and PlfLst

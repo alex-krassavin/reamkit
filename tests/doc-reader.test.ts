@@ -11,15 +11,26 @@ import { describe, expect, it } from 'vitest';
 import { buildDoc, buildPicf } from './fixtures/build-doc';
 import type { BodyElement } from '@/core/document-model';
 import type { FlowDoc } from '@/core/ir/flow';
+import type { TextLineItem } from '@/layout/page-doc';
 
 import { docReader, readDoc } from '@/word/doc/doc-reader';
 import { Ream } from '@/core/converter/ream';
+import { FontRegistry } from '@/core/font';
+import { flowRenderOptions } from '@/core/converter/project';
+import { layoutStyledDocument } from '@/layout/styled-layout';
 
 const CM = String.fromCharCode(0x07); // table cell mark
 const PIC = String.fromCharCode(0x01); // picture placeholder char
 const F13 = String.fromCharCode(0x13); // field begin
 const F14 = String.fromCharCode(0x14); // field separator
 const F15 = String.fromCharCode(0x15); // field end
+const PB = String.fromCharCode(0x0c); // page break — or, closing a section, its section mark
+const COL = String.fromCharCode(0x0e); // column break
+const ZWSP = '\u200b'; // the text of an empty paragraph
+const FONTS = {
+  regular: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Regular.ttf')),
+  bold: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Bold.ttf')),
+};
 // The smallest image the decoder accepts — a 1×1 transparent PNG.
 const PNG_1x1 = Uint8Array.from(
   Buffer.from(
@@ -44,6 +55,19 @@ function firstParagraphRuns(doc: FlowDoc) {
 // The paragraph elements of the FlowDoc body.
 function paragraphs(doc: FlowDoc) {
   return doc.body.filter((el) => el.kind === 'paragraph');
+}
+
+// The text of each line on each page, laid out the way the PDF is.
+function pageTexts(doc: FlowDoc): Array<Array<string>> {
+  const laid = layoutStyledDocument(doc.body, {
+    registry: FontRegistry.fromBytes(FONTS),
+    ...flowRenderOptions(doc),
+  });
+  return laid.pages.map((page) =>
+    page.commands
+      .filter((c): c is TextLineItem => c.type === 'line')
+      .map((l) => l.line.tokens.map((t) => (t.kind === 'text' ? t.text : '')).join('')),
+  );
 }
 
 // The concatenated text of a table cell's paragraphs.
@@ -603,5 +627,66 @@ describe('doc reader (DOC-1)', () => {
       },
     });
     expect(new TextDecoder().decode(pdf.subarray(0, 5))).toBe('%PDF-');
+  });
+});
+
+describe('doc reader: page and column breaks', () => {
+  // [MS-DOC] §2.8.26 — 0x0C is a manual page break, except as the last character
+  // of a section (each but the last), where it is that section's mark. The pages
+  // are Word for Mac's, counted on .doc files that carry these very characters.
+
+  it('reads a page break as a run of its own, where it stands among the words', () => {
+    const doc = readDoc(buildDoc([{ text: `Latin${PB}Second\r`, compressed: false }])).doc;
+    expect(firstParagraphRuns(doc).map((r) => [r.text, r.pageBreak === true])).toEqual([
+      ['Latin', false],
+      ['', true],
+      ['Second', false],
+    ]);
+    // Word: "Latin" on page 1, "Second" at the top of page 2.
+    expect(pageTexts(doc)).toEqual([['Latin'], ['Second']]);
+  });
+
+  it('breaks the page before a paragraph that opens with one, and twice for two', () => {
+    // Word: "Second" at the top of page 2; with two breaks in a row, three pages
+    // and nothing but an empty line on the second.
+    const opening = readDoc(buildDoc([{ text: `one\r${PB}Second\r`, compressed: false }])).doc;
+    expect(pageTexts(opening)).toEqual([['one'], ['Second']]);
+    const twice = readDoc(buildDoc([{ text: `Latin${PB}${PB}Second\r`, compressed: false }])).doc;
+    expect(pageTexts(twice)).toEqual([['Latin'], [''], ['Second']]);
+  });
+
+  it('reads a column break, which starts the next page in a section of one column', () => {
+    const doc = readDoc(buildDoc([{ text: `Latin${COL}Second\r`, compressed: false }])).doc;
+    expect(firstParagraphRuns(doc).map((r) => [r.text, r.columnBreak === true])).toEqual([
+      ['Latin', false],
+      ['\n', true],
+      ['Second', false],
+    ]);
+    // Word: "Second" at the top of page 2.
+    expect(pageTexts(doc)).toEqual([['Latin'], ['Second']]);
+  });
+
+  it('ends the paragraph at a section mark, and breaks no page there', () => {
+    // "one", the first section's mark, then "two" in a section that runs on
+    // (sprmSBkc 0). Word: one page, "two" on the line under "one".
+    const doc = readDoc(
+      buildDoc([{ text: `one${PB}two\r`, compressed: false }], {
+        sections: [{ length: 4 }, { length: 4, bkc: 0 }],
+      }),
+    ).doc;
+    expect(paragraphTexts(doc)).toEqual(['one', 'two']);
+    expect(paragraphs(doc).flatMap((el) => el.paragraph.runs.filter((r) => r.pageBreak))).toEqual(
+      [],
+    );
+    expect(pageTexts(doc)).toEqual([['one', 'two']]);
+  });
+
+  it('reads a section mark alone after a paragraph mark as an empty paragraph', () => {
+    const doc = readDoc(
+      buildDoc([{ text: `one\r${PB}two\r`, compressed: false }], {
+        sections: [{ length: 5 }, { length: 4, bkc: 0 }],
+      }),
+    ).doc;
+    expect(paragraphTexts(doc)).toEqual(['one', ZWSP, 'two']);
   });
 });
