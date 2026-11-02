@@ -614,6 +614,10 @@ yourself, or `{ images: 'drop' }` to omit them.
 - Pictures (`p:pic`) with the recolouring the file asks for — `a:duotone`,
   `a:clrChange`, `a:alphaModFix` — shapes with geometry/fill/stroke/gradient,
   and embedded charts (`c:chart`), including a chart papered with a picture.
+- **Connectors and lines** (`p:cxnSp`) — read as the shapes they are, a
+  horizontal or vertical line with them; an outline that states only its width
+  takes its colour from the layout or master shape that states one, and with
+  none to take draws nothing.
 - **WordArt** (`a:prstTxWarp`) — the text bent through the preset curve its body
   names and stretched onto the shape's box: thirty envelope presets and the two
   rings, each glyph placed on its own along the curve.
