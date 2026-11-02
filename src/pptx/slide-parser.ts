@@ -193,7 +193,11 @@ export function parseSlideShapes(
     // the prompt PowerPoint shows while editing. Drawn as a shape it would put
     // "Click to edit Master title style" on every slide.
     if (skipPlaceholders && isPlaceholder(child)) continue;
-    if (poIs(child, 'p:sp')) {
+    // §19.3.1.19 `p:cxnSp` — a connector is a shape without text: the same
+    // `p:spPr` and `p:style`, so the same path draws it. Anything drawn with
+    // PowerPoint's line and arrow tools is one, and skipped it left a diagram's
+    // boxes with nothing between them.
+    if (poIs(child, 'p:sp') || poIs(child, 'p:cxnSp')) {
       const shape = parseSp(child, ctx, transform);
       if (shape) out.push({ kind: 'shape', shape });
     } else if (poIs(child, 'p:pic')) {
@@ -303,7 +307,7 @@ function floatAt(box: ShapeBoxEmu): FloatAnchor {
   };
 }
 
-// p:sp → a floating shape: its geometry, fill and stroke (PX3), plus a text body
+// p:sp or p:cxnSp → a floating shape: its geometry, fill and stroke (PX3), plus a text body
 // (PX1/PX2). The box comes from the shape's own a:xfrm, else (for a placeholder)
 // the cascade. Undefined when there is no geometry, or the shape is entirely
 // invisible (no fill, no stroke, no text).

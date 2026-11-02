@@ -712,6 +712,104 @@ describe('pptx slide shapes (E-PPTX PX3)', () => {
   });
 });
 
+// A line at a box of the given extent, as a connector or as a plain shape.
+const RED_LINE =
+  `<a:prstGeom prst="line"><a:avLst/></a:prstGeom>` +
+  `<a:ln w="38100"><a:solidFill><a:srgbClr val="FF0000"/></a:solidFill></a:ln>`;
+function connector(cx: number, cy: number, spPrInner = RED_LINE, xfrmAttrs = ''): string {
+  return (
+    `<p:cxnSp><p:nvCxnSpPr><p:cNvPr id="2" name="Connector"/><p:cNvCxnSpPr/><p:nvPr/></p:nvCxnSpPr>` +
+    `<p:spPr><a:xfrm${xfrmAttrs}><a:off x="914400" y="914400"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm>` +
+    `${spPrInner}</p:spPr></p:cxnSp>`
+  );
+}
+function lineShape(cx: number, cy: number): string {
+  return (
+    `<p:sp><p:spPr><a:xfrm><a:off x="914400" y="914400"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm>` +
+    `${RED_LINE}</p:spPr></p:sp>`
+  );
+}
+
+describe('pptx connectors and straight lines', () => {
+  it('reads a connector as a shape, with its geometry and outline', () => {
+    const shp = firstShape(Ream.parse(buildPptx([connector(1828800, 914400)])));
+    expect(shp?.geometry.preset).toBe('line');
+    expect(shp?.line?.colorHex).toBe('FF0000');
+    expect(shp?.width).toBe(144);
+    expect(shp?.height).toBe(72);
+  });
+
+  it("takes a connector's outline from its p:style", () => {
+    const style =
+      `<p:style><a:lnRef idx="1"><a:srgbClr val="00AA00"/></a:lnRef>` +
+      `<a:fillRef idx="0"><a:srgbClr val="000000"/></a:fillRef>` +
+      `<a:effectRef idx="0"><a:srgbClr val="000000"/></a:effectRef>` +
+      `<a:fontRef idx="minor"><a:srgbClr val="000000"/></a:fontRef></p:style>`;
+    const cxn = connector(
+      1828800,
+      914400,
+      `<a:prstGeom prst="line"><a:avLst/></a:prstGeom>`,
+    ).replace('</p:spPr>', `</p:spPr>${style}`);
+    expect(firstShape(Ream.parse(buildPptx([cxn])))?.line?.colorHex).toBe('00AA00');
+  });
+
+  it("keeps a connector's arrowhead and flip", () => {
+    const arrow =
+      `<a:prstGeom prst="straightConnector1"><a:avLst/></a:prstGeom>` +
+      `<a:ln w="38100"><a:solidFill><a:srgbClr val="FF0000"/></a:solidFill>` +
+      `<a:tailEnd type="triangle"/></a:ln>`;
+    const shp = firstShape(
+      Ream.parse(buildPptx([connector(1828800, 914400, arrow, ' flipH="1"')])),
+    );
+    expect(shp?.line?.tailEnd).toBeDefined();
+    expect(shp?.transform?.flipH).toBe(true);
+  });
+
+  it('reads a connector inside a group', () => {
+    const group =
+      `<p:grpSp><p:nvGrpSpPr><p:cNvPr id="3" name="Group"/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>` +
+      `<p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="9144000" cy="6858000"/>` +
+      `<a:chOff x="0" y="0"/><a:chExt cx="9144000" cy="6858000"/></a:xfrm></p:grpSpPr>` +
+      `${connector(1828800, 0)}</p:grpSp>`;
+    expect(firstShape(Ream.parse(buildPptx([group])))?.line?.colorHex).toBe('FF0000');
+  });
+
+  it.each([
+    ['horizontal connector', connector(1828800, 0), 144, 0],
+    ['vertical connector', connector(0, 914400), 0, 72],
+    ['horizontal p:sp line', lineShape(1828800, 0), 144, 0],
+    ['vertical p:sp line', lineShape(0, 914400), 0, 72],
+  ])('keeps a %s, whose box is empty one way', (_name, xml, width, height) => {
+    const shp = firstShape(Ream.parse(buildPptx([xml])));
+    expect(shp?.width).toBe(width);
+    expect(shp?.height).toBe(height);
+    expect(shp?.line?.colorHex).toBe('FF0000');
+  });
+
+  it.each([
+    ['empty both ways', connector(0, 0)],
+    ['a negative width', connector(-1828800, 914400)],
+    ['a negative height', lineShape(1828800, -914400)],
+  ])('still drops a shape with %s', (_name, xml) => {
+    expect(firstShape(Ream.parse(buildPptx([xml])))).toBeUndefined();
+  });
+
+  it.each([
+    ['diagonal', 1828800, 914400],
+    ['horizontal', 1828800, 0],
+    ['vertical', 0, 914400],
+  ])('draws a %s connector in the PDF and SVG', async (_name, cx, cy) => {
+    const doc = Ream.parse(buildPptx([connector(cx, cy)]));
+    const pdf = await doc.convert('pdf', { fonts: FONTS });
+    const page = PdfFile.parse(pdf).pages()[0];
+    expect(page).toBeDefined();
+    expect(latin1.decode(pdf)).not.toContain('NaN');
+    const svg = decoder.decode(await doc.convert('svg', { fonts: FONTS }));
+    expect(svg.toLowerCase()).toContain('#ff0000');
+    expect(svg).not.toContain('NaN');
+  });
+});
+
 const CHART_NS = 'http://schemas.openxmlformats.org/drawingml/2006/chart';
 const CHART_REL = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart';
 const BAR_CHART =
