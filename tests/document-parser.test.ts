@@ -5,6 +5,7 @@ import { eighthPtToPt, emuToPt, halfPtToPt, twipsToPt } from '@/core/ir';
 
 import { OpcPackage } from '@/core/opc';
 import { parseDocument } from '@/word';
+import { readDocx } from '@/word/docx-reader';
 
 function parse(paragraphs: Parameters<typeof buildRichDocx>[0]) {
   const docx = buildRichDocx(paragraphs);
@@ -120,12 +121,39 @@ describe('parseDocument: tracked changes (accept-all)', () => {
 
 // §17.3.3.1 — a forced page break vs a soft line break.
 describe('parseDocument: page break', () => {
-  it('flags w:br w:type="page" as a page break; plain w:br stays a newline', () => {
+  it('cuts the run at w:br w:type="page"; plain w:br stays a newline', () => {
     const body = `<w:p><w:r><w:t>A</w:t><w:br/><w:t>B</w:t><w:br w:type="page"/></w:r></w:p>`;
     const els = parseDocument(OpcPackage.open(buildDocxFromBody(body)).getMainDocument().data);
     const para = els[0]!.kind === 'paragraph' ? els[0]!.paragraph : null;
-    const run = para!.runs[0]!;
-    expect(run.text).toBe('A\nB'); // plain w:br → newline (soft break)
-    expect(run.pageBreak).toBe(true); // w:br w:type="page" → page-break flag
+    // A plain w:br is a newline in the text; the page break is a run of its own.
+    expect(para!.runs.map((r) => [r.text, r.pageBreak === true])).toEqual([
+      ['A\nB', false],
+      ['', true],
+    ]);
+  });
+
+  it('keeps each piece of a cut run in its properties, its link and its comment', () => {
+    // Word writes "A", a page break, "B", a column break and "C" in one run
+    // when they share their formatting: the breaks stand where they are, and
+    // every piece is still bold, still the link and still under the comment.
+    const body =
+      '<w:p><w:commentRangeStart w:id="7"/><w:hyperlink w:anchor="here"><w:r><w:rPr><w:b/></w:rPr>' +
+      '<w:t>A</w:t><w:br w:type="page"/><w:t>B</w:t><w:br w:type="column"/><w:t>C</w:t>' +
+      '</w:r></w:hyperlink><w:commentRangeEnd w:id="7"/></w:p>';
+    const para = readDocx(buildDocxFromBody(body)).doc.body.find((b) => b.kind === 'paragraph');
+    if (para?.kind !== 'paragraph') throw new Error('expected a paragraph');
+    const runs = para.paragraph.runs;
+    expect(runs.map((r) => [r.text, r.pageBreak === true, r.columnBreak === true])).toEqual([
+      ['A', false, false],
+      ['', true, false],
+      ['B', false, false],
+      ['\n', false, true],
+      ['C', false, false],
+    ]);
+    for (const r of runs) {
+      expect(r.properties.bold).toBe(true);
+      expect(r.anchor).toBe('here');
+      expect(r.commentRangeRefs).toEqual(['7']);
+    }
   });
 });

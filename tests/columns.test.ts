@@ -160,6 +160,43 @@ describe('a column break (§17.3.3.1 w:br w:type="column")', () => {
     expect(laid.pages).toHaveLength(2);
     expect(lineXs(laid.pages[1]!.commands)[0]).toBeCloseTo(36, 0);
   });
+
+  it('breaks where it stands in a run it shares with the words', () => {
+    // Word: "before" in column one, "after" at the head of column two.
+    const laid = layoutOf(
+      twoCols('<w:p><w:r><w:t>before</w:t><w:br w:type="column"/><w:t>after</w:t></w:r></w:p>'),
+    );
+    const xs = lineXs(laid.pages[0]!.commands);
+    expect(xs).toHaveLength(2);
+    expect(xs[0]).toBeCloseTo(36, 0);
+    expect(xs[1]).toBeCloseTo(228, 0);
+  });
+
+  it('leaves the line before it in its column under widow control', () => {
+    // Word: "one" and "before" in column one, "after" in column two, one
+    // page. Read as a line the column could not hold, the break left "before"
+    // alone at its foot, and widow control sent it on with "after" behind it.
+    const laid = layoutOf(
+      twoCols(
+        '<w:p><w:pPr><w:widowControl/></w:pPr><w:r><w:t>one</w:t></w:r></w:p>' +
+          '<w:p><w:pPr><w:widowControl/></w:pPr><w:r><w:t>before</w:t></w:r>' +
+          '<w:r><w:br w:type="column"/></w:r><w:r><w:t>after</w:t></w:r></w:p>',
+      ),
+    );
+    expect(laid.pages).toHaveLength(1);
+    const xs = lineXs(laid.pages[0]!.commands);
+    expect(xs.map((x) => Math.round(x))).toEqual([36, 36, 228]);
+  });
+
+  it('sends a page break on to the next page, not the next column', () => {
+    // Word: "Second" at the head of page 2's first column.
+    const laid = layoutOf(
+      twoCols('<w:p><w:r><w:t>Latin</w:t><w:br w:type="page"/><w:t>Second</w:t></w:r></w:p>'),
+    );
+    expect(laid.pages).toHaveLength(2);
+    expect(lineXs(laid.pages[0]!.commands)).toHaveLength(1);
+    expect(lineXs(laid.pages[1]!.commands)[0]).toBeCloseTo(36, 0);
+  });
 });
 
 describe('a text frame (§17.3.1.11 w:framePr)', () => {

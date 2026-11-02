@@ -81,6 +81,12 @@ export interface TextToken {
    */
   readonly columnBreak?: true;
   /**
+   * §17.3.3.1 — the token is a `w:br w:type="page"`: an empty mark of where it
+   * stands, and what follows it belongs on the next page. Layout takes it out
+   * of the line before the line is wrapped.
+   */
+  readonly pageBreak?: true;
+  /**
    * §17.3.1.38 — the token IS a tab: its width is the distance to the stop it
    * advances to, resolved once the line is known, and its text is whatever
    * leader fills that gap.

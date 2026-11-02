@@ -693,6 +693,21 @@ describe('docx writer (E-DOCX D2 skeleton)', () => {
     expect(para.paragraph.runs.some((r) => r.pageBreak === true)).toBe(true);
   });
 
+  it('keeps a page break where it stands in a run it shares with text', () => {
+    // §17.3.3.1 — read as a flag on the run, the break was written after all of
+    // its text, and "before" and "after" came back as one word on one page.
+    const body = '<w:p><w:r><w:t>before</w:t><w:br w:type="page"/><w:t>after</w:t></w:r></w:p>';
+    const { doc: flow } = readDocx(buildDocxFromBody(body));
+    const { doc: again } = readDocx(writeDocx(flow).bytes);
+    const para = again.body.find((b) => b.kind === 'paragraph');
+    if (para?.kind !== 'paragraph') throw new Error('expected a paragraph');
+    expect(para.paragraph.runs.map((r) => [r.text, r.pageBreak === true])).toEqual([
+      ['before', false],
+      ['', true],
+      ['after', false],
+    ]);
+  });
+
   it('reports unwritten block kinds as losses (v0)', () => {
     const { doc: flow } = readDocx(buildDocxFromBody(IMAGE_BODY));
     const { losses } = writeDocx(flow);

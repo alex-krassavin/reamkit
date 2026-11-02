@@ -762,6 +762,12 @@ interface ParagraphBlock {
    * the next column. Pagination advances the column before drawing one.
    */
   readonly columnBreakLines?: ReadonlySet<number>;
+  /**
+   * §17.3.3.1 — the indices of the lines that a `w:br w:type="page"` between
+   * the paragraph's words sends to the next page. Pagination starts one before
+   * drawing each.
+   */
+  readonly pageBreakLines?: ReadonlySet<number>;
   // Tagged PDF: when this paragraph is a list item (w:numPr), its list id and
   // nesting level (w:ilvl) so pagination can build the L/LI/LBody structure.
   readonly list?: { readonly numId: string; readonly level: number };
@@ -1422,6 +1428,7 @@ export function layoutStyledDocument(
       width,
       ctx.pageContentHeight,
       box,
+      true,
     );
   });
 
@@ -1589,7 +1596,7 @@ export function layoutStyledDocument(
   // per-line widths; the closure re-runs the paragraph layout at the given
   // column width with those widths.
   const reflowParagraph = (paragraph: Paragraph, width: number, widths?: ReadonlyArray<number>) =>
-    layoutParagraphBlock(paragraph, options, fontResources, imageResources, width, widths);
+    layoutParagraphBlock(paragraph, options, fontResources, imageResources, width, widths, true);
   const pages = paginateSections(
     blocks,
     sectionCtxs,
@@ -2690,9 +2697,20 @@ function layoutBodyElement(
   contentWidth: number,
   maxHeight?: number,
   box?: RelativeBox,
+  // Whether a paragraph here stands in the body's flow of pages (see
+  // layoutParagraphBlock).
+  pageFlow = false,
 ): LaidOutBlock {
   if (el.kind === 'paragraph') {
-    return layoutParagraphBlock(el.paragraph, options, fontResources, imageResources, contentWidth);
+    return layoutParagraphBlock(
+      el.paragraph,
+      options,
+      fontResources,
+      imageResources,
+      contentWidth,
+      undefined,
+      pageFlow,
+    );
   }
   if (el.kind === 'table') {
     return layoutTableBlock(el.table, options, fontResources, imageResources, contentWidth);
@@ -5743,6 +5761,11 @@ function layoutParagraphBlock(
   contentWidth: number,
   // Float wrapping: explicit per-line widths (overrides first/other widths).
   lineWidths?: ReadonlyArray<number>,
+  // §17.3.3.1 — whether the paragraph stands in the body's flow of pages, the
+  // one place a page break has a page to break. In a cell, a text box, a band
+  // or a note it breaks nothing, and Word sets the words on either side of it
+  // on one line: "Latin", a break and "Second" in a cell read "LatinSecond".
+  pageFlow = false,
 ): ParagraphBlock {
   const cascaded = resolveParagraphProperties(paragraph.properties, options.styles);
   // §17.6.5 / §17.3.1.32 — the section's grid, carried onto the paragraph so
@@ -5788,7 +5811,7 @@ function layoutParagraphBlock(
         baseDir === 'rtl' && baseResolved.alignment === 'left'
         ? { ...baseResolved, alignment: 'right' }
         : baseResolved;
-  const tokens = tokenizeParagraph(
+  const all = tokenizeParagraph(
     paragraph,
     options,
     fontResources,
@@ -5796,6 +5819,7 @@ function layoutParagraphBlock(
     contentWidth,
     baseDir,
   );
+  const tokens = pageFlow ? all : all.filter((t) => !(t.kind === 'text' && t.pageBreak));
   const firstLineWidth = paragraphMaxWidth(resolved, contentWidth, true);
   const otherWidth = paragraphMaxWidth(resolved, contentWidth, false);
   const leading = paragraphLeading(paragraph.properties, options);
@@ -5818,23 +5842,29 @@ function layoutParagraphBlock(
   // §17.3.3.1 — a `w:br w:type="column"` splits the paragraph's own flow: what
   // follows it belongs in the NEXT column. Wrapping the parts one at a time is
   // what tells pagination which line that is; columnbreak.docx sets one
-  // mid-paragraph and both halves came out in the first column.
-  const parts = splitAtColumnBreaks(tokens);
+  // mid-paragraph and both halves came out in the first column. A page break
+  // between its words splits it the same way, to the next page.
+  const flow = splitAtBreaks(tokens);
   const columnBreakLines = new Set<number>();
+  const pageBreakLines = new Set<number>();
   let wrapped: Array<Line>;
-  if (parts.length === 1) {
-    wrapped = runWrap(tokens, firstLineWidth, lineWidths);
+  if (flow.parts.length === 1) {
+    wrapped = runWrap(flow.parts[0]!.tokens, firstLineWidth, lineWidths);
   } else {
     wrapped = [];
-    for (const [i, part] of parts.entries()) {
+    for (const [i, part] of flow.parts.entries()) {
       // A continuation is not a first line: it keeps the body indent, not the
       // first-line one, and the float widths carry on where they left off.
-      const lines = runWrap(
-        part,
-        i === 0 ? firstLineWidth : otherWidth,
-        lineWidths?.slice(wrapped.length),
-      );
-      if (i > 0 && lines.length > 0) columnBreakLines.add(wrapped.length);
+      const width = i === 0 ? firstLineWidth : otherWidth;
+      const lines = runWrap(part.tokens, width, lineWidths?.slice(wrapped.length));
+      // The line a page break ends is a line, with nothing else on it or not:
+      // two breaks in a row leave an empty one on the page between.
+      if (lines.length === 0 && (part.opens === 'page' || part.endsPage)) {
+        lines.push(emptyLine(paragraph, options, resolved, Math.max(width, 0)));
+      }
+      if (i > 0 && lines.length > 0) {
+        (part.opens === 'page' ? pageBreakLines : columnBreakLines).add(wrapped.length);
+      }
       wrapped.push(...(i === 0 ? lines : lines.map((l) => ({ ...l, firstLine: false }))));
     }
   }
@@ -5852,34 +5882,6 @@ function layoutParagraphBlock(
   let heightPt = 0;
   for (const line of lines) heightPt += computeLineHeight(line, resolved);
   const numbering = paragraph.properties.numbering;
-  // §17.3.3.1 — a forced break happens WHERE IT STANDS. One that precedes
-  // every word of the paragraph moves the paragraph itself to the next page;
-  // any other sends what FOLLOWS the paragraph there.
-  const breakIdx = paragraph.runs.findIndex((r) => r.pageBreak === true);
-  // A run that carries a PICTURE is not nothing, however empty its text: the
-  // break after it sends what FOLLOWS to the next page, it does not move the
-  // paragraph. Counted as empty, tdf125657.docx — a full-page image and then a
-  // break — kept the break's page to itself and lost the one the mark after it
-  // stands on.
-  //
-  // …and only when something FOLLOWS it. A paragraph that is nothing but the
-  // break — a page break typed on a line of its own — keeps its mark with the
-  // break, on the page the break ends, and what follows starts the next page
-  // at its very top. Word for Mac, in every mode: a document ending in one is
-  // one page, two in a row leave the second alone at the top of page 2, and
-  // the paragraph after the break stands at the page's first line. Moved to
-  // the next page with its mark, it stood an empty line down every such page.
-  const holds = (r: Paragraph['runs'][number]): boolean =>
-    r.text !== '' || r.inlineImage !== undefined || r.math !== undefined;
-  const leadingPageBreak =
-    breakIdx >= 0 &&
-    paragraph.runs
-      .slice(0, breakIdx + 1)
-      .every((r) => r.text === '' && r.inlineImage === undefined) &&
-    paragraph.runs.slice(breakIdx + 1).some(holds);
-  const trailingPageBreak = paragraph.runs.some(
-    (r, i) => r.pageBreak === true && (!leadingPageBreak || i > breakIdx),
-  );
   return {
     kind: 'paragraph',
     resolved,
@@ -5888,9 +5890,10 @@ function layoutParagraphBlock(
     spacingBeforePt: resolved.spacingBefore,
     spacingAfterPt: resolved.spacingAfter,
     ...(numbering ? { list: { numId: numbering.numId, level: numbering.ilvl } } : {}),
-    ...(leadingPageBreak ? { pageBreakBefore: true } : {}),
-    ...(trailingPageBreak ? { pageBreakAfter: true } : {}),
+    ...(flow.pageBreakBefore ? { pageBreakBefore: true } : {}),
+    ...(flow.pageBreakAfter ? { pageBreakAfter: true } : {}),
     ...(columnBreakLines.size > 0 ? { columnBreakLines } : {}),
+    ...(pageBreakLines.size > 0 ? { pageBreakLines } : {}),
     ...(paragraph.bookmarks && paragraph.bookmarks.length > 0
       ? { bookmarks: paragraph.bookmarks }
       : {}),
@@ -6221,20 +6224,71 @@ function tokenizeParagraph(
   return tokenizePlansBidi(plans, realLevels);
 }
 
+/** A stretch of a paragraph between two of its §17.3.3.1 breaks. */
+interface FlowPart {
+  readonly tokens: Array<Token>;
+  /** The break this part follows, which sends it on: none for the first. */
+  readonly opens?: 'column' | 'page';
+  /** Whether a page break ends it. */
+  endsPage: boolean;
+}
+
 /**
- * Split a paragraph's tokens at every §17.3.3.1 column break, dropping the
- * break token itself (its line ends there anyway). One part ⇒ no break.
+ * Split a paragraph's tokens at every §17.3.3.1 column or page break, dropping
+ * the break token itself (its line ends there anyway). One part ⇒ no break.
+ *
+ * A forced page break happens WHERE IT STANDS. One that precedes every word of
+ * the paragraph moves the paragraph itself to the next page, one that follows
+ * every word sends what FOLLOWS the paragraph there, and neither splits it. One
+ * between two of its words splits it there: Word sets "Latin", a page break and
+ * "Second" on two pages, and read as a break after the paragraph, both words
+ * stood on the first.
+ *
+ * A PICTURE is not nothing, however empty its run's text: the break after it
+ * sends what follows to the next page, it does not move the paragraph. Counted
+ * as empty, tdf125657.docx — a full-page image and then a break — kept the
+ * break's page to itself and lost the one the mark after it stands on.
+ *
+ * …and a break is before the paragraph only when something FOLLOWS it. A
+ * paragraph that is nothing but the break — a page break typed on a line of its
+ * own — keeps its mark with the break, on the page the break ends, and what
+ * follows starts the next page at its very top. Word for Mac, in every mode: a
+ * document ending in one is one page, two in a row leave the second alone at
+ * the top of page 2, and the paragraph after the break stands at the page's
+ * first line. Moved to the next page with its mark, it stood an empty line down
+ * every such page.
  *
  * @param tokens The paragraph's tokens in order.
- * @returns The parts, in order; always at least one.
+ * @returns The parts, in order (always at least one), and whether the
+ *          paragraph breaks the page before itself and after itself.
  */
-function splitAtColumnBreaks(tokens: ReadonlyArray<Token>): Array<Array<Token>> {
-  const parts: Array<Array<Token>> = [[]];
-  for (const t of tokens) {
-    if (t.kind === 'text' && t.columnBreak) parts.push([]);
-    else parts[parts.length - 1]!.push(t);
+function splitAtBreaks(tokens: ReadonlyArray<Token>): {
+  parts: Array<FlowPart>;
+  pageBreakBefore: boolean;
+  pageBreakAfter: boolean;
+} {
+  const isPage = (t: Token): boolean => t.kind === 'text' && t.pageBreak === true;
+  const pageBreakBefore = tokens.length > 0 && isPage(tokens[0]!) && tokens.some((t) => !isPage(t));
+  const pageBreakAfter = tokens.length > 0 && isPage(tokens[tokens.length - 1]!);
+  const parts: Array<FlowPart> = [{ tokens: [], endsPage: false }];
+  const end = pageBreakAfter ? tokens.length - 1 : tokens.length;
+  for (const t of tokens.slice(pageBreakBefore ? 1 : 0, end)) {
+    if (isPage(t)) {
+      parts[parts.length - 1]!.endsPage = true;
+      parts.push({ tokens: [], opens: 'page', endsPage: false });
+    } else if (t.kind === 'text' && t.columnBreak) {
+      parts.push({ tokens: [], opens: 'column', endsPage: false });
+    } else parts[parts.length - 1]!.tokens.push(t);
   }
-  return parts.filter((p, i) => i === 0 || p.length > 0);
+  if (pageBreakAfter) parts[parts.length - 1]!.endsPage = true;
+  return {
+    // An empty stretch a page break opens or ends is still the line it stands on.
+    parts: parts.filter(
+      (p, i) => i === 0 || p.tokens.length > 0 || p.opens === 'page' || p.endsPage,
+    ),
+    pageBreakBefore,
+    pageBreakAfter,
+  };
 }
 
 // Fast LTR tokenization — splits each run on whitespace only.
@@ -6301,8 +6355,32 @@ function tokenizePlansLtr(plans: ReadonlyArray<RunPlan>): Array<Token> {
         });
       }
     }
+    if (plan.run.pageBreak) tokens.push(pageBreakToken(plan));
   }
   return tokens;
+}
+
+/**
+ * §17.3.3.1 — the mark a `w:br w:type="page"` leaves among its paragraph's
+ * tokens: nothing to draw, only where the break stands. A run that holds text
+ * as well breaks after it, the way the writer writes one. It never reaches a
+ * line: the paragraph is split at it before it is wrapped.
+ *
+ * @param plan The break's run.
+ * @returns An empty text token flagged `pageBreak`.
+ */
+function pageBreakToken(plan: RunPlan): TextToken {
+  return {
+    kind: 'text',
+    text: '',
+    isSpace: false,
+    pageBreak: true,
+    resolvedRun: plan.resolvedRun,
+    font: plan.font,
+    fontSizePt: plan.fontSizePt,
+    widthPt: 0,
+    bidiLevel: 0,
+  };
 }
 
 /**
@@ -6450,6 +6528,7 @@ function tokenizePlansBidi(
       realIdx++;
     }
     flush(chars.length);
+    if (plan.run.pageBreak) tokens.push(pageBreakToken(plan));
   }
   return tokens;
 }
@@ -9080,8 +9159,8 @@ class PageAssembler {
   /**
    * The first of a paragraph's lines, from `from` on, that the current column
    * no longer holds: each line is counted with the notes it brings onto the
-   * page, the way the line loop places it, and an explicit column break ends
-   * the column where it stands.
+   * page, the way the line loop places it, and an explicit column or page break
+   * ends the column where it stands.
    *
    * @param pb   The paragraph being placed.
    * @param from The first line not yet placed.
@@ -9094,7 +9173,7 @@ class PageAssembler {
     let notesOnPage = this.pageNotes.length > 0;
     const counted = new Set<string>();
     for (let i = from; i < pb.lines.length; i++) {
-      if (i > from && pb.columnBreakLines?.has(i)) return i;
+      if (i > from && (pb.columnBreakLines?.has(i) || pb.pageBreakLines?.has(i))) return i;
       const line = pb.lines[i]!;
       const h = computeLineHeight(line, pb.resolved);
       const notes = this.lineFootnotes(line).filter((x) => !counted.has(x.id));
@@ -9891,6 +9970,10 @@ function paginateSections(
         if (!pb.resolved.widowControl || n < 2 || asm.exclusions.length > 0) return undefined;
         let end = asm.firstLineOverflowing(pb, from);
         if (end >= n) return undefined;
+        // A break the author put there ends the column, and leaves nothing
+        // alone that the column could keep: Word moves none of the lines
+        // before a column or page break on with the one after it.
+        if (pb.columnBreakLines?.has(end) || pb.pageBreakLines?.has(end)) return undefined;
         if (n - end === 1) end--;
         if (from === 0 && end === 1) end = 0;
         // A column that holds nothing yet takes a line however the rest falls,
@@ -9942,8 +10025,14 @@ function paginateSections(
       // the near side of it and left this one its other half.
       let pairPending: number | undefined;
       for (const [lineIdx, line] of pb.lines.entries()) {
-        // §17.3.3.1 — the line after a column break starts the next column,
-        // even when this one has room to spare.
+        // §17.3.3.1 — the line after a page break starts the next page, from
+        // whichever column of this one the break stands in…
+        if (pb.pageBreakLines?.has(lineIdx) && asm.pageHasContent()) {
+          asm.flushPage();
+          columnEnd = keptColumnEnd(lineIdx);
+        }
+        // …and the line after a column break the next column, even when this
+        // one has room to spare.
         if (pb.columnBreakLines?.has(lineIdx) && asm.colHasContent()) {
           advanceBefore(lineIdx);
           columnEnd = keptColumnEnd(lineIdx);
