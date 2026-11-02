@@ -252,8 +252,18 @@ function emitTextToken(
       emitAsText(out, tok, x, baseline);
       return;
     }
-    if (id !== null) uses.push(`<use href="#${id}"${pen !== 0 ? ` x="${fmtEm(pen)}"` : ''}/>`);
-    pen += (run.advances[g] ?? 0) / upem + spacingEm;
+    // A mark the shaper set by its anchor stands off the pen, and off the
+    // baseline (the em is y-up inside the group).
+    const gx = pen + (run.xOffsets?.[g] ?? 0) / upem;
+    const gy = (run.yOffsets?.[g] ?? 0) / upem;
+    if (id !== null) {
+      uses.push(
+        `<use href="#${id}"${gx !== 0 ? ` x="${fmtEm(gx)}"` : ''}${gy !== 0 ? ` y="${fmtEm(gy)}"` : ''}/>`,
+      );
+    }
+    // Spacing goes after each cluster of the scripts of India, not each glyph.
+    const spaced = run.clusterEnds ? run.clusterEnds[g] === true : true;
+    pen += (run.advances[g] ?? 0) / upem + (spaced ? spacingEm : 0);
   }
   if (uses.length === 0) return;
   // ISO 32000-1 §9.3.6 — the faked bold (a stroke a thirtieth of the em wide,

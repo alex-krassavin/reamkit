@@ -434,6 +434,22 @@ function syllables(cats: ReadonlyArray<number>): Array<readonly [number, number,
   return out;
 }
 
+/**
+ * Where the syllables of the scripts of India begin in a text, by the grammar
+ * the shaper cuts them with: a syllable is the unit a reph, a conjunct or a
+ * vowel sign is shaped within, and shaped in two halves it falls apart.
+ *
+ * @param text The text.
+ * @returns Per code point: whether a syllable — or anything that is not one —
+ *          begins at it.
+ */
+export function syllableStarts(text: string): Array<boolean> {
+  const cats = [...text].map((ch) => properties(ch.codePointAt(0)!)[0]);
+  const out = cats.map(() => false);
+  for (const [start] of syllables(cats)) out[start] = true;
+  return out;
+}
+
 // ----- The buffer -----
 
 interface Glyph extends OtlGlyph {

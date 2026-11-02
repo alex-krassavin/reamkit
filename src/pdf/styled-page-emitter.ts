@@ -675,7 +675,14 @@ function embedFontResources(
   for (const [variant, res] of laid.fontResources) {
     // A resource nothing draws from carries no glyphs and needs no program.
     if (res.gids.size === 0) continue;
-    out.set(variant, embedTtfFont(doc, res.parsed, { usedGids: res.gids, cidSet }));
+    out.set(
+      variant,
+      embedTtfFont(doc, res.parsed, {
+        usedGids: res.gids,
+        cidSet,
+        ...(res.glyphText ? { glyphText: res.glyphText } : {}),
+      }),
+    );
   }
   return out;
 }
@@ -897,6 +904,20 @@ function emitPageContent(
   let lastFauxWidth = 0;
   let lastStroke: string | undefined;
   let lastTz = 100;
+  /** A run's letter spacing, in the text space `Tz` scales (§9.4.4). */
+  const spacingOf = (tok: TextToken): number => {
+    const tz = Math.round(
+      (tok.synthetic?.widthScale ?? 1) * (tok.resolvedRun.widthScale ?? 1) * 100,
+    );
+    return (tok.resolvedRun.letterSpacingPt ?? 0) / (tz > 0 ? tz / 100 : 1);
+  };
+  /** The show operators for a token's text, with what the Indic shaper needs passed on. */
+  const showTextOf = (tok: TextToken, text: string): string => {
+    const measure = tok.font.measure;
+    return measure.clustered(text)
+      ? measure.showText(text, tok.fontSizePt, spacingOf(tok))
+      : measure.showText(text);
+  };
   const switchFontIfNeeded = (tok: TextToken) => {
     const fontKey = tok.font.resourceName;
     if (fontKey !== lastFont || tok.fontSizePt !== lastSize) {
@@ -948,8 +969,10 @@ function emitPageContent(
     // glyph through `Tc` (ISO 32000-1 §9.3.2). Set only when it changes, and
     // cleared for the runs that ask for none.
     // §9.4.4 — `Tc` is scaled by `Tz` with the glyphs, and the layout measured
-    // the spacing unscaled.
-    const tc = (tok.resolvedRun.letterSpacingPt ?? 0) / (tz > 0 ? tz / 100 : 1);
+    // the spacing unscaled. A run of the scripts of India takes its spacing
+    // after each cluster, in its own show operators (see `showTextOf`), and
+    // none from `Tc`, which would put it between a consonant and its vowel sign.
+    const tc = tok.font.measure.clustered(tok.text) ? 0 : spacingOf(tok);
     if (tc !== lastTc) {
       out.push(`${formatNumber(tc)} Tc`);
       lastTc = tc;
@@ -1365,7 +1388,31 @@ function emitPageContent(
 
     const showToken = (tok: TextToken): string => {
       const text = tok.bidiLevel % 2 === 1 ? reverseByCodePoint(tok.text) : tok.text;
-      return tok.font.measure.showText(text);
+      return showTextOf(tok, text);
+    };
+    // ISO 32000-1 §14.9.4 — text the Indic shaper set is drawn in an order of
+    // its own (the short i of हि before the ha), and a glyph it formed may
+    // stand for several characters, so each word of it is bracketed with the
+    // text it stands for: copied or searched, it reads as it was written. A
+    // word cut into runs — a vowel sign coloured apart — is one bracket, or a
+    // reader takes each run for a word of its own.
+    const actualText = (tokens: ReadonlyArray<(typeof line.tokens)[number]>) => {
+      const open = tokens.map(() => '');
+      const close = tokens.map(() => false);
+      const shaped = (t: (typeof line.tokens)[number] | undefined): t is TextToken =>
+        t?.kind === 'text' && !t.isSpace && t.tab !== true && t.font.measure.clustered(t.text);
+      for (let i = 0; i < tokens.length; i++) {
+        if (!shaped(tokens[i])) continue;
+        let j = i;
+        let text = '';
+        for (let t = tokens[j]; shaped(t); t = tokens[++j]) text += t.text;
+        let hex = '';
+        for (const b of unicodeString(text).bytes) hex += b.toString(16).padStart(2, '0');
+        open[i] = `/Span <</ActualText <${hex.toUpperCase()}>>> BDC`;
+        close[j - 1] = true;
+        i = j - 1;
+      }
+      return { open, close };
     };
 
     // §17.3.2.32 — a run's own background, painted behind its glyphs before
@@ -1576,11 +1623,14 @@ function emitPageContent(
         `${cos} ${sin} ${formatNumber(-Math.sin(rad))} ${cos} ` +
           `${formatNumber(originX)} ${formatNumber(baselineY)} Tm`,
       );
-      for (const tok of line.tokens) {
-        if (tok.kind !== 'text') continue;
+      const at = actualText(line.tokens);
+      line.tokens.forEach((tok, i) => {
+        if (tok.kind !== 'text') return;
         switchFontIfNeeded(tok);
-        out.push(tok.font.measure.showText(tok.text));
-      }
+        if (at.open[i]) out.push(at.open[i] ?? '');
+        out.push(showTextOf(tok, tok.text));
+        if (at.close[i]) out.push('EMC');
+      });
     } else if (
       extraPerSpace !== 0 ||
       hasImageToken ||
@@ -1594,9 +1644,10 @@ function emitPageContent(
       // slack), inline images (text-mode exits), and BiDi (visual order
       // differs from logical order). Tokens are emitted in visual order.
       const order = hasRtl ? lineVisualOrder(line) : line.tokens.map((_, i) => i);
+      const at = actualText(order.map((i) => line.tokens[i]!));
       let x: number = originX;
-      for (const ti of order) {
-        const tok = line.tokens[ti]!;
+      for (let oi = 0; oi < order.length; oi++) {
+        const tok = line.tokens[order[oi]!]!;
         if (tok.kind === 'image') {
           flushLink();
           emitImageToken(tok, x, baselineY);
@@ -1621,7 +1672,9 @@ function emitPageContent(
           `1 0 ${formatNumber(slant)} 1 ` +
             `${formatNumber(x)} ${formatNumber(baselineY + (tok.risePt ?? 0))} Tm`,
         );
+        if (at.open[oi]) out.push(at.open[oi] ?? '');
         out.push(showToken(tok));
+        if (at.close[oi]) out.push('EMC');
         const tokenX0 = x;
         x += tok.widthPt;
         if (tok.isSpace) x += extraPerSpace;
@@ -1634,11 +1687,15 @@ function emitPageContent(
         inBT = true;
       }
       out.push(`1 0 0 1 ${formatNumber(originX)} ${formatNumber(baselineY)} Tm`);
+      const at = actualText(line.tokens);
       let x: number = originX;
-      for (const tok of line.tokens) {
+      for (let i = 0; i < line.tokens.length; i++) {
+        const tok = line.tokens[i]!;
         if (tok.kind !== 'text') continue; // unreachable here, but TS-narrowed
         switchFontIfNeeded(tok);
-        out.push(tok.font.measure.showText(tok.text));
+        if (at.open[i]) out.push(at.open[i] ?? '');
+        out.push(showTextOf(tok, tok.text));
+        if (at.close[i]) out.push('EMC');
         trackLink(tok.href, tok.anchor, tok.text, x, x + tok.widthPt);
         x += tok.widthPt;
       }

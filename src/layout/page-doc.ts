@@ -29,6 +29,11 @@ export interface FontResource {
   readonly measure: FontMeasure;
   /** Glyphs collected by the usage walk — the emit phase subsets to these. */
   readonly gids: ReadonlySet<number>;
+  /**
+   * The text of each collected glyph that no character maps to — a conjunct,
+   * a reph, a vowel sign's contextual form — for the PDF's /ToUnicode.
+   */
+  readonly glyphText?: ReadonlyMap<number, string>;
 }
 
 /**

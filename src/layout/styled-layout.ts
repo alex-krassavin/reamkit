@@ -102,7 +102,8 @@ import type { Sheet } from '@/layout/turned-section';
 import { pageItemBounds } from '@/layout/page-doc';
 import { ResourceStore, halfPtToPt, pt } from '@/core/ir';
 import { headingLevelOf } from '@/core/outline';
-import { createFontMeasure, hasSubstitutable, shapeText, substituteLetters } from '@/core/font';
+import { createFontMeasure, hasSubstitutable, shapeGlyphs, substituteLetters } from '@/core/font';
+import { hasIndic, syllableStarts } from '@/core/font/indic-shaper';
 import { resolveFamilyStyle } from '@/core/fonts';
 import { scriptForCodepoint } from '@/core/fonts/scripts';
 import { prepareImage } from '@/core/images';
@@ -5292,6 +5293,32 @@ interface RunFace {
   readonly synthetic?: SyntheticFace;
 }
 
+// Characters a word of the scripts of India is written with that a Latin face
+// may also carry: the join controls, the dotted circle and the no-break space
+// a vowel sign is shown on, and the dandas. In such a word they belong to the
+// face that draws its letters — drawn by the Latin one, they cut the syllable
+// in two and neither half shapes.
+const INDIC_JOINS = new Set([0x200c, 0x200d, 0x25cc, 0x00a0, 0x0964, 0x0965]);
+
+/**
+ * The face that draws the letters of the scripts of India in `text`, when the
+ * run's own face does not.
+ */
+function indicFace(
+  options: StyledRenderOptions,
+  primary: ParsedTtf,
+  resolved: ResolvedRunProperties,
+  text: string,
+): { fontKey: string; parsed: ParsedTtf } | undefined {
+  for (const ch of text) {
+    const cp = ch.codePointAt(0)!;
+    if (cp < 0x0900 || cp > 0x0d7f || cp === 0x0964 || cp === 0x0965) continue;
+    if (primary.glyphForCodepoint(cp) !== 0) return undefined;
+    return fallbackFaceKey(options, cp, resolved.bold, resolved.italic);
+  }
+  return undefined;
+}
+
 /**
  * `text` cut into the stretches ONE face draws, by the same decision the
  * tokenizer makes — the whole string as a single span when the run's own face
@@ -5309,14 +5336,17 @@ function faceSpans(
   text: string,
 ): Array<{ fontKey: string; parsed: ParsedTtf; text: string }> {
   const out: Array<{ fontKey: string; parsed: ParsedTtf; text: string }> = [];
+  const indic = indicFace(options, primary.parsed, resolved, text);
   let cur = primary;
   let buf = '';
   for (const ch of text) {
     const cp = ch.codePointAt(0)!;
     const face =
-      primary.parsed.glyphForCodepoint(cp) !== 0
-        ? primary
-        : (fallbackFaceKey(options, cp, resolved.bold, resolved.italic) ?? primary);
+      indic && INDIC_JOINS.has(cp) && indic.parsed.glyphForCodepoint(cp) !== 0
+        ? indic
+        : primary.parsed.glyphForCodepoint(cp) !== 0
+          ? primary
+          : (fallbackFaceKey(options, cp, resolved.bold, resolved.italic) ?? primary);
     if (buf !== '' && face.fontKey !== cur.fontKey) {
       out.push({ ...cur, text: buf });
       buf = '';
@@ -5347,10 +5377,13 @@ function facesForRun(
   text: string,
 ): ReadonlyMap<number, RunFace> | undefined {
   let out: Map<number, RunFace> | undefined;
+  const indic = indicFace(options, primary, resolved, text);
   for (const ch of text) {
     const cp = ch.codePointAt(0)!;
-    if (out?.has(cp) === true || primary.glyphForCodepoint(cp) !== 0) continue;
-    const fallback = fallbackFaceKey(options, cp, resolved.bold, resolved.italic);
+    if (out?.has(cp) === true) continue;
+    const joins = indic && INDIC_JOINS.has(cp) && indic.parsed.glyphForCodepoint(cp) !== 0;
+    if (!joins && primary.glyphForCodepoint(cp) !== 0) continue;
+    const fallback = joins ? indic : fallbackFaceKey(options, cp, resolved.bold, resolved.italic);
     if (!fallback) continue;
     const font = fontResources.get(fallback.fontKey);
     if (!font) continue;
@@ -5384,7 +5417,10 @@ function collectFontResources(
   options: StyledRenderOptions,
   imageResources: ReadonlyMap<string, ImageResource>,
 ): Map<string, FontResource> {
-  const used = new Map<string, { parsed: ParsedTtf; gids: Set<number> }>();
+  const used = new Map<
+    string,
+    { parsed: ParsedTtf; gids: Set<number>; glyphText?: Map<number, string> }
+  >();
   // §17.6.12 — a PAGE field prints in the numerals its section names, so
   // every numeral a section may print goes into the subset with the digits:
   // front matter numbered i, ii, iii needs its i, v and x.
@@ -5443,15 +5479,14 @@ function collectFontResources(
         sink = { parsed: span.parsed, gids: new Set<number>() };
         used.set(span.fontKey, sink);
       }
-      const shaped = shapeText(
-        span.text,
-        span.parsed.glyphForCodepoint,
-        span.parsed.advanceWidths,
-        span.parsed.ligatures,
-        span.parsed.kerning,
-        span.parsed.joiningForms,
-      );
+      const shaped = shapeGlyphs(span.parsed, span.text);
       for (const g of shaped.gids) sink.gids.add(g);
+      // A conjunct or a vowel sign's contextual form is reached by no
+      // character, and the text layer has to be told what it stands for.
+      for (const [g, t] of shaped.glyphText ?? []) {
+        sink.glyphText ??= new Map();
+        if (!sink.glyphText.has(g)) sink.glyphText.set(g, t);
+      }
     }
     // §17.3.1.38 — a tab's leader characters are drawn but written nowhere: the
     // layout makes them, from the stop, long after the subset is chosen from
@@ -5682,6 +5717,7 @@ function collectFontResources(
       // E-PARITY FP4: the 'word' profile measures kern-free (Word's default).
       measure: createFontMeasure(info.parsed, options.layoutProfile !== 'word'),
       gids: info.gids,
+      ...(info.glyphText ? { glyphText: info.glyphText } : {}),
     });
   }
   return out;
@@ -6041,7 +6077,63 @@ function displayCapsRuns(
       start = i;
     }
   }
-  return any ? out : paragraph.runs;
+  return mendSplitSyllables(any ? out : paragraph.runs);
+}
+
+/** A run of plain text: no picture, equation, field, note mark or list marker. */
+function plainTextRun(run: Paragraph['runs'][number]): boolean {
+  return (
+    run.text.length > 0 &&
+    run.inlineImage === undefined &&
+    run.math === undefined &&
+    run.field === undefined &&
+    run.footnoteRef === undefined &&
+    run.endnoteRef === undefined &&
+    run.noteNumber !== true &&
+    run.listMarker !== true
+  );
+}
+
+// How much either side of a run boundary is enough to see the syllable it cuts.
+const SYLLABLE_REACH = 32;
+
+/**
+ * A syllable of the scripts of India that a run boundary cuts, given whole to
+ * the run it begins in. Word sets runs apart for a colour, a weight, a tracked
+ * change or a spelling mark, and nothing stops one from starting at a vowel
+ * sign: font issues.docx colours each sign of कृष्ण apart, and
+ * Untitled 2.docx ends a bold run on the र् of a reph. Shaped run by run,
+ * each sign stood alone on a dotted circle and the reph stayed a Ra and a
+ * virama. The syllable now takes the formatting of the run it begins in.
+ */
+function mendSplitSyllables(
+  runs: ReadonlyArray<Paragraph['runs'][number]>,
+): ReadonlyArray<Paragraph['runs'][number]> {
+  if (!runs.some((r) => hasIndic(r.text))) return runs;
+  const out = [...runs];
+  let prev = -1;
+  for (let k = 0; k < out.length; k++) {
+    const run = out[k]!;
+    if (!plainTextRun(run)) {
+      if (run.text.length > 0 || run.inlineImage !== undefined || run.math !== undefined) prev = -1;
+      continue;
+    }
+    const before = prev >= 0 ? out[prev] : undefined;
+    if (before && hasIndic(before.text + run.text)) {
+      const tail = [...before.text].slice(-SYLLABLE_REACH);
+      const head = [...run.text].slice(0, SYLLABLE_REACH);
+      const starts = syllableStarts([...tail, ...head].join(''));
+      let moved = 0;
+      while (moved < head.length && !starts[tail.length + moved]) moved++;
+      if (moved > 0) {
+        const take = head.slice(0, moved).join('');
+        out[prev] = { ...before, text: before.text + take };
+        out[k] = { ...run, text: run.text.slice(take.length) };
+      }
+    }
+    if (out[k]!.text.length > 0) prev = k;
+  }
+  return out;
 }
 
 function tokenizeParagraph(
@@ -6431,7 +6523,11 @@ function measureRunText(plan: RunPlan, text: string, face?: RunFace): number {
     (drawn.synthetic?.widthScale ?? 1) *
     (plan.resolvedRun.widthScale ?? 1);
   const extra = plan.resolvedRun.letterSpacingPt;
-  return extra === undefined || extra === 0 ? base : base + extra * [...text].length;
+  // Per character — or per cluster, where the Indic shaper set the text and a
+  // consonant and its vowel sign are one letter.
+  return extra === undefined || extra === 0
+    ? base
+    : base + extra * drawn.font.measure.spacingSlots(text);
 }
 
 // BiDi-aware tokenization — splits each run on whitespace boundaries AND on

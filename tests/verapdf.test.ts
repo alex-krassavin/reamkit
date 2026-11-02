@@ -179,6 +179,27 @@ describe.skipIf(!VP)('veraPDF formal conformance', { timeout: 60_000 }, () => {
     expect(validate(VP!, pdf, '3b')).toMatch(/^PASS/);
   });
 
+  it('validates Hindi, reordered and bracketed with /ActualText, as PDF/A-1a, 2a, 2u and UA-1', () => {
+    // The shaper draws the short i before its consonant and a conjunct as one
+    // glyph no character maps to: /ToUnicode has to name that glyph, and the
+    // /ActualText bracket sits inside the line's marked content.
+    const hindi = buildDocxFromBody('<w:p><w:r><w:t>हिन्दी धर्म क्षमा श्री</w:t></w:r></w:p>');
+    const regular = new Uint8Array(
+      readFileSync(resolve(here, 'fixtures/fonts/NotoSansDevanagari-shaping.ttf')),
+    );
+    const a1 = convertDocxToPdfSync(hindi, { fonts: { regular }, pdfA: 'PDF/A-1a' });
+    expect(validate(VP!, a1, '1a')).toMatch(/^PASS/);
+    const a2 = convertDocxToPdfSync(hindi, {
+      fonts: { regular },
+      pdfA: 'PDF/A-2a',
+      pdfUA: true,
+      info: { title: 'Hindi' },
+    });
+    expect(validate(VP!, a2, '2a')).toMatch(/^PASS/);
+    expect(validate(VP!, a2, '2u')).toMatch(/^PASS/);
+    expect(validate(VP!, a2, 'ua1')).toMatch(/^PASS/);
+  });
+
   it('validates a rich tagged document with an embedded source as PDF/A-3a', () => {
     const pdf = convertDocxToPdfSync(richDocx(), {
       fonts: FONTS,
