@@ -9,6 +9,7 @@
 // supplied ContentFont (built from the font dictionaries in EP2b); an unmapped
 // font falls back to Latin-1 with a half-em advance so text still surfaces.
 
+import { pdfTextString } from './encodings';
 import { Lexer } from './lexer';
 import { cmykHex, dashLengths, grayHex, rgbHex, spaceColor } from './shading';
 import type { ColorSpaceInfo, GsPaint, PageGradient } from './shading';
@@ -655,6 +656,7 @@ export function interpretContent(
   alphas: ReadonlyMap<string, GsPaint> = new Map(),
   spaces: ReadonlyMap<string, ColorSpaceInfo> = new Map(),
   hiddenOc: ReadonlySet<string> = new Set(),
+  actualTexts: ReadonlyMap<string, string> = new Map(),
 ): InterpretResult {
   const runs: Array<TextRun> = [];
   const images: Array<ImagePlacement> = [];
@@ -680,6 +682,20 @@ export function interpretContent(
   const ocStack: Array<boolean> = [];
   let hiddenDepth = 0;
   const visible = (): boolean => hiddenDepth === 0;
+  // §14.9.4 — the marked-content sequence being read that names a REPLACEMENT
+  // for its glyphs: the text, how deep in the nesting it opened, where its
+  // first glyph stood and its last one ended, and where the glyph outlines it
+  // drew begin.
+  let replacing:
+    | {
+        readonly text: string;
+        readonly depth: number;
+        readonly outlinesFrom: number;
+        first?: TextRun;
+        endX?: number;
+        endY?: number;
+      }
+    | undefined;
 
   // Apply the CTM to a user-space point → page space (§8.3.4).
   const toPage = (x: number, y: number): [number, number] => [
@@ -837,8 +853,9 @@ export function interpretContent(
   };
 
   // Decode a shown string and advance the matrix glyph by glyph, returning its
-  // Unicode (without emitting — Tj and TJ both build on this).
-  const consume = (operand: PdfValue): string => {
+  // Unicode and how many glyphs it showed (without emitting — Tj and TJ both
+  // build on this).
+  const consume = (operand: PdfValue): { text: string; glyphs: number } => {
     const bytes = toBytes(operand);
     const codes = state.font.splitCodes
       ? state.font.splitCodes(bytes)
@@ -851,12 +868,16 @@ export function interpretContent(
       if (!set) codesShown.set(state.font, (set = new Set()));
       for (const code of codes) set.add(code);
     }
-    return state.font.decode(codes);
+    return { text: state.font.decode(codes), glyphs: codes.length };
   };
 
-  const emitAt = (origin: Matrix, shown: string, end: Matrix): void => {
-    const text = logicalOrder(shown);
-    if (text.length === 0) return;
+  const emitAt = (origin: Matrix, shown: { text: string; glyphs: number }, end: Matrix): void => {
+    // §14.9.4 — inside a sequence with replacement text, what the glyphs decode
+    // to is not what they say: only where they stand is kept, for the text the
+    // sequence names to take their place. A glyph with no character of its own
+    // stands there all the same.
+    const text = replacing ? '' : logicalOrder(shown.text);
+    if (replacing ? shown.glyphs === 0 : text.length === 0) return;
     const scaleY = Math.hypot(origin[2], origin[3]) || 1;
     const scaleX = (Math.hypot(origin[0], origin[1]) || 1) * state.hScale;
     const mcid = mcStack.length > 0 ? mcStack[mcStack.length - 1] : undefined;
@@ -864,7 +885,7 @@ export function interpretContent(
     // direction is the first column of it; upright text leaves this at zero.
     const angle = (Math.atan2(origin[1], origin[0]) * 180) / Math.PI;
     if (!visible()) return;
-    runs.push({
+    const run: TextRun = {
       text,
       x: origin[4],
       y: origin[5],
@@ -906,14 +927,46 @@ export function interpretContent(
       // reconstruction says the shape of it was lost.
       colorHex: state.fillGradient ? midGradient(state.fillGradient) : state.fillColor,
       ...(mcid !== undefined ? { mcid } : {}),
+    };
+    if (replacing) {
+      replacing.first ??= run;
+      replacing.endX = end[4];
+      replacing.endY = end[5];
+    } else runs.push(run);
+  };
+
+  // §14.9.4 — a sequence with replacement text closes. The text stands where
+  // its first glyph stood, in that glyph's face, size and colour, and reaches to
+  // where its last glyph ended, so the line it is on, the gaps between its
+  // words and its place in the reading are found from it as from any run: the
+  // short i of हि is shown before the ha, and the word reads हि all the same.
+  // EMPTY text says the glyphs stand for nothing. Text of any other kind says
+  // what a glyph with no character of its own is, which is then written rather
+  // than drawn.
+  //
+  // A tab or a line end in it is a SPACE here. Word draws a tab as a space
+  // glyph and names it with `\t`, and where the next word stands the page
+  // already says: issue10529.pdf sets "OK:" and its smiley four points apart,
+  // and taken for a tab the smiley went to the next default stop, half an inch
+  // off.
+  const closeReplacement = (): void => {
+    const open = replacing;
+    replacing = undefined;
+    if (!open?.first || open.text.length === 0) return;
+    outlines.splice(open.outlinesFrom);
+    runs.push({
+      ...open.first,
+      text: open.text.replace(/[\t\n\v\f\r]/gu, ' '),
+      endX: open.endX ?? open.first.endX,
+      endY: open.endY ?? open.first.endY,
     });
   };
 
   // Tj / ' / " — one string at the current origin.
   const showString = (operand: PdfValue): void => {
     const origin = multiply(tm, state.ctm);
-    const text = consume(operand);
-    emitAt(origin, text, multiply(tm, state.ctm));
+    const shown = consume(operand);
+    emitAt(origin, shown, multiply(tm, state.ctm));
   };
 
   // §9.4.3 TJ — an array of strings with the pen nudged BETWEEN them. Each
@@ -928,8 +981,8 @@ export function interpretContent(
         tm = multiply(translation((-el / 1000) * state.fontSize * state.hScale, 0), tm);
       } else if (typeof el === 'string' || el instanceof PdfHexString) {
         const origin = multiply(tm, state.ctm);
-        const text = consume(el);
-        emitAt(origin, text, multiply(tm, state.ctm));
+        const shown = consume(el);
+        emitAt(origin, shown, multiply(tm, state.ctm));
       }
     }
   };
@@ -1019,7 +1072,31 @@ export function interpretContent(
         const props = operands[operands.length - 1];
         const isArtifact = tag instanceof PdfName && tag.value === 'Artifact';
         const mcidVal = !isArtifact && props instanceof Map ? props.get('MCID') : undefined;
-        mcStack.push(typeof mcidVal === 'number' ? mcidVal : undefined);
+        // §14.6 — a sequence nested in another is part of it, so one with no
+        // MCID of its own belongs to the structure element the enclosing one
+        // belongs to. Word and Ream both set a /Span with replacement text
+        // inside a paragraph's `/P <</MCID n>> BDC`, and read as untagged, the
+        // words in it dropped out of a tagged reading altogether.
+        mcStack.push(
+          typeof mcidVal === 'number'
+            ? mcidVal
+            : isArtifact
+              ? undefined
+              : mcStack[mcStack.length - 1],
+        );
+        // §14.9.4 — `/ActualText` in the property list, written there or named
+        // through the page's /Properties, replaces what the glyphs up to the
+        // matching `EMC` decode to. One inside another is covered by the outer.
+        const own = props instanceof Map ? props.get('ActualText') : undefined;
+        const actual =
+          typeof own === 'string' || own instanceof PdfHexString
+            ? pdfTextString(toBytes(own))
+            : props instanceof PdfName
+              ? actualTexts.get(props.value)
+              : undefined;
+        if (actual !== undefined && replacing === undefined) {
+          replacing = { text: actual, depth: mcStack.length - 1, outlinesFrom: outlines.length };
+        }
         // §8.11.3.2 — `/OC /Name BDC` guards everything up to its `EMC` on a
         // group the file may have turned off. issue11144_reduced.pdf keeps
         // three versions of its page this way, two of them off, and read
@@ -1033,13 +1110,19 @@ export function interpretContent(
         if (isOc) hiddenDepth++;
         break;
       }
-      case 'BMC':
-        mcStack.push(undefined); // `tag BMC` — no properties, so no MCID
+      case 'BMC': {
+        // `tag BMC` — no properties, so no MCID of its own: it is part of the
+        // sequence around it, unless it marks an artifact (§14.8.2.2).
+        const tag = operands[operands.length - 1];
+        const isArtifact = tag instanceof PdfName && tag.value === 'Artifact';
+        mcStack.push(isArtifact ? undefined : mcStack[mcStack.length - 1]);
         ocStack.push(false);
         break;
+      }
       case 'EMC':
         mcStack.pop();
         if (ocStack.pop() === true) hiddenDepth--;
+        if (replacing && mcStack.length <= replacing.depth) closeReplacement();
         break;
       case 'Do': {
         // Paint an XObject (image or form). Record its name + the CTM (which
@@ -1318,6 +1401,8 @@ export function interpretContent(
         break;
     }
   }
+  // A stream that ends inside the sequence still showed its glyphs.
+  closeReplacement();
   return { texts: runs, images, vectors, glyphs, shadings: painted, outlines, shown: codesShown };
 }
 

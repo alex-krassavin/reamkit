@@ -234,3 +234,43 @@ export function isStandardLatinFace(baseFont: string): boolean {
       .toLowerCase(),
   );
 }
+
+// Annex D.2 PDF — where PDFDocEncoding parts from Latin-1: the spacing accents
+// it puts among the control codes, and the typographer's punctuation, the two
+// ligatures and the Central European letters it puts where CP-1252 has them,
+// in an order of its own. 0x9F is unused, and 0xA0 is the euro sign.
+const PDF_DOC: ReadonlyMap<number, number> = new Map([
+  ...[0x02d8, 0x02c7, 0x02c6, 0x02d9, 0x02dd, 0x02db, 0x02da, 0x02dc].map(
+    (cp, i) => [0x18 + i, cp] as const,
+  ),
+  ...[
+    0x2022, 0x2020, 0x2021, 0x2026, 0x2014, 0x2013, 0x0192, 0x2044, 0x2039, 0x203a, 0x2212, 0x2030,
+    0x201e, 0x201c, 0x201d, 0x2018, 0x2019, 0x201a, 0x2122, 0xfb01, 0xfb02, 0x0141, 0x0152, 0x0160,
+    0x0178, 0x017d, 0x0131, 0x0142, 0x0153, 0x0161, 0x017e,
+  ].map((cp, i) => [0x80 + i, cp] as const),
+  [0xa0, 0x20ac],
+]);
+
+/**
+ * §7.9.2.2 — the characters of a text string: UTF-16BE behind its byte-order
+ * mark, UTF-8 behind its own (PDF 2.0), and otherwise PDFDocEncoding, one byte
+ * to a character.
+ *
+ * @param bytes The string's bytes, as written literal or in hex.
+ * @returns The text it stands for.
+ */
+export function pdfTextString(bytes: Uint8Array): string {
+  if (bytes[0] === 0xfe && bytes[1] === 0xff) {
+    let out = '';
+    for (let i = 2; i + 1 < bytes.length; i += 2) {
+      out += String.fromCharCode((bytes[i]! << 8) | bytes[i + 1]!);
+    }
+    return out;
+  }
+  if (bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) {
+    return new TextDecoder('utf-8').decode(bytes.subarray(3));
+  }
+  let out = '';
+  for (const b of bytes) out += String.fromCodePoint(PDF_DOC.get(b) ?? b);
+  return out;
+}

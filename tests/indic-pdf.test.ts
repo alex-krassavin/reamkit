@@ -73,6 +73,19 @@ describe('a word of the scripts of India on a PDF page', () => {
     expect(pdf).toContain(`/Span <</ActualText <${utf16('हिन्दी')}>>> BDC`);
   });
 
+  it('reads back as written, tagged or not', async () => {
+    // The glyphs are in the shaper's order; the reader takes the /ActualText
+    // each word is bracketed with, where it was taking िहन्दी िक.
+    for (const tagged of [false, true]) {
+      const pdf = await Ream.parse(buildDocxFromBody(para('हिन्दी कि'))).convert('pdf', {
+        fonts: { regular: DEVANAGARI },
+        tagged,
+      });
+      const md = new TextDecoder().decode(await Ream.parse(pdf).convert('md'));
+      expect(md.trim()).toBe('हिन्दी कि');
+    }
+  });
+
   it('names in /ToUnicode a glyph only shaping reaches', async () => {
     const pdf = await pdfBytes(para('हिन्दी'), DEVANAGARI);
     const shortI = shapeIndic(parsed, 'हिन्दी')!.gids[0]!;
