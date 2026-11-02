@@ -15,7 +15,15 @@ import type { ThemeFonts } from '@/core/drawingml/theme-parser';
 import { eighthPtToPt, pt, twipsToPt } from '@/core/ir';
 
 import { parseRunProperties } from '@/word/run-properties';
-import { asArray, asElement, getAttr, getVal, parseIntAttr, parseToggle } from '@/word/xml-helpers';
+import {
+  asArray,
+  asElement,
+  foldRepeatedProperties,
+  getAttr,
+  getVal,
+  parseIntAttr,
+  parseToggle,
+} from '@/word/xml-helpers';
 
 const ALIGNMENTS = new Set<Alignment>(['left', 'right', 'center', 'both', 'distribute']);
 const LINE_RULES = new Set<'auto' | 'exact' | 'atLeast'>(['auto', 'exact', 'atLeast']);
@@ -114,7 +122,7 @@ export function parseParagraphProperties(
   autoSpacingPt = 0,
   themeFonts?: ThemeFonts,
 ): ParagraphProperties {
-  const el = asElement(pPr);
+  const el = foldRepeatedProperties(pPr);
   if (!el) return {};
 
   const out: Mutable<ParagraphProperties> = {};

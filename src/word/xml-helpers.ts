@@ -111,6 +111,68 @@ export function parseToggle(node: unknown): boolean | undefined {
 }
 
 /**
+ * Narrow a `w:rPr` or `w:pPr` to an element, with every property written more
+ * than once in it folded into the one Word applies.
+ *
+ * The schema allows each property once, but producers repeat them: LibreOffice
+ * writes `<w:b w:val="false"/>` twice, and the flat tree hands the pair over as
+ * an array, which every reader took for nothing and {@link parseToggle} for
+ * "on", so the run came out bold. Word applies the occurrences in order, each
+ * over the ones before it (Word for Mac, measured): what a later one states
+ * wins, what it leaves unsaid stands. Two `w:ind` keep the left indent of one
+ * and the right of the other, two `w:pBdr` draw the rules of both, and two
+ * `w:rFonts` name the faces of both.
+ *
+ * @param node The parsed `w:rPr` / `w:pPr`.
+ * @returns The element with its repeats folded (the same object when it has
+ *          none), or `undefined` when `node` is not a single element.
+ */
+export function foldRepeatedProperties(node: unknown): XmlElement | undefined {
+  const el = asElement(node);
+  if (!el) return undefined;
+  let out: XmlElement | undefined;
+  for (const [tag, v] of Object.entries(el)) {
+    if (!Array.isArray(v)) continue;
+    out ??= { ...el };
+    out[tag] = fold(v);
+  }
+  return out ?? el;
+}
+
+function fold(v: unknown): unknown {
+  return Array.isArray(v) ? (v as ReadonlyArray<unknown>).reduce(applyOver) : v;
+}
+
+/**
+ * One occurrence of a property element applied over an earlier one: its
+ * attributes win, its child elements apply over theirs in turn, and its tab
+ * stops join the ones already set (Word keeps the stops of both `w:tabs`).
+ */
+function applyOver(earlier: unknown, later: unknown): unknown {
+  const a = asElement(earlier) ?? {};
+  const b = asElement(later) ?? {};
+  // Between two that carry nothing but `w:val`, the later one is the whole
+  // statement: an on/off property written bare says "on" (§17.17.4), and
+  // `<w:b w:val="0"/><w:b/>` is bold in Word, where laying the bare one over
+  // the other attribute by attribute would have kept the "0".
+  if (valOnly(a) && valOnly(b)) return later;
+  const out: XmlElement = { ...a };
+  for (const [k, v] of Object.entries(b)) {
+    out[k] =
+      !Object.hasOwn(out, k) || k.startsWith('@_')
+        ? v
+        : k === 'w:tab'
+          ? [...asArray(out[k]), ...asArray(v)]
+          : applyOver(fold(out[k]), fold(v));
+  }
+  return out;
+}
+
+function valOnly(el: XmlElement): boolean {
+  return Object.keys(el).every((k) => k === '@_w:val' || k === '@_val');
+}
+
+/**
  * Read the `#text` content of a node. A bare string/number is returned directly;
  * an element returns its `#text` child (coerced to string), else the empty string.
  */

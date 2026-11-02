@@ -262,3 +262,19 @@ describe('paragraph shading (§17.3.1.31)', () => {
     ).toBeUndefined();
   });
 });
+
+describe('parseParagraphProperties: a property written twice', () => {
+  // LibreOffice writes a heading style's `w:outlineLvl` twice (tdf102466.docx),
+  // and the pair read as no level at all. A bare element written after a
+  // stated one adds nothing to it: Word keeps the indent.
+  it('reads it the way Word does', () => {
+    expect(
+      parseParagraphProperties(
+        parsePpr('<w:pPr><w:outlineLvl w:val="1"/><w:outlineLvl w:val="1"/></w:pPr>'),
+      ),
+    ).toEqual({ outlineLevel: 1 });
+    expect(
+      parseParagraphProperties(parsePpr('<w:pPr><w:ind w:left="1440"/><w:ind/></w:pPr>')),
+    ).toEqual({ indentLeft: twipsToPt(1440) });
+  });
+});

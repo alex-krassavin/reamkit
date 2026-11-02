@@ -10,7 +10,14 @@ import type {
 import type { ThemeFonts } from '@/core/drawingml/theme-parser';
 import { halfPtToPt, twipsToPt } from '@/core/ir';
 
-import { asElement, getAttr, getVal, parseHalfPointAttr, parseToggle } from '@/word/xml-helpers';
+import {
+  asElement,
+  foldRepeatedProperties,
+  getAttr,
+  getVal,
+  parseHalfPointAttr,
+  parseToggle,
+} from '@/word/xml-helpers';
 import { resolveThemeFont } from '@/core/drawingml/theme-parser';
 import { resolveWordThemeFont } from '@/word/theme-fonts';
 import { shadingFillHex } from '@/word/shading';
@@ -82,7 +89,7 @@ const HIGHLIGHT_COLORS: ReadonlyMap<string, string> = new Map([
  * @returns The parsed properties; an empty object when `rPr` is absent.
  */
 export function parseRunProperties(rPr: unknown, themeFonts?: ThemeFonts): RunProperties {
-  const el = asElement(rPr);
+  const el = foldRepeatedProperties(rPr);
   if (!el) return {};
 
   const out: Mutable<RunProperties> = {};
