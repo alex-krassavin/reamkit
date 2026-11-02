@@ -24,6 +24,7 @@ import type {
   HeaderFooterReference,
   HeaderFooterType,
   ImageBlock,
+  PageMargins,
   ParagraphProperties,
   Run,
   RunProperties,
@@ -36,13 +37,14 @@ import type {
 } from '@/core/document-model';
 import type { DocumentReader, ReadResult } from '@/core/ir/adapters';
 import type { FlowDoc } from '@/core/ir/flow';
-import type { Loss } from '@/core/ir';
+import type { Loss, Pt } from '@/core/ir';
 import type {
   DocBorder,
   DocCharProps,
   DocContent,
   DocListTables,
   DocLvl,
+  DocMargins,
   DocParaProps,
   DocParagraph,
   DocPicture,
@@ -236,8 +238,8 @@ export function readDoc(bytes: Uint8Array): ReadResult<FlowDoc> {
   }
 
   // A section's page size (SEP sprmSXaPage/sprmSYaPage), US Letter when it gives
-  // none, and where it starts (sprmSBkc). Margins stay Word's one-inch default
-  // for now, and every section shows the first section's headers and footers.
+  // none, where it starts (sprmSBkc) and its margins. Every section shows the
+  // first section's headers and footers.
   const sectionProperties = (sec: DocSection | undefined): SectionProperties => {
     const ps = sec?.pageSize;
     const sectionStart = sec?.bkc !== undefined ? sectionStartOf(sec.bkc) : undefined;
@@ -249,7 +251,7 @@ export function readDoc(bytes: Uint8Array): ReadResult<FlowDoc> {
             orientation: ps.widthPt > ps.heightPt ? 'landscape' : 'portrait',
           }
         : { width: pt(612), height: pt(792) },
-      margins: { top: pt(72), right: pt(72), bottom: pt(72), left: pt(72) },
+      margins: toMargins(sec?.margins),
       headers,
       footers,
       ...(sectionStart ? { sectionStart } : {}),
@@ -619,6 +621,22 @@ function underlineStyle(kul: number): UnderlineStyle | undefined {
     default:
       return 'single';
   }
+}
+
+// A section's margins (twips) → the model's. Where the SEP says nothing, Word
+// sets an inch on every side and the header and footer half an inch off the
+// edge (measured: a .doc whose SEP states no margin opens with exactly these).
+function toMargins(m: DocMargins | undefined): PageMargins {
+  const side = (twips: number | undefined): Pt => twipsToPt(twips ?? 1440);
+  return {
+    top: side(m?.topTwips),
+    right: side(m?.rightTwips),
+    bottom: side(m?.bottomTwips),
+    left: side(m?.leftTwips),
+    ...(m?.headerTwips !== undefined ? { header: twipsToPt(m.headerTwips) } : {}),
+    ...(m?.footerTwips !== undefined ? { footer: twipsToPt(m.footerTwips) } : {}),
+    ...(m?.gutterTwips ? { gutter: twipsToPt(m.gutterTwips) } : {}),
+  };
 }
 
 // A section's `bkc` → where the model's section starts. A new column is a new

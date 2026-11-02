@@ -89,11 +89,13 @@ export function buildDoc(
     // The main text's sections, in order: each `length` characters long, counting
     // the section mark (0x0C) every section but the last ends with, and starting
     // as `bkc` says (sprmSBkc: 0 continuous, 2 new page, 3 even, 4 odd page). Each
-    // gets its own SEP, with its own page size or else `pageSizeTwips`.
+    // gets its own SEP, with its own page size or else `pageSizeTwips`, and the
+    // margins it states (twips; top and bottom signed, as Word stores them).
     readonly sections?: ReadonlyArray<{
       readonly length: number;
       readonly bkc?: number;
       readonly pageSizeTwips?: { readonly width: number; readonly height: number };
+      readonly marginsTwips?: DocSepMargins;
     }>;
     readonly data?: Uint8Array; // the Data stream (embedded pictures: see buildPicf)
     readonly headerFooter?: {
@@ -234,7 +236,11 @@ export function buildDoc(
     const sv = new DataView(plcfSed.buffer);
     let cp = 0;
     sections.forEach((section, i) => {
-      const grpprl = buildSepGrpprl(section.bkc, section.pageSizeTwips ?? opts.pageSizeTwips);
+      const grpprl = buildSepGrpprl(
+        section.bkc,
+        section.pageSizeTwips ?? opts.pageSizeTwips,
+        section.marginsTwips,
+      );
       const sepxBytes = new Uint8Array(2 + grpprl.length); // cb + grpprl
       new DataView(sepxBytes.buffer).setUint16(0, grpprl.length, true);
       sepxBytes.set(grpprl, 2);
@@ -286,18 +292,40 @@ export function buildDoc(
   ]);
 }
 
+// A section's margins as its SEP states them, in twips.
+export interface DocSepMargins {
+  readonly left?: number; // sprmSDxaLeft
+  readonly right?: number; // sprmSDxaRight
+  readonly top?: number; // sprmSDyaTop (signed)
+  readonly bottom?: number; // sprmSDyaBottom (signed)
+  readonly header?: number; // sprmSDyaHdrTop
+  readonly footer?: number; // sprmSDyaHdrBottom
+  readonly gutter?: number; // sprmSDzaGutter
+}
+
 // A section's grpprl: sprmSBkc (its break kind, a 1-byte operand), then
-// sprmSXaPage/sprmSYaPage (the page size in twips).
+// sprmSXaPage/sprmSYaPage (the page size in twips), then the margins (2 bytes each).
 function buildSepGrpprl(
   bkc: number | undefined,
   page: { readonly width: number; readonly height: number } | undefined,
+  margins?: DocSepMargins,
 ): Uint8Array {
   const bytes: Array<number> = [];
+  const word = (sprm: number, v: number): void => {
+    bytes.push(sprm & 0xff, sprm >> 8, v & 0xff, (v >> 8) & 0xff);
+  };
   if (bkc !== undefined) bytes.push(0x09, 0x30, bkc); // sprmSBkc
   if (page) {
-    bytes.push(0x1f, 0xb0, page.width & 0xff, page.width >> 8); // sprmSXaPage
-    bytes.push(0x20, 0xb0, page.height & 0xff, page.height >> 8); // sprmSYaPage
+    word(0xb01f, page.width); // sprmSXaPage
+    word(0xb020, page.height); // sprmSYaPage
   }
+  if (margins?.left !== undefined) word(0xb021, margins.left);
+  if (margins?.right !== undefined) word(0xb022, margins.right);
+  if (margins?.top !== undefined) word(0x9023, margins.top);
+  if (margins?.bottom !== undefined) word(0x9024, margins.bottom);
+  if (margins?.header !== undefined) word(0xb017, margins.header);
+  if (margins?.footer !== undefined) word(0xb018, margins.footer);
+  if (margins?.gutter !== undefined) word(0xb025, margins.gutter);
   return Uint8Array.from(bytes);
 }
 

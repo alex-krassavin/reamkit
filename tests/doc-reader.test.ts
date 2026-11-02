@@ -9,6 +9,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import { buildDoc, buildPicf } from './fixtures/build-doc';
+import type { DocSepMargins } from './fixtures/build-doc';
 import type { BodyElement } from '@/core/document-model';
 import type { FlowDoc } from '@/core/ir/flow';
 import type { TextLineItem } from '@/layout/page-doc';
@@ -733,6 +734,7 @@ describe('doc reader: sections', () => {
       length: number;
       bkc?: number;
       pageSizeTwips?: { width: number; height: number };
+      marginsTwips?: DocSepMargins;
     }>,
   ): FlowDoc => readDoc(buildDoc([{ text, compressed: false }], { sections })).doc;
 
@@ -778,5 +780,36 @@ describe('doc reader: sections', () => {
       [612, 792],
       [792, 612],
     ]);
+  });
+
+  it('sets each section within its own margins', () => {
+    // Word: "one" at x 162.2 (a two-inch margin and a quarter-inch gutter), its
+    // line's top at 108.4; "two", in the next section, at 36.4 and 36.4. A top
+    // margin stored negative is the same size.
+    const doc = sectioned(`one${PB}two\r`, [
+      { length: 4, marginsTwips: { left: 2880, right: 720, top: 2160, bottom: 1440, gutter: 360 } },
+      { length: 4, marginsTwips: { left: 720, right: 2880, top: -720, bottom: 720 } },
+    ]);
+    expect(doc.sections.map((s) => s.properties.margins)).toEqual([
+      { top: 108, right: 36, bottom: 72, left: 144, gutter: 18 },
+      { top: 36, right: 144, bottom: 36, left: 36 },
+    ]);
+    const laid = layoutStyledDocument(doc.body, {
+      registry: FontRegistry.fromBytes(FONTS),
+      ...flowRenderOptions(doc),
+    });
+    const first = laid.pages.map((p) => p.commands.find((c) => c.type === 'line')!);
+    expect(first.map((l) => l.originX)).toEqual([162, 36]);
+    expect(first[0]!.baselineY - first[1]!.baselineY).toBeCloseTo(72, 3);
+  });
+
+  it('keeps an inch on every side where the SEP states no margin, as Word does', () => {
+    const doc = sectioned(`one${PB}two\r`, [{ length: 4 }, { length: 4 }]);
+    expect(doc.sections[0]!.properties.margins).toEqual({
+      top: 72,
+      right: 72,
+      bottom: 72,
+      left: 72,
+    });
   });
 });

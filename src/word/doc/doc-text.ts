@@ -78,6 +78,13 @@ const SPRM_P_ILFO = 0x460b; // list-format override index (>0 ⇒ the paragraph 
 const SPRM_S_BKC = 0x3009; // where the section starts (bkc)
 const SPRM_S_XA_PAGE = 0xb01f; // section page width in twips (xaPage)
 const SPRM_S_YA_PAGE = 0xb020; // section page height in twips (yaPage)
+const SPRM_S_DXA_LEFT = 0xb021; // left margin (twips)
+const SPRM_S_DXA_RIGHT = 0xb022; // right margin (twips)
+const SPRM_S_DYA_TOP = 0x9023; // top margin (twips, signed: < 0 ⇒ exactly that)
+const SPRM_S_DYA_BOTTOM = 0x9024; // bottom margin (twips, signed likewise)
+const SPRM_S_DYA_HDR_TOP = 0xb017; // header's distance from the top edge (twips)
+const SPRM_S_DYA_HDR_BOTTOM = 0xb018; // footer's distance from the bottom edge (twips)
+const SPRM_S_DZA_GUTTER = 0xb025; // binding space beside the left margin (twips)
 const MAX_PAGE_TWIPS = 31680; // Word's max page dimension (22 inches) — sanity bound
 const SPRA_LEN = [1, 1, 2, 4, 2, 2, 0, 3];
 // spra-6 sprms whose operand is prefixed by a 2-byte (not 1-byte) length.
@@ -221,6 +228,23 @@ export interface DocSection {
   readonly bkc?: number;
   /** The page size in points (xaPage/yaPage), when present and sane. */
   readonly pageSize?: { readonly widthPt: number; readonly heightPt: number };
+  /** The margins the SEP states, in twips; each absent one is Word's default. */
+  readonly margins?: DocMargins;
+}
+
+/**
+ * A section's margins in twips (§2.6.4 sprmSDxaLeft … sprmSDzaGutter). A top or
+ * bottom margin is stored signed, negative for one the header or footer may not
+ * push; its size is the same either way.
+ */
+export interface DocMargins {
+  readonly leftTwips?: number;
+  readonly rightTwips?: number;
+  readonly topTwips?: number;
+  readonly bottomTwips?: number;
+  readonly headerTwips?: number;
+  readonly footerTwips?: number;
+  readonly gutterTwips?: number;
 }
 
 /**
@@ -299,7 +323,8 @@ const EMPTY: DocContent = { paragraphs: [], encrypted: false };
 // next section starts a page is that section's own bkc.
 //
 // Each SED's fcSepx points at a Sepx in the WordDocument stream, whose grpprl
-// carries sprmSBkc and sprmSXaPage/sprmSYaPage (page width/height in twips).
+// carries sprmSBkc, sprmSXaPage/sprmSYaPage (page width/height in twips) and the
+// margins.
 // Word stores already-swapped dimensions for a landscape section (xaPage >
 // yaPage), so they map straight to the page size — no orientation fix-up. A
 // SED with no Sepx (fcSepx 0xFFFFFFFF) is a section with every default.
@@ -328,15 +353,28 @@ function readSections(
     let bkc: number | undefined;
     let xa = 0;
     let ya = 0;
+    const margins: { -readonly [K in keyof DocMargins]: number } = {};
+    // A margin past the largest page is no margin: it is left to the default.
+    const margin = (key: keyof DocMargins, twips: number): void => {
+      if (twips <= MAX_PAGE_TWIPS) margins[key] = twips;
+    };
     for (const { sprm, op } of sprms(grpprl)) {
       if (sprm === SPRM_S_BKC) bkc = grpprl[op];
       else if (sprm === SPRM_S_XA_PAGE) xa = u16(grpprl, op);
       else if (sprm === SPRM_S_YA_PAGE) ya = u16(grpprl, op);
+      else if (sprm === SPRM_S_DXA_LEFT) margin('leftTwips', u16(grpprl, op));
+      else if (sprm === SPRM_S_DXA_RIGHT) margin('rightTwips', u16(grpprl, op));
+      else if (sprm === SPRM_S_DYA_TOP) margin('topTwips', Math.abs(i16(grpprl, op)));
+      else if (sprm === SPRM_S_DYA_BOTTOM) margin('bottomTwips', Math.abs(i16(grpprl, op)));
+      else if (sprm === SPRM_S_DYA_HDR_TOP) margin('headerTwips', u16(grpprl, op));
+      else if (sprm === SPRM_S_DYA_HDR_BOTTOM) margin('footerTwips', u16(grpprl, op));
+      else if (sprm === SPRM_S_DZA_GUTTER) margin('gutterTwips', u16(grpprl, op));
     }
     const sane = xa >= 1 && ya >= 1 && xa <= MAX_PAGE_TWIPS && ya <= MAX_PAGE_TWIPS;
     sections.push({
       ...(bkc !== undefined ? { bkc } : {}),
       ...(sane ? { pageSize: { widthPt: xa / 20, heightPt: ya / 20 } } : {}),
+      ...(Object.keys(margins).length > 0 ? { margins } : {}),
     });
   }
   return { sections, ends };
