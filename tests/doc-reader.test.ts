@@ -803,6 +803,62 @@ describe('doc reader: sections', () => {
     expect(first[0]!.baselineY - first[1]!.baselineY).toBeCloseTo(72, 3);
   });
 
+  it('gives each section its own header and footer, or the one before', () => {
+    // Word: "Head A" and "Foot A" on page 1; "Head B" on page 2, over the
+    // footer the second section takes from the first ("same as previous", which
+    // Word writes as a story of no characters).
+    const doc = readDoc(
+      buildDoc([{ text: `one${PB}two\r`, compressed: false }], {
+        sections: [{ length: 4 }, { length: 4 }],
+        headerFooter: [
+          { defaultHeader: 'Head A', defaultFooter: 'Foot A' },
+          { defaultHeader: 'Head B' },
+        ],
+      }),
+    ).doc;
+    expect(pageTexts(doc)).toEqual([
+      ['Head A', 'one', 'Foot A'],
+      ['Head B', 'two', 'Foot A'],
+    ]);
+  });
+
+  it('shows no line for the paragraph mark that closes every story', () => {
+    // LibreOffice writes a one-line header as "Head", CR, CR; Word shows one line.
+    const doc = readDoc(
+      buildDoc([{ text: 'one\r', compressed: false }], {
+        headerFooter: { defaultHeader: 'Head\r' },
+      }),
+    ).doc;
+    expect(pageTexts(doc)).toEqual([['Head', 'one']]);
+  });
+
+  it('shows the first page its own header when the section asks', () => {
+    // sprmSFTitlePage. Word: "Cover" over page 1 and no footer under it, "Head"
+    // and "Foot" on page 2.
+    const doc = readDoc(
+      buildDoc([{ text: `one${PB}two\r`, compressed: false }], {
+        sections: [{ length: 8, titlePage: true }],
+        headerFooter: { firstHeader: 'Cover', defaultHeader: 'Head', defaultFooter: 'Foot' },
+      }),
+    ).doc;
+    expect(pageTexts(doc)).toEqual([
+      ['Cover', 'one'],
+      ['Head', 'two', 'Foot'],
+    ]);
+  });
+
+  it('shows the even pages their own header when the document has facing pages', () => {
+    // Dop.fFacingPages. Word: "Odd", "Even", "Odd" over three pages.
+    const bands = { defaultHeader: 'Odd', evenHeader: 'Even' };
+    const text = `one${PB}two${PB}three\r`;
+    const facing = readDoc(
+      buildDoc([{ text, compressed: false }], { headerFooter: bands, facingPages: true }),
+    ).doc;
+    expect(pageTexts(facing).map((lines) => lines[0])).toEqual(['Odd', 'Even', 'Odd']);
+    const single = readDoc(buildDoc([{ text, compressed: false }], { headerFooter: bands })).doc;
+    expect(pageTexts(single).map((lines) => lines[0])).toEqual(['Odd', 'Odd', 'Odd']);
+  });
+
   it('keeps an inch on every side where the SEP states no margin, as Word does', () => {
     const doc = sectioned(`one${PB}two\r`, [{ length: 4 }, { length: 4 }]);
     expect(doc.sections[0]!.properties.margins).toEqual({

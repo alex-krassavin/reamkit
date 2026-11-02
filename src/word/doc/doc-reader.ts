@@ -209,38 +209,51 @@ export function readDoc(bytes: Uint8Array): ReadResult<FlowDoc> {
   const resources = new ResourceStore();
   const { body, sectionEnds } = buildBody(content, resources);
 
-  // Header/footer stories → a named-body map + the section's references.
+  // Header/footer stories → a named-body map + each section's references. A
+  // story a section takes from the one before is the same array, and so the
+  // same band.
   const headersFooters = new Map<string, ReadonlyArray<BodyElement>>();
-  const headers: Array<HeaderFooterReference> = [];
-  const footers: Array<HeaderFooterReference> = [];
-  const addStory = (
-    story: ReadonlyArray<DocParagraph> | undefined,
-    kind: 'header' | 'footer',
-    type: HeaderFooterType,
-  ): void => {
-    if (!story) return;
-    const id = `${kind}-${type}`;
-    const els = resolveBodyStyles(
-      story.flatMap((p) => mapParagraph(p, resources)),
-      EMPTY_STYLE_SHEET,
-    );
-    headersFooters.set(id, els);
-    (kind === 'header' ? headers : footers).push({ type, relationshipId: id });
+  const bandIds = new Map<ReadonlyArray<DocParagraph>, string>();
+  const bands = (
+    index: number,
+  ): { headers: Array<HeaderFooterReference>; footers: Array<HeaderFooterReference> } => {
+    const headers: Array<HeaderFooterReference> = [];
+    const footers: Array<HeaderFooterReference> = [];
+    const hf = content.headerFooters?.[index];
+    const add = (
+      story: ReadonlyArray<DocParagraph> | undefined,
+      kind: 'header' | 'footer',
+      type: HeaderFooterType,
+    ): void => {
+      if (!story) return;
+      let id = bandIds.get(story);
+      if (id === undefined) {
+        id = `${kind}-${type}-${index}`;
+        bandIds.set(story, id);
+        headersFooters.set(
+          id,
+          resolveBodyStyles(
+            story.flatMap((p) => mapParagraph(p, resources)),
+            EMPTY_STYLE_SHEET,
+          ),
+        );
+      }
+      (kind === 'header' ? headers : footers).push({ type, relationshipId: id });
+    };
+    add(hf?.defaultHeader, 'header', 'default');
+    add(hf?.firstHeader, 'header', 'first');
+    add(hf?.evenHeader, 'header', 'even');
+    add(hf?.defaultFooter, 'footer', 'default');
+    add(hf?.firstFooter, 'footer', 'first');
+    add(hf?.evenFooter, 'footer', 'even');
+    return { headers, footers };
   };
-  const hf = content.headerFooters;
-  if (hf) {
-    addStory(hf.defaultHeader, 'header', 'default');
-    addStory(hf.firstHeader, 'header', 'first');
-    addStory(hf.evenHeader, 'header', 'even');
-    addStory(hf.defaultFooter, 'footer', 'default');
-    addStory(hf.firstFooter, 'footer', 'first');
-    addStory(hf.evenFooter, 'footer', 'even');
-  }
 
   // A section's page size (SEP sprmSXaPage/sprmSYaPage), US Letter when it gives
-  // none, where it starts (sprmSBkc) and its margins. Every section shows the
-  // first section's headers and footers.
-  const sectionProperties = (sec: DocSection | undefined): SectionProperties => {
+  // none, where it starts (sprmSBkc), its margins and its headers and footers:
+  // the first page's own when the section asks (sprmSFTitlePage), the even
+  // pages' own when the document does (Dop.fFacingPages).
+  const sectionProperties = (sec: DocSection | undefined, index: number): SectionProperties => {
     const ps = sec?.pageSize;
     const sectionStart = sec?.bkc !== undefined ? sectionStartOf(sec.bkc) : undefined;
     return {
@@ -252,8 +265,9 @@ export function readDoc(bytes: Uint8Array): ReadResult<FlowDoc> {
           }
         : { width: pt(612), height: pt(792) },
       margins: toMargins(sec?.margins),
-      headers,
-      footers,
+      ...bands(index),
+      ...(sec?.titlePage ? { titlePg: true } : {}),
+      ...(content.facingPages ? { evenAndOddHeaders: true } : {}),
       ...(sectionStart ? { sectionStart } : {}),
     };
   };
@@ -267,13 +281,13 @@ export function readDoc(bytes: Uint8Array): ReadResult<FlowDoc> {
     const last = sections[sections.length - 1]?.endIndex ?? 0;
     if (end.endIndex <= last || end.endIndex >= body.length) continue;
     sections.push({
-      properties: sectionProperties(docSections[end.section]),
+      properties: sectionProperties(docSections[end.section], end.section),
       endIndex: end.endIndex,
     });
   }
   if (sections.length > 0) {
     sections.push({
-      properties: sectionProperties(docSections[docSections.length - 1]),
+      properties: sectionProperties(docSections[docSections.length - 1], docSections.length - 1),
       endIndex: body.length,
     });
   }
@@ -281,7 +295,7 @@ export function readDoc(bytes: Uint8Array): ReadResult<FlowDoc> {
     kind: 'flow',
     body: resolveBodyStyles(body, EMPTY_STYLE_SHEET),
     sections,
-    section: sectionProperties(docSections[0]),
+    section: sectionProperties(docSections[0], 0),
     styles: EMPTY_STYLE_SHEET,
     resources,
     ...(headersFooters.size > 0 ? { headersFooters } : {}),

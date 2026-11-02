@@ -96,16 +96,14 @@ export function buildDoc(
       readonly bkc?: number;
       readonly pageSizeTwips?: { readonly width: number; readonly height: number };
       readonly marginsTwips?: DocSepMargins;
+      readonly titlePage?: boolean; // sprmSFTitlePage
     }>;
     readonly data?: Uint8Array; // the Data stream (embedded pictures: see buildPicf)
-    readonly headerFooter?: {
-      readonly defaultHeader?: string;
-      readonly defaultFooter?: string;
-      readonly firstHeader?: string;
-      readonly firstFooter?: string;
-      readonly evenHeader?: string;
-      readonly evenFooter?: string;
-    };
+    // The header/footer stories: one set for the first section, or one per section.
+    // An absent story has no characters, which a later section reads as the
+    // previous section's; an empty string is a story of one empty paragraph.
+    readonly headerFooter?: DocBands | ReadonlyArray<DocBands>;
+    readonly facingPages?: boolean; // Dop.fFacingPages — even pages have their own bands
     // List tables (DOC-10): `lfos` maps each 1-based ilfo to a list's lsid; `lstfs`
     // gives each list its levels (nfc + iStartAt + the xst number-text code units).
     readonly lists?: {
@@ -141,7 +139,9 @@ export function buildDoc(
   // CP ≥ ccpText, with a PlcfHdd dividing them.
   let headerCps: Array<number> | undefined;
   if (opts.headerFooter) {
-    const story = buildHeaderStream(opts.headerFooter);
+    const story = buildHeaderStream(
+      Array.isArray(opts.headerFooter) ? opts.headerFooter : [opts.headerFooter],
+    );
     headerCps = story.cps;
     if (cursor % 2 !== 0) cursor++;
     const bytes = encodeUtf16(story.text);
@@ -219,6 +219,11 @@ export function buildDoc(
     headerCps.forEach((cp, i) => hv.setUint32(i * 4, cp, true));
     fibFields.push({ fc: 0xf2, off: addBinTable(plcfHdd), lcb: plcfHdd.length }); // PlcfHdd
   }
+  if (opts.facingPages) {
+    // A Dop of its first bits only: fFacingPages is bit 0 of byte 0.
+    const dop = Uint8Array.from([0x01, 0x00, 0x00, 0x00]);
+    fibFields.push({ fc: 0x192, off: addBinTable(dop), lcb: dop.length }); // fcDop/lcbDop
+  }
   if (opts.lists) {
     const { plfLst, lcbLstfs, plfLfo } = buildListTables(opts.lists);
     fibFields.push({ fc: 0x2e2, off: addBinTable(plfLst), lcb: lcbLstfs }); // fcPlfLst/lcbPlfLst
@@ -240,6 +245,7 @@ export function buildDoc(
         section.bkc,
         section.pageSizeTwips ?? opts.pageSizeTwips,
         section.marginsTwips,
+        section.titlePage,
       );
       const sepxBytes = new Uint8Array(2 + grpprl.length); // cb + grpprl
       new DataView(sepxBytes.buffer).setUint16(0, grpprl.length, true);
@@ -309,12 +315,14 @@ function buildSepGrpprl(
   bkc: number | undefined,
   page: { readonly width: number; readonly height: number } | undefined,
   margins?: DocSepMargins,
+  titlePage?: boolean,
 ): Uint8Array {
   const bytes: Array<number> = [];
   const word = (sprm: number, v: number): void => {
     bytes.push(sprm & 0xff, sprm >> 8, v & 0xff, (v >> 8) & 0xff);
   };
   if (bkc !== undefined) bytes.push(0x09, 0x30, bkc); // sprmSBkc
+  if (titlePage !== undefined) bytes.push(0x0a, 0x30, titlePage ? 1 : 0); // sprmSFTitlePage
   if (page) {
     word(0xb01f, page.width); // sprmSXaPage
     word(0xb020, page.height); // sprmSYaPage
@@ -390,29 +398,34 @@ function buildListTables(lists: {
 // separators, left empty; 6–11 are section 0's even/odd/first header and footer)
 // as CR-terminated text, returning the concatenated story stream and the 13 CP
 // boundaries that divide it.
-function buildHeaderStream(hf: {
+// One section's header/footer stories.
+export interface DocBands {
   readonly defaultHeader?: string;
   readonly defaultFooter?: string;
   readonly firstHeader?: string;
   readonly firstFooter?: string;
   readonly evenHeader?: string;
   readonly evenFooter?: string;
-}): { text: string; cps: Array<number> } {
+}
+
+function buildHeaderStream(sections: ReadonlyArray<DocBands>): {
+  text: string;
+  cps: Array<number>;
+} {
   const cr = String.fromCharCode(0x0d);
   const slots = [
-    '',
-    '',
-    '',
-    '',
-    '',
-    '', // doc-wide separators
-    hf.evenHeader, // 6
-    hf.defaultHeader, // 7 (odd-page = primary)
-    hf.evenFooter, // 8
-    hf.defaultFooter, // 9 (odd-page = primary)
-    hf.firstHeader, // 10
-    hf.firstFooter, // 11
-  ].map((t) => (t ? t + cr : ''));
+    ...['', '', '', '', '', ''], // doc-wide separators
+    ...sections.flatMap((hf) =>
+      [
+        hf.evenHeader, // 6 + 6k
+        hf.defaultHeader, // 7 + 6k (odd-page = primary)
+        hf.evenFooter, // 8 + 6k
+        hf.defaultFooter, // 9 + 6k (odd-page = primary)
+        hf.firstHeader, // 10 + 6k
+        hf.firstFooter, // 11 + 6k
+      ].map((t) => (t === undefined ? '' : t + cr)),
+    ),
+  ];
   const cps = [0];
   let text = '';
   for (const s of slots) {

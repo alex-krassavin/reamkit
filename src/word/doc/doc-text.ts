@@ -27,6 +27,8 @@ const OFF_CCPFTN = 0x50; // fibRgLw97.ccpFtn — footnote story char count
 const OFF_CCPHDD = 0x54; // fibRgLw97.ccpHdd — header/footer story char count
 const OFF_FCPLCFHDD = 0xf2; // fibRgFcLcb97.fcPlcfHdd — header/footer story divisions
 const OFF_LCBPLCFHDD = 0xf6;
+const OFF_FCDOP = 0x192; // fibRgFcLcb97.fcDop — the document properties (Dop)
+const OFF_LCBDOP = 0x196;
 const OFF_FCPLCFBTECHPX = 0xfa; // fibRgFcLcb97.fcPlcfBteChpx — CHPX bin table
 const OFF_LCBPLCFBTECHPX = 0xfe;
 const OFF_FCPLCFBTEPAPX = 0x102; // fibRgFcLcb97.fcPlcfBtePapx — PAPX bin table
@@ -76,6 +78,7 @@ const MAX_ROW_CELLS = 256; // a row's cell count is small; guard a crafted huge 
 const SPRM_P_ILVL = 0x260a; // list level (0–8)
 const SPRM_P_ILFO = 0x460b; // list-format override index (>0 ⇒ the paragraph is a list item)
 const SPRM_S_BKC = 0x3009; // where the section starts (bkc)
+const SPRM_S_F_TITLE_PAGE = 0x300a; // the section's first page has its own header/footer
 const SPRM_S_XA_PAGE = 0xb01f; // section page width in twips (xaPage)
 const SPRM_S_YA_PAGE = 0xb020; // section page height in twips (yaPage)
 const SPRM_S_DXA_LEFT = 0xb021; // left margin (twips)
@@ -228,6 +231,8 @@ export interface DocSection {
   readonly bkc?: number;
   /** The page size in points (xaPage/yaPage), when present and sane. */
   readonly pageSize?: { readonly widthPt: number; readonly heightPt: number };
+  /** `sprmSFTitlePage` — the first page shows the first-page header and footer. */
+  readonly titlePage?: boolean;
   /** The margins the SEP states, in twips; each absent one is Word's default. */
   readonly margins?: DocMargins;
 }
@@ -248,9 +253,10 @@ export interface DocMargins {
 }
 
 /**
- * The section's header/footer stories (best-effort: the binary story ordering
- * cannot be validated against a real file, so only well-formed, non-empty stories
- * are surfaced). `default` is the odd-page (primary) header/footer.
+ * One section's header/footer stories ([MS-DOC] Plcfhdd: six per section, after
+ * the six separator stories). `default` is the odd-page (primary) one. A story
+ * the section leaves empty is the previous section's, the very same array; one
+ * that holds no text is absent.
  */
 export interface DocHeaderFooters {
   readonly defaultHeader?: ReadonlyArray<DocParagraph>;
@@ -288,7 +294,10 @@ export interface DocListTables {
 /** Everything extracted from a `.doc`'s `WordDocument` stream. */
 export interface DocContent {
   readonly paragraphs: ReadonlyArray<DocParagraph>;
-  readonly headerFooters?: DocHeaderFooters;
+  /** Each section's header/footer stories, in section order. */
+  readonly headerFooters?: ReadonlyArray<DocHeaderFooters>;
+  /** `Dop.fFacingPages` — even pages show the even header and footer. */
+  readonly facingPages?: boolean;
   /** The list tables resolving a paragraph's (ilfo, ilvl) to its number format. */
   readonly listTables?: DocListTables;
   /**
@@ -351,6 +360,7 @@ function readSections(
     const cb = u16(wd, fcSepx);
     const grpprl = wd.subarray(fcSepx + 2, Math.min(wd.length, fcSepx + 2 + cb));
     let bkc: number | undefined;
+    let titlePage: boolean | undefined;
     let xa = 0;
     let ya = 0;
     const margins: { -readonly [K in keyof DocMargins]: number } = {};
@@ -360,6 +370,7 @@ function readSections(
     };
     for (const { sprm, op } of sprms(grpprl)) {
       if (sprm === SPRM_S_BKC) bkc = grpprl[op];
+      else if (sprm === SPRM_S_F_TITLE_PAGE) titlePage = grpprl[op] !== 0;
       else if (sprm === SPRM_S_XA_PAGE) xa = u16(grpprl, op);
       else if (sprm === SPRM_S_YA_PAGE) ya = u16(grpprl, op);
       else if (sprm === SPRM_S_DXA_LEFT) margin('leftTwips', u16(grpprl, op));
@@ -374,6 +385,7 @@ function readSections(
     sections.push({
       ...(bkc !== undefined ? { bkc } : {}),
       ...(sane ? { pageSize: { widthPt: xa / 20, heightPt: ya / 20 } } : {}),
+      ...(titlePage ? { titlePage } : {}),
       ...(Object.keys(margins).length > 0 ? { margins } : {}),
     });
   }
@@ -421,11 +433,25 @@ export function extractDocContent(bytes: Uint8Array): DocContent {
   const data = cfb.readStream('Data'); // embedded picture store (PICF + image)
   const { sections, ends } = readSections(wd, table);
   const main = buildParagraphs(wd, pieces, chpx, papx, 0, ccpText, data, ends);
-  const headerFooters = extractHeaderFooters(wd, table, pieces, chpx, papx, data, ccpText);
+  const headerFooters = extractHeaderFooters(
+    wd,
+    table,
+    pieces,
+    chpx,
+    papx,
+    data,
+    ccpText,
+    Math.max(1, sections.length),
+  );
   const listTables = parseListTables(wd, table);
+  // Dop.fFacingPages, the first bit of the Dop.
+  const fcDop = u32(wd, OFF_FCDOP);
+  const facingPages =
+    u32(wd, OFF_LCBDOP) > 0 && fcDop < table.length && (table[fcDop]! & 0x01) !== 0;
   return {
     paragraphs: main,
     ...(headerFooters ? { headerFooters } : {}),
+    ...(facingPages ? { facingPages } : {}),
     ...(listTables ? { listTables } : {}),
     ...(sections.length > 0 ? { sections } : {}),
     encrypted: false,
@@ -568,11 +594,15 @@ function colorHex(r: number, g: number, b: number): string {
     .toUpperCase();
 }
 
-// §2.8.26 PlcfHdd — the header/footer stories live in the same piece-table stream,
-// after the main text and footnotes; PlcfHdd is a plex of CPs (relative to that
-// start) dividing it into stories. The first 6 are doc-wide separators; then 6 per
-// section: even/odd page header, even/odd page footer, first-page header, first-
-// page footer. We surface section 0's stories (best-effort — see DocHeaderFooters).
+// [MS-DOC] Plcfhdd — the header/footer stories live in the same piece-table
+// stream, after the main text and footnotes; Plcfhdd is a plex of CPs (relative
+// to that start) dividing it into stories. The first 6 are doc-wide separators;
+// then 6 per section: even/odd page header, even/odd page footer, first-page
+// header, first-page footer. A story with no characters at all is the previous
+// section's, as Word's "same as previous" writes it (53379.doc leaves two of its
+// eight sections so); one whose characters hold no text has no header or footer.
+// Each story ends with one paragraph mark more than its paragraphs, which no
+// page shows: LibreOffice writes a one-line header as "text", CR, CR.
 function extractHeaderFooters(
   wd: Uint8Array,
   table: Uint8Array,
@@ -581,7 +611,8 @@ function extractHeaderFooters(
   papx: ReadonlyArray<BteRun<DocParaProps>>,
   data: Uint8Array | undefined,
   ccpText: number,
-): DocHeaderFooters | undefined {
+  sectionCount: number,
+): ReadonlyArray<DocHeaderFooters> | undefined {
   if (u32(wd, OFF_CCPHDD) === 0) return undefined;
   const fc = u32(wd, OFF_FCPLCFHDD);
   const lcb = u32(wd, OFF_LCBPLCFHDD);
@@ -590,33 +621,44 @@ function extractHeaderFooters(
   const n = Math.floor(lcb / 4); // CP entries
   const hddStart = ccpText + u32(wd, OFF_CCPFTN); // the header story's first CP
 
-  // Story i spans CP[i]..CP[i+1] (relative to hddStart); an empty story is dropped.
-  const story = (i: number): ReadonlyArray<DocParagraph> | undefined => {
-    if (i + 1 >= n) return undefined;
+  // Story i spans CP[i]..CP[i+1] (relative to hddStart): `inherit` when it has
+  // no characters (or the plex ends before it), else its paragraphs, or
+  // undefined when they hold no text.
+  const story = (i: number): ReadonlyArray<DocParagraph> | undefined | 'inherit' => {
+    if (i + 1 >= n) return 'inherit';
     const a = hddStart + u32(plc, i * 4);
     const b = hddStart + u32(plc, (i + 1) * 4);
-    if (b <= a) return undefined;
+    if (b <= a) return 'inherit';
     const paras = buildParagraphs(wd, pieces, chpx, papx, a, b, data);
+    const last = paras[paras.length - 1];
+    if (last && last.runs.length === 0) paras.pop(); // the story's closing mark
     const hasContent = paras.some((p) => p.runs.some((r) => r.text.length > 0 || r.picture));
     return hasContent ? paras : undefined;
   };
 
-  // Section 0's six stories begin at index 6.
-  const evenHeader = story(6);
-  const defaultHeader = story(7); // odd-page = the primary header
-  const evenFooter = story(8);
-  const defaultFooter = story(9); // odd-page = the primary footer
-  const firstHeader = story(10);
-  const firstFooter = story(11);
-  const hf: DocHeaderFooters = {
-    ...(defaultHeader ? { defaultHeader } : {}),
-    ...(defaultFooter ? { defaultFooter } : {}),
-    ...(firstHeader ? { firstHeader } : {}),
-    ...(firstFooter ? { firstFooter } : {}),
-    ...(evenHeader ? { evenHeader } : {}),
-    ...(evenFooter ? { evenFooter } : {}),
-  };
-  return Object.keys(hf).length > 0 ? hf : undefined;
+  // Each section's six stories begin at index 6 + 6 × section, in the order of
+  // SLOTS; an inherited one is the previous section's very array.
+  const SLOTS = [
+    'evenHeader',
+    'defaultHeader', // odd-page = the primary header
+    'evenFooter',
+    'defaultFooter', // odd-page = the primary footer
+    'firstHeader',
+    'firstFooter',
+  ] as const;
+  const out: Array<DocHeaderFooters> = [];
+  let prev: DocHeaderFooters = {};
+  for (let sec = 0; sec < sectionCount; sec++) {
+    const hf: { -readonly [K in keyof DocHeaderFooters]: DocHeaderFooters[K] } = {};
+    SLOTS.forEach((slot, k) => {
+      const got = story(6 + sec * 6 + k);
+      const paras = got === 'inherit' ? prev[slot] : got;
+      if (paras) hf[slot] = paras;
+    });
+    out.push(hf);
+    prev = hf;
+  }
+  return out.some((hf) => Object.keys(hf).length > 0) ? out : undefined;
 }
 
 // §2.9.38 Clx — zero or more Prc (each a 0x01 byte + i16 length + grpprl) then
