@@ -87,9 +87,14 @@ export function buildDoc(
     // the PlcfSed that points at it. Landscape is just width > height.
     readonly pageSizeTwips?: { readonly width: number; readonly height: number };
     // The main text's sections, in order: each `length` characters long, counting
-    // the section mark (0x0C) every section but the last ends with, and breaking
-    // as `bkc` says (sprmSBkc: 0 continuous, 2 new page). Each gets its own SEP.
-    readonly sections?: ReadonlyArray<{ readonly length: number; readonly bkc?: number }>;
+    // the section mark (0x0C) every section but the last ends with, and starting
+    // as `bkc` says (sprmSBkc: 0 continuous, 2 new page, 3 even, 4 odd page). Each
+    // gets its own SEP, with its own page size or else `pageSizeTwips`.
+    readonly sections?: ReadonlyArray<{
+      readonly length: number;
+      readonly bkc?: number;
+      readonly pageSizeTwips?: { readonly width: number; readonly height: number };
+    }>;
     readonly data?: Uint8Array; // the Data stream (embedded pictures: see buildPicf)
     readonly headerFooter?: {
       readonly defaultHeader?: string;
@@ -229,7 +234,7 @@ export function buildDoc(
     const sv = new DataView(plcfSed.buffer);
     let cp = 0;
     sections.forEach((section, i) => {
-      const grpprl = buildSepGrpprl(section.bkc, opts.pageSizeTwips);
+      const grpprl = buildSepGrpprl(section.bkc, section.pageSizeTwips ?? opts.pageSizeTwips);
       const sepxBytes = new Uint8Array(2 + grpprl.length); // cb + grpprl
       new DataView(sepxBytes.buffer).setUint16(0, grpprl.length, true);
       sepxBytes.set(grpprl, 2);

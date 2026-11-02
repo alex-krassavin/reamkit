@@ -27,6 +27,8 @@ import type {
   ParagraphProperties,
   Run,
   RunProperties,
+  Section,
+  SectionProperties,
   Table,
   TableCell,
   TableRow,
@@ -44,6 +46,7 @@ import type {
   DocParaProps,
   DocParagraph,
   DocPicture,
+  DocSection,
   DocTc,
 } from '@/word/doc/doc-text';
 
@@ -202,7 +205,7 @@ const DOC_ENCRYPTED_LOSS: Loss = {
 export function readDoc(bytes: Uint8Array): ReadResult<FlowDoc> {
   const content = extractDocContent(bytes);
   const resources = new ResourceStore();
-  const body = buildBody(content, resources);
+  const { body, sectionEnds } = buildBody(content, resources);
 
   // Header/footer stories → a named-body map + the section's references.
   const headersFooters = new Map<string, ReadonlyArray<BodyElement>>();
@@ -232,26 +235,51 @@ export function readDoc(bytes: Uint8Array): ReadResult<FlowDoc> {
     addStory(hf.evenFooter, 'footer', 'even');
   }
 
-  // The first section's page size (SEP sprmSXaPage/sprmSYaPage); US Letter when
-  // the section gives none. Margins stay Word's one-inch default for now.
-  const ps = content.pageSize;
-  const pageSize = ps
-    ? {
-        width: pt(ps.widthPt),
-        height: pt(ps.heightPt),
-        orientation: ps.widthPt > ps.heightPt ? ('landscape' as const) : ('portrait' as const),
-      }
-    : { width: pt(612), height: pt(792) };
-  const doc: FlowDoc = {
-    kind: 'flow',
-    body: resolveBodyStyles(body, EMPTY_STYLE_SHEET),
-    sections: [],
-    section: {
-      pageSize,
+  // A section's page size (SEP sprmSXaPage/sprmSYaPage), US Letter when it gives
+  // none, and where it starts (sprmSBkc). Margins stay Word's one-inch default
+  // for now, and every section shows the first section's headers and footers.
+  const sectionProperties = (sec: DocSection | undefined): SectionProperties => {
+    const ps = sec?.pageSize;
+    const sectionStart = sec?.bkc !== undefined ? sectionStartOf(sec.bkc) : undefined;
+    return {
+      pageSize: ps
+        ? {
+            width: pt(ps.widthPt),
+            height: pt(ps.heightPt),
+            orientation: ps.widthPt > ps.heightPt ? 'landscape' : 'portrait',
+          }
+        : { width: pt(612), height: pt(792) },
       margins: { top: pt(72), right: pt(72), bottom: pt(72), left: pt(72) },
       headers,
       footers,
-    },
+      ...(sectionStart ? { sectionStart } : {}),
+    };
+  };
+  // §2.8.26 — a document of more than one section is laid out section by
+  // section: each runs up to the paragraph its section mark closes, and the
+  // next one starts where its bkc says. Read as one, a .doc of new-page
+  // sections ran them all together on the first section's pages.
+  const docSections = content.sections ?? [];
+  const sections: Array<Section> = [];
+  for (const end of sectionEnds) {
+    const last = sections[sections.length - 1]?.endIndex ?? 0;
+    if (end.endIndex <= last || end.endIndex >= body.length) continue;
+    sections.push({
+      properties: sectionProperties(docSections[end.section]),
+      endIndex: end.endIndex,
+    });
+  }
+  if (sections.length > 0) {
+    sections.push({
+      properties: sectionProperties(docSections[docSections.length - 1]),
+      endIndex: body.length,
+    });
+  }
+  const doc: FlowDoc = {
+    kind: 'flow',
+    body: resolveBodyStyles(body, EMPTY_STYLE_SHEET),
+    sections,
+    section: sectionProperties(docSections[0]),
     styles: EMPTY_STYLE_SHEET,
     resources,
     ...(headersFooters.size > 0 ? { headersFooters } : {}),
@@ -260,24 +288,38 @@ export function readDoc(bytes: Uint8Array): ReadResult<FlowDoc> {
   return { doc, losses: [content.encrypted ? DOC_ENCRYPTED_LOSS : DOC_TEXT_LOSS] };
 }
 
+// Where a section ends in the body: the index past the last element of the
+// paragraph its section mark closes, and that section's index.
+interface SectionEnd {
+  readonly section: number;
+  readonly endIndex: number;
+}
+
 // Group the extracted paragraphs into the FlowDoc body: runs of in-table
 // paragraphs become Tables; everything else is a paragraph. doc-text has already
-// split paragraphs at the CR / cell mark and cleaned the control characters.
-function buildBody(content: DocContent, resources: ResourceStore): Array<BodyElement> {
+// split paragraphs at the CR / cell / section mark and cleaned the control
+// characters.
+function buildBody(
+  content: DocContent,
+  resources: ResourceStore,
+): { body: Array<BodyElement>; sectionEnds: ReadonlyArray<SectionEnd> } {
   const markers = createListMarkers(content.listTables);
-  const body = groupTables(content.paragraphs, resources, markers);
+  const sectionEnds: Array<SectionEnd> = [];
+  const body = groupTables(content.paragraphs, resources, markers, sectionEnds);
   // A document ends with a trailing paragraph mark — drop the empty tail it adds.
   while (body.length > 1 && isEmptyParagraph(body[body.length - 1]!)) body.pop();
   if (body.length === 0) body.push(emptyParagraph());
-  return body;
+  return { body, sectionEnds };
 }
 
 // Consecutive in-table paragraphs (sprmPFInTable) collapse into one Table; the
-// rest map straight to paragraphs (and image blocks).
+// rest map straight to paragraphs (and image blocks). Each paragraph a section
+// mark closes notes where its section ends in `sectionEnds`.
 function groupTables(
   paras: ReadonlyArray<DocParagraph>,
   resources: ResourceStore,
   markers: ListMarkers,
+  sectionEnds: Array<SectionEnd>,
 ): Array<BodyElement> {
   const out: Array<BodyElement> = [];
   let i = 0;
@@ -287,7 +329,10 @@ function groupTables(
       while (i < paras.length && paras[i]!.props.inTable) group.push(paras[i++]!);
       out.push({ kind: 'table', table: buildTable(group, resources, markers) });
     } else {
-      out.push(...mapParagraph(paras[i++]!, resources, markers));
+      const p = paras[i++]!;
+      out.push(...mapParagraph(p, resources, markers));
+      if (p.sectionEnd !== undefined)
+        sectionEnds.push({ section: p.sectionEnd, endIndex: out.length });
     }
   }
   return out;
@@ -573,6 +618,21 @@ function underlineStyle(kul: number): UnderlineStyle | undefined {
       return 'dash';
     default:
       return 'single';
+  }
+}
+
+// A section's `bkc` → where the model's section starts. A new column is a new
+// page, as for a section of one column; so is any code past the spec's.
+function sectionStartOf(bkc: number): SectionProperties['sectionStart'] {
+  switch (bkc) {
+    case 0:
+      return 'continuous';
+    case 3:
+      return 'evenPage';
+    case 4:
+      return 'oddPage';
+    default:
+      return 'nextPage';
   }
 }
 

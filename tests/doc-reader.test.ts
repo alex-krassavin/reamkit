@@ -711,3 +711,61 @@ describe('doc reader: page and column breaks', () => {
     expect(pageTexts(first)).toEqual([['one', 'two']]);
   });
 });
+
+describe('doc reader: sections', () => {
+  // [MS-DOC] §2.8.26 — each section runs up to its section mark, and the next one
+  // starts where its own sprmSBkc says. Pages as Word for Mac sets the same
+  // sections in .doc files LibreOffice wrote.
+  const sectioned = (
+    text: string,
+    sections: ReadonlyArray<{
+      length: number;
+      bkc?: number;
+      pageSizeTwips?: { width: number; height: number };
+    }>,
+  ): FlowDoc => readDoc(buildDoc([{ text, compressed: false }], { sections })).doc;
+
+  it('starts a section on a new page when its SEP says nothing', () => {
+    // Word: "two" at the top of page 2.
+    const doc = sectioned(`one${PB}two\r`, [{ length: 4 }, { length: 4 }]);
+    expect(doc.sections.map((s) => s.endIndex)).toEqual([1, 2]);
+    expect(pageTexts(doc)).toEqual([['one'], ['two']]);
+  });
+
+  it('starts it on the page in hand, on an odd page or on an even one, as bkc says', () => {
+    // Word: "two" under "one" (0); on page 3 after a blank page 2 (4, odd); on
+    // page 2 (3, even).
+    const at = (bkc: number) =>
+      pageTexts(sectioned(`one${PB}two\r`, [{ length: 4 }, { length: 4, bkc }]));
+    expect(at(0)).toEqual([['one', 'two']]);
+    expect(at(4)).toEqual([['one'], [], ['two']]);
+    expect(at(3)).toEqual([['one'], ['two']]);
+  });
+
+  it('lays out three sections each as its own bkc says', () => {
+    // Word: "one" on page 1; "two" and "three" on page 2, the third section
+    // running on from the second.
+    const doc = sectioned(`one${PB}two${PB}three\r`, [
+      { length: 4 },
+      { length: 4 },
+      { length: 6, bkc: 0 },
+    ]);
+    expect(pageTexts(doc)).toEqual([['one'], ['two', 'three']]);
+  });
+
+  it('gives each section its own page size', () => {
+    // Word: page 1 is 612×792, page 2 (the landscape section) 792×612.
+    const doc = sectioned(`one${PB}two\r`, [
+      { length: 4 },
+      { length: 4, pageSizeTwips: { width: 15840, height: 12240 } },
+    ]);
+    const laid = layoutStyledDocument(doc.body, {
+      registry: FontRegistry.fromBytes(FONTS),
+      ...flowRenderOptions(doc),
+    });
+    expect(laid.pages.map((p) => [p.width, p.height])).toEqual([
+      [612, 792],
+      [792, 612],
+    ]);
+  });
+});

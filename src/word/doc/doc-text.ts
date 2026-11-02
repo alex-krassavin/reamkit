@@ -75,6 +75,7 @@ const SPRM_T_DEF_TABLE_SHD = 0xd612; // per-cell shading array (Shd: cvFore/cvBa
 const MAX_ROW_CELLS = 256; // a row's cell count is small; guard a crafted huge array
 const SPRM_P_ILVL = 0x260a; // list level (0–8)
 const SPRM_P_ILFO = 0x460b; // list-format override index (>0 ⇒ the paragraph is a list item)
+const SPRM_S_BKC = 0x3009; // where the section starts (bkc)
 const SPRM_S_XA_PAGE = 0xb01f; // section page width in twips (xaPage)
 const SPRM_S_YA_PAGE = 0xb020; // section page height in twips (yaPage)
 const MAX_PAGE_TWIPS = 31680; // Word's max page dimension (22 inches) — sanity bound
@@ -202,6 +203,23 @@ export interface DocParagraph {
    * closes a table cell. With `props.rowEnd` it also closes the row.
    */
   readonly cellMark?: boolean;
+  /**
+   * The paragraph was ended by the section mark of the (zero-based) section it
+   * is the last of — the index into {@link DocContent.sections}.
+   */
+  readonly sectionEnd?: number;
+}
+
+/** One section of the main document (§2.8.26 PlcfSed): what its SEP says. */
+export interface DocSection {
+  /**
+   * `sprmSBkc` — where the section starts: 0 on the page in hand, 1 in the next
+   * column, 2 on a new page, 3 on an even page, 4 on an odd page. Absent when
+   * the SEP says nothing, which is a new page.
+   */
+  readonly bkc?: number;
+  /** The page size in points (xaPage/yaPage), when present and sane. */
+  readonly pageSize?: { readonly widthPt: number; readonly heightPt: number };
 }
 
 /**
@@ -249,10 +267,10 @@ export interface DocContent {
   /** The list tables resolving a paragraph's (ilfo, ilvl) to its number format. */
   readonly listTables?: DocListTables;
   /**
-   * The first section's page size in points (xaPage/yaPage from its SEP), when
-   * present and sane; absent ⇒ the reader's default (US Letter) applies.
+   * Every section of the main document, in order, when the PlcfSed is usable. A
+   * section with no page size takes the reader's default (US Letter).
    */
-  readonly pageSize?: { readonly widthPt: number; readonly heightPt: number };
+  readonly sections?: ReadonlyArray<DocSection>;
   /** The file is encrypted/obfuscated — text cannot be read without the key. */
   readonly encrypted: boolean;
 }
@@ -272,55 +290,60 @@ interface BteRun<TProps> {
 
 const EMPTY: DocContent = { paragraphs: [], encrypted: false };
 
-// The first section's page size (§2.6.4 SEP). The FIB's PlcfSed in the table
-// stream lists each section's Sepx; its grpprl carries sprmSXaPage/sprmSYaPage
-// (page width/height in twips). Word stores already-swapped dimensions for a
-// landscape section (xaPage > yaPage), so they map straight to the page size —
-// no orientation fix-up needed. Returns the first section's size (the single
-// geometry the FlowDoc carries; a multi-section .doc reflows to it), or none
-// when there is no usable PlcfSed / the values are out of range.
-function readSectionPageSize(
+// The main document's sections (§2.8.26 PlcfSed): each one's SEP (§2.6.4), and
+// where each but the last closes — the CP just past its last character, which is
+// its section mark, mapped to the section's index. The mark is the same
+// character as a manual page break (0x0C) and is told from one only by standing
+// there. It ends the section's last paragraph the way a CR would; whether the
+// next section starts a page is that section's own bkc.
+//
+// Each SED's fcSepx points at a Sepx in the WordDocument stream, whose grpprl
+// carries sprmSBkc and sprmSXaPage/sprmSYaPage (page width/height in twips).
+// Word stores already-swapped dimensions for a landscape section (xaPage >
+// yaPage), so they map straight to the page size — no orientation fix-up. A
+// SED with no Sepx (fcSepx 0xFFFFFFFF) is a section with every default.
+function readSections(
   wd: Uint8Array,
   table: Uint8Array,
-): { widthPt: number; heightPt: number } | undefined {
+): { sections: Array<DocSection>; ends: Map<number, number> } {
+  const sections: Array<DocSection> = [];
+  const ends = new Map<number, number>();
   const fc = u32(wd, OFF_FCPLCFSED);
   const lcb = u32(wd, OFF_LCBPLCFSED);
   // PlcfSed = (n+1) CPs (4 bytes each) then n SED structures (12 bytes); n ≥ 1.
-  if (lcb < 4 + 16 || fc + lcb > table.length) return undefined;
+  if (lcb < 4 + 16 || fc + lcb > table.length) return { sections, ends };
   const plc = table.subarray(fc, fc + lcb);
   const n = Math.floor((lcb - 4) / 16);
-  const fcSepx = u32(plc, (n + 1) * 4 + 2); // first SED.fcSepx (offset 2 in the SED)
-  if (fcSepx === 0xffffffff || fcSepx + 2 > wd.length) return undefined;
-  const cb = u16(wd, fcSepx);
-  const grpprl = wd.subarray(fcSepx + 2, Math.min(wd.length, fcSepx + 2 + cb));
-  let xa = 0;
-  let ya = 0;
-  for (const { sprm, op } of sprms(grpprl)) {
-    if (sprm === SPRM_S_XA_PAGE) xa = u16(grpprl, op);
-    else if (sprm === SPRM_S_YA_PAGE) ya = u16(grpprl, op);
+  for (let i = 0; i < n; i++) {
+    // aCP[n] is no section's end of text: it may lie past the main document.
+    if (i + 1 < n) ends.set(u32(plc, (i + 1) * 4), i);
+    const fcSepx = u32(plc, (n + 1) * 4 + i * 12 + 2); // SED.fcSepx (offset 2 in the SED)
+    if (fcSepx === 0xffffffff || fcSepx + 2 > wd.length) {
+      sections.push({});
+      continue;
+    }
+    const cb = u16(wd, fcSepx);
+    const grpprl = wd.subarray(fcSepx + 2, Math.min(wd.length, fcSepx + 2 + cb));
+    let bkc: number | undefined;
+    let xa = 0;
+    let ya = 0;
+    for (const { sprm, op } of sprms(grpprl)) {
+      if (sprm === SPRM_S_BKC) bkc = grpprl[op];
+      else if (sprm === SPRM_S_XA_PAGE) xa = u16(grpprl, op);
+      else if (sprm === SPRM_S_YA_PAGE) ya = u16(grpprl, op);
+    }
+    const sane = xa >= 1 && ya >= 1 && xa <= MAX_PAGE_TWIPS && ya <= MAX_PAGE_TWIPS;
+    sections.push({
+      ...(bkc !== undefined ? { bkc } : {}),
+      ...(sane ? { pageSize: { widthPt: xa / 20, heightPt: ya / 20 } } : {}),
+    });
   }
-  if (xa < 1 || ya < 1 || xa > MAX_PAGE_TWIPS || ya > MAX_PAGE_TWIPS) return undefined;
-  return { widthPt: xa / 20, heightPt: ya / 20 };
-}
-
-// Where each section but the last closes (§2.8.26 PlcfSed): the CP just past its
-// last character, which is its section mark. The mark is the same character as a
-// manual page break (0x0C) and is told from one only by standing there. It ends
-// the section's last paragraph the way a CR would, and breaks no page of itself.
-function readSectionEnds(wd: Uint8Array, table: Uint8Array): ReadonlySet<number> {
-  const fc = u32(wd, OFF_FCPLCFSED);
-  const lcb = u32(wd, OFF_LCBPLCFSED);
-  const ends = new Set<number>();
-  if (lcb < 4 + 16 || fc + lcb > table.length) return ends;
-  const n = Math.floor((lcb - 4) / 16);
-  // aCP[n] is no section's end of text: it may lie past the main document.
-  for (let i = 1; i < n; i++) ends.add(u32(table, fc + i * 4));
-  return ends;
+  return { sections, ends };
 }
 
 /**
  * Extract a `.doc`'s `WordDocument` stream into its main-document paragraphs plus
- * the section's header/footer stories, list tables and first-section page size.
+ * the section's header/footer stories, list tables and sections.
  * Joins the piece table (CLX → CPs/FCs), CHPX run formatting and PAPX paragraph
  * formatting, splitting at the CR / cell marks. Every offset is bounds-checked, so
  * a structurally odd file yields no text rather than throwing.
@@ -357,16 +380,15 @@ export function extractDocContent(bytes: Uint8Array): DocContent {
   const papx = parsePlcBte(wd, table, OFF_FCPLCFBTEPAPX, OFF_LCBPLCFBTEPAPX, parsePapxFkp);
   const ccpText = u32(wd, OFF_CCPTEXT);
   const data = cfb.readStream('Data'); // embedded picture store (PICF + image)
-  const sectionEnds = readSectionEnds(wd, table);
-  const main = buildParagraphs(wd, pieces, chpx, papx, 0, ccpText, data, sectionEnds);
+  const { sections, ends } = readSections(wd, table);
+  const main = buildParagraphs(wd, pieces, chpx, papx, 0, ccpText, data, ends);
   const headerFooters = extractHeaderFooters(wd, table, pieces, chpx, papx, data, ccpText);
   const listTables = parseListTables(wd, table);
-  const pageSize = readSectionPageSize(wd, table);
   return {
     paragraphs: main,
     ...(headerFooters ? { headerFooters } : {}),
     ...(listTables ? { listTables } : {}),
-    ...(pageSize ? { pageSize } : {}),
+    ...(sections.length > 0 ? { sections } : {}),
     encrypted: false,
   };
 }
@@ -922,7 +944,8 @@ function magicAt(d: Uint8Array, off: number, magic: ReadonlyArray<number>): bool
 // Walk the pieces character by character: attach each character's CHPX (by FC),
 // split paragraphs at the CR mark (attaching each paragraph's PAPX, also by FC),
 // clean the in-paragraph control characters, and coalesce same-formatting runs.
-// `sectionEnds` holds the CP past each section mark of the main document.
+// `sectionEnds` maps the CP past each section mark of the main document to the
+// index of the section the mark closes.
 function buildParagraphs(
   wd: Uint8Array,
   pieces: ReadonlyArray<Piece>,
@@ -931,7 +954,7 @@ function buildParagraphs(
   cpStart: number,
   cpEnd: number,
   data: Uint8Array | undefined,
-  sectionEnds: ReadonlySet<number> = new Set(),
+  sectionEnds: ReadonlyMap<number, number> = new Map(),
 ): Array<DocParagraph> {
   const end = Math.min(cpEnd, cpStart + MAX_TEXT);
   const paragraphs: Array<DocParagraph> = [];
@@ -951,12 +974,13 @@ function buildParagraphs(
       cur = '';
     }
   };
-  const endParagraph = (fc: number, cellMark: boolean): void => {
+  const endParagraph = (fc: number, cellMark: boolean, sectionEnd?: number): void => {
     flushRun();
     paragraphs.push({
       runs,
       props: lookup(papx, fc) ?? {},
       ...(cellMark ? { cellMark: true } : {}),
+      ...(sectionEnd !== undefined ? { sectionEnd } : {}),
     });
     runs = [];
   };
@@ -976,9 +1000,9 @@ function buildParagraphs(
       // TTP, a row); a section mark ends the section's last paragraph — all three
       // terminate the current paragraph. Word's PAPX runs end at a section mark,
       // after text or alone in a paragraph, and never at a page break.
-      const sectionMark = code === PAGE_BREAK && sectionEnds.has(piece.cpStart + k + 1);
-      if (code === CR || code === CELL_MARK || sectionMark) {
-        endParagraph(fc, code === CELL_MARK);
+      const sectionEnd = code === PAGE_BREAK ? sectionEnds.get(piece.cpStart + k + 1) : undefined;
+      if (code === CR || code === CELL_MARK || sectionEnd !== undefined) {
+        endParagraph(fc, code === CELL_MARK, sectionEnd);
         continue;
       }
       // Field delimiters: enter the code (suppress), reach the separator (the
