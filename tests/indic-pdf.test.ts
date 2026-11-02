@@ -275,6 +275,22 @@ describe('a syllable a run boundary cuts, in its runs’ colours', () => {
     expect(svg).not.toContain('0000FF');
   });
 
+  it('strokes a faked bold in the colour of each glyph on a PDF page too', async () => {
+    // A bold क and a red ि: the syllable takes the ka's weight, and the face
+    // has no bold, so the page fakes it. The pen goes with the fill.
+    const body = `<w:p><w:r><w:rPr><w:b/></w:rPr><w:t>क</w:t></w:r>${run('ि', 'FF0000')}</w:p>`;
+    const pdf = await pdfOf(body, COLOUR);
+    const [shortI, ka] = shapeIndic(parsed, 'कि')!.gids;
+    expect(pdf).toMatch(/2 Tr [\d.]+ w/u);
+    const word = pdf.slice(pdf.indexOf('/ActualText'), pdf.indexOf('EMC'));
+    expect(word).toMatch(
+      new RegExp(
+        `BDC\\s+1 0 0 rg 1 0 0 RG <${hex4(shortI!)}> Tj 0 0 0 rg 0 0 0 RG <${hex4(ka!)}> Tj\\s*$`,
+        'u',
+      ),
+    );
+  });
+
   it('strokes a faked bold in the colour of each glyph, the weight being its own', async () => {
     // A green bold ष् and a black ण: the face has no bold, so the page fakes it.
     const bold = '<w:rPr><w:b/><w:color w:val="00FF00"/></w:rPr>';

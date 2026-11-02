@@ -902,7 +902,10 @@ function emitPageContent(
   // font because a `Q` restores text state too: every place that forgets
   // `lastFont` must forget these with it.
   let lastFauxWidth = 0;
+  // The stroking colour the text last set, undefined where a `Q` may have
+  // undone it; and whether the stroke goes with the fill (a faked bold).
   let lastStroke: string | undefined;
+  let strokeFollowsFill = false;
   let lastTz = 100;
   /** A run's letter spacing, in the text space `Tz` scales (§9.4.4). */
   const spacingOf = (tok: TextToken): number => {
@@ -911,12 +914,23 @@ function emitPageContent(
     );
     return (tok.resolvedRun.letterSpacingPt ?? 0) / (tz > 0 ? tz / 100 : 1);
   };
-  /** The `rg` that makes `hex` the fill colour, when it is not already. */
+  /**
+   * The `rg` that makes `hex` the fill colour, when it is not already, and
+   * the `RG` with it while a faked bold strokes the glyphs in their own colour.
+   */
   const fillTo = (hex: string): string | undefined => {
-    if (hex === lastColor) return undefined;
-    lastColor = hex;
+    const ops: Array<string> = [];
     const [r, g, b] = hexToRgb01(hex);
-    return `${formatNumber(r)} ${formatNumber(g)} ${formatNumber(b)} rg`;
+    const rgb = `${formatNumber(r)} ${formatNumber(g)} ${formatNumber(b)}`;
+    if (hex !== lastColor) {
+      ops.push(`${rgb} rg`);
+      lastColor = hex;
+    }
+    if (strokeFollowsFill && hex !== lastStroke) {
+      ops.push(`${rgb} RG`);
+      lastStroke = hex;
+    }
+    return ops.length > 0 ? ops.join(' ') : undefined;
   };
   /**
    * The show operators for a token's text, with what the Indic shaper needs
@@ -970,15 +984,15 @@ function emitPageContent(
       out.push(fauxWidth > 0 ? `2 Tr ${formatNumber(fauxWidth)} w` : '0 Tr');
       lastFauxWidth = fauxWidth;
     }
-    // The stroking colour, which faux bold leaves at the fill's and a stated
-    // outline sets for itself.
-    const strokeHex = outline?.colorHex;
-    if (strokeHex !== lastStroke) {
-      if (strokeHex !== undefined) {
-        const [sr, sg, sb] = hexToRgb01(strokeHex);
-        out.push(`${formatNumber(sr)} ${formatNumber(sg)} ${formatNumber(sb)} RG`);
-      }
-      lastStroke = strokeHex;
+    // The stroking colour. A stated outline sets its own; a faked bold strokes
+    // in the fill's, since its line is the glyphs' weight and not a line round
+    // them, and it goes with the fill wherever that changes (`fillTo`). Left to
+    // whatever the pen last was, a red word in faux bold was ringed in black.
+    strokeFollowsFill = outline === undefined && fauxWidth > 0;
+    if (outline !== undefined && outline.colorHex !== lastStroke) {
+      const [sr, sg, sb] = hexToRgb01(outline.colorHex);
+      out.push(`${formatNumber(sr)} ${formatNumber(sg)} ${formatNumber(sb)} RG`);
+      lastStroke = outline.colorHex;
     }
     // ISO 32000-1 §9.3.3 — horizontal scaling, which is how a condensed face is
     // drawn when the substitute has no condensed cut, and how a run the
@@ -1002,11 +1016,8 @@ function emitPageContent(
       out.push(`${formatNumber(tc)} Tc`);
       lastTc = tc;
     }
-    if (tok.resolvedRun.colorHex !== lastColor) {
-      const [r, g, b] = hexToRgb01(tok.resolvedRun.colorHex);
-      out.push(`${formatNumber(r)} ${formatNumber(g)} ${formatNumber(b)} rg`);
-      lastColor = tok.resolvedRun.colorHex;
-    }
+    const fill = fillTo(tok.resolvedRun.colorHex);
+    if (fill !== undefined) out.push(fill);
   };
   const emitImageToken = (tok: ImageToken, x: number, baselineY: number) => {
     // MS-EMF / MS-WMF — an inline metafile draws itself: its primitives live
