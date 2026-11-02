@@ -95,6 +95,16 @@ describe('a line of text (§17.3.1.33)', () => {
     expect(own).not.toBeCloseTo(CALIBRI_11, 1);
   });
 
+  it('looks the text of India up by the complex-script family, as it does Arabic', () => {
+    // §17.3.2.26: Word sets Devanagari in the run's cs font, not its Latin one.
+    const roboto = parseTtf(FONTS.regular);
+    const own = (11 * (roboto.ascender - roboto.descender + roboto.lineGap)) / roboto.unitsPerEm;
+    const hindi =
+      '<w:r><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:cs="Nobody Devanagari"/>' +
+      '<w:sz w:val="22"/></w:rPr><w:t>हिन्दी#</w:t></w:r>';
+    expect(lineHeight(three(hindi))).toBeCloseTo(own, 3);
+  });
+
   it('takes the tallest ascent and the deepest descent of the faces on it, each apart', () => {
     // Word: 14.36 for Verdana beside Courier New — Verdana's ascent over
     // Courier's descent, where either face alone stands 13.4.

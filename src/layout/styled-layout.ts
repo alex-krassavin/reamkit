@@ -60,7 +60,7 @@ import type {
   TableRow,
 } from '@/core/document-model';
 import type { FontRegistry, FontVariant, ParsedTtf } from '@/core/font';
-import type { FamilyKey, SubstituteKey } from '@/core/fonts';
+import type { FamilyKey, ScriptKey, SubstituteKey } from '@/core/fonts';
 import type { Hyphenator } from '@/core/hyphenation';
 import type { PreparedImage } from '@/core/images';
 import type { Item } from '@/core/line-breaker';
@@ -5112,13 +5112,13 @@ function runFontKeyAndParsed(
 /**
  * The face a CHARACTER falls back to when the run's own has no glyph for it.
  *
- * The curated substitutes are Latin families: Han, Kana, Hangul, Arabic, Thai
- * and the geometric symbols are a notdef box in every one of them, and 2145
- * characters of the corpus are exactly those. A face for the character's
- * writing system is fetched when the document holds one (see `addScriptFonts`),
- * and this is where a run reaches it — followed by every other family already
- * loaded, because a glyph one of them happens to carry is still better than a
- * box.
+ * The curated substitutes are Latin families: Han, Kana, Hangul, Arabic, Thai,
+ * the scripts of India and the geometric symbols are a notdef box in every one
+ * of them, and 2145 characters of the corpus are exactly those. A face for the
+ * character's writing system is fetched when the document holds one (see
+ * `addScriptFonts`), and this is where a run reaches it — followed by every
+ * other family already loaded, because a glyph one of them happens to carry is
+ * still better than a box.
  *
  * Called from BOTH walks that need it — the glyph-subset collection and the
  * tokenizer — so the face a character is measured, subset and drawn with is one
@@ -7165,6 +7165,22 @@ function wrap(
   return lines;
 }
 
+/** The scripts Word sets in a run's complex-script font, `w:cs`. */
+const COMPLEX_SCRIPTS: ReadonlySet<ScriptKey> = new Set<ScriptKey>([
+  'hebrew',
+  'arabic',
+  'thai',
+  'devanagari',
+  'bengali',
+  'gurmukhi',
+  'gujarati',
+  'oriya',
+  'tamil',
+  'telugu',
+  'kannada',
+  'malayalam',
+]);
+
 /**
  * §17.3.2.26 — the family Word sets a token's characters in: East Asian text
  * in the run's `eastAsia` font, complex-script text (and a `w:rtl` run) in its
@@ -7185,7 +7201,7 @@ function wordFamilyOf(t: TextToken): string | undefined {
     if (cp <= 0x7f) continue;
     high = true;
     const script = scriptForCodepoint(cp);
-    if (script === 'hebrew' || script === 'arabic' || script === 'thai') return fonts.cs;
+    if (script !== undefined && COMPLEX_SCRIPTS.has(script)) return fonts.cs;
     if (script === 'kr' || script === 'jp' || script === 'sc') return fonts.eastAsia;
   }
   return high ? (fonts.hAnsi ?? fonts.ascii) : fonts.ascii;

@@ -529,8 +529,8 @@ export class Ream {
 
   /**
    * Fetch one face per writing system the document holds text in — the curated
-   * families are Latin, and Han, Kana, Hangul, Arabic and the geometric symbols
-   * are a notdef box in every one of them.
+   * families are Latin, and Han, Kana, Hangul, Arabic, the scripts of India and
+   * the geometric symbols are a notdef box in every one of them.
    *
    * Only the regular weight is fetched: Noto Sans SC is ten megabytes, and a
    * bold run in it is better stroked (see `SyntheticFace`) than downloaded four
