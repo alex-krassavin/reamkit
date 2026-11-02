@@ -667,6 +667,17 @@ describe('doc reader: page and column breaks', () => {
     expect(pageTexts(twice)).toEqual([['Latin'], [''], ['Second']]);
   });
 
+  it('sets the mark of a paragraph that ends in a break at the head of the next page', () => {
+    // Word's .doc, whatever Copts.fSplitPgBreakAndParaMark says: "one", a break,
+    // then "two" on the second line of page 2, under the mark's line; the same
+    // after a column break; and a last paragraph of nothing but a break makes
+    // a page of its own.
+    const pages = (text: string) => pageTexts(readDoc(buildDoc([{ text, compressed: false }])).doc);
+    expect(pages(`one${PB}\rtwo\r`)).toEqual([['one'], [ZWSP, 'two']]);
+    expect(pages(`one${COL}\rtwo\r`)).toEqual([['one'], [ZWSP, 'two']]);
+    expect(pages(`one\r${PB}\r`)).toEqual([['one'], [ZWSP]]);
+  });
+
   it('reads a column break, which starts the next page in a section of one column', () => {
     const doc = readDoc(buildDoc([{ text: `Latin${COL}Second\r`, compressed: false }])).doc;
     expect(firstParagraphRuns(doc).map((r) => [r.text, r.columnBreak === true])).toEqual([

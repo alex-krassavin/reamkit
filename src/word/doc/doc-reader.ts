@@ -540,6 +540,17 @@ function mapParagraph(
       ...(r.pageBreak ? { pageBreak: true } : {}),
       ...(r.columnBreak ? { columnBreak: true } : {}),
     }));
+    // A paragraph that ends in a page or column break has its mark set on a
+    // line of its own at the head of the next page or column, in Word's .doc
+    // whatever Copts.fSplitPgBreakAndParaMark says: "one", a break, then "two"
+    // puts "two" on the second line of page 2, and a last paragraph of nothing
+    // but a break makes a page of its own. Word's .docx keeps the mark with the
+    // break, which is what the layout does, so the line the mark makes is set
+    // here.
+    const last = textRuns[textRuns.length - 1];
+    if (last?.pageBreak || last?.columnBreak) {
+      runs.push({ text: ZERO_WIDTH_SPACE, properties: p.mark ? toRunProperties(p.mark) : {} });
+    }
     let properties = toParaProperties(p.props);
     if (isList) {
       // The LST/LVL number format (DOC-10) → a real "1." / "a)" / bullet marker;
