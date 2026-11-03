@@ -22,10 +22,19 @@ export interface DocPiece {
 // A run of character formatting over `length` characters of the document text.
 export interface DocFormatRun {
   readonly length: number;
-  readonly bold?: boolean;
-  readonly italic?: boolean;
+  // On, off, or a toggle operand as Word stores it: 0x80 as the style, 0x81 its opposite.
+  readonly bold?: boolean | number;
+  readonly italic?: boolean | number;
+  readonly charStyle?: number; // sprmCIstd — the run's character style
   readonly underlineKul?: number; // Word `kul` code (0 = none, 1 = single, …)
   readonly sizeHalfPts?: number; // font size in half-points
+  // The fonts, each an index into the font table (`fonts`): of ASCII characters
+  // (sprmCRgFtc0), East Asian ones (sprmCRgFtc1), the others (sprmCRgFtc2) and
+  // complex-script ones (sprmCFtcBi).
+  readonly fontAscii?: number;
+  readonly fontEastAsia?: number;
+  readonly fontOther?: number;
+  readonly fontBi?: number;
   readonly picOffset?: number; // a picture: sprmCFSpec + sprmCPicLocation → Data offset
 }
 
@@ -44,6 +53,7 @@ export interface DocParaFormat {
   readonly widowControl?: boolean; // sprmPFWidowControl
   readonly keepNext?: boolean; // sprmPFKeepFollow
   readonly keepLines?: boolean; // sprmPFKeep
+  readonly pageBreakBefore?: boolean; // sprmPFPageBreakBefore
   readonly cellEdgesTwips?: ReadonlyArray<number>; // sprmTDefTable cell boundaries
   // Per-cell TC80 descriptors (DOC-11): borders (each a Brc80) + vertical merge.
   readonly cellTc?: ReadonlyArray<{
@@ -60,6 +70,7 @@ export interface DocParaFormat {
   readonly cellShadings?: ReadonlyArray<string | undefined>;
   readonly listIlfo?: number; // sprmPIlfo — list override (>0 ⇒ a list item)
   readonly listIlvl?: number; // sprmPIlvl — list level
+  readonly istd?: number; // the paragraph's style (the istd before its grpprl)
 }
 
 // One Brc80 edge for the fixture: width in eighths of a point, brcType (1 single /
@@ -85,17 +96,43 @@ export function buildDoc(
     // First section's page size in twips → a SEP (sprmSXaPage/sprmSYaPage) plus
     // the PlcfSed that points at it. Landscape is just width > height.
     readonly pageSizeTwips?: { readonly width: number; readonly height: number };
+    // The main text's sections, in order: each `length` characters long, counting
+    // the section mark (0x0C) every section but the last ends with, and starting
+    // as `bkc` says (sprmSBkc: 0 continuous, 2 new page, 3 even, 4 odd page). Each
+    // gets its own SEP, with its own page size or else `pageSizeTwips`, and the
+    // margins it states (twips; top and bottom signed, as Word stores them).
+    readonly sections?: ReadonlyArray<{
+      readonly length: number;
+      readonly bkc?: number;
+      readonly pageSizeTwips?: { readonly width: number; readonly height: number };
+      readonly marginsTwips?: DocSepMargins;
+      readonly titlePage?: boolean; // sprmSFTitlePage
+      // sprmSNfcPgn (the MSONFC of its page numbers) and, with restartAt,
+      // sprmSFPgnRestart + sprmSPgnStart97 (the number its first page is given).
+      readonly pageNumbers?: { readonly nfc?: number; readonly restartAt?: number };
+    }>;
     readonly data?: Uint8Array; // the Data stream (embedded pictures: see buildPicf)
-    readonly headerFooter?: {
-      readonly defaultHeader?: string;
-      readonly defaultFooter?: string;
-      readonly firstHeader?: string;
-      readonly firstFooter?: string;
-      readonly evenHeader?: string;
-      readonly evenFooter?: string;
-    };
+    // The header/footer stories: one set for the first section, or one per section.
+    // An absent story has no characters, which a later section reads as the
+    // previous section's; an empty string is a story of one empty paragraph.
+    readonly headerFooter?: DocBands | ReadonlyArray<DocBands>;
+    readonly facingPages?: boolean; // Dop.fFacingPages — even pages have their own bands
     // List tables (DOC-10): `lfos` maps each 1-based ilfo to a list's lsid; `lstfs`
-    // gives each list its levels (nfc + iStartAt + the xst number-text code units).
+    // gives each list its levels (nfc + iStartAt + the xst number-text code units
+    // + the ixchFollow after it).
+    // The style sheet (STSH): each style at its istd, based on `base`, with the
+    // paragraph and run properties it gives.
+    readonly styles?: ReadonlyArray<DocStyleDef>;
+    // The style sheet's default fonts (Stshi ftcAsci, ftcFE, ftcOther, and the
+    // ftcBi after them, which lengthens the Stshi to 20 bytes), as font indices.
+    readonly styleFonts?: {
+      readonly ascii?: number;
+      readonly eastAsia?: number;
+      readonly other?: number;
+      readonly bi?: number;
+    };
+    // The font table (SttbfFfn): each font's name, at its index.
+    readonly fonts?: ReadonlyArray<string>;
     readonly lists?: {
       readonly lfos: ReadonlyArray<number>;
       readonly lstfs: ReadonlyArray<{
@@ -105,6 +142,7 @@ export function buildDoc(
           readonly nfc: number;
           readonly iStartAt?: number;
           readonly xst: ReadonlyArray<number>;
+          readonly follow?: number; // LVLF.ixchFollow — 0 tab (the default), 1 space, 2 nothing
         }>;
       }>;
     };
@@ -129,7 +167,9 @@ export function buildDoc(
   // CP ≥ ccpText, with a PlcfHdd dividing them.
   let headerCps: Array<number> | undefined;
   if (opts.headerFooter) {
-    const story = buildHeaderStream(opts.headerFooter);
+    const story = buildHeaderStream(
+      Array.isArray(opts.headerFooter) ? opts.headerFooter : [opts.headerFooter],
+    );
     headerCps = story.cps;
     if (cursor % 2 !== 0) cursor++;
     const bytes = encodeUtf16(story.text);
@@ -207,33 +247,54 @@ export function buildDoc(
     headerCps.forEach((cp, i) => hv.setUint32(i * 4, cp, true));
     fibFields.push({ fc: 0xf2, off: addBinTable(plcfHdd), lcb: plcfHdd.length }); // PlcfHdd
   }
+  if (opts.facingPages) {
+    // A Dop of its first bits only: fFacingPages is bit 0 of byte 0.
+    const dop = Uint8Array.from([0x01, 0x00, 0x00, 0x00]);
+    fibFields.push({ fc: 0x192, off: addBinTable(dop), lcb: dop.length }); // fcDop/lcbDop
+  }
+  if (opts.styles) {
+    const stsh = buildStsh(opts.styles, opts.styleFonts);
+    fibFields.push({ fc: 0xa2, off: addBinTable(stsh), lcb: stsh.length }); // fcStshf/lcbStshf
+  }
+  if (opts.fonts) {
+    const sttbfFfn = buildSttbfFfn(opts.fonts);
+    fibFields.push({ fc: 0x112, off: addBinTable(sttbfFfn), lcb: sttbfFfn.length }); // fcSttbfFfn
+  }
   if (opts.lists) {
     const { plfLst, lcbLstfs, plfLfo } = buildListTables(opts.lists);
     fibFields.push({ fc: 0x2e2, off: addBinTable(plfLst), lcb: lcbLstfs }); // fcPlfLst/lcbPlfLst
     fibFields.push({ fc: 0x2ea, off: addBinTable(plfLfo), lcb: plfLfo.length }); // fcPlfLfo/lcb
   }
 
-  // Section page size (F4): a Sepx (sprmSXaPage/sprmSYaPage) appended to the
-  // WordDocument stream, addressed by a one-section PlcfSed in the table stream.
-  let sepx: { offset: number; bytes: Uint8Array } | undefined;
-  if (opts.pageSizeTwips) {
-    const grpprl = new Uint8Array(8);
-    const gv = new DataView(grpprl.buffer);
-    gv.setUint16(0, 0xb01f, true); // sprmSXaPage
-    gv.setUint16(2, opts.pageSizeTwips.width, true);
-    gv.setUint16(4, 0xb020, true); // sprmSYaPage
-    gv.setUint16(6, opts.pageSizeTwips.height, true);
-    const sepxBytes = new Uint8Array(2 + grpprl.length); // cb + grpprl
-    new DataView(sepxBytes.buffer).setUint16(0, grpprl.length, true);
-    sepxBytes.set(grpprl, 2);
-    sepx = { offset: wdEnd, bytes: sepxBytes };
-    wdEnd += sepxBytes.length;
-    // PlcfSed: 2 CPs (0, mainChars) then one 12-byte SED whose fcSepx → the Sepx.
-    const plcfSed = new Uint8Array(8 + 12);
+  // Sections (F4): a Sepx per section (sprmSBkc, and sprmSXaPage/sprmSYaPage
+  // for the page size) appended to the WordDocument stream, addressed by a
+  // PlcfSed in the table stream. A page size alone makes one section.
+  const sections = opts.sections ?? (opts.pageSizeTwips ? [{ length: mainChars }] : []);
+  const sepxs: Array<{ offset: number; bytes: Uint8Array }> = [];
+  if (sections.length > 0) {
+    // PlcfSed: n+1 CPs (0, then each section's end) then n 12-byte SEDs.
+    const plcfSed = new Uint8Array((sections.length + 1) * 4 + sections.length * 12);
     const sv = new DataView(plcfSed.buffer);
-    sv.setUint32(4, mainChars, true);
-    sv.setUint32(8 + 2, sepx.offset, true); // SED.fcSepx
-    sv.setUint32(8 + 8, 0xffffffff, true); // SED.fcMpr (none)
+    let cp = 0;
+    sections.forEach((section, i) => {
+      const grpprl = buildSepGrpprl(
+        section.bkc,
+        section.pageSizeTwips ?? opts.pageSizeTwips,
+        section.marginsTwips,
+        section.titlePage,
+        section.pageNumbers,
+      );
+      const sepxBytes = new Uint8Array(2 + grpprl.length); // cb + grpprl
+      new DataView(sepxBytes.buffer).setUint16(0, grpprl.length, true);
+      sepxBytes.set(grpprl, 2);
+      const sed = (sections.length + 1) * 4 + i * 12;
+      sv.setUint32(sed + 2, wdEnd, true); // SED.fcSepx
+      sv.setUint32(sed + 8, 0xffffffff, true); // SED.fcMpr (none)
+      sepxs.push({ offset: wdEnd, bytes: sepxBytes });
+      wdEnd += sepxBytes.length;
+      cp += section.length;
+      sv.setUint32((i + 1) * 4, cp, true);
+    });
     fibFields.push({ fc: 0xca, off: addBinTable(plcfSed), lcb: plcfSed.length }); // fcPlcfSed/lcb
   }
 
@@ -265,13 +326,59 @@ export function buildDoc(
   wv.setUint32(0x1a6, clx.length, true); // lcbClx
   for (const p of placed) wd.set(p.bytes, p.offset);
   for (const f of fkpPages) wd.set(f.page, f.offset);
-  if (sepx) wd.set(sepx.bytes, sepx.offset);
+  for (const sepx of sepxs) wd.set(sepx.bytes, sepx.offset);
 
   return buildCfb([
     { name: 'WordDocument', data: wd },
     { name: whichTable, data: table },
     ...(opts.data ? [{ name: 'Data', data: opts.data }] : []),
   ]);
+}
+
+// A section's margins as its SEP states them, in twips.
+export interface DocSepMargins {
+  readonly left?: number; // sprmSDxaLeft
+  readonly right?: number; // sprmSDxaRight
+  readonly top?: number; // sprmSDyaTop (signed)
+  readonly bottom?: number; // sprmSDyaBottom (signed)
+  readonly header?: number; // sprmSDyaHdrTop
+  readonly footer?: number; // sprmSDyaHdrBottom
+  readonly gutter?: number; // sprmSDzaGutter
+}
+
+// A section's grpprl: sprmSBkc (its break kind, a 1-byte operand), the title
+// page and page numbering, then sprmSXaPage/sprmSYaPage (the page size in
+// twips), then the margins (2 bytes each).
+function buildSepGrpprl(
+  bkc: number | undefined,
+  page: { readonly width: number; readonly height: number } | undefined,
+  margins?: DocSepMargins,
+  titlePage?: boolean,
+  pageNumbers?: { readonly nfc?: number; readonly restartAt?: number },
+): Uint8Array {
+  const bytes: Array<number> = [];
+  const word = (sprm: number, v: number): void => {
+    bytes.push(sprm & 0xff, sprm >> 8, v & 0xff, (v >> 8) & 0xff);
+  };
+  if (bkc !== undefined) bytes.push(0x09, 0x30, bkc); // sprmSBkc
+  if (titlePage !== undefined) bytes.push(0x0a, 0x30, titlePage ? 1 : 0); // sprmSFTitlePage
+  if (pageNumbers?.nfc !== undefined) bytes.push(0x0e, 0x30, pageNumbers.nfc); // sprmSNfcPgn
+  if (pageNumbers?.restartAt !== undefined) {
+    bytes.push(0x11, 0x30, 1); // sprmSFPgnRestart
+    word(0x501c, pageNumbers.restartAt); // sprmSPgnStart97
+  }
+  if (page) {
+    word(0xb01f, page.width); // sprmSXaPage
+    word(0xb020, page.height); // sprmSYaPage
+  }
+  if (margins?.left !== undefined) word(0xb021, margins.left);
+  if (margins?.right !== undefined) word(0xb022, margins.right);
+  if (margins?.top !== undefined) word(0x9023, margins.top);
+  if (margins?.bottom !== undefined) word(0x9024, margins.bottom);
+  if (margins?.header !== undefined) word(0xb017, margins.header);
+  if (margins?.footer !== undefined) word(0xb018, margins.footer);
+  if (margins?.gutter !== undefined) word(0xb025, margins.gutter);
+  return Uint8Array.from(bytes);
 }
 
 // The list tables (DOC-10): PlfLfo (lfoMac + 16-byte LFOs, lsid @0) and PlfLst
@@ -286,6 +393,7 @@ function buildListTables(lists: {
       readonly nfc: number;
       readonly iStartAt?: number;
       readonly xst: ReadonlyArray<number>;
+      readonly follow?: number;
     }>;
   }>;
 }): { plfLst: Uint8Array; lcbLstfs: number; plfLfo: Uint8Array } {
@@ -313,6 +421,7 @@ function buildListTables(lists: {
       const lvlf = new Uint8Array(28); // cbGrpprlChpx @24 / cbGrpprlPapx @25 = 0
       new DataView(lvlf.buffer).setInt32(0, lvl.iStartAt ?? 1, true);
       lvlf[4] = lvl.nfc;
+      lvlf[15] = lvl.follow ?? 0; // ixchFollow
       const xst = new Uint8Array(2 + lvl.xst.length * 2);
       const xv = new DataView(xst.buffer);
       xv.setUint16(0, lvl.xst.length, true);
@@ -335,29 +444,34 @@ function buildListTables(lists: {
 // separators, left empty; 6–11 are section 0's even/odd/first header and footer)
 // as CR-terminated text, returning the concatenated story stream and the 13 CP
 // boundaries that divide it.
-function buildHeaderStream(hf: {
+// One section's header/footer stories.
+export interface DocBands {
   readonly defaultHeader?: string;
   readonly defaultFooter?: string;
   readonly firstHeader?: string;
   readonly firstFooter?: string;
   readonly evenHeader?: string;
   readonly evenFooter?: string;
-}): { text: string; cps: Array<number> } {
+}
+
+function buildHeaderStream(sections: ReadonlyArray<DocBands>): {
+  text: string;
+  cps: Array<number>;
+} {
   const cr = String.fromCharCode(0x0d);
   const slots = [
-    '',
-    '',
-    '',
-    '',
-    '',
-    '', // doc-wide separators
-    hf.evenHeader, // 6
-    hf.defaultHeader, // 7 (odd-page = primary)
-    hf.evenFooter, // 8
-    hf.defaultFooter, // 9 (odd-page = primary)
-    hf.firstHeader, // 10
-    hf.firstFooter, // 11
-  ].map((t) => (t ? t + cr : ''));
+    ...['', '', '', '', '', ''], // doc-wide separators
+    ...sections.flatMap((hf) =>
+      [
+        hf.evenHeader, // 6 + 6k
+        hf.defaultHeader, // 7 + 6k (odd-page = primary)
+        hf.evenFooter, // 8 + 6k
+        hf.defaultFooter, // 9 + 6k (odd-page = primary)
+        hf.firstHeader, // 10 + 6k
+        hf.firstFooter, // 11 + 6k
+      ].map((t) => (t === undefined ? '' : t + cr)),
+    ),
+  ];
   const cps = [0];
   let text = '';
   for (const s of slots) {
@@ -435,7 +549,7 @@ function buildPapxFkp(
   const bxBase = (cpara + 1) * 4;
   let blobOff = bxBase + cpara * 13;
   for (let i = 0; i < cpara; i++) {
-    const blob = buildPapxInFkp(buildPapxGrpprl(runs[i]!));
+    const blob = buildPapxInFkp(buildPapxGrpprl(runs[i]!), runs[i]!.istd ?? 0);
     if (blobOff % 2 !== 0) blobOff++; // PapxInFkp offsets are in 2-byte words
     page.set(blob, blobOff);
     page[bxBase + i * 13] = blobOff / 2; // BX bOffset; the rest of the BX is PHE (0)
@@ -446,13 +560,96 @@ function buildPapxFkp(
 }
 
 // §2.9.24 PapxInFkp — a u8 cb then GrpPrlAndIstd (istd + grpprl). cb≠0 ⇒ size is
-// 2·cb−1 (odd); cb=0 ⇒ a second u8 gives 2·cb2 (even). istd is always 0 here.
-function buildPapxInFkp(grpprl: Uint8Array): Uint8Array {
+// 2·cb−1 (odd); cb=0 ⇒ a second u8 gives 2·cb2 (even).
+function buildPapxInFkp(grpprl: Uint8Array, istd: number): Uint8Array {
   const size = 2 + grpprl.length; // GrpPrlAndIstd: istd (2 bytes) + grpprl
+  const id = [istd & 0xff, istd >> 8];
   if (size % 2 === 1) {
-    return Uint8Array.from([(size + 1) / 2, 0, 0, ...grpprl]); // cb, istd lo/hi, grpprl
+    return Uint8Array.from([(size + 1) / 2, ...id, ...grpprl]); // cb, istd lo/hi, grpprl
   }
-  return Uint8Array.from([0, size / 2, 0, 0, ...grpprl]); // cb=0, cb2, istd lo/hi, grpprl
+  return Uint8Array.from([0, size / 2, ...id, ...grpprl]); // cb=0, cb2, istd lo/hi, grpprl
+}
+
+// One style of the fixture's style sheet.
+export interface DocStyleDef {
+  readonly istd: number;
+  readonly kind: 'paragraph' | 'character';
+  readonly base?: number; // istdBase; absent ⇒ based on none
+  readonly para?: Omit<DocParaFormat, 'length'>;
+  readonly chars?: Omit<DocFormatRun, 'length'>;
+}
+
+// §2.9.271 STSH — a u16 cbStshi and an 18-byte Stshi (cstd, cbSTDBaseInFile 10,
+// zeros, then ftcAsci, ftcFE and ftcOther), 20 bytes with an ftcBi after them,
+// then a u16 cbStd and the STD for each istd up to the last one defined (0 for
+// none). An STD: a 10-byte Stdf (sti, stk | istdBase << 4,
+// cupx | istdNext << 4, bchUpe, grfstd), the name as an Xstz, then its UPXs —
+// a paragraph style's PAPX (istd + grpprl) and CHPX, a character style's CHPX —
+// each a u16 cbUpx and the bytes, padded to an even length.
+function buildStsh(
+  styles: ReadonlyArray<DocStyleDef>,
+  fonts: {
+    readonly ascii?: number;
+    readonly eastAsia?: number;
+    readonly other?: number;
+    readonly bi?: number;
+  } = {},
+): Uint8Array {
+  const u16 = (v: number): Array<number> => [v & 0xff, (v >> 8) & 0xff];
+  const cstd = Math.max(...styles.map((st) => st.istd)) + 1;
+  const out: Array<number> = [
+    ...u16(fonts.bi !== undefined ? 20 : 18),
+    ...u16(cstd),
+    ...u16(10),
+    ...new Array<number>(8).fill(0),
+    ...u16(fonts.ascii ?? 0),
+    ...u16(fonts.eastAsia ?? 0),
+    ...u16(fonts.other ?? 0),
+    ...(fonts.bi !== undefined ? u16(fonts.bi) : []),
+  ];
+  for (let istd = 0; istd < cstd; istd++) {
+    const st = styles.find((x) => x.istd === istd);
+    if (!st) {
+      out.push(...u16(0));
+      continue;
+    }
+    const para = st.kind === 'paragraph';
+    const upxs = para
+      ? [
+          Uint8Array.from([...u16(istd), ...buildPapxGrpprl({ length: 0, ...st.para })]),
+          buildChpxGrpprl({ length: 0, ...st.chars }),
+        ]
+      : [buildChpxGrpprl({ length: 0, ...st.chars })];
+    const name = `S${istd}`;
+    const std: Array<number> = [
+      ...u16(istd & 0x0fff),
+      ...u16((para ? 1 : 2) | ((st.base ?? 0x0fff) << 4)),
+      ...u16(upxs.length | (istd << 4)),
+      ...u16(0),
+      ...u16(0),
+      ...u16(name.length),
+      ...[...name].flatMap((c) => u16(c.charCodeAt(0))),
+      ...u16(0),
+    ];
+    for (const upx of upxs) {
+      std.push(...u16(upx.length), ...upx);
+      if (upx.length % 2 === 1) std.push(0);
+    }
+    out.push(...u16(std.length), ...std);
+  }
+  return Uint8Array.from(out);
+}
+
+// §2.9.286 SttbfFfn — a u16 count, a u16 cbExtra (0), then each FFN: its size
+// less one, then prq/ff, wWeight, chs, ixchSzAlt, PANOSE and FONTSIGNATURE (39
+// bytes, zero here) and the name, NUL-terminated UTF-16.
+function buildSttbfFfn(fonts: ReadonlyArray<string>): Uint8Array {
+  const out: Array<number> = [fonts.length & 0xff, fonts.length >> 8, 0, 0];
+  for (const name of fonts) {
+    const xsz = [...name, '\0'].flatMap((c) => [c.charCodeAt(0) & 0xff, c.charCodeAt(0) >> 8]);
+    out.push(39 + xsz.length, ...new Array<number>(39).fill(0), ...xsz);
+  }
+  return Uint8Array.from(out);
 }
 
 // §2.6.1 — the character sprm list for a run.
@@ -461,10 +658,19 @@ function buildChpxGrpprl(run: DocFormatRun): Uint8Array {
   const sprm = (op: number, ...operand: Array<number>): void => {
     parts.push(op & 0xff, (op >> 8) & 0xff, ...operand);
   };
-  if (run.bold) sprm(0x0835, 0x01); // sprmCFBold
-  if (run.italic) sprm(0x0836, 0x01); // sprmCFItalic
+  const toggle = (v: boolean | number): number => (v === true ? 1 : v === false ? 0 : v);
+  if (run.charStyle !== undefined) sprm(0x4a30, run.charStyle & 0xff, run.charStyle >> 8); // sprmCIstd
+  if (run.bold !== undefined) sprm(0x0835, toggle(run.bold)); // sprmCFBold
+  if (run.italic !== undefined) sprm(0x0836, toggle(run.italic)); // sprmCFItalic
   if (run.underlineKul) sprm(0x2a3e, run.underlineKul & 0xff); // sprmCKul
   if (run.sizeHalfPts) sprm(0x4a43, run.sizeHalfPts & 0xff, (run.sizeHalfPts >> 8) & 0xff); // sprmCHps
+  const ftc = (op: number, v: number | undefined): void => {
+    if (v !== undefined) sprm(op, v & 0xff, v >> 8);
+  };
+  ftc(0x4a4f, run.fontAscii); // sprmCRgFtc0
+  ftc(0x4a50, run.fontEastAsia); // sprmCRgFtc1
+  ftc(0x4a51, run.fontOther); // sprmCRgFtc2
+  ftc(0x4a5e, run.fontBi); // sprmCFtcBi
   if (run.picOffset !== undefined) {
     sprm(0x0855, 0x01); // sprmCFSpec — special character (picture)
     const fc = run.picOffset >>> 0;
@@ -489,6 +695,7 @@ function buildPapxGrpprl(run: DocParaFormat): Uint8Array {
   if (run.widowControl !== undefined) sprm(0x2431, run.widowControl ? 1 : 0); // sprmPFWidowControl
   if (run.keepNext !== undefined) sprm(0x2406, run.keepNext ? 1 : 0); // sprmPFKeepFollow
   if (run.keepLines !== undefined) sprm(0x2405, run.keepLines ? 1 : 0); // sprmPFKeep
+  if (run.pageBreakBefore !== undefined) sprm(0x2407, run.pageBreakBefore ? 1 : 0); // sprmPFPageBreakBefore
   // sprmTDefTable (a long-operand sprm) goes before the table flags so the reader
   // must skip its 2-byte-length operand correctly to still reach sprmPFTtp.
   if (run.cellEdgesTwips) {

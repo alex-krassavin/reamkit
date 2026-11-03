@@ -183,6 +183,10 @@ function parseLevel(
   // prints in decimal. listWithLgl.docx numbers its chapters in Roman and its
   // sections "Sect 1.01"; we wrote "Sect I.01".
   const isLegal = 'w:isLgl' in lvlEl && getValVal(lvlEl['w:isLgl']) !== '0';
+  // §17.9.29 `w:suff` — a tab follows the marker unless the level says a
+  // space or nothing; the tab, and anything else, is left unstated.
+  const suff = getValVal(lvlEl['w:suff']);
+  const suffix = suff === 'space' || suff === 'nothing' ? suff : undefined;
 
   return {
     ilvl,
@@ -190,6 +194,7 @@ function parseLevel(
     format,
     lvlText,
     ...(isLegal ? { isLegal: true } : {}),
+    ...(suffix ? { suffix } : {}),
     ...(picBullet ? { picBullet } : {}),
     paragraphProperties: parseParagraphProperties(lvlEl['w:pPr'], 0, themeFonts),
     runProperties: parseRunProperties(lvlEl['w:rPr'], themeFonts),

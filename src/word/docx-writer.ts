@@ -2332,8 +2332,11 @@ function levelXml(level: NumberingLevel): string {
   const inner: Array<string> = [
     `<w:start w:val="${level.start}"/>`,
     `<w:numFmt w:val="${level.format}"/>`,
-    `<w:lvlText w:val="${escapeAttr(level.lvlText)}"/>`,
   ];
+  // §17.9.29 — between `w:numFmt` and `w:lvlText` in the schema's order; left
+  // out, the marker re-reads with the default tab after it.
+  if (level.suffix !== undefined) inner.push(`<w:suff w:val="${level.suffix}"/>`);
+  inner.push(`<w:lvlText w:val="${escapeAttr(level.lvlText)}"/>`);
   const pPr = rawParaPrXml(level.paragraphProperties);
   if (pPr) inner.push(pPr);
   const rPr = rawRunPrXml(level.runProperties);

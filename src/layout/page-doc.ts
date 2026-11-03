@@ -29,6 +29,11 @@ export interface FontResource {
   readonly measure: FontMeasure;
   /** Glyphs collected by the usage walk — the emit phase subsets to these. */
   readonly gids: ReadonlySet<number>;
+  /**
+   * The text of each collected glyph that no character maps to — a conjunct,
+   * a reph, a vowel sign's contextual form — for the PDF's /ToUnicode.
+   */
+  readonly glyphText?: ReadonlyMap<number, string>;
 }
 
 /**
@@ -76,10 +81,22 @@ export interface TextToken {
    */
   readonly listMarker?: true;
   /**
+   * §17.9.29 — the token is the space a list level's `w:suff="space"` puts
+   * after its marker: a gap of fixed width with nothing drawn in it, which a
+   * justified line does not stretch.
+   */
+  readonly listMarkerSpace?: true;
+  /**
    * §17.3.3.1 — the token is the break of a `w:br w:type="column"`: what
    * follows it belongs in the next column.
    */
   readonly columnBreak?: true;
+  /**
+   * §17.3.3.1 — the token is a `w:br w:type="page"`: an empty mark of where it
+   * stands, and what follows it belongs on the next page. Layout takes it out
+   * of the line before the line is wrapped.
+   */
+  readonly pageBreak?: true;
   /**
    * §17.3.1.38 — the token IS a tab: its width is the distance to the stop it
    * advances to, resolved once the line is known, and its text is whatever
@@ -91,6 +108,15 @@ export interface TextToken {
    * fills a soft highlight behind it (E-COMMENTS CM2c).
    */
   readonly highlight?: true;
+  /**
+   * Per code point of `text`, the colour it is drawn in, where the token holds
+   * a syllable of the scripts of India that a run boundary cut: the syllable
+   * is shaped whole in the run it begins in, and each character keeps the
+   * colour of the run it was typed in. A glyph standing for several characters
+   * takes the colour of the first. Absent when every character takes
+   * `resolvedRun.colorHex`.
+   */
+  readonly charColorsHex?: ReadonlyArray<string>;
   readonly resolvedRun: ResolvedRunProperties;
   readonly font: FontResource;
   /** What the chosen face lacks and the emitter must fake (see {@link SyntheticFace}). */

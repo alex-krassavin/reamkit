@@ -151,4 +151,31 @@ describe('parseRunProperties', () => {
       rtl: false,
     });
   });
+
+  // A property written twice, through the flat tree styles.xml and
+  // numbering.xml are read into: there a bare element is '' rather than an
+  // empty object, and a bare on/off one still says "on" after an "off".
+  // tdf102466.docx gives a bullet's font in two `w:rFonts`, and Word takes
+  // the faces of both.
+  it('reads a property written twice the way Word does', () => {
+    expect(
+      parseRunProperties(parseRpr('<w:rPr><w:b w:val="false"/><w:b w:val="false"/></w:rPr>')),
+    ).toEqual({ bold: false });
+    expect(parseRunProperties(parseRpr('<w:rPr><w:i w:val="0"/><w:i/></w:rPr>'))).toEqual({
+      italic: true,
+    });
+    expect(parseRunProperties(parseRpr('<w:rPr><w:i/><w:i w:val="0"/></w:rPr>'))).toEqual({
+      italic: false,
+    });
+    expect(
+      parseRunProperties(
+        parseRpr(
+          '<w:rPr><w:rFonts w:ascii="Courier New" w:hAnsi="Courier New"/>' +
+            '<w:rFonts w:cs="Courier New"/></w:rPr>',
+        ),
+      ),
+    ).toEqual({
+      fontFamily: { ascii: 'Courier New', hAnsi: 'Courier New', cs: 'Courier New' },
+    });
+  });
 });

@@ -9,17 +9,29 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import { buildDoc, buildPicf } from './fixtures/build-doc';
+import type { DocSepMargins } from './fixtures/build-doc';
 import type { BodyElement } from '@/core/document-model';
 import type { FlowDoc } from '@/core/ir/flow';
+import type { TextLineItem } from '@/layout/page-doc';
 
 import { docReader, readDoc } from '@/word/doc/doc-reader';
 import { Ream } from '@/core/converter/ream';
+import { FontRegistry } from '@/core/font';
+import { flowRenderOptions } from '@/core/converter/project';
+import { layoutStyledDocument } from '@/layout/styled-layout';
 
 const CM = String.fromCharCode(0x07); // table cell mark
 const PIC = String.fromCharCode(0x01); // picture placeholder char
 const F13 = String.fromCharCode(0x13); // field begin
 const F14 = String.fromCharCode(0x14); // field separator
 const F15 = String.fromCharCode(0x15); // field end
+const PB = String.fromCharCode(0x0c); // page break — or, closing a section, its section mark
+const COL = String.fromCharCode(0x0e); // column break
+const ZWSP = '\u200b'; // the text of an empty paragraph
+const FONTS = {
+  regular: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Regular.ttf')),
+  bold: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Bold.ttf')),
+};
 // The smallest image the decoder accepts — a 1×1 transparent PNG.
 const PNG_1x1 = Uint8Array.from(
   Buffer.from(
@@ -44,6 +56,19 @@ function firstParagraphRuns(doc: FlowDoc) {
 // The paragraph elements of the FlowDoc body.
 function paragraphs(doc: FlowDoc) {
   return doc.body.filter((el) => el.kind === 'paragraph');
+}
+
+// The text of each line on each page, laid out the way the PDF is.
+function pageTexts(doc: FlowDoc): Array<Array<string>> {
+  const laid = layoutStyledDocument(doc.body, {
+    registry: FontRegistry.fromBytes(FONTS),
+    ...flowRenderOptions(doc),
+  });
+  return laid.pages.map((page) =>
+    page.commands
+      .filter((c): c is TextLineItem => c.type === 'line')
+      .map((l) => l.line.tokens.map((t) => (t.kind === 'text' ? t.text : '')).join('')),
+  );
 }
 
 // The concatenated text of a table cell's paragraphs.
@@ -104,6 +129,17 @@ describe('doc reader (DOC-1)', () => {
   it('drops control characters and turns tabs into spaces', () => {
     const doc = readDoc(buildDoc([{ text: 'a\tbc\r', compressed: false }])).doc;
     expect(paragraphTexts(doc)).toEqual(['a bc']); // tab → space
+  });
+
+  it('reads a line break (0x0B) as the end of a line within the paragraph', () => {
+    // Word: "Latin" and "Second" on two lines of one paragraph; two breaks leave
+    // an empty line between them.
+    const LB = String.fromCharCode(0x0b);
+    const one = readDoc(buildDoc([{ text: `Latin${LB}Second\r`, compressed: false }])).doc;
+    expect(paragraphTexts(one)).toEqual(['Latin\nSecond']);
+    expect(pageTexts(one)).toEqual([['Latin', 'Second']]);
+    const two = readDoc(buildDoc([{ text: `Latin${LB}${LB}Second\r`, compressed: false }])).doc;
+    expect(pageTexts(two)).toEqual([['Latin', '', 'Second']]);
   });
 
   it('reports the formatting loss and reads no text from an encrypted file', () => {
@@ -491,9 +527,9 @@ describe('doc reader (DOC-1)', () => {
       }),
     ).doc;
     const ps = paragraphs(doc);
-    expect(ps[0]?.paragraph.runs.map((r) => r.text)).toEqual(['1. ', 'A']);
-    expect(ps[1]?.paragraph.runs.map((r) => r.text)).toEqual(['2. ', 'B']);
-    expect(ps[2]?.paragraph.runs.map((r) => r.text)).toEqual(['3. ', 'C']);
+    expect(ps[0]?.paragraph.runs.map((r) => r.text)).toEqual(['1.\t', 'A']);
+    expect(ps[1]?.paragraph.runs.map((r) => r.text)).toEqual(['2.\t', 'B']);
+    expect(ps[2]?.paragraph.runs.map((r) => r.text)).toEqual(['3.\t', 'C']);
   });
 
   it('renders a lower-letter list (nfc 4) (DOC-10)', () => {
@@ -512,8 +548,8 @@ describe('doc reader (DOC-1)', () => {
       }),
     ).doc;
     const ps = paragraphs(doc);
-    expect(ps[0]?.paragraph.runs[0]?.text).toBe('a) ');
-    expect(ps[1]?.paragraph.runs[0]?.text).toBe('b) ');
+    expect(ps[0]?.paragraph.runs[0]?.text).toBe('a)\t');
+    expect(ps[1]?.paragraph.runs[0]?.text).toBe('b)\t');
   });
 
   it('renders a multi-level "1.1." numbered list (DOC-10)', () => {
@@ -539,8 +575,8 @@ describe('doc reader (DOC-1)', () => {
       }),
     ).doc;
     const ps = paragraphs(doc);
-    expect(ps[0]?.paragraph.runs[0]?.text).toBe('1. ');
-    expect(ps[1]?.paragraph.runs[0]?.text).toBe('1.1. ');
+    expect(ps[0]?.paragraph.runs[0]?.text).toBe('1.\t');
+    expect(ps[1]?.paragraph.runs[0]?.text).toBe('1.1.\t');
   });
 
   it('keeps a bullet (nfc 23) as its glyph, not a number (DOC-10)', () => {
@@ -553,7 +589,36 @@ describe('doc reader (DOC-1)', () => {
         },
       }),
     ).doc;
-    expect(paragraphs(doc)[0]?.paragraph.runs[0]?.text).toBe('• ');
+    expect(paragraphs(doc)[0]?.paragraph.runs[0]?.text).toBe('•\t');
+  });
+
+  it('ends each marker in what its level puts after it (ixchFollow)', () => {
+    // [MS-DOC] §2.9.150 — 0 a tab, 1 a space, 2 nothing; a bullet as a number.
+    const doc = readDoc(
+      buildDoc([{ text: 'A\rB\rC\rD\r', compressed: false }], {
+        paraRuns: [
+          { length: 2, listIlfo: 1, listIlvl: 0 },
+          { length: 2, listIlfo: 2, listIlvl: 0 },
+          { length: 2, listIlfo: 3, listIlvl: 0 },
+          { length: 2, listIlfo: 4, listIlvl: 0 },
+        ],
+        lists: {
+          lfos: [1, 2, 3, 4],
+          lstfs: [
+            { lsid: 1, simple: true, levels: [{ nfc: 0, xst: [0x0000, 0x2e], follow: 0 }] },
+            { lsid: 2, simple: true, levels: [{ nfc: 0, xst: [0x0000, 0x2e], follow: 1 }] },
+            { lsid: 3, simple: true, levels: [{ nfc: 0, xst: [0x0000, 0x2e], follow: 2 }] },
+            { lsid: 4, simple: true, levels: [{ nfc: 23, xst: [0x2022], follow: 1 }] },
+          ],
+        },
+      }),
+    ).doc;
+    expect(paragraphs(doc).map((p) => p.paragraph.runs.map((r) => r.text))).toEqual([
+      ['1.\t', 'A'],
+      ['1. ', 'B'],
+      ['1.', 'C'],
+      ['• ', 'D'],
+    ]);
   });
 
   it('renders a .doc with a table to a valid PDF', async () => {
@@ -603,5 +668,554 @@ describe('doc reader (DOC-1)', () => {
       },
     });
     expect(new TextDecoder().decode(pdf.subarray(0, 5))).toBe('%PDF-');
+  });
+});
+
+describe('doc reader: page and column breaks', () => {
+  // [MS-DOC] §2.8.26 — 0x0C is a manual page break, except as the last character
+  // of a section (each but the last), where it is that section's mark. The pages
+  // are Word for Mac's, counted on .doc files that carry these very characters.
+
+  it('reads a page break as a run of its own, where it stands among the words', () => {
+    const doc = readDoc(buildDoc([{ text: `Latin${PB}Second\r`, compressed: false }])).doc;
+    expect(firstParagraphRuns(doc).map((r) => [r.text, r.pageBreak === true])).toEqual([
+      ['Latin', false],
+      ['', true],
+      ['Second', false],
+    ]);
+    // Word: "Latin" on page 1, "Second" at the top of page 2.
+    expect(pageTexts(doc)).toEqual([['Latin'], ['Second']]);
+  });
+
+  it('breaks the page before a paragraph that opens with one, and twice for two', () => {
+    // Word: "Second" at the top of page 2; with two breaks in a row, three pages
+    // and nothing but an empty line on the second.
+    const opening = readDoc(buildDoc([{ text: `one\r${PB}Second\r`, compressed: false }])).doc;
+    expect(pageTexts(opening)).toEqual([['one'], ['Second']]);
+    const twice = readDoc(buildDoc([{ text: `Latin${PB}${PB}Second\r`, compressed: false }])).doc;
+    expect(pageTexts(twice)).toEqual([['Latin'], [''], ['Second']]);
+  });
+
+  it('sets the mark of a paragraph that ends in a break at the head of the next page', () => {
+    // Word's .doc, whatever Copts.fSplitPgBreakAndParaMark says: "one", a break,
+    // then "two" on the second line of page 2, under the mark's line; the same
+    // after a column break; and a last paragraph of nothing but a break makes
+    // a page of its own.
+    const pages = (text: string) => pageTexts(readDoc(buildDoc([{ text, compressed: false }])).doc);
+    expect(pages(`one${PB}\rtwo\r`)).toEqual([['one'], [ZWSP, 'two']]);
+    expect(pages(`one${COL}\rtwo\r`)).toEqual([['one'], [ZWSP, 'two']]);
+    expect(pages(`one\r${PB}\r`)).toEqual([['one'], [ZWSP]]);
+  });
+
+  it('reads a column break, which starts the next page in a section of one column', () => {
+    const doc = readDoc(buildDoc([{ text: `Latin${COL}Second\r`, compressed: false }])).doc;
+    expect(firstParagraphRuns(doc).map((r) => [r.text, r.columnBreak === true])).toEqual([
+      ['Latin', false],
+      ['\n', true],
+      ['Second', false],
+    ]);
+    // Word: "Second" at the top of page 2.
+    expect(pageTexts(doc)).toEqual([['Latin'], ['Second']]);
+  });
+
+  it('ends the paragraph at a section mark, and breaks no page there', () => {
+    // "one", the first section's mark, then "two" in a section that runs on
+    // (sprmSBkc 0). Word: one page, "two" on the line under "one".
+    const doc = readDoc(
+      buildDoc([{ text: `one${PB}two\r`, compressed: false }], {
+        sections: [{ length: 4 }, { length: 4, bkc: 0 }],
+      }),
+    ).doc;
+    expect(paragraphTexts(doc)).toEqual(['one', 'two']);
+    expect(paragraphs(doc).flatMap((el) => el.paragraph.runs.filter((r) => r.pageBreak))).toEqual(
+      [],
+    );
+    expect(pageTexts(doc)).toEqual([['one', 'two']]);
+  });
+
+  it('reads a section mark alone after a paragraph mark as an empty paragraph', () => {
+    const doc = readDoc(
+      buildDoc([{ text: `one\r${PB}two\r`, compressed: false }], {
+        sections: [{ length: 5 }, { length: 4, bkc: 0 }],
+      }),
+    ).doc;
+    expect(paragraphTexts(doc)).toEqual(['one', ZWSP, 'two']);
+  });
+
+  it('starts a new page at a paragraph marked to break before, unless it is the first', () => {
+    // sprmPFPageBreakBefore — how LibreOffice writes every page break into a .doc.
+    // Word: "Second" at the top of page 2; on the first paragraph, one page.
+    const doc = readDoc(
+      buildDoc([{ text: 'one\rSecond\r', compressed: false }], {
+        paraRuns: [{ length: 4 }, { length: 7, pageBreakBefore: true }],
+      }),
+    ).doc;
+    expect(paragraphs(doc).map((el) => el.paragraph.properties.pageBreakBefore === true)).toEqual([
+      false,
+      true,
+    ]);
+    expect(pageTexts(doc)).toEqual([['one'], ['Second']]);
+    const first = readDoc(
+      buildDoc([{ text: 'one\rtwo\r', compressed: false }], {
+        paraRuns: [{ length: 4, pageBreakBefore: true }, { length: 4 }],
+      }),
+    ).doc;
+    expect(pageTexts(first)).toEqual([['one', 'two']]);
+  });
+});
+
+describe('doc reader: sections', () => {
+  // [MS-DOC] §2.8.26 — each section runs up to its section mark, and the next one
+  // starts where its own sprmSBkc says. Pages as Word for Mac sets the same
+  // sections in .doc files LibreOffice wrote.
+  const sectioned = (
+    text: string,
+    sections: ReadonlyArray<{
+      length: number;
+      bkc?: number;
+      pageSizeTwips?: { width: number; height: number };
+      marginsTwips?: DocSepMargins;
+    }>,
+  ): FlowDoc => readDoc(buildDoc([{ text, compressed: false }], { sections })).doc;
+
+  it('starts a section on a new page when its SEP says nothing', () => {
+    // Word: "two" at the top of page 2.
+    const doc = sectioned(`one${PB}two\r`, [{ length: 4 }, { length: 4 }]);
+    expect(doc.sections.map((s) => s.endIndex)).toEqual([1, 2]);
+    expect(pageTexts(doc)).toEqual([['one'], ['two']]);
+  });
+
+  it('starts it on the page in hand, on an odd page or on an even one, as bkc says', () => {
+    // Word: "two" under "one" (0); on page 3 after a blank page 2 (4, odd); on
+    // page 2 (3, even).
+    const at = (bkc: number) =>
+      pageTexts(sectioned(`one${PB}two\r`, [{ length: 4 }, { length: 4, bkc }]));
+    expect(at(0)).toEqual([['one', 'two']]);
+    expect(at(4)).toEqual([['one'], [], ['two']]);
+    expect(at(3)).toEqual([['one'], ['two']]);
+  });
+
+  it('lays out three sections each as its own bkc says', () => {
+    // Word: "one" on page 1; "two" and "three" on page 2, the third section
+    // running on from the second.
+    const doc = sectioned(`one${PB}two${PB}three\r`, [
+      { length: 4 },
+      { length: 4 },
+      { length: 6, bkc: 0 },
+    ]);
+    expect(pageTexts(doc)).toEqual([['one'], ['two', 'three']]);
+  });
+
+  it('gives each section its own page size', () => {
+    // Word: page 1 is 612×792, page 2 (the landscape section) 792×612.
+    const doc = sectioned(`one${PB}two\r`, [
+      { length: 4 },
+      { length: 4, pageSizeTwips: { width: 15840, height: 12240 } },
+    ]);
+    const laid = layoutStyledDocument(doc.body, {
+      registry: FontRegistry.fromBytes(FONTS),
+      ...flowRenderOptions(doc),
+    });
+    expect(laid.pages.map((p) => [p.width, p.height])).toEqual([
+      [612, 792],
+      [792, 612],
+    ]);
+  });
+
+  it('sets each section within its own margins', () => {
+    // Word: "one" at x 162.2 (a two-inch margin and a quarter-inch gutter), its
+    // line's top at 108.4; "two", in the next section, at 36.4 and 36.4. A top
+    // margin stored negative is the same size.
+    const doc = sectioned(`one${PB}two\r`, [
+      { length: 4, marginsTwips: { left: 2880, right: 720, top: 2160, bottom: 1440, gutter: 360 } },
+      { length: 4, marginsTwips: { left: 720, right: 2880, top: -720, bottom: 720 } },
+    ]);
+    expect(doc.sections.map((s) => s.properties.margins)).toEqual([
+      { top: 108, right: 36, bottom: 72, left: 144, gutter: 18 },
+      { top: 36, right: 144, bottom: 36, left: 36 },
+    ]);
+    const laid = layoutStyledDocument(doc.body, {
+      registry: FontRegistry.fromBytes(FONTS),
+      ...flowRenderOptions(doc),
+    });
+    const first = laid.pages.map((p) => p.commands.find((c) => c.type === 'line')!);
+    expect(first.map((l) => l.originX)).toEqual([162, 36]);
+    expect(first[0]!.baselineY - first[1]!.baselineY).toBeCloseTo(72, 3);
+  });
+
+  it('gives each section its own header and footer, or the one before', () => {
+    // Word: "Head A" and "Foot A" on page 1; "Head B" on page 2, over the
+    // footer the second section takes from the first ("same as previous", which
+    // Word writes as a story of no characters).
+    const doc = readDoc(
+      buildDoc([{ text: `one${PB}two\r`, compressed: false }], {
+        sections: [{ length: 4 }, { length: 4 }],
+        headerFooter: [
+          { defaultHeader: 'Head A', defaultFooter: 'Foot A' },
+          { defaultHeader: 'Head B' },
+        ],
+      }),
+    ).doc;
+    expect(pageTexts(doc)).toEqual([
+      ['Head A', 'one', 'Foot A'],
+      ['Head B', 'two', 'Foot A'],
+    ]);
+  });
+
+  it('shows no line for the paragraph mark that closes every story', () => {
+    // LibreOffice writes a one-line header as "Head", CR, CR; Word shows one line.
+    const doc = readDoc(
+      buildDoc([{ text: 'one\r', compressed: false }], {
+        headerFooter: { defaultHeader: 'Head\r' },
+      }),
+    ).doc;
+    expect(pageTexts(doc)).toEqual([['Head', 'one']]);
+  });
+
+  it('shows the first page its own header when the section asks', () => {
+    // sprmSFTitlePage. Word: "Cover" over page 1 and no footer under it, "Head"
+    // and "Foot" on page 2.
+    const doc = readDoc(
+      buildDoc([{ text: `one${PB}two\r`, compressed: false }], {
+        sections: [{ length: 8, titlePage: true }],
+        headerFooter: { firstHeader: 'Cover', defaultHeader: 'Head', defaultFooter: 'Foot' },
+      }),
+    ).doc;
+    expect(pageTexts(doc)).toEqual([
+      ['Cover', 'one'],
+      ['Head', 'two', 'Foot'],
+    ]);
+  });
+
+  it('shows the even pages their own header when the document has facing pages', () => {
+    // Dop.fFacingPages. Word: "Odd", "Even", "Odd" over three pages.
+    const bands = { defaultHeader: 'Odd', evenHeader: 'Even' };
+    const text = `one${PB}two${PB}three\r`;
+    const facing = readDoc(
+      buildDoc([{ text, compressed: false }], { headerFooter: bands, facingPages: true }),
+    ).doc;
+    expect(pageTexts(facing).map((lines) => lines[0])).toEqual(['Odd', 'Even', 'Odd']);
+    const single = readDoc(buildDoc([{ text, compressed: false }], { headerFooter: bands })).doc;
+    expect(pageTexts(single).map((lines) => lines[0])).toEqual(['Odd', 'Odd', 'Odd']);
+  });
+
+  it("numbers each page in a footer's PAGE and NUMPAGES fields, not as Word cached them", () => {
+    // The codes LibreOffice writes; Word saved "9" and "9" as the results.
+    // Word: "Page 1 of 3", "Page 2 of 3", "Page 3 of 3".
+    const footer = `Page ${F13} PAGE ${F14}9${F15} of ${F13} NUMPAGES \\* MERGEFORMAT ${F14}9${F15}`;
+    const doc = readDoc(
+      buildDoc([{ text: `one${PB}two${PB}three\r`, compressed: false }], {
+        headerFooter: { defaultFooter: footer },
+      }),
+    ).doc;
+    expect(pageTexts(doc).map((lines) => lines[lines.length - 1])).toEqual([
+      'Page 1 of 3',
+      'Page 2 of 3',
+      'Page 3 of 3',
+    ]);
+    const id = doc.section!.footers[0]!.relationshipId;
+    const [band] = doc.headersFooters!.get(id)!;
+    const runs = band?.kind === 'paragraph' ? band.paragraph.runs : [];
+    expect(runs.map((r) => [r.text, r.field])).toEqual([
+      ['Page ', undefined],
+      ['9', 'PAGE'],
+      [' of ', undefined],
+      ['9', 'NUMPAGES'],
+    ]);
+  });
+
+  it("numbers a section's pages again where its SEP starts the count again", () => {
+    // LibreOffice writes `w:pgNumType w:start="1" w:fmt="lowerRoman"` on the
+    // second section as sprmSFPgnRestart, sprmSPgnStart97 1 and sprmSNfcPgn 2.
+    // Word: "p1", "p2", then "pi", "pii".
+    const page = `p${F13} PAGE ${F14}9${F15}`;
+    const doc = readDoc(
+      buildDoc([{ text: `one${PB}two${PB}three${PB}four\r`, compressed: false }], {
+        sections: [{ length: 8 }, { length: 11, pageNumbers: { nfc: 2, restartAt: 1 } }],
+        headerFooter: [{ defaultFooter: page }, { defaultFooter: page }],
+      }),
+    ).doc;
+    expect(pageTexts(doc).map((lines) => lines[lines.length - 1])).toEqual([
+      'p1',
+      'p2',
+      'pi',
+      'pii',
+    ]);
+  });
+
+  it('keeps the cached result of every other field in a band', () => {
+    // SECTIONPAGES, a date, and a PAGE inside another field's code: what Word
+    // cached is all the reader has of them.
+    const footer =
+      `${F13} SECTIONPAGES ${F14}5${F15}/${F13} DATE ${F14}1.2.99${F15}/` +
+      `${F13} IF ${F13} PAGE ${F14}1${F15} = 1 "a" "b" ${F14}a${F15}`;
+    const doc = readDoc(
+      buildDoc([{ text: `one${PB}two\r`, compressed: false }], {
+        headerFooter: { defaultFooter: footer },
+      }),
+    ).doc;
+    expect(pageTexts(doc).map((lines) => lines[lines.length - 1])).toEqual([
+      '5/1.2.99/a',
+      '5/1.2.99/a',
+    ]);
+    const id = doc.section!.footers[0]!.relationshipId;
+    const [band] = doc.headersFooters!.get(id)!;
+    expect(band?.kind === 'paragraph' && band.paragraph.runs.some((r) => r.field)).toBe(false);
+  });
+
+  it('marks a PAGE field in the body, in the formatting of its cached result', () => {
+    // The body keeps the cached number, as it does from a docx.
+    const doc = readDoc(
+      buildDoc([{ text: `Page ${F13} page ${F14}7${F15}\r`, compressed: false }], {
+        formatRuns: [{ length: 13 }, { length: 1, bold: true }, { length: 2 }],
+      }),
+    ).doc;
+    expect(
+      firstParagraphRuns(doc).map((r) => [r.text, r.field, r.properties.bold === true]),
+    ).toEqual([
+      ['Page ', undefined, false],
+      ['7', 'PAGE', true],
+    ]);
+  });
+
+  it('keeps an inch on every side where the SEP states no margin, as Word does', () => {
+    const doc = sectioned(`one${PB}two\r`, [{ length: 4 }, { length: 4 }]);
+    expect(doc.sections[0]!.properties.margins).toEqual({
+      top: 72,
+      right: 72,
+      bottom: 72,
+      left: 72,
+    });
+  });
+});
+
+describe('doc reader: styles', () => {
+  // §2.9.271 STSH. Measured in Word for Mac on a .doc LibreOffice wrote from a
+  // .docx of these styles: each word's size, weight and slant, and each
+  // paragraph's alignment, spacing and keep, as Word reports them.
+  const NORMAL = {
+    istd: 0,
+    kind: 'paragraph',
+    para: { spaceAfterTwips: 240 },
+    chars: { sizeHalfPts: 24 },
+  } as const;
+  const HEADING = {
+    istd: 1,
+    kind: 'paragraph',
+    base: 0,
+    para: { jc: 1, spaceBeforeTwips: 480, keepNext: true },
+    chars: { bold: true, sizeHalfPts: 32 },
+  } as const;
+  const EMPH = { istd: 10, kind: 'character', chars: { italic: true, sizeHalfPts: 20 } } as const;
+  const runsOf = (doc: FlowDoc) =>
+    paragraphs(doc).map((el) =>
+      el.paragraph.runs.map((r) => [
+        r.text,
+        r.properties.fontSizePt,
+        r.properties.bold === true,
+        r.properties.italic === true,
+      ]),
+    );
+
+  it('gives a paragraph the properties of its style and of the one that is based on', () => {
+    // Word: "Title" 16 pt bold, centred, 24 pt before and 12 after (Normal's),
+    // kept with the next; "Body" 12 pt, 12 after.
+    const doc = readDoc(
+      buildDoc([{ text: 'Title\rBody\r', compressed: false }], {
+        styles: [NORMAL, HEADING],
+        paraRuns: [{ length: 6, istd: 1 }, { length: 5 }],
+      }),
+    ).doc;
+    const [title, body] = paragraphs(doc).map((el) => el.paragraph.properties);
+    expect(title).toMatchObject({
+      alignment: 'center',
+      spacingBefore: 24,
+      spacingAfter: 12,
+      keepNext: true,
+    });
+    expect(body).toMatchObject({ alignment: 'left', spacingAfter: 12 });
+    expect(runsOf(doc)).toEqual([[['Title', 16, true, false]], [['Body', 12, false, false]]]);
+  });
+
+  it('lays a character style over the paragraph style, and the run formatting over both', () => {
+    // Word: "Body " 12 pt, "emph" 10 pt italic, "bold" 12 pt bold.
+    const doc = readDoc(
+      buildDoc([{ text: 'Body emphbold\r', compressed: false }], {
+        styles: [NORMAL, EMPH],
+        paraRuns: [{ length: 14 }],
+        formatRuns: [{ length: 5 }, { length: 4, charStyle: 10 }, { length: 5, bold: true }],
+      }),
+    ).doc;
+    expect(runsOf(doc)).toEqual([
+      [
+        ['Body ', 12, false, false],
+        ['emph', 10, false, true],
+        ['bold', 12, true, false],
+      ],
+    ]);
+  });
+
+  it('reads a toggle against what the style says', () => {
+    // [MS-DOC] ToggleOperand: 0x80 is the style's value, 0x81 its opposite, the
+    // way Word 97's heading styles make themselves bold over Normal. "Head "
+    // bold and "plain" not in a bold heading; "body" bold in a Normal paragraph.
+    const doc = readDoc(
+      buildDoc([{ text: 'Head plain\rbody\r', compressed: false }], {
+        styles: [NORMAL, HEADING],
+        paraRuns: [{ length: 11, istd: 1 }, { length: 5 }],
+        formatRuns: [
+          { length: 5, bold: 0x80 },
+          { length: 6, bold: 0x81 },
+          { length: 5, bold: 0x81 },
+        ],
+      }),
+    ).doc;
+    expect(runsOf(doc)).toEqual([
+      [
+        ['Head ', 16, true, false],
+        ['plain', 16, false, false],
+      ],
+      [['body', 12, true, false]],
+    ]);
+  });
+
+  it('keeps an empty paragraph in the spacing of its style and the size of its mark', () => {
+    // Word: the empty paragraph between "one" and "two" has 12 pt after it, as
+    // they do.
+    const doc = readDoc(
+      buildDoc([{ text: 'one\r\rtwo\r', compressed: false }], {
+        styles: [NORMAL],
+        paraRuns: [{ length: 4 }, { length: 1 }, { length: 4 }],
+      }),
+    ).doc;
+    expect(paragraphs(doc).map((el) => el.paragraph.properties.spacingAfter)).toEqual([12, 12, 12]);
+    expect(runsOf(doc)[1]).toEqual([[ZWSP, 12, false, false]]);
+  });
+
+  it('reads a list level past the ninth as the first', () => {
+    // Word 97's "List Bullet" style says level 10 over a list of the old kind
+    // (53446.doc); read as it stands, it indented the item eleven levels.
+    const doc = readDoc(
+      buildDoc([{ text: 'item\r', compressed: false }], {
+        paraRuns: [{ length: 5, listIlfo: 1, listIlvl: 10 }],
+      }),
+    ).doc;
+    expect(paragraphs(doc)[0]!.paragraph.properties.indentLeft).toBe(18);
+  });
+});
+
+describe('doc reader: fonts', () => {
+  // [MS-DOC] SttbfFfn: a run's font sprms and the style sheet name a font by
+  // its index in the font table. Measured in Word for Mac on .docs LibreOffice
+  // wrote from a .docx of these fonts, some bytes patched in place: each word's
+  // ASCII, other, East Asian and complex-script font, as Word reports them.
+  const FACES = ['Times New Roman', 'Arial', 'Courier New', 'SimSun', 'Georgia'];
+  const fontsOf = (doc: FlowDoc) =>
+    paragraphs(doc).map((el) => el.paragraph.runs.map((r) => [r.text, r.properties.fontFamily]));
+
+  it("names each run's font from the font table, and parts runs that differ in it alone", () => {
+    // Word: "plain " in no font of its own, "arial " in Arial, "courier" in Courier New.
+    const doc = readDoc(
+      buildDoc([{ text: 'plain arial courier\r', compressed: false }], {
+        fonts: FACES,
+        formatRuns: [
+          { length: 6 },
+          { length: 6, fontAscii: 1, fontOther: 1 },
+          { length: 8, fontAscii: 2, fontOther: 2 },
+        ],
+      }),
+    ).doc;
+    expect(fontsOf(doc)).toEqual([
+      [
+        ['plain ', {}],
+        ['arial ', { ascii: 'Arial', hAnsi: 'Arial' }],
+        ['courier', { ascii: 'Courier New', hAnsi: 'Courier New' }],
+      ],
+    ]);
+  });
+
+  it('reads the font of each kind of character into its slot of w:rFonts', () => {
+    // Word: a word in Verdana for ASCII and Courier New for the other
+    // characters sets its Cyrillic in Courier New, which is w:hAnsi; East Asian
+    // characters take sprmCRgFtc1's font, complex-script ones sprmCFtcBi's.
+    const doc = readDoc(
+      buildDoc([{ text: 'mixed\r', compressed: false }], {
+        fonts: FACES,
+        formatRuns: [{ length: 6, fontAscii: 4, fontOther: 2, fontEastAsia: 3, fontBi: 1 }],
+      }),
+    ).doc;
+    expect(fontsOf(doc)).toEqual([
+      [['mixed', { ascii: 'Georgia', hAnsi: 'Courier New', eastAsia: 'SimSun', cs: 'Arial' }]],
+    ]);
+  });
+
+  it('takes the font of the paragraph style, then of the character style, then of the run', () => {
+    // Word: "Title words" in heading 1's Arial, "body " in Normal's Times New
+    // Roman, "code " in the Code style's Courier New, "override" in its own
+    // Georgia; each in Normal's East Asian font.
+    const doc = readDoc(
+      buildDoc([{ text: 'Title words\rbody code override\r', compressed: false }], {
+        fonts: FACES,
+        styles: [
+          { istd: 0, kind: 'paragraph', chars: { fontAscii: 0, fontOther: 0, fontEastAsia: 3 } },
+          { istd: 1, kind: 'paragraph', base: 0, chars: { fontAscii: 1, fontOther: 1 } },
+          { istd: 10, kind: 'character', chars: { fontAscii: 2, fontOther: 2 } },
+        ],
+        paraRuns: [{ length: 12, istd: 1 }, { length: 19 }],
+        formatRuns: [
+          { length: 12 },
+          { length: 5 },
+          { length: 5, charStyle: 10 },
+          { length: 9, charStyle: 10, fontAscii: 4, fontOther: 4 },
+        ],
+      }),
+    ).doc;
+    const face = (name: string) => ({ ascii: name, hAnsi: name, eastAsia: 'SimSun' });
+    expect(fontsOf(doc)).toEqual([
+      [['Title words', face('Arial')]],
+      [
+        ['body ', face('Times New Roman')],
+        ['code ', face('Courier New')],
+        ['override', face('Georgia')],
+      ],
+    ]);
+  });
+
+  it("sets a run in the style sheet's default fonts where no style or run names one", () => {
+    // Word: with a Normal style that names no ASCII or other font and a Stshi
+    // that names Georgia and Courier New, "plain" is in Georgia, in Courier New
+    // past ASCII, and so is the empty line; "Title" in its style's Arial. Word
+    // 2007 on writes its .docs so, with Calibri there. The complex-script
+    // default (ftcBi, a Stshi longer than LibreOffice writes) is the spec's.
+    const doc = readDoc(
+      buildDoc([{ text: 'plain\r\rTitle\r', compressed: false }], {
+        fonts: FACES,
+        styles: [
+          { istd: 0, kind: 'paragraph' },
+          { istd: 1, kind: 'paragraph', base: 0, chars: { fontAscii: 1, fontOther: 1 } },
+        ],
+        styleFonts: { ascii: 4, eastAsia: 3, other: 2, bi: 1 },
+        paraRuns: [{ length: 6 }, { length: 1 }, { length: 6, istd: 1 }],
+      }),
+    ).doc;
+    const defaults = { ascii: 'Georgia', hAnsi: 'Courier New', eastAsia: 'SimSun', cs: 'Arial' };
+    expect(fontsOf(doc)).toEqual([
+      [['plain', defaults]],
+      [[ZWSP, defaults]],
+      [['Title', { ...defaults, ascii: 'Arial', hAnsi: 'Arial' }]],
+    ]);
+  });
+
+  it('names no font for an index past the end of the table, nor for one with no name', () => {
+    const doc = readDoc(
+      buildDoc([{ text: 'past nameless\r', compressed: false }], {
+        fonts: ['Arial', ''],
+        formatRuns: [
+          { length: 5, fontAscii: 7 },
+          { length: 9, fontAscii: 1 },
+        ],
+      }),
+    ).doc;
+    expect(fontsOf(doc)).toEqual([[['past nameless', {}]]]);
   });
 });

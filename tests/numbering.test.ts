@@ -1,15 +1,26 @@
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
 import type { Numbering } from '@/core/document-model';
 import type { ResourceId } from '@/core/ir';
+import type { Line, TextLineItem } from '@/layout/page-doc';
 import { eighthPtToPt, emuToPt, halfPtToPt, twipsToPt } from '@/core/ir';
 
 import { parseNumbering } from '@/word';
 import { NumberingState } from '@/core/numbering';
+import { flowRenderOptions } from '@/core/converter/project';
+import { FontRegistry } from '@/core/font';
+import { computeJustifyExtra } from '@/layout/line-paint';
+import { layoutStyledDocument } from '@/layout/styled-layout';
 import { readDocx } from '@/word/docx-reader';
 
 const encoder = new TextEncoder();
+const FONTS = {
+  regular: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Regular.ttf')),
+  bold: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Bold.ttf')),
+};
 
 function parse(xml: string, resolveImage?: (relId: string) => ResourceId | undefined): Numbering {
   return parseNumbering(
@@ -342,5 +353,114 @@ describe('numbering a paragraph carries through its style (§17.9.24)', () => {
       b.kind === 'paragraph' ? b.paragraph.runs.filter((r) => r.listMarker).map((r) => r.text) : [],
     );
     expect(markers).toEqual(['Chapter 1.\t', 'Chapter 2.\t']);
+  });
+});
+
+describe('a list marker takes its fonts slot by slot (§17.3.2.26)', () => {
+  it('lays the level’s ASCII font over the paragraph mark’s other slots', () => {
+    const numberingXml =
+      '<w:abstractNum w:abstractNumId="0">' +
+      '<w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/>' +
+      '<w:lvlText w:val="Глава %1."/><w:rPr><w:rFonts w:ascii="Arial"/></w:rPr></w:lvl>' +
+      '</w:abstractNum>' +
+      '<w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>';
+    const body =
+      '<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr>' +
+      '<w:rPr><w:rFonts w:ascii="Georgia" w:hAnsi="Georgia"/></w:rPr></w:pPr>' +
+      '<w:r><w:t>Текст</w:t></w:r></w:p>';
+    const { doc } = readDocx(buildDocxFromBody(body, { numberingXml }));
+    const marker = doc.body.flatMap((b) =>
+      b.kind === 'paragraph' ? b.paragraph.runs.filter((r) => r.listMarker) : [],
+    )[0];
+    expect(marker?.properties.fontFamily).toEqual({ ascii: 'Arial', hAnsi: 'Georgia' });
+  });
+});
+
+describe('what follows a list marker (§17.9.29)', () => {
+  // Word for Mac, on probes of each suffix: a tab out to the next stop, one
+  // space, or the text right against the marker; no `w:suff` is a tab.
+  const level = (suff: string, sizePt = 12): string =>
+    '<w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/>' +
+    `${suff ? `<w:suff w:val="${suff}"/>` : ''}<w:lvlText w:val="%1."/>` +
+    `<w:pPr><w:ind w:left="0" w:firstLine="0"/></w:pPr><w:rPr><w:sz w:val="${sizePt * 2}"/></w:rPr></w:lvl>`;
+  const lists = (levels: ReadonlyArray<string>): string =>
+    levels.map((l, i) => `<w:abstractNum w:abstractNumId="${i}">${l}</w:abstractNum>`).join('') +
+    levels
+      .map((_, i) => `<w:num w:numId="${i + 1}"><w:abstractNumId w:val="${i}"/></w:num>`)
+      .join('');
+  const item = (numId: number, text: string, pPr = ''): string =>
+    `<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="${numId}"/></w:numPr>${pPr}</w:pPr>` +
+    `<w:r><w:t xml:space="preserve">${text}</w:t></w:r></w:p>`;
+
+  it('ends each marker in the tab, space or nothing its level asks for', () => {
+    const numberingXml = lists([level('tab'), level('space'), level('nothing'), level('')]);
+    const body = [1, 2, 3, 4].map((n) => item(n, 'Alpha')).join('');
+    const { doc } = readDocx(buildDocxFromBody(body, { numberingXml }));
+    const markers = doc.body.map((b) =>
+      b.kind === 'paragraph'
+        ? b.paragraph.runs
+            .filter((r) => r.listMarker)
+            .map((r) => (r.listMarkerSpace ? `[${r.text}]` : r.text))
+        : [],
+    );
+    expect(markers).toEqual([['1.\t'], ['1.', '[ ]'], ['1.'], ['1.\t']]);
+  });
+
+  it('reads a suffix it does not know as the tab', () => {
+    const numbering = parse(
+      `<w:abstractNum w:abstractNumId="0">${level('space')}</w:abstractNum>` +
+        `<w:abstractNum w:abstractNumId="1">${level('tab')}</w:abstractNum>` +
+        `<w:abstractNum w:abstractNumId="2">${level('dot')}</w:abstractNum>`,
+    );
+    const suffixes = ['0', '1', '2'].map(
+      (id) => numbering.abstractNums.get(id)!.levels.get(0)!.suffix,
+    );
+    expect(suffixes).toEqual(['space', undefined, undefined]);
+  });
+
+  /** The first line of each paragraph, as laid out for the page. */
+  const firstLines = (docx: Uint8Array): Array<Line> => {
+    const flow = readDocx(docx).doc;
+    const laid = layoutStyledDocument(flow.body, {
+      registry: FontRegistry.fromBytes(FONTS),
+      ...flowRenderOptions(flow),
+    });
+    return laid.pages[0]!.commands.filter((c): c is TextLineItem => c.type === 'line')
+      .map((c) => c.line)
+      .filter((l) => l.tokens.some((t) => t.kind === 'text' && t.listMarker));
+  };
+  /** Where the text after the marker starts, from the line's left. */
+  const textStart = (line: Line): number => {
+    let x = 0;
+    for (const t of line.tokens) {
+      if (!(t.kind === 'text' && t.listMarker)) return x;
+      x += t.widthPt;
+    }
+    return x;
+  };
+
+  it('sets the space at a fixed 0.278 em of the marker, whatever its face', () => {
+    // Word: at 48pt a space after Courier New, Arial, Verdana, Times New Roman,
+    // Georgia, Calibri, Tahoma, Impact and Songti markers is the same 13.45pt
+    // (±0.4, Word's readout) — Arial's space, 569/2048 of the em; 9.9 at 36pt.
+    const numberingXml = lists([level('nothing', 48), level('space', 48), level('space', 36)]);
+    const body = item(1, 'Alpha') + item(2, 'Alpha') + item(3, 'Alpha');
+    const [nothing, space48, space36] = firstLines(buildDocxFromBody(body, { numberingXml }));
+    expect(textStart(space48!) - textStart(nothing!)).toBeCloseTo((48 * 569) / 2048, 3);
+    const markerAt36 = space36!.tokens[0]!.widthPt;
+    expect(textStart(space36!) - markerAt36).toBeCloseTo((36 * 569) / 2048, 3);
+  });
+
+  it('keeps the space its width in a justified line', () => {
+    // Word: the first word of a justified item stands where it does in a
+    // left-aligned one, 89.4 against 89.4; only the spaces between words grow.
+    const words = Array.from({ length: 40 }, (_, i) => `w${i}`).join(' ');
+    const numberingXml = lists([level('space')]);
+    const body = item(1, words) + item(1, words, '<w:jc w:val="both"/>');
+    const [left, justified] = firstLines(buildDocxFromBody(body, { numberingXml }));
+    expect(computeJustifyExtra(justified!)).toBeGreaterThan(0);
+    const gap = justified!.tokens.find((t) => t.kind === 'text' && t.listMarkerSpace);
+    expect(gap?.isSpace).toBe(false);
+    expect(textStart(justified!)).toBeCloseTo(textStart(left!), 6);
   });
 });

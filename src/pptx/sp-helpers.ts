@@ -131,7 +131,12 @@ export function rPrToRunProps(
       : {}),
     ...(sz !== undefined ? { fontSizePt: pt(sz / 100) } : {}),
     ...(colorHex ? { colorHex } : {}),
-    ...(typeface ? { fontFamily: { ascii: typeface } } : {}),
+    // §21.1.2.3.7 — `a:latin` is the font of everything neither East Asian nor
+    // complex script: both of WordprocessingML's slots for it. Named as the
+    // ascii slot alone, the text of a .docx's own shapes took its Cyrillic
+    // from the document's defaults: tdf143476_lockedCanvas_position.docx set
+    // the "ЮНЫЕ" of its Monotype Corsiva WordArt in Calibri.
+    ...(typeface ? { fontFamily: { ascii: typeface, hAnsi: typeface } } : {}),
     ...capsOf(poAttr(rPr, 'cap')),
   };
 }

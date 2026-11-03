@@ -6,8 +6,8 @@
 // .docx) works on a legacy `.doc` the way it already does for `.xls`. The shared
 // CFB container reader (`src/core/ole`) is the keystone both legacy formats reuse.
 //
-// Scope: paragraphs of formatted runs — bold / italic / underline / font size
-// (CHPX) on each run, alignment / indentation / spacing (PAPX) on each paragraph,
+// Scope: paragraphs of formatted runs — bold / italic / underline / font size /
+// fonts (CHPX) on each run, alignment / indentation / spacing (PAPX) on each paragraph,
 // tables (in-table paragraphs grouped into a row/cell grid, with per-column widths
 // from sprmTDefTable), inline images (the picture char's CHPX → a PICF in the Data
 // stream), fields (resolved to their cached result), the section's headers/footers
@@ -21,11 +21,17 @@ import type {
   Border,
   CellBorders,
   CellMerge,
+  FontFamilyMap,
   HeaderFooterReference,
   HeaderFooterType,
   ImageBlock,
+  NumberingFormat,
+  PageMargins,
   ParagraphProperties,
+  Run,
   RunProperties,
+  Section,
+  SectionProperties,
   Table,
   TableCell,
   TableRow,
@@ -33,16 +39,18 @@ import type {
 } from '@/core/document-model';
 import type { DocumentReader, ReadResult } from '@/core/ir/adapters';
 import type { FlowDoc } from '@/core/ir/flow';
-import type { Loss } from '@/core/ir';
+import type { Loss, Pt } from '@/core/ir';
 import type {
   DocBorder,
   DocCharProps,
   DocContent,
   DocListTables,
   DocLvl,
+  DocMargins,
   DocParaProps,
   DocParagraph,
   DocPicture,
+  DocSection,
   DocTc,
 } from '@/word/doc/doc-text';
 
@@ -69,10 +77,15 @@ const TABLE_BORDERS: CellBorders = {
   insideV: TABLE_BORDER,
 };
 
+// What each LVLF ixchFollow puts after the number text: 0 a tab, 1 a space,
+// 2 nothing.
+const LVL_FOLLOW: ReadonlyArray<string> = ['\t', ' ', ''];
+
 // A list marker resolver (DOC-10): maps a list paragraph's (ilfo, ilvl) to its
-// rendered marker text — a real number ("1.", "a)", "iii.") or a bullet glyph —
-// keeping per-(lsid, level) running counters across the body. Returns undefined
-// when the list tables can't resolve the level (the caller uses a generic bullet).
+// rendered marker text — a real number ("1.", "a)", "iii.") or a bullet glyph,
+// with whatever the level puts after it — keeping per-(lsid, level) running
+// counters across the body. Returns undefined when the list tables can't
+// resolve the level (the caller uses a generic bullet).
 function createListMarkers(tables: DocListTables | undefined) {
   const counters = new Map<number, Array<number | undefined>>();
   const resolve = (ilfo: number, ilvl: number): { lsid: number; lvl: DocLvl } | undefined => {
@@ -87,9 +100,14 @@ function createListMarkers(tables: DocListTables | undefined) {
       const r = resolve(ilfo, ilvl);
       if (!r) return undefined;
       const { lsid, lvl } = r;
+      // [MS-DOC] §2.9.150 ixchFollow — what parts the number from the text: a
+      // tab, a space, or nothing. The note under 53379.doc's Table 6 asks for
+      // the tab, which carries its first line out to the hanging indent its
+      // second line hangs at; the space we always wrote stopped it short.
+      const follow = LVL_FOLLOW[lvl.follow] ?? '\t';
       // A bullet (nfc 23) / none (0xFF) / placeholder-less template renders literally.
       if (lvl.nfc === 23 || lvl.nfc === 0xff || !lvl.xst.some((cu) => cu <= 8)) {
-        return lvl.xst.map((cu) => String.fromCharCode(cu)).join('');
+        return lvl.xst.map((cu) => String.fromCharCode(cu)).join('') + follow;
       }
       // Advance this level's counter; reset the deeper levels (they re-seed later).
       const col = counters.get(lsid) ?? [];
@@ -106,7 +124,7 @@ function createListMarkers(tables: DocListTables | undefined) {
           out += String.fromCharCode(cu);
         }
       }
-      return out;
+      return out + follow;
     },
   };
 }
@@ -201,56 +219,102 @@ const DOC_ENCRYPTED_LOSS: Loss = {
 export function readDoc(bytes: Uint8Array): ReadResult<FlowDoc> {
   const content = extractDocContent(bytes);
   const resources = new ResourceStore();
-  const body = buildBody(content, resources);
+  const { body, sectionEnds } = buildBody(content, resources);
 
-  // Header/footer stories → a named-body map + the section's references.
+  // Header/footer stories → a named-body map + each section's references. A
+  // story a section takes from the one before is the same array, and so the
+  // same band.
   const headersFooters = new Map<string, ReadonlyArray<BodyElement>>();
-  const headers: Array<HeaderFooterReference> = [];
-  const footers: Array<HeaderFooterReference> = [];
-  const addStory = (
-    story: ReadonlyArray<DocParagraph> | undefined,
-    kind: 'header' | 'footer',
-    type: HeaderFooterType,
-  ): void => {
-    if (!story) return;
-    const id = `${kind}-${type}`;
-    const els = resolveBodyStyles(
-      story.flatMap((p) => mapParagraph(p, resources)),
-      EMPTY_STYLE_SHEET,
-    );
-    headersFooters.set(id, els);
-    (kind === 'header' ? headers : footers).push({ type, relationshipId: id });
-  };
-  const hf = content.headerFooters;
-  if (hf) {
-    addStory(hf.defaultHeader, 'header', 'default');
-    addStory(hf.firstHeader, 'header', 'first');
-    addStory(hf.evenHeader, 'header', 'even');
-    addStory(hf.defaultFooter, 'footer', 'default');
-    addStory(hf.firstFooter, 'footer', 'first');
-    addStory(hf.evenFooter, 'footer', 'even');
-  }
-
-  // The first section's page size (SEP sprmSXaPage/sprmSYaPage); US Letter when
-  // the section gives none. Margins stay Word's one-inch default for now.
-  const ps = content.pageSize;
-  const pageSize = ps
-    ? {
-        width: pt(ps.widthPt),
-        height: pt(ps.heightPt),
-        orientation: ps.widthPt > ps.heightPt ? ('landscape' as const) : ('portrait' as const),
+  const bandIds = new Map<ReadonlyArray<DocParagraph>, string>();
+  const bands = (
+    index: number,
+  ): { headers: Array<HeaderFooterReference>; footers: Array<HeaderFooterReference> } => {
+    const headers: Array<HeaderFooterReference> = [];
+    const footers: Array<HeaderFooterReference> = [];
+    const hf = content.headerFooters?.[index];
+    const add = (
+      story: ReadonlyArray<DocParagraph> | undefined,
+      kind: 'header' | 'footer',
+      type: HeaderFooterType,
+    ): void => {
+      if (!story) return;
+      let id = bandIds.get(story);
+      if (id === undefined) {
+        id = `${kind}-${type}-${index}`;
+        bandIds.set(story, id);
+        headersFooters.set(
+          id,
+          resolveBodyStyles(
+            story.flatMap((p) => mapParagraph(p, resources)),
+            EMPTY_STYLE_SHEET,
+          ),
+        );
       }
-    : { width: pt(612), height: pt(792) };
+      (kind === 'header' ? headers : footers).push({ type, relationshipId: id });
+    };
+    add(hf?.defaultHeader, 'header', 'default');
+    add(hf?.firstHeader, 'header', 'first');
+    add(hf?.evenHeader, 'header', 'even');
+    add(hf?.defaultFooter, 'footer', 'default');
+    add(hf?.firstFooter, 'footer', 'first');
+    add(hf?.evenFooter, 'footer', 'even');
+    return { headers, footers };
+  };
+
+  // A section's page size (SEP sprmSXaPage/sprmSYaPage), US Letter when it gives
+  // none, where it starts (sprmSBkc), its margins and its headers and footers:
+  // the first page's own when the section asks (sprmSFTitlePage), the even
+  // pages' own when the document does (Dop.fFacingPages). Its page numbers are
+  // what a PAGE field prints: Word numbers a section that starts its count
+  // again (sprmSFPgnRestart) from sprmSPgnStart97, in the numerals sprmSNfcPgn
+  // names.
+  const sectionProperties = (sec: DocSection | undefined, index: number): SectionProperties => {
+    const ps = sec?.pageSize;
+    const sectionStart = sec?.bkc !== undefined ? sectionStartOf(sec.bkc) : undefined;
+    const pageNumberFormat =
+      sec?.pageNumberNfc !== undefined ? pageNumberFormatOf(sec.pageNumberNfc) : undefined;
+    return {
+      pageSize: ps
+        ? {
+            width: pt(ps.widthPt),
+            height: pt(ps.heightPt),
+            orientation: ps.widthPt > ps.heightPt ? 'landscape' : 'portrait',
+          }
+        : { width: pt(612), height: pt(792) },
+      margins: toMargins(sec?.margins),
+      ...bands(index),
+      ...(sec?.titlePage ? { titlePg: true } : {}),
+      ...(content.facingPages ? { evenAndOddHeaders: true } : {}),
+      ...(sectionStart ? { sectionStart } : {}),
+      ...(sec?.pageNumberStart !== undefined ? { pageNumberStart: sec.pageNumberStart } : {}),
+      ...(pageNumberFormat ? { pageNumberFormat } : {}),
+    };
+  };
+  // §2.8.26 — a document of more than one section is laid out section by
+  // section: each runs up to the paragraph its section mark closes, and the
+  // next one starts where its bkc says. Read as one, a .doc of new-page
+  // sections ran them all together on the first section's pages.
+  const docSections = content.sections ?? [];
+  const sections: Array<Section> = [];
+  for (const end of sectionEnds) {
+    const last = sections[sections.length - 1]?.endIndex ?? 0;
+    if (end.endIndex <= last || end.endIndex >= body.length) continue;
+    sections.push({
+      properties: sectionProperties(docSections[end.section], end.section),
+      endIndex: end.endIndex,
+    });
+  }
+  if (sections.length > 0) {
+    sections.push({
+      properties: sectionProperties(docSections[docSections.length - 1], docSections.length - 1),
+      endIndex: body.length,
+    });
+  }
   const doc: FlowDoc = {
     kind: 'flow',
     body: resolveBodyStyles(body, EMPTY_STYLE_SHEET),
-    sections: [],
-    section: {
-      pageSize,
-      margins: { top: pt(72), right: pt(72), bottom: pt(72), left: pt(72) },
-      headers,
-      footers,
-    },
+    sections,
+    section: sectionProperties(docSections[0], 0),
     styles: EMPTY_STYLE_SHEET,
     resources,
     ...(headersFooters.size > 0 ? { headersFooters } : {}),
@@ -259,24 +323,38 @@ export function readDoc(bytes: Uint8Array): ReadResult<FlowDoc> {
   return { doc, losses: [content.encrypted ? DOC_ENCRYPTED_LOSS : DOC_TEXT_LOSS] };
 }
 
+// Where a section ends in the body: the index past the last element of the
+// paragraph its section mark closes, and that section's index.
+interface SectionEnd {
+  readonly section: number;
+  readonly endIndex: number;
+}
+
 // Group the extracted paragraphs into the FlowDoc body: runs of in-table
 // paragraphs become Tables; everything else is a paragraph. doc-text has already
-// split paragraphs at the CR / cell mark and cleaned the control characters.
-function buildBody(content: DocContent, resources: ResourceStore): Array<BodyElement> {
+// split paragraphs at the CR / cell / section mark and cleaned the control
+// characters.
+function buildBody(
+  content: DocContent,
+  resources: ResourceStore,
+): { body: Array<BodyElement>; sectionEnds: ReadonlyArray<SectionEnd> } {
   const markers = createListMarkers(content.listTables);
-  const body = groupTables(content.paragraphs, resources, markers);
+  const sectionEnds: Array<SectionEnd> = [];
+  const body = groupTables(content.paragraphs, resources, markers, sectionEnds);
   // A document ends with a trailing paragraph mark — drop the empty tail it adds.
   while (body.length > 1 && isEmptyParagraph(body[body.length - 1]!)) body.pop();
   if (body.length === 0) body.push(emptyParagraph());
-  return body;
+  return { body, sectionEnds };
 }
 
 // Consecutive in-table paragraphs (sprmPFInTable) collapse into one Table; the
-// rest map straight to paragraphs (and image blocks).
+// rest map straight to paragraphs (and image blocks). Each paragraph a section
+// mark closes notes where its section ends in `sectionEnds`.
 function groupTables(
   paras: ReadonlyArray<DocParagraph>,
   resources: ResourceStore,
   markers: ListMarkers,
+  sectionEnds: Array<SectionEnd>,
 ): Array<BodyElement> {
   const out: Array<BodyElement> = [];
   let i = 0;
@@ -286,7 +364,10 @@ function groupTables(
       while (i < paras.length && paras[i]!.props.inTable) group.push(paras[i++]!);
       out.push({ kind: 'table', table: buildTable(group, resources, markers) });
     } else {
-      out.push(...mapParagraph(paras[i++]!, resources, markers));
+      const p = paras[i++]!;
+      out.push(...mapParagraph(p, resources, markers));
+      if (p.sectionEnd !== undefined)
+        sectionEnds.push({ section: p.sectionEnd, endIndex: out.length });
     }
   }
   return out;
@@ -459,9 +540,9 @@ function isBlank(p: DocParagraph): boolean {
   return p.runs.every((r) => r.text.length === 0 && r.picture === undefined);
 }
 
-// A paragraph → its text paragraph (if it has text) followed by an image block per
-// embedded picture. A picture occupies its own run, so a picture-only paragraph
-// yields just the image(s).
+// A paragraph → its text paragraph (if it has text or a break) followed by an
+// image block per embedded picture. A picture occupies its own run, so a
+// picture-only paragraph yields just the image(s).
 function mapParagraph(
   p: DocParagraph,
   resources: ResourceStore,
@@ -471,15 +552,33 @@ function mapParagraph(
   const textRuns = p.runs.filter((r) => r.picture === undefined);
   const ilvl = p.props.listIlvl ?? 0;
   const isList = (p.props.listIlfo ?? 0) > 0;
-  if (textRuns.some((r) => r.text.length > 0) || isList) {
-    const runs = textRuns.map((r) => ({ text: r.text, properties: toRunProperties(r.props) }));
+  if (textRuns.some((r) => r.text.length > 0 || r.pageBreak || r.field) || isList) {
+    const runs: Array<Run> = textRuns.map((r) => ({
+      text: r.text,
+      properties: toRunProperties(r.props),
+      ...(r.pageBreak ? { pageBreak: true } : {}),
+      ...(r.columnBreak ? { columnBreak: true } : {}),
+      ...(r.field ? { field: r.field } : {}),
+    }));
+    // A paragraph that ends in a page or column break has its mark set on a
+    // line of its own at the head of the next page or column, in Word's .doc
+    // whatever Copts.fSplitPgBreakAndParaMark says: "one", a break, then "two"
+    // puts "two" on the second line of page 2, and a last paragraph of nothing
+    // but a break makes a page of its own. Word's .docx keeps the mark with the
+    // break, which is what the layout does, so the line the mark makes is set
+    // here.
+    const last = textRuns[textRuns.length - 1];
+    if (last?.pageBreak || last?.columnBreak) {
+      runs.push({ text: ZERO_WIDTH_SPACE, properties: p.mark ? toRunProperties(p.mark) : {} });
+    }
     let properties = toParaProperties(p.props);
     if (isList) {
-      // The LST/LVL number format (DOC-10) → a real "1." / "a)" / bullet marker;
-      // an unresolved list falls back to a generic per-level bullet. + a per-level indent.
+      // The LST/LVL number format (DOC-10) → a real "1." / "a)" / bullet marker
+      // and what follows it; an unresolved list falls back to a generic
+      // per-level bullet and a space. + a per-level indent.
       const marker =
-        markers?.marker(p.props.listIlfo!, ilvl) ?? LIST_BULLETS[ilvl % LIST_BULLETS.length];
-      runs.unshift({ text: `${marker} `, properties: {} });
+        markers?.marker(p.props.listIlfo!, ilvl) ?? `${LIST_BULLETS[ilvl % LIST_BULLETS.length]} `;
+      runs.unshift({ text: marker, properties: {} });
       properties = { ...properties, indentLeft: pt((ilvl + 1) * LIST_INDENT_PT) };
     }
     out.push({
@@ -493,7 +592,10 @@ function mapParagraph(
   for (const r of p.runs) {
     if (r.picture) out.push(imageBlock(r.picture, resources, toParaProperties(p.props)));
   }
-  if (out.length === 0) out.push(emptyParagraph()); // preserve the (empty) line
+  // Preserve the (empty) line: in its paragraph's spacing and indents, and in
+  // its mark's size, as Word sets it. Without them a run of empty Normal
+  // paragraphs lost the style's space after each.
+  if (out.length === 0) out.push(emptyParagraph(toParaProperties(p.props), p.mark));
   return out;
 }
 
@@ -511,10 +613,16 @@ function imageBlock(
   return { kind: 'image', image };
 }
 
-function emptyParagraph(): BodyElement {
+function emptyParagraph(
+  properties: ParagraphProperties = {},
+  mark: DocCharProps | undefined = undefined,
+): BodyElement {
   return {
     kind: 'paragraph',
-    paragraph: { properties: {}, runs: [{ text: ZERO_WIDTH_SPACE, properties: {} }] },
+    paragraph: {
+      properties,
+      runs: [{ text: ZERO_WIDTH_SPACE, properties: mark ? toRunProperties(mark) : {} }],
+    },
   };
 }
 
@@ -529,12 +637,27 @@ function isEmptyParagraph(el: BodyElement): boolean {
 function toRunProperties(p: DocCharProps): RunProperties {
   const underline = p.underlineKul ? underlineStyle(p.underlineKul) : undefined;
   const size = p.sizeHalfPts && p.sizeHalfPts > 0 ? pt(p.sizeHalfPts / 2) : undefined;
+  const fontFamily = toFontFamily(p);
   return {
     ...(p.bold ? { bold: true } : {}),
     ...(p.italic ? { italic: true } : {}),
     ...(underline ? { underline } : {}),
     ...(size ? { fontSizePt: size } : {}),
+    ...(fontFamily ? { fontFamily } : {}),
   };
+}
+
+// A run's fonts in the slots of w:rFonts: the font of the characters neither
+// ASCII nor East Asian (sprmCRgFtc2) is the high-ANSI one, the one Word sets
+// Cyrillic in.
+function toFontFamily(p: DocCharProps): FontFamilyMap | undefined {
+  const fonts: FontFamilyMap = {
+    ...(p.fontAscii ? { ascii: p.fontAscii } : {}),
+    ...(p.fontOther ? { hAnsi: p.fontOther } : {}),
+    ...(p.fontEastAsia ? { eastAsia: p.fontEastAsia } : {}),
+    ...(p.fontBi ? { cs: p.fontBi } : {}),
+  };
+  return Object.keys(fonts).length > 0 ? fonts : undefined;
 }
 
 function toParaProperties(p: DocParaProps): ParagraphProperties {
@@ -550,6 +673,7 @@ function toParaProperties(p: DocParaProps): ParagraphProperties {
     ...(p.widowControl !== undefined ? { widowControl: p.widowControl } : {}),
     ...(p.keepNext !== undefined ? { keepNext: p.keepNext } : {}),
     ...(p.keepLines !== undefined ? { keepLines: p.keepLines } : {}),
+    ...(p.pageBreakBefore !== undefined ? { pageBreakBefore: p.pageBreakBefore } : {}),
   };
 }
 
@@ -566,6 +690,54 @@ function underlineStyle(kul: number): UnderlineStyle | undefined {
       return 'dash';
     default:
       return 'single';
+  }
+}
+
+// A section's margins (twips) → the model's. Where the SEP says nothing, Word
+// sets an inch on every side and the header and footer half an inch off the
+// edge (measured: a .doc whose SEP states no margin opens with exactly these).
+function toMargins(m: DocMargins | undefined): PageMargins {
+  const side = (twips: number | undefined): Pt => twipsToPt(twips ?? 1440);
+  return {
+    top: side(m?.topTwips),
+    right: side(m?.rightTwips),
+    bottom: side(m?.bottomTwips),
+    left: side(m?.leftTwips),
+    ...(m?.headerTwips !== undefined ? { header: twipsToPt(m.headerTwips) } : {}),
+    ...(m?.footerTwips !== undefined ? { footer: twipsToPt(m.footerTwips) } : {}),
+    ...(m?.gutterTwips ? { gutter: twipsToPt(m.gutterTwips) } : {}),
+  };
+}
+
+// A section's `bkc` → where the model's section starts. A new column is a new
+// page, as for a section of one column; so is any code past the spec's.
+function sectionStartOf(bkc: number): SectionProperties['sectionStart'] {
+  switch (bkc) {
+    case 0:
+      return 'continuous';
+    case 3:
+      return 'evenPage';
+    case 4:
+      return 'oddPage';
+    default:
+      return 'nextPage';
+  }
+}
+
+// The MSONFC numerals Word offers for page numbers (sprmSNfcPgn) → the model's;
+// any other is left to print arabic.
+function pageNumberFormatOf(nfc: number): NumberingFormat | undefined {
+  switch (nfc) {
+    case 1:
+      return 'upperRoman';
+    case 2:
+      return 'lowerRoman';
+    case 3:
+      return 'upperLetter';
+    case 4:
+      return 'lowerLetter';
+    default:
+      return undefined;
   }
 }
 

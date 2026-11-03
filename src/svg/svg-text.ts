@@ -28,7 +28,7 @@ import type { ImageCrop } from '@/core/document-model';
 import type { VectorShape } from '@/core/vector';
 import type { OutlineSource } from '@/pdf-reader/glyf-outline';
 import { reverseByCodePoint } from '@/core/bidi';
-import { warpGlyphMatrix } from '@/core/drawingml/text-warp';
+import { warpGlyphMatrix, warpGlyphRun } from '@/core/drawingml/text-warp';
 import { sanitizeHref } from '@/core/links';
 import { svgPathData } from '@/core/vector';
 import { FAUX_ITALIC_SHEAR, computeJustifyExtra, lineVisualOrder } from '@/layout/line-paint';
@@ -240,10 +240,25 @@ function emitTextToken(
   const scale = (tok.synthetic?.widthScale ?? 1) * (tok.resolvedRun.widthScale ?? 1);
   const slant = tok.synthetic?.italic === true ? FAUX_ITALIC_SHEAR : 0;
   const rise = tok.risePt ?? 0;
-  const text = tok.bidiLevel % 2 === 1 ? reverseByCodePoint(tok.text) : tok.text;
+  const reversed = tok.bidiLevel % 2 === 1;
+  const text = reversed ? reverseByCodePoint(tok.text) : tok.text;
   const run = tok.font.measure.glyphRun(text);
   const upem = tok.font.parsed.unitsPerEm;
   const spacingEm = (tok.resolvedRun.letterSpacingPt ?? 0) / (size * scale);
+  // ISO 32000-1 §9.3.6 — the faked bold (a stroke a thirtieth of the em wide,
+  // in the text's colour) and §21.1.2.3.9's outline (one of its own).
+  const outline = tok.resolvedRun.textOutline;
+  const strokeWidth =
+    outline !== undefined ? outline.widthPt : tok.synthetic?.bold === true ? size * 0.03 : 0;
+  // A syllable a run boundary cut: each glyph in the colour of the first
+  // character it stands for, where that is not the group's — and a faked
+  // bold, which is the glyph's own weight, in that colour too.
+  const colours = reversed ? tok.charColorsHex?.slice().reverse() : tok.charColorsHex;
+  const sources = colours ? tok.font.measure.glyphSources(text) : undefined;
+  const paint = (hex: string | undefined): string =>
+    hex === undefined || hex === tok.resolvedRun.colorHex
+      ? ''
+      : ` fill="#${hex}"${strokeWidth > 0 && outline === undefined ? ` stroke="#${hex}"` : ''}`;
   const uses: Array<string> = [];
   let pen = 0;
   for (let g = 0; g < run.gids.length; g++) {
@@ -252,15 +267,21 @@ function emitTextToken(
       emitAsText(out, tok, x, baseline);
       return;
     }
-    if (id !== null) uses.push(`<use href="#${id}"${pen !== 0 ? ` x="${fmtEm(pen)}"` : ''}/>`);
-    pen += (run.advances[g] ?? 0) / upem + spacingEm;
+    // A mark the shaper set by its anchor stands off the pen, and off the
+    // baseline (the em is y-up inside the group).
+    const gx = pen + (run.xOffsets?.[g] ?? 0) / upem;
+    const gy = (run.yOffsets?.[g] ?? 0) / upem;
+    if (id !== null) {
+      const fill = paint(sources ? colours?.[sources[g]!] : undefined);
+      uses.push(
+        `<use href="#${id}"${gx !== 0 ? ` x="${fmtEm(gx)}"` : ''}${gy !== 0 ? ` y="${fmtEm(gy)}"` : ''}${fill}/>`,
+      );
+    }
+    // Spacing goes after each cluster of the scripts of India, not each glyph.
+    const spaced = run.clusterEnds ? run.clusterEnds[g] === true : true;
+    pen += (run.advances[g] ?? 0) / upem + (spaced ? spacingEm : 0);
   }
   if (uses.length === 0) return;
-  // ISO 32000-1 §9.3.6 — the faked bold (a stroke a thirtieth of the em wide,
-  // in the text's colour) and §21.1.2.3.9's outline (one of its own).
-  const outline = tok.resolvedRun.textOutline;
-  const strokeWidth =
-    outline !== undefined ? outline.widthPt : tok.synthetic?.bold === true ? size * 0.03 : 0;
   const stroke =
     strokeWidth > 0
       ? ` stroke="#${outline?.colorHex ?? tok.resolvedRun.colorHex}" stroke-width="${fmtEm(strokeWidth / size)}"`
@@ -470,6 +491,38 @@ function emitWarped(out: Array<string>, item: TextLineItem, ctx: SvgLineCtx): vo
       continue;
     }
     const size = tok.fontSizePt;
+    // The warp's matrix maps the glyph's text space (y up) into the page's
+    // top-left frame; the em is the size.
+    const group = (
+      m: readonly [number, number, number, number, number, number],
+      uses: string,
+      hex = tok.resolvedRun.colorHex,
+    ) =>
+      `<g transform="matrix(${fmt(m[0] * size)} ${fmt(m[1] * size)} ${fmt(m[2] * size)} ` +
+      `${fmt(m[3] * size)} ${fmt(m[4])} ${fmt(m[5])})" fill="#${hex}">` +
+      `${uses}</g>`;
+    // The scripts of India go onto the curve as the shaper set them, glyph by
+    // glyph in its order, a mark lifted off the baseline in its own matrix.
+    if (tok.font.measure.clustered(tok.text)) {
+      const glyphs = warpGlyphRun(
+        warp,
+        tok.font.measure.glyphRun(tok.text),
+        cursor,
+        tok.widthPt,
+        size / tok.font.parsed.unitsPerEm,
+        item.baselineY,
+      );
+      // A syllable a run boundary cut: each glyph in its first character's colour.
+      const colours = tok.charColorsHex;
+      const sources = colours ? tok.font.measure.glyphSources(tok.text) : undefined;
+      for (const g of glyphs) {
+        const id = ctx.glyphs.use(tok.font, g.gid);
+        const hex = sources ? colours?.[sources[g.index]!] : undefined;
+        if (id) out.push(group(g.matrix, `<use href="#${id}"/>`, hex));
+      }
+      cursor += tok.widthPt;
+      continue;
+    }
     const chars = [...tok.text];
     const raw = chars.map((c) => tok.font.measure.textWidthPt(c, size));
     const total = raw.reduce((a, b) => a + b, 0);
@@ -489,13 +542,7 @@ function emitWarped(out: Array<string>, item: TextLineItem, ctx: SvgLineCtx): vo
         pen += (run.advances[g] ?? 0) / upem;
       }
       if (uses.length === 0) continue;
-      // The warp's matrix maps the glyph's text space (y up) into the page's
-      // top-left frame; the em is the size.
-      out.push(
-        `<g transform="matrix(${fmt(m[0] * size)} ${fmt(m[1] * size)} ${fmt(m[2] * size)} ` +
-          `${fmt(m[3] * size)} ${fmt(m[4])} ${fmt(m[5])})" fill="#${tok.resolvedRun.colorHex}">` +
-          `${uses.join('')}</g>`,
-      );
+      out.push(group(m, uses.join('')));
     }
   }
 }

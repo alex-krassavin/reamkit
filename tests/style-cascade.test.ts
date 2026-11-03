@@ -3,7 +3,11 @@ import { describe, expect, it } from 'vitest';
 import type { Style, StyleSheet } from '@/core/document-model';
 import { eighthPtToPt, emuToPt, halfPtToPt, twipsToPt } from '@/core/ir';
 
-import { resolveParagraphProperties, resolveRunProperties } from '@/core/style-cascade';
+import {
+  EMPTY_STYLE_SHEET,
+  resolveParagraphProperties,
+  resolveRunProperties,
+} from '@/core/style-cascade';
 
 function sheet(styles: Array<Style>, defaults: Partial<StyleSheet> = {}): StyleSheet {
   return {
@@ -135,6 +139,73 @@ describe('resolveRunProperties', () => {
     );
     expect(r.bold).toBe(true);
     expect(r.italic).toBe(true);
+  });
+});
+
+describe('the four slots of w:rFonts (§17.3.2.26)', () => {
+  // Each slot is a property of its own. Word for Mac sets the Cyrillic of a run
+  // that names only `w:ascii="Verdana"` in the defaults' hAnsi font, and
+  // replacing the whole map set it in Verdana.
+  const DEFAULT_FONTS = {
+    ascii: 'Aptos',
+    hAnsi: 'Aptos',
+    eastAsia: 'MS Mincho',
+    cs: 'Arial',
+  };
+
+  it('a run that names one slot keeps the others it inherits', () => {
+    const r = resolveRunProperties(
+      { fontFamily: { ascii: 'Verdana' } },
+      {},
+      sheet([], { defaultRunProperties: { fontFamily: DEFAULT_FONTS } }),
+    );
+    expect(r.fontFamily).toEqual({ ...DEFAULT_FONTS, ascii: 'Verdana' });
+  });
+
+  it('a basedOn chain inherits each slot on its own', () => {
+    const r = resolveRunProperties(
+      { styleId: 'Emphasis' },
+      { styleId: 'Sub' },
+      sheet([
+        {
+          id: 'Root',
+          type: 'paragraph',
+          isDefault: false,
+          runProperties: { fontFamily: { ascii: 'Georgia', hAnsi: 'Georgia' } },
+          paragraphProperties: {},
+        },
+        {
+          id: 'Sub',
+          type: 'paragraph',
+          basedOn: 'Root',
+          isDefault: false,
+          runProperties: { fontFamily: { hAnsi: 'Courier New' } },
+          paragraphProperties: {},
+        },
+        {
+          id: 'Emphasis',
+          type: 'character',
+          isDefault: false,
+          runProperties: { fontFamily: { cs: 'Times New Roman' } },
+          paragraphProperties: {},
+        },
+      ]),
+    );
+    expect(r.fontFamily).toEqual({
+      ascii: 'Georgia',
+      hAnsi: 'Courier New',
+      cs: 'Times New Roman',
+    });
+  });
+
+  it('resolved again over the empty sheet, a run keeps the map it has', () => {
+    const resolved = resolveRunProperties(
+      { fontFamily: { ascii: 'Verdana' } },
+      {},
+      sheet([], { defaultRunProperties: { fontFamily: DEFAULT_FONTS } }),
+    );
+    const again = resolveRunProperties(resolved, {}, EMPTY_STYLE_SHEET);
+    expect(again.fontFamily).toBe(resolved.fontFamily);
   });
 });
 

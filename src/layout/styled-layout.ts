@@ -44,6 +44,7 @@ import type {
   PictureOutline,
   RelativeSize,
   Run,
+  RunProperties,
   Section,
   SectionColumns,
   SectionProperties,
@@ -61,10 +62,11 @@ import type {
 } from '@/core/document-model';
 import type { FontRegistry, FontVariant, ParsedTtf } from '@/core/font';
 import type { FamilyKey, SubstituteKey } from '@/core/fonts';
+import type { FontSlot } from '@/core/fonts/scripts';
 import type { Hyphenator } from '@/core/hyphenation';
 import type { PreparedImage } from '@/core/images';
 import type { Item } from '@/core/line-breaker';
-import type { Pt, ResourceId } from '@/core/ir';
+import type { Loss, Pt, ResourceId } from '@/core/ir';
 import type { ResolvedParagraphProperties, ResolvedRunProperties } from '@/core/style-cascade';
 import type { ShapeGradient, StrokeStyle, VectorPath } from '@/core/vector';
 import type {
@@ -102,9 +104,10 @@ import type { Sheet } from '@/layout/turned-section';
 import { pageItemBounds } from '@/layout/page-doc';
 import { ResourceStore, halfPtToPt, pt } from '@/core/ir';
 import { headingLevelOf } from '@/core/outline';
-import { createFontMeasure, hasSubstitutable, shapeText, substituteLetters } from '@/core/font';
+import { createFontMeasure, hasSubstitutable, shapeGlyphs, substituteLetters } from '@/core/font';
+import { hasIndic, syllableStarts } from '@/core/font/indic-shaper';
 import { resolveFamilyStyle } from '@/core/fonts';
-import { scriptForCodepoint } from '@/core/fonts/scripts';
+import { fontSlotOf, scriptForCodepoint } from '@/core/fonts/scripts';
 import { prepareImage } from '@/core/images';
 import { isEmf, readEmf } from '@/core/metafile/emf';
 import { isWmf, readWmf } from '@/core/metafile/wmf';
@@ -140,6 +143,7 @@ import {
 } from '@/core/drawingml/shape-render';
 import { StructTreeBuilder } from '@/pdf/struct-tree';
 import { floatIntoFrame, turnOntoSheet } from '@/layout/turned-section';
+import { undrawnLoss } from '@/layout/undrawn';
 
 /**
  * PDF/A conformance string: part 1 (ISO 19005-1, PDF 1.4) / 2 (ISO 19005-2) / 3
@@ -477,6 +481,13 @@ export interface StyledRenderOptions {
    * signature.
    */
   readonly signaturePlaceholder?: SignaturePlaceholder;
+  /**
+   * Sink the layout writes its {@link Loss} entries into: the characters no
+   * face on hand has a glyph for, which the page draws as empty boxes (see
+   * `undrawnLoss`). The converter always supplies one and returns it with the
+   * output; omitted ⇒ the boxes are drawn all the same, and nothing says so.
+   */
+  readonly losses?: Array<Loss>;
 }
 
 // Re-exported from the document model (moved there so FlowDoc can carry it).
@@ -754,6 +765,12 @@ interface ParagraphBlock {
    * the next column. Pagination advances the column before drawing one.
    */
   readonly columnBreakLines?: ReadonlySet<number>;
+  /**
+   * §17.3.3.1 — the indices of the lines that a `w:br w:type="page"` between
+   * the paragraph's words sends to the next page. Pagination starts one before
+   * drawing each.
+   */
+  readonly pageBreakLines?: ReadonlySet<number>;
   // Tagged PDF: when this paragraph is a list item (w:numPr), its list id and
   // nesting level (w:ilvl) so pagination can build the L/LI/LBody structure.
   readonly list?: { readonly numId: string; readonly level: number };
@@ -1414,6 +1431,7 @@ export function layoutStyledDocument(
       width,
       ctx.pageContentHeight,
       box,
+      true,
     );
   });
 
@@ -1581,7 +1599,7 @@ export function layoutStyledDocument(
   // per-line widths; the closure re-runs the paragraph layout at the given
   // column width with those widths.
   const reflowParagraph = (paragraph: Paragraph, width: number, widths?: ReadonlyArray<number>) =>
-    layoutParagraphBlock(paragraph, options, fontResources, imageResources, width, widths);
+    layoutParagraphBlock(paragraph, options, fontResources, imageResources, width, widths, true);
   const pages = paginateSections(
     blocks,
     sectionCtxs,
@@ -1594,6 +1612,10 @@ export function layoutStyledDocument(
     collapsesSpacing(options),
     options.compatibilityMode,
   );
+  if (options.losses) {
+    const undrawn = undrawnLoss(pages);
+    if (undrawn) options.losses.push(undrawn);
+  }
 
   return {
     pages,
@@ -2678,9 +2700,20 @@ function layoutBodyElement(
   contentWidth: number,
   maxHeight?: number,
   box?: RelativeBox,
+  // Whether a paragraph here stands in the body's flow of pages (see
+  // layoutParagraphBlock).
+  pageFlow = false,
 ): LaidOutBlock {
   if (el.kind === 'paragraph') {
-    return layoutParagraphBlock(el.paragraph, options, fontResources, imageResources, contentWidth);
+    return layoutParagraphBlock(
+      el.paragraph,
+      options,
+      fontResources,
+      imageResources,
+      contentWidth,
+      undefined,
+      pageFlow,
+    );
   }
   if (el.kind === 'table') {
     return layoutTableBlock(el.table, options, fontResources, imageResources, contentWidth);
@@ -5100,13 +5133,13 @@ function runFontKeyAndParsed(
 /**
  * The face a CHARACTER falls back to when the run's own has no glyph for it.
  *
- * The curated substitutes are Latin families: Han, Kana, Hangul, Arabic, Thai
- * and the geometric symbols are a notdef box in every one of them, and 2145
- * characters of the corpus are exactly those. A face for the character's
- * writing system is fetched when the document holds one (see `addScriptFonts`),
- * and this is where a run reaches it — followed by every other family already
- * loaded, because a glyph one of them happens to carry is still better than a
- * box.
+ * The curated substitutes are Latin families: Han, Kana, Hangul, Arabic, Thai,
+ * the scripts of India and the geometric symbols are a notdef box in every one
+ * of them, and 2145 characters of the corpus are exactly those. A face for the
+ * character's writing system is fetched when the document holds one (see
+ * `addScriptFonts`), and this is where a run reaches it — followed by every
+ * other family already loaded, because a glyph one of them happens to carry is
+ * still better than a box.
  *
  * Called from BOTH walks that need it — the glyph-subset collection and the
  * tokenizer — so the face a character is measured, subset and drawn with is one
@@ -5158,27 +5191,17 @@ function fallbackFaceKey(
  * Only where nobody can draw the character itself: one a face DOES carry is
  * drawn as written.
  *
- * @param options  The render options (the loaded registries).
- * @param primary  The run's own face.
- * @param resolved Its resolved properties (weight and slant).
- * @param text     The run's text.
+ * @param faces The face each character of the run is drawn with ({@link runFaces}).
+ * @param text  The run's text.
  * @returns The text to set, which is `text` itself unless something was undrawable.
  */
-function drawableText(
-  options: StyledRenderOptions,
-  primary: ParsedTtf,
-  resolved: ResolvedRunProperties,
-  text: string,
-): string {
+function drawableText(faces: (cp: number) => KeyedFace, text: string): string {
   if (!hasSubstitutable(text)) return text;
   let out = '';
   for (const ch of text) {
     const cp = ch.codePointAt(0)!;
     const letters = substituteLetters(cp);
-    const drawable =
-      letters === undefined ||
-      primary.glyphForCodepoint(cp) !== 0 ||
-      fallbackFaceKey(options, cp, resolved.bold, resolved.italic) !== undefined;
+    const drawable = letters === undefined || faces(cp).parsed.glyphForCodepoint(cp) !== 0;
     out += drawable ? ch : letters;
   }
   return out;
@@ -5226,7 +5249,9 @@ function syntheticFace(
  */
 function splitByFace(plan: RunPlan, text: string): Array<{ text: string; face: RunFace }> {
   const first = faceOf(plan, text.codePointAt(0) ?? 0);
-  if (!plan.faceFor || plan.faceFor.size === 0) return [{ text, face: first }];
+  // A tab is a token with no text, and it still has to reach the line: cut
+  // into nothing, the tab after a list marker set in two faces was lost.
+  if (text === '' || !plan.faceFor || plan.faceFor.size === 0) return [{ text, face: first }];
   const out: Array<{ text: string; face: RunFace }> = [];
   let buf = '';
   let face = first;
@@ -5262,81 +5287,180 @@ interface RunFace {
   readonly synthetic?: SyntheticFace;
 }
 
+// Characters a word of the scripts of India is written with that a Latin face
+// may also carry: the join controls, the dotted circle and the no-break space
+// a vowel sign is shown on, and the dandas. In such a word they belong to the
+// face that draws its letters — drawn by the Latin one, they cut the syllable
+// in two and neither half shapes.
+const INDIC_JOINS = new Set([0x200c, 0x200d, 0x25cc, 0x00a0, 0x0964, 0x0965]);
+
+/** A face by its key among the font resources, as {@link runFontKeyAndParsed} gives it. */
+interface KeyedFace {
+  readonly fontKey: string;
+  readonly parsed: ParsedTtf;
+  readonly synthetic?: SyntheticFace;
+}
+
 /**
- * `text` cut into the stretches ONE face draws, by the same decision the
- * tokenizer makes — the whole string as a single span when the run's own face
- * covers it, which is nearly always.
+ * Whether a family has a face of its OWN on hand — embedded, or a substitute
+ * fetched for it — rather than the first registry, which is where
+ * {@link runFontKeyAndParsed} sends a family nothing was fetched for.
  *
- * @param options  The render options (the loaded registries).
- * @param primary  The run's own face.
- * @param resolved Its resolved properties (weight and slant).
- * @param text     The run's text.
+ * @param options The render options (the loaded faces).
+ * @param family  The family's name.
  */
-function faceSpans(
+function hasOwnFace(options: StyledRenderOptions, family: string): boolean {
+  if (options.embeddedFonts?.has(family.trim().toLowerCase()) === true) return true;
+  return options.registriesByFamily?.has(resolveFamilyStyle(family).key) === true;
+}
+
+/**
+ * §17.3.2.26 — the faces a run's other slots name, where one is on hand and is
+ * not the face its ascii slot names.
+ *
+ * @param options  The render options (the loaded faces).
+ * @param resolved The run's resolved properties.
+ * @param primary  The run's own face, its ascii slot's.
+ * @returns The face per slot, or `undefined` when every slot draws in `primary`.
+ */
+function slotFaces(
   options: StyledRenderOptions,
-  primary: { fontKey: string; parsed: ParsedTtf },
   resolved: ResolvedRunProperties,
+  primary: KeyedFace,
+): Map<FontSlot, KeyedFace> | undefined {
+  let out: Map<FontSlot, KeyedFace> | undefined;
+  for (const slot of ['hAnsi', 'eastAsia', 'cs'] as const) {
+    const family = resolved.fontFamily[slot];
+    if (family === undefined || !hasOwnFace(options, family)) continue;
+    const face = runFontKeyAndParsed(options, family, resolved.bold, resolved.italic);
+    if (face.fontKey !== primary.fontKey) (out ??= new Map()).set(slot, face);
+  }
+  return out;
+}
+
+/**
+ * {@link fallbackFaceKey}, with what the face lacks of the run's weight and
+ * slant: a script face is fetched in the regular weight only, and a bold run in
+ * it is stroked, which is what F3's synthesis is for.
+ */
+function fallbackFace(
+  options: StyledRenderOptions,
+  cp: number,
+  resolved: ResolvedRunProperties,
+): KeyedFace | undefined {
+  const face = fallbackFaceKey(options, cp, resolved.bold, resolved.italic);
+  if (!face) return undefined;
+  const variant = face.fontKey.split(':')[1];
+  const got: FontVariant =
+    variant === 'bold' || variant === 'boldItalic' || variant === 'italic' ? variant : 'regular';
+  return { ...face, ...syntheticFace(got, resolved.bold, resolved.italic) };
+}
+
+/**
+ * §17.3.2.26 — the face each character of a run is drawn with: the one its
+ * slot names ({@link fontSlotOf}), else the run's own, else whichever face on
+ * hand has the glyph ({@link fallbackFaceKey}).
+ *
+ * A run names a face per slot, and Word sets each character in its slot's:
+ * "split" in a run's ascii Verdana and "Кириллица" beside it in its hAnsi
+ * Courier New. We drew both in Verdana's substitute, and the hAnsi face was
+ * read for nothing but the line's height. A slot whose family has no face on
+ * hand leaves its characters to the run's own, as before.
+ *
+ * Called from every walk that needs it — the glyph-subset collection, the
+ * tokenizer, a table cell's measure — so the face a character is measured,
+ * subset and drawn with is one decision made once.
+ *
+ * @param options  The render options (the loaded faces).
+ * @param resolved The run's resolved properties (its faces, weight, slant, direction).
+ * @param primary  The run's own face, the one its ascii slot names.
+ * @param text     The run's text, for the scripts of India (see {@link INDIC_JOINS}).
+ * @returns The face a code point of the run is drawn with.
+ */
+function runFaces(
+  options: StyledRenderOptions,
+  resolved: ResolvedRunProperties,
+  primary: KeyedFace,
   text: string,
-): Array<{ fontKey: string; parsed: ParsedTtf; text: string }> {
-  const out: Array<{ fontKey: string; parsed: ParsedTtf; text: string }> = [];
-  let cur = primary;
-  let buf = '';
+): (cp: number) => KeyedFace {
+  const slots = slotFaces(options, resolved, primary);
+  const drawing = (cp: number): KeyedFace => {
+    const own = slots?.get(fontSlotOf(cp, resolved.rtl)) ?? primary;
+    if (own.parsed.glyphForCodepoint(cp) !== 0) return own;
+    if (own !== primary && primary.parsed.glyphForCodepoint(cp) !== 0) return primary;
+    return fallbackFace(options, cp, resolved) ?? own;
+  };
+  const indic = indicFace(drawing, text);
+  if (!indic) return drawing;
+  return (cp) =>
+    INDIC_JOINS.has(cp) && indic.parsed.glyphForCodepoint(cp) !== 0 ? indic : drawing(cp);
+}
+
+/** The face that draws the first letter of the scripts of India in `text`. */
+function indicFace(drawing: (cp: number) => KeyedFace, text: string): KeyedFace | undefined {
   for (const ch of text) {
     const cp = ch.codePointAt(0)!;
-    const face =
-      primary.parsed.glyphForCodepoint(cp) !== 0
-        ? primary
-        : (fallbackFaceKey(options, cp, resolved.bold, resolved.italic) ?? primary);
-    if (buf !== '' && face.fontKey !== cur.fontKey) {
+    if (cp < 0x0900 || cp > 0x0d7f || cp === 0x0964 || cp === 0x0965) continue;
+    return drawing(cp);
+  }
+  return undefined;
+}
+
+/**
+ * `text` cut into the stretches ONE face draws, by the same decision the
+ * tokenizer makes — the whole string as a single span when one face draws all
+ * of it, which is nearly always.
+ *
+ * @param faces The face each character of the run is drawn with ({@link runFaces}).
+ * @param text  The run's text.
+ */
+function faceSpans(
+  faces: (cp: number) => KeyedFace,
+  text: string,
+): Array<KeyedFace & { readonly text: string }> {
+  const out: Array<KeyedFace & { readonly text: string }> = [];
+  let cur: KeyedFace | undefined;
+  let buf = '';
+  for (const ch of text) {
+    const face = faces(ch.codePointAt(0)!);
+    if (cur && face.fontKey !== cur.fontKey) {
       out.push({ ...cur, text: buf });
       buf = '';
     }
     cur = face;
     buf += ch;
   }
-  if (buf !== '') out.push({ ...cur, text: buf });
+  if (cur) out.push({ ...cur, text: buf });
   return out;
 }
 
 /**
- * The face for every character of `text` the run's own cannot draw.
+ * The face for every character of `text` the run's own does not draw.
  *
- * @param options       The render options (the loaded registries).
  * @param fontResources The faces the document embeds, by key.
  * @param primary       The run's own face.
- * @param resolved      Its resolved properties (weight and slant).
+ * @param faces         The face each character is drawn with ({@link runFaces}).
  * @param text          The run's text.
  * @returns A map from code point to face, or `undefined` when the run's own
  *          face draws all of it.
  */
 function facesForRun(
-  options: StyledRenderOptions,
   fontResources: ReadonlyMap<string, FontResource>,
-  primary: ParsedTtf,
-  resolved: ResolvedRunProperties,
+  primary: KeyedFace,
+  faces: (cp: number) => KeyedFace,
   text: string,
 ): ReadonlyMap<number, RunFace> | undefined {
   let out: Map<number, RunFace> | undefined;
   for (const ch of text) {
     const cp = ch.codePointAt(0)!;
-    if (out?.has(cp) === true || primary.glyphForCodepoint(cp) !== 0) continue;
-    const fallback = fallbackFaceKey(options, cp, resolved.bold, resolved.italic);
-    if (!fallback) continue;
-    const font = fontResources.get(fallback.fontKey);
+    if (out?.has(cp) === true) continue;
+    const face = faces(cp);
+    if (face.fontKey === primary.fontKey) continue;
+    const font = fontResources.get(face.fontKey);
     if (!font) continue;
-    out ??= new Map<number, RunFace>();
-    // A script face is fetched in the regular weight only — a bold run in it is
-    // stroked, which is what F3's synthesis is for.
-    const { variant } = { variant: fallback.fontKey.split(':')[1] ?? '' };
-    out.set(cp, {
+    (out ??= new Map<number, RunFace>()).set(cp, {
       font,
-      ...syntheticFace(
-        variant === 'bold' || variant === 'boldItalic' || variant === 'italic'
-          ? variant
-          : 'regular',
-        resolved.bold,
-        resolved.italic,
-      ),
+      ...(face.synthetic ? { synthetic: face.synthetic } : {}),
     });
   }
   return out;
@@ -5354,7 +5478,10 @@ function collectFontResources(
   options: StyledRenderOptions,
   imageResources: ReadonlyMap<string, ImageResource>,
 ): Map<string, FontResource> {
-  const used = new Map<string, { parsed: ParsedTtf; gids: Set<number> }>();
+  const used = new Map<
+    string,
+    { parsed: ParsedTtf; gids: Set<number>; glyphText?: Map<number, string> }
+  >();
   // §17.6.12 — a PAGE field prints in the numerals its section names, so
   // every numeral a section may print goes into the subset with the digits:
   // front matter numbered i, ii, iii needs its i, v and x.
@@ -5375,12 +5502,13 @@ function collectFontResources(
     para: Paragraph,
   ) => {
     const resolved = resolveRunProperties(run.properties, para.properties, options.styles);
-    const { fontKey, parsed } = runFontKeyAndParsed(
+    const primary = runFontKeyAndParsed(
       options,
       resolved.fontFamily.ascii,
       resolved.bold,
       resolved.italic,
     );
+    const { fontKey, parsed } = primary;
     let bucket = used.get(fontKey);
     if (!bucket) {
       bucket = { parsed, gids: new Set<number>() };
@@ -5390,38 +5518,34 @@ function collectFontResources(
     // emit phase encodes — otherwise a ligature glyph (e.g. fi) would be
     // rendered but pruned from the subset / absent from the /CIDSet and
     // /ToUnicode (PDF/A §6.3.5 / §6.3.8).
-    // A marker whose glyph the font lacks is drawn as another character
-    // (see {@link markerText}), so the subset must reserve THAT one.
     // A ligature nobody can draw is set as its letters (see
     // {@link drawableText}), so it is those letters the subset must reserve.
-    const text = drawableText(
-      options,
-      parsed,
-      resolved,
-      run.listMarker === true ? markerText(run.text, parsed) : run.text,
-    );
-    // A character this face cannot draw is drawn by ANOTHER one (see
-    // {@link fallbackFaceKey}), and its glyphs have to be reserved in THAT
-    // face's subset — the walk that measures and the walk that embeds must
-    // agree, or the page draws a glyph the font object does not carry. Each
-    // stretch is shaped by the face that draws it: an Arabic letter's medial
-    // form is a different glyph from its isolated one, so reserving the code
-    // point alone would embed the wrong ones.
-    for (const span of faceSpans(options, { fontKey, parsed }, resolved, text)) {
+    const faces = runFaces(options, resolved, primary, run.text);
+    const text = drawableText(faces, run.text);
+    // A character another slot names a face for, or this face cannot draw, is
+    // drawn by ANOTHER one (see {@link runFaces}), and its glyphs have to be
+    // reserved in THAT face's subset — the walk that measures and the walk that
+    // embeds must agree, or the page draws a glyph the font object does not
+    // carry. Each stretch is shaped by the face that draws it: an Arabic
+    // letter's medial form is a different glyph from its isolated one, so
+    // reserving the code point alone would embed the wrong ones.
+    for (const span of faceSpans(faces, text)) {
       let sink = used.get(span.fontKey);
       if (!sink) {
         sink = { parsed: span.parsed, gids: new Set<number>() };
         used.set(span.fontKey, sink);
       }
-      const shaped = shapeText(
-        span.text,
-        span.parsed.glyphForCodepoint,
-        span.parsed.advanceWidths,
-        span.parsed.ligatures,
-        span.parsed.kerning,
-        span.parsed.joiningForms,
-      );
+      // A marker whose glyph the face drawing it lacks is drawn as another
+      // character (see {@link markerText}), so the subset must reserve THAT one.
+      const shown = run.listMarker === true ? markerText(span.text, span.parsed) : span.text;
+      const shaped = shapeGlyphs(span.parsed, shown);
       for (const g of shaped.gids) sink.gids.add(g);
+      // A conjunct or a vowel sign's contextual form is reached by no
+      // character, and the text layer has to be told what it stands for.
+      for (const [g, t] of shaped.glyphText ?? []) {
+        sink.glyphText ??= new Map();
+        if (!sink.glyphText.has(g)) sink.glyphText.set(g, t);
+      }
     }
     // §17.3.1.38 — a tab's leader characters are drawn but written nowhere: the
     // layout makes them, from the stop, long after the subset is chosen from
@@ -5652,6 +5776,7 @@ function collectFontResources(
       // E-PARITY FP4: the 'word' profile measures kern-free (Word's default).
       measure: createFontMeasure(info.parsed, options.layoutProfile !== 'word'),
       gids: info.gids,
+      ...(info.glyphText ? { glyphText: info.glyphText } : {}),
     });
   }
   return out;
@@ -5731,6 +5856,11 @@ function layoutParagraphBlock(
   contentWidth: number,
   // Float wrapping: explicit per-line widths (overrides first/other widths).
   lineWidths?: ReadonlyArray<number>,
+  // §17.3.3.1 — whether the paragraph stands in the body's flow of pages, the
+  // one place a page break has a page to break. In a cell, a text box, a band
+  // or a note it breaks nothing, and Word sets the words on either side of it
+  // on one line: "Latin", a break and "Second" in a cell read "LatinSecond".
+  pageFlow = false,
 ): ParagraphBlock {
   const cascaded = resolveParagraphProperties(paragraph.properties, options.styles);
   // §17.6.5 / §17.3.1.32 — the section's grid, carried onto the paragraph so
@@ -5776,7 +5906,7 @@ function layoutParagraphBlock(
         baseDir === 'rtl' && baseResolved.alignment === 'left'
         ? { ...baseResolved, alignment: 'right' }
         : baseResolved;
-  const tokens = tokenizeParagraph(
+  const all = tokenizeParagraph(
     paragraph,
     options,
     fontResources,
@@ -5784,6 +5914,7 @@ function layoutParagraphBlock(
     contentWidth,
     baseDir,
   );
+  const tokens = pageFlow ? all : all.filter((t) => !(t.kind === 'text' && t.pageBreak));
   const firstLineWidth = paragraphMaxWidth(resolved, contentWidth, true);
   const otherWidth = paragraphMaxWidth(resolved, contentWidth, false);
   const leading = paragraphLeading(paragraph.properties, options);
@@ -5806,23 +5937,29 @@ function layoutParagraphBlock(
   // §17.3.3.1 — a `w:br w:type="column"` splits the paragraph's own flow: what
   // follows it belongs in the NEXT column. Wrapping the parts one at a time is
   // what tells pagination which line that is; columnbreak.docx sets one
-  // mid-paragraph and both halves came out in the first column.
-  const parts = splitAtColumnBreaks(tokens);
+  // mid-paragraph and both halves came out in the first column. A page break
+  // between its words splits it the same way, to the next page.
+  const flow = splitAtBreaks(tokens);
   const columnBreakLines = new Set<number>();
+  const pageBreakLines = new Set<number>();
   let wrapped: Array<Line>;
-  if (parts.length === 1) {
-    wrapped = runWrap(tokens, firstLineWidth, lineWidths);
+  if (flow.parts.length === 1) {
+    wrapped = runWrap(flow.parts[0]!.tokens, firstLineWidth, lineWidths);
   } else {
     wrapped = [];
-    for (const [i, part] of parts.entries()) {
+    for (const [i, part] of flow.parts.entries()) {
       // A continuation is not a first line: it keeps the body indent, not the
       // first-line one, and the float widths carry on where they left off.
-      const lines = runWrap(
-        part,
-        i === 0 ? firstLineWidth : otherWidth,
-        lineWidths?.slice(wrapped.length),
-      );
-      if (i > 0 && lines.length > 0) columnBreakLines.add(wrapped.length);
+      const width = i === 0 ? firstLineWidth : otherWidth;
+      const lines = runWrap(part.tokens, width, lineWidths?.slice(wrapped.length));
+      // The line a page break ends is a line, with nothing else on it or not:
+      // two breaks in a row leave an empty one on the page between.
+      if (lines.length === 0 && (part.opens === 'page' || part.endsPage)) {
+        lines.push(emptyLine(paragraph, options, resolved, Math.max(width, 0)));
+      }
+      if (i > 0 && lines.length > 0) {
+        (part.opens === 'page' ? pageBreakLines : columnBreakLines).add(wrapped.length);
+      }
       wrapped.push(...(i === 0 ? lines : lines.map((l) => ({ ...l, firstLine: false }))));
     }
   }
@@ -5840,34 +5977,6 @@ function layoutParagraphBlock(
   let heightPt = 0;
   for (const line of lines) heightPt += computeLineHeight(line, resolved);
   const numbering = paragraph.properties.numbering;
-  // §17.3.3.1 — a forced break happens WHERE IT STANDS. One that precedes
-  // every word of the paragraph moves the paragraph itself to the next page;
-  // any other sends what FOLLOWS the paragraph there.
-  const breakIdx = paragraph.runs.findIndex((r) => r.pageBreak === true);
-  // A run that carries a PICTURE is not nothing, however empty its text: the
-  // break after it sends what FOLLOWS to the next page, it does not move the
-  // paragraph. Counted as empty, tdf125657.docx — a full-page image and then a
-  // break — kept the break's page to itself and lost the one the mark after it
-  // stands on.
-  //
-  // …and only when something FOLLOWS it. A paragraph that is nothing but the
-  // break — a page break typed on a line of its own — keeps its mark with the
-  // break, on the page the break ends, and what follows starts the next page
-  // at its very top. Word for Mac, in every mode: a document ending in one is
-  // one page, two in a row leave the second alone at the top of page 2, and
-  // the paragraph after the break stands at the page's first line. Moved to
-  // the next page with its mark, it stood an empty line down every such page.
-  const holds = (r: Paragraph['runs'][number]): boolean =>
-    r.text !== '' || r.inlineImage !== undefined || r.math !== undefined;
-  const leadingPageBreak =
-    breakIdx >= 0 &&
-    paragraph.runs
-      .slice(0, breakIdx + 1)
-      .every((r) => r.text === '' && r.inlineImage === undefined) &&
-    paragraph.runs.slice(breakIdx + 1).some(holds);
-  const trailingPageBreak = paragraph.runs.some(
-    (r, i) => r.pageBreak === true && (!leadingPageBreak || i > breakIdx),
-  );
   return {
     kind: 'paragraph',
     resolved,
@@ -5876,9 +5985,10 @@ function layoutParagraphBlock(
     spacingBeforePt: resolved.spacingBefore,
     spacingAfterPt: resolved.spacingAfter,
     ...(numbering ? { list: { numId: numbering.numId, level: numbering.ilvl } } : {}),
-    ...(leadingPageBreak ? { pageBreakBefore: true } : {}),
-    ...(trailingPageBreak ? { pageBreakAfter: true } : {}),
+    ...(flow.pageBreakBefore ? { pageBreakBefore: true } : {}),
+    ...(flow.pageBreakAfter ? { pageBreakAfter: true } : {}),
     ...(columnBreakLines.size > 0 ? { columnBreakLines } : {}),
+    ...(pageBreakLines.size > 0 ? { pageBreakLines } : {}),
     ...(paragraph.bookmarks && paragraph.bookmarks.length > 0
       ? { bookmarks: paragraph.bookmarks }
       : {}),
@@ -5906,6 +6016,12 @@ interface RunPlan {
    * Absent when the run's face covers all of its text, which is nearly always.
    */
   readonly faceFor?: ReadonlyMap<number, RunFace>;
+  /**
+   * Per code point of `run.text`, the colour it is drawn in, where a split
+   * syllable brought characters of other runs into this one (see
+   * {@link LaidRun}) and one of them is coloured otherwise.
+   */
+  readonly charColorsHex?: ReadonlyArray<string>;
   readonly fontSizePt: number;
   /** How far off the baseline this run draws (super/subscript), in points. */
   readonly risePt?: number;
@@ -5978,7 +6094,7 @@ function resolveMathItems(
 function displayCapsRuns(
   paragraph: Paragraph,
   options: StyledRenderOptions,
-): ReadonlyArray<Paragraph['runs'][number]> {
+): ReadonlyArray<LaidRun> {
   let any = false;
   const out: Array<Paragraph['runs'][number]> = [];
   for (const raw of paragraph.runs) {
@@ -6026,7 +6142,171 @@ function displayCapsRuns(
       start = i;
     }
   }
-  return any ? out : paragraph.runs;
+  return mendSplitSyllables(any ? out : paragraph.runs);
+}
+
+/** A run of plain text: no picture, equation, field, note mark or list marker. */
+function plainTextRun(run: Paragraph['runs'][number]): boolean {
+  return (
+    run.text.length > 0 &&
+    run.inlineImage === undefined &&
+    run.math === undefined &&
+    run.field === undefined &&
+    run.footnoteRef === undefined &&
+    run.endnoteRef === undefined &&
+    run.noteNumber !== true &&
+    run.listMarker !== true
+  );
+}
+
+// How much either side of a run boundary is enough to see the syllable it cuts.
+const SYLLABLE_REACH = 32;
+
+/**
+ * A run as the page sets it: a run of the paragraph, or one that a syllable a
+ * run boundary cut was given whole to (see {@link mendSplitSyllables}).
+ */
+type LaidRun = Paragraph['runs'][number] & {
+  /**
+   * Per code point of `text`, the properties of the run the character was
+   * typed in — its own, except for the characters a split syllable brought
+   * here from the runs after it. Absent when nothing was brought.
+   */
+  readonly charProperties?: ReadonlyArray<RunProperties>;
+};
+
+/** Per code point of a run's text, the properties of the run each character was typed in. */
+function charPropertiesOf(run: LaidRun): ReadonlyArray<RunProperties> {
+  return run.charProperties ?? [...run.text].map(() => run.properties);
+}
+
+/**
+ * A syllable of the scripts of India that a run boundary cuts, given whole to
+ * the run it begins in. Word sets runs apart for a colour, a weight, a tracked
+ * change or a spelling mark, and nothing stops one from starting at a vowel
+ * sign: font issues.docx colours each sign of कृष्ण apart, and
+ * Untitled 2.docx ends a bold run on the र् of a reph. Shaped run by run,
+ * each sign stood alone on a dotted circle and the reph stayed a Ra and a
+ * virama. The syllable now takes the formatting of the run it begins in…
+ *
+ * …all but its colour. Word draws each sign of कृष्ण in the colour of its
+ * own run, on the one shaped syllable, so each character brought along keeps
+ * the properties of the run it came from (`charProperties`), and the glyphs
+ * are painted from them.
+ */
+function mendSplitSyllables(runs: ReadonlyArray<LaidRun>): ReadonlyArray<LaidRun> {
+  if (!runs.some((r) => hasIndic(r.text))) return runs;
+  const out = [...runs];
+  let prev = -1;
+  for (let k = 0; k < out.length; k++) {
+    const run = out[k]!;
+    if (!plainTextRun(run)) {
+      if (run.text.length > 0 || run.inlineImage !== undefined || run.math !== undefined) prev = -1;
+      continue;
+    }
+    const before = prev >= 0 ? out[prev] : undefined;
+    if (before && hasIndic(before.text + run.text)) {
+      const tail = [...before.text].slice(-SYLLABLE_REACH);
+      const head = [...run.text].slice(0, SYLLABLE_REACH);
+      const starts = syllableStarts([...tail, ...head].join(''));
+      let moved = 0;
+      while (moved < head.length && !starts[tail.length + moved]) moved++;
+      if (moved > 0) {
+        const take = head.slice(0, moved).join('');
+        const brought = charPropertiesOf(run);
+        out[prev] = {
+          ...before,
+          text: before.text + take,
+          charProperties: [...charPropertiesOf(before), ...brought.slice(0, moved)],
+        };
+        out[k] = {
+          ...run,
+          text: run.text.slice(take.length),
+          ...(run.charProperties ? { charProperties: brought.slice(moved) } : {}),
+        };
+      }
+    }
+    if (out[k]!.text.length > 0) prev = k;
+  }
+  return out;
+}
+
+/**
+ * The colour each character of a run is drawn in, where a split syllable
+ * brought characters of other runs into it: each takes its own run's colour,
+ * resolved through the styles as that run's would be.
+ *
+ * @param options  The render options (for the style cascade).
+ * @param paragraph The paragraph the run is in.
+ * @param faces    The face each character of the run is drawn with ({@link runFaces}).
+ * @param resolved The run's resolved properties.
+ * @param run      The run, as {@link mendSplitSyllables} left it.
+ * @param drawn    Its text as drawn ({@link drawableText}).
+ * @returns Per code point of `drawn`, its colour — or nothing when every
+ *          character is in the run's own.
+ */
+function charColours(
+  options: StyledRenderOptions,
+  paragraph: Paragraph,
+  faces: (cp: number) => KeyedFace,
+  resolved: ResolvedRunProperties,
+  run: LaidRun,
+  drawn: string,
+): ReadonlyArray<string> | undefined {
+  const from = run.charProperties;
+  if (!from) return undefined;
+  const hexOf = new Map<RunProperties, string>([[run.properties, resolved.colorHex]]);
+  const out: Array<string> = [];
+  let i = 0;
+  for (const ch of run.text) {
+    const props = from[i++] ?? run.properties;
+    let hex = hexOf.get(props);
+    if (hex === undefined) {
+      hex = resolveRunProperties(props, paragraph.properties, options.styles).colorHex;
+      hexOf.set(props, hex);
+    }
+    // A ligature no face can draw is set as its letters, each in its colour.
+    const letters = drawn === run.text ? 1 : [...drawableText(faces, ch)].length;
+    for (let k = 0; k < letters; k++) out.push(hex);
+  }
+  return out.some((hex) => hex !== resolved.colorHex) ? out : undefined;
+}
+
+/**
+ * A token's share of the per-character colours it was cut from: the code
+ * points [from, to) of them, kept only when one differs from the token's own.
+ *
+ * @param colours  The colours of what the token was cut from, if any.
+ * @param ownHex   The token's own colour.
+ * @param from     The first code point the token takes.
+ * @param to       The code point after its last.
+ * @returns `{ charColorsHex }` when the token needs them, `{}` when not.
+ */
+function charColoursOf(
+  colours: ReadonlyArray<string> | undefined,
+  ownHex: string,
+  from: number,
+  to: number,
+): { charColorsHex?: ReadonlyArray<string> } {
+  if (!colours) return {};
+  const own = colours.slice(from, to);
+  return own.some((hex) => hex !== ownHex) ? { charColorsHex: own } : {};
+}
+
+/**
+ * A piece cut out of a text token — its code points [from, from + its text's
+ * length) — with the token's formatting and its own share of the per-character
+ * colours.
+ */
+function tokenPiece(tok: TextToken, text: string, from: number, widthPt: number): TextToken {
+  const { charColorsHex, ...rest } = tok;
+  if (!charColorsHex) return { ...tok, text, widthPt };
+  return {
+    ...rest,
+    text,
+    widthPt,
+    ...charColoursOf(charColorsHex, tok.resolvedRun.colorHex, from, from + [...text].length),
+  };
 }
 
 function tokenizeParagraph(
@@ -6149,30 +6429,34 @@ function tokenizeParagraph(
       };
     }
     const resolvedRun = resolveRunProperties(run.properties, paragraph.properties, options.styles);
-    const { fontKey, synthetic } = runFontKeyAndParsed(
+    const primary = runFontKeyAndParsed(
       options,
       resolvedRun.fontFamily.ascii,
       resolvedRun.bold,
       resolvedRun.italic,
     );
+    const { fontKey, synthetic } = primary;
     // §17.3.2.42 / §18.4.2 `vertAlign` — a super/subscript run draws SMALLER and
     // off the baseline. The model carried the flag and the HTML writer honoured
     // it; the PDF layout did neither, so a footnote marker and a cell's
     // "Salary⁽²⁾" came out full size, on the line (45540_classic_Header.xlsx).
     const script = SCRIPT_OFFSET[resolvedRun.verticalAlign] ?? 0;
     const own = lookupFont(fontResources, fontKey);
+    const faces = runFaces(options, resolvedRun, primary, run.text);
     // A ligature nobody can draw is set as its letters — before the plans are
     // built, because everything downstream measures and draws what it is given.
     const drawn = ((): typeof run => {
-      const text = drawableText(options, own.parsed, resolvedRun, run.text);
+      const text = drawableText(faces, run.text);
       return text === run.text ? run : { ...run, text };
     })();
-    const faceFor = facesForRun(options, fontResources, own.parsed, resolvedRun, drawn.text);
+    const faceFor = facesForRun(fontResources, primary, faces, drawn.text);
+    const charColorsHex = charColours(options, paragraph, faces, resolvedRun, run, drawn.text);
     return {
       run: drawn,
       resolvedRun,
       font: own,
       ...(faceFor ? { faceFor } : {}),
+      ...(charColorsHex ? { charColorsHex } : {}),
       ...(synthetic ? { synthetic } : {}),
       fontSizePt: script === 0 ? resolvedRun.fontSizePt : resolvedRun.fontSizePt * SCRIPT_SCALE,
       ...(script === 0 ? {} : { risePt: resolvedRun.fontSizePt * script }),
@@ -6209,20 +6493,71 @@ function tokenizeParagraph(
   return tokenizePlansBidi(plans, realLevels);
 }
 
+/** A stretch of a paragraph between two of its §17.3.3.1 breaks. */
+interface FlowPart {
+  readonly tokens: Array<Token>;
+  /** The break this part follows, which sends it on: none for the first. */
+  readonly opens?: 'column' | 'page';
+  /** Whether a page break ends it. */
+  endsPage: boolean;
+}
+
 /**
- * Split a paragraph's tokens at every §17.3.3.1 column break, dropping the
- * break token itself (its line ends there anyway). One part ⇒ no break.
+ * Split a paragraph's tokens at every §17.3.3.1 column or page break, dropping
+ * the break token itself (its line ends there anyway). One part ⇒ no break.
+ *
+ * A forced page break happens WHERE IT STANDS. One that precedes every word of
+ * the paragraph moves the paragraph itself to the next page, one that follows
+ * every word sends what FOLLOWS the paragraph there, and neither splits it. One
+ * between two of its words splits it there: Word sets "Latin", a page break and
+ * "Second" on two pages, and read as a break after the paragraph, both words
+ * stood on the first.
+ *
+ * A PICTURE is not nothing, however empty its run's text: the break after it
+ * sends what follows to the next page, it does not move the paragraph. Counted
+ * as empty, tdf125657.docx — a full-page image and then a break — kept the
+ * break's page to itself and lost the one the mark after it stands on.
+ *
+ * …and a break is before the paragraph only when something FOLLOWS it. A
+ * paragraph that is nothing but the break — a page break typed on a line of its
+ * own — keeps its mark with the break, on the page the break ends, and what
+ * follows starts the next page at its very top. Word for Mac, in every mode: a
+ * document ending in one is one page, two in a row leave the second alone at
+ * the top of page 2, and the paragraph after the break stands at the page's
+ * first line. Moved to the next page with its mark, it stood an empty line down
+ * every such page.
  *
  * @param tokens The paragraph's tokens in order.
- * @returns The parts, in order; always at least one.
+ * @returns The parts, in order (always at least one), and whether the
+ *          paragraph breaks the page before itself and after itself.
  */
-function splitAtColumnBreaks(tokens: ReadonlyArray<Token>): Array<Array<Token>> {
-  const parts: Array<Array<Token>> = [[]];
-  for (const t of tokens) {
-    if (t.kind === 'text' && t.columnBreak) parts.push([]);
-    else parts[parts.length - 1]!.push(t);
+function splitAtBreaks(tokens: ReadonlyArray<Token>): {
+  parts: Array<FlowPart>;
+  pageBreakBefore: boolean;
+  pageBreakAfter: boolean;
+} {
+  const isPage = (t: Token): boolean => t.kind === 'text' && t.pageBreak === true;
+  const pageBreakBefore = tokens.length > 0 && isPage(tokens[0]!) && tokens.some((t) => !isPage(t));
+  const pageBreakAfter = tokens.length > 0 && isPage(tokens[tokens.length - 1]!);
+  const parts: Array<FlowPart> = [{ tokens: [], endsPage: false }];
+  const end = pageBreakAfter ? tokens.length - 1 : tokens.length;
+  for (const t of tokens.slice(pageBreakBefore ? 1 : 0, end)) {
+    if (isPage(t)) {
+      parts[parts.length - 1]!.endsPage = true;
+      parts.push({ tokens: [], opens: 'page', endsPage: false });
+    } else if (t.kind === 'text' && t.columnBreak) {
+      parts.push({ tokens: [], opens: 'column', endsPage: false });
+    } else parts[parts.length - 1]!.tokens.push(t);
   }
-  return parts.filter((p, i) => i === 0 || p.length > 0);
+  if (pageBreakAfter) parts[parts.length - 1]!.endsPage = true;
+  return {
+    // An empty stretch a page break opens or ends is still the line it stands on.
+    parts: parts.filter(
+      (p, i) => i === 0 || p.tokens.length > 0 || p.opens === 'page' || p.endsPage,
+    ),
+    pageBreakBefore,
+    pageBreakAfter,
+  };
 }
 
 // Fast LTR tokenization — splits each run on whitespace only.
@@ -6261,17 +6596,29 @@ function tokenizePlansLtr(plans: ReadonlyArray<RunPlan>): Array<Token> {
       });
       continue;
     }
+    if (plan.run.listMarkerSpace === true) {
+      tokens.push(markerSpaceToken(plan, 0));
+      continue;
+    }
     const highlight = (plan.run.commentRangeRefs?.length ?? 0) > 0;
+    // The code point of the run's text the next token starts at, for its share
+    // of the per-character colours (counted only where there are some).
+    let at = 0;
     for (const t of tokenizeText(plan.run.text)) {
       // …and split again wherever the face changes: a token carries one font,
       // and a Latin substitute cannot draw the Han beside it.
       for (const piece of splitByFace(plan, t.text)) {
         const text =
-          plan.run.listMarker === true ? markerText(piece.text, plan.font.parsed) : piece.text;
+          plan.run.listMarker === true
+            ? markerText(piece.text, piece.face.font.parsed)
+            : piece.text;
+        const from = at;
+        if (plan.charColorsHex) at += t.tab ? 1 : [...piece.text].length;
         tokens.push({
           kind: 'text',
           text,
           isSpace: t.isSpace,
+          ...charColoursOf(plan.charColorsHex, plan.resolvedRun.colorHex, from, at),
           ...(t.tab ? { tab: true as const } : {}),
           ...(plan.run.href !== undefined ? { href: plan.run.href } : {}),
           ...(plan.run.footnoteRef !== undefined ? { footnoteRef: plan.run.footnoteRef } : {}),
@@ -6289,8 +6636,59 @@ function tokenizePlansLtr(plans: ReadonlyArray<RunPlan>): Array<Token> {
         });
       }
     }
+    if (plan.run.pageBreak) tokens.push(pageBreakToken(plan));
   }
   return tokens;
+}
+
+/**
+ * §17.3.3.1 — the mark a `w:br w:type="page"` leaves among its paragraph's
+ * tokens: nothing to draw, only where the break stands. A run that holds text
+ * as well breaks after it, the way the writer writes one. It never reaches a
+ * line: the paragraph is split at it before it is wrapped.
+ *
+ * @param plan The break's run.
+ * @returns An empty text token flagged `pageBreak`.
+ */
+function pageBreakToken(plan: RunPlan): TextToken {
+  return {
+    kind: 'text',
+    text: '',
+    isSpace: false,
+    pageBreak: true,
+    resolvedRun: plan.resolvedRun,
+    font: plan.font,
+    fontSizePt: plan.fontSizePt,
+    widthPt: 0,
+    bidiLevel: 0,
+  };
+}
+
+/** Arial's space, as a fraction of the em: 569 of its 2048 units. */
+const MARKER_SPACE_EM = 569 / 2048;
+
+/**
+ * §17.9.29 — the space a list level's `w:suff="space"` puts after its marker,
+ * as Word sets it: a gap of 0.278 em of the marker's size, whatever the
+ * marker's face — Arial's space, though the marker is in none of it. Measured
+ * in Word for Mac at 48pt, Courier New, Verdana, Times New Roman, Georgia,
+ * Calibri, Tahoma, Impact and Songti markers all leave the same 13.4pt before
+ * the text; a space of each face would have ranged from 8.5 to 28.8. Nothing is
+ * drawn in it, and a justified line does not stretch it.
+ */
+function markerSpaceToken(plan: RunPlan, bidiLevel: number): TextToken {
+  return {
+    kind: 'text',
+    text: '',
+    isSpace: false,
+    listMarker: true,
+    listMarkerSpace: true,
+    resolvedRun: plan.resolvedRun,
+    font: plan.font,
+    fontSizePt: plan.fontSizePt,
+    widthPt: MARKER_SPACE_EM * plan.fontSizePt,
+    bidiLevel,
+  };
 }
 
 /**
@@ -6304,8 +6702,15 @@ function tokenizePlansLtr(plans: ReadonlyArray<RunPlan>): Array<Token> {
  * eleven slides. The marker is the one place where the shape matters more than
  * the code point, so it takes the nearest thing the font can draw.
  *
- * @param text The marker's text.
- * @param font The font it is set in.
+ * Asked of the face that DRAWS the character, not of the run's own: a marker
+ * may be set in two faces, and a character another face draws is no business
+ * of the run's. chtoutline.docx numbers its chapters "第 1 章" in a Latin
+ * heading face with the Han in a face of their own; asked of the Latin one, 第
+ * and 章 became dots set in the Han face's subset, which had reserved neither,
+ * and the heading printed nothing but its "1".
+ *
+ * @param text   The marker's text.
+ * @param parsed The face that draws it.
  * @returns The text to draw.
  */
 function markerText(text: string, parsed: ParsedTtf): string {
@@ -6341,7 +6746,11 @@ function measureRunText(plan: RunPlan, text: string, face?: RunFace): number {
     (drawn.synthetic?.widthScale ?? 1) *
     (plan.resolvedRun.widthScale ?? 1);
   const extra = plan.resolvedRun.letterSpacingPt;
-  return extra === undefined || extra === 0 ? base : base + extra * [...text].length;
+  // Per character — or per cluster, where the Indic shaper set the text and a
+  // consonant and its vowel sign are one letter.
+  return extra === undefined || extra === 0
+    ? base
+    : base + extra * drawn.font.measure.spacingSlots(text);
 }
 
 // BiDi-aware tokenization — splits each run on whitespace boundaries AND on
@@ -6388,6 +6797,11 @@ function tokenizePlansBidi(
       realIdx++;
       continue;
     }
+    if (plan.run.listMarkerSpace === true) {
+      tokens.push(markerSpaceToken(plan, realLevels[realIdx] ?? 0));
+      realIdx += [...plan.run.text].length;
+      continue;
+    }
     // Iterate code points, grouping by (isSpace, level, face) — a character the
     // run's own face cannot draw is drawn by another one, and a token carries
     // exactly one font.
@@ -6399,11 +6813,12 @@ function tokenizePlansBidi(
     const flush = (endExclusive: number) => {
       if (endExclusive <= bufStart) return;
       const raw = chars.slice(bufStart, endExclusive).join('');
-      const text = plan.run.listMarker === true ? markerText(raw, plan.font.parsed) : raw;
+      const text = plan.run.listMarker === true ? markerText(raw, curFace.font.parsed) : raw;
       tokens.push({
         kind: 'text',
         text,
         isSpace: curSpace,
+        ...charColoursOf(plan.charColorsHex, plan.resolvedRun.colorHex, bufStart, endExclusive),
         ...(plan.run.href !== undefined ? { href: plan.run.href } : {}),
         ...(plan.run.footnoteRef !== undefined ? { footnoteRef: plan.run.footnoteRef } : {}),
         ...(plan.run.anchor !== undefined ? { anchor: plan.run.anchor } : {}),
@@ -6438,6 +6853,7 @@ function tokenizePlansBidi(
       realIdx++;
     }
     flush(chars.length);
+    if (plan.run.pageBreak) tokens.push(pageBreakToken(plan));
   }
   return tokens;
 }
@@ -6675,6 +7091,14 @@ function paragraphItemStream(
         fontSizePt: tok.fontSizePt,
         widthPt: fragWidth,
         bidiLevel: tok.bidiLevel,
+        ...(tok.charColorsHex
+          ? charColoursOf(
+              tok.charColorsHex,
+              tok.resolvedRun.colorHex,
+              [...tok.text.slice(0, prev)].length,
+              [...tok.text.slice(0, end)].length,
+            )
+          : {}),
       };
       entries.push({ item: { type: 'box', width: fragWidth }, token: fragTok });
       if (pi < positions.length) {
@@ -6847,11 +7271,12 @@ function splitAtHyphens(tok: Token): Array<Token> | undefined {
   }
   if (parts.length === 0) return undefined;
   parts.push(tok.text.slice(start));
-  return parts.map((text) => ({
-    ...tok,
-    text,
-    widthPt: tok.font.measure.textWidthPt(text, tok.fontSizePt),
-  }));
+  let from = 0;
+  return parts.map((text) => {
+    const piece = tokenPiece(tok, text, from, tok.font.measure.textWidthPt(text, tok.fontSizePt));
+    if (tok.charColorsHex) from += [...text].length;
+    return piece;
+  });
 }
 
 function splitToWidth(tok: Token, widthPt: number): Array<Token> | undefined {
@@ -6881,7 +7306,7 @@ function splitToWidth(tok: Token, widthPt: number): Array<Token> | undefined {
       width = nextWidth;
       end++;
     }
-    out.push({ ...tok, text, widthPt: width });
+    out.push(tokenPiece(tok, text, start, width));
     start = end;
   }
   return out.length > 1 ? out : undefined;
@@ -7156,10 +7581,11 @@ function wrap(
 /**
  * §17.3.2.26 — the family Word sets a token's characters in: East Asian text
  * in the run's `eastAsia` font, complex-script text (and a `w:rtl` run) in its
- * `cs` one, the rest in `ascii` — `hAnsi` above ASCII. The layout draws a run
- * with its ascii face and hands what that face lacks to another, so the name
- * the run gives for THESE characters is the one Word's line is looked up by:
- * a Chinese sentence in a Calibri run does not stand on Calibri's line.
+ * `cs` one, the rest in `ascii` — `hAnsi` above ASCII (see {@link fontSlotOf}).
+ * The layout draws each character in its slot's face where that face is
+ * loaded, and in what it falls back to where not, so the name the run gives for
+ * THESE characters is the one Word's line is looked up by: a Chinese sentence
+ * in a Calibri run does not stand on Calibri's line.
  *
  * @param t The text token.
  * @returns The family's name, when the run gives one for that slot.
@@ -7169,12 +7595,9 @@ function wordFamilyOf(t: TextToken): string | undefined {
   if (t.resolvedRun.rtl) return fonts.cs;
   let high = false;
   for (const ch of t.text) {
-    const cp = ch.codePointAt(0) ?? 0;
-    if (cp <= 0x7f) continue;
-    high = true;
-    const script = scriptForCodepoint(cp);
-    if (script === 'hebrew' || script === 'arabic' || script === 'thai') return fonts.cs;
-    if (script === 'kr' || script === 'jp' || script === 'sc') return fonts.eastAsia;
+    const slot = fontSlotOf(ch.codePointAt(0) ?? 0);
+    if (slot === 'cs' || slot === 'eastAsia') return fonts[slot];
+    if (slot === 'hAnsi') high = true;
   }
   return high ? (fonts.hAnsi ?? fonts.ascii) : fonts.ascii;
 }
@@ -7805,18 +8228,22 @@ function measureSingleLine(
     // base registry). The old direct registry lookup keyed fontResources by
     // bare variant — with registriesByFamily/embeddedFonts those keys do not
     // exist, so table auto-layout measured with the wrong font or crashed.
-    const { fontKey, synthetic } = runFontKeyAndParsed(
+    const primary = runFontKeyAndParsed(
       options,
       resolved.fontFamily.ascii,
       resolved.bold,
       resolved.italic,
     );
-    const font = lookupFont(fontResources, fontKey);
-    const fontSizePt = resolved.fontSizePt;
-    total +=
-      font.measure.textWidthPt(run.text, fontSizePt) *
-      (synthetic?.widthScale ?? 1) *
-      (resolved.widthScale ?? 1);
+    // …and each character in the face that draws it (see {@link runFaces}).
+    for (const span of faceSpans(runFaces(options, resolved, primary, run.text), run.text)) {
+      total +=
+        lookupFont(fontResources, span.fontKey).measure.textWidthPt(
+          span.text,
+          resolved.fontSizePt,
+        ) *
+        (span.synthetic?.widthScale ?? 1) *
+        (resolved.widthScale ?? 1);
+    }
   }
   return total;
 }
@@ -9052,8 +9479,8 @@ class PageAssembler {
   /**
    * The first of a paragraph's lines, from `from` on, that the current column
    * no longer holds: each line is counted with the notes it brings onto the
-   * page, the way the line loop places it, and an explicit column break ends
-   * the column where it stands.
+   * page, the way the line loop places it, and an explicit column or page break
+   * ends the column where it stands.
    *
    * @param pb   The paragraph being placed.
    * @param from The first line not yet placed.
@@ -9066,7 +9493,7 @@ class PageAssembler {
     let notesOnPage = this.pageNotes.length > 0;
     const counted = new Set<string>();
     for (let i = from; i < pb.lines.length; i++) {
-      if (i > from && pb.columnBreakLines?.has(i)) return i;
+      if (i > from && (pb.columnBreakLines?.has(i) || pb.pageBreakLines?.has(i))) return i;
       const line = pb.lines[i]!;
       const h = computeLineHeight(line, pb.resolved);
       const notes = this.lineFootnotes(line).filter((x) => !counted.has(x.id));
@@ -9863,6 +10290,10 @@ function paginateSections(
         if (!pb.resolved.widowControl || n < 2 || asm.exclusions.length > 0) return undefined;
         let end = asm.firstLineOverflowing(pb, from);
         if (end >= n) return undefined;
+        // A break the author put there ends the column, and leaves nothing
+        // alone that the column could keep: Word moves none of the lines
+        // before a column or page break on with the one after it.
+        if (pb.columnBreakLines?.has(end) || pb.pageBreakLines?.has(end)) return undefined;
         if (n - end === 1) end--;
         if (from === 0 && end === 1) end = 0;
         // A column that holds nothing yet takes a line however the rest falls,
@@ -9914,8 +10345,14 @@ function paginateSections(
       // the near side of it and left this one its other half.
       let pairPending: number | undefined;
       for (const [lineIdx, line] of pb.lines.entries()) {
-        // §17.3.3.1 — the line after a column break starts the next column,
-        // even when this one has room to spare.
+        // §17.3.3.1 — the line after a page break starts the next page, from
+        // whichever column of this one the break stands in…
+        if (pb.pageBreakLines?.has(lineIdx) && asm.pageHasContent()) {
+          asm.flushPage();
+          columnEnd = keptColumnEnd(lineIdx);
+        }
+        // …and the line after a column break the next column, even when this
+        // one has room to spare.
         if (pb.columnBreakLines?.has(lineIdx) && asm.colHasContent()) {
           advanceBefore(lineIdx);
           columnEnd = keptColumnEnd(lineIdx);

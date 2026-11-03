@@ -149,6 +149,29 @@ describe('docx writer (E-DOCX D2 skeleton)', () => {
     expect(paras[2]!.runs.map((r) => r.text).join('')).toBe('a)\tnested');
   });
 
+  it('round-trips what follows each marker (§17.9.29)', () => {
+    // Left out of numbering.xml, a level's space or nothing re-read as a tab.
+    const lvl = (suff: string) =>
+      '<w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/>' +
+      `<w:suff w:val="${suff}"/><w:lvlText w:val="%1."/></w:lvl>`;
+    const numberingXml =
+      `<w:abstractNum w:abstractNumId="0">${lvl('space')}</w:abstractNum>` +
+      `<w:abstractNum w:abstractNumId="1">${lvl('nothing')}</w:abstractNum>` +
+      '<w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>' +
+      '<w:num w:numId="2"><w:abstractNumId w:val="1"/></w:num>';
+    const li = (numId: number, t: string) =>
+      `<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="${numId}"/></w:numPr></w:pPr>` +
+      `<w:r><w:t>${t}</w:t></w:r></w:p>`;
+    const { doc: flow } = readDocx(
+      buildDocxFromBody(li(1, 'spaced') + li(2, 'tight'), { numberingXml }),
+    );
+    const { doc: again } = readDocx(writeDocx(flow).bytes);
+    const texts = again.body.flatMap((el) =>
+      el.kind === 'paragraph' ? [el.paragraph.runs.map((r) => r.text).join('')] : [],
+    );
+    expect(texts).toEqual(['1. spaced', '1.tight']);
+  });
+
   it('omits numbering.xml when the document has no lists', () => {
     const { doc: flow } = readDocx(buildDocxFromBody('<w:p><w:r><w:t>plain</w:t></w:r></w:p>'));
     const pkg = OpcPackage.open(writeDocx(flow).bytes);
@@ -691,6 +714,21 @@ describe('docx writer (E-DOCX D2 skeleton)', () => {
     const para = again.body.find((b) => b.kind === 'paragraph');
     if (para?.kind !== 'paragraph') throw new Error('expected a paragraph');
     expect(para.paragraph.runs.some((r) => r.pageBreak === true)).toBe(true);
+  });
+
+  it('keeps a page break where it stands in a run it shares with text', () => {
+    // §17.3.3.1 — read as a flag on the run, the break was written after all of
+    // its text, and "before" and "after" came back as one word on one page.
+    const body = '<w:p><w:r><w:t>before</w:t><w:br w:type="page"/><w:t>after</w:t></w:r></w:p>';
+    const { doc: flow } = readDocx(buildDocxFromBody(body));
+    const { doc: again } = readDocx(writeDocx(flow).bytes);
+    const para = again.body.find((b) => b.kind === 'paragraph');
+    if (para?.kind !== 'paragraph') throw new Error('expected a paragraph');
+    expect(para.paragraph.runs.map((r) => [r.text, r.pageBreak === true])).toEqual([
+      ['before', false],
+      ['', true],
+      ['after', false],
+    ]);
   });
 
   it('reports unwritten block kinds as losses (v0)', () => {

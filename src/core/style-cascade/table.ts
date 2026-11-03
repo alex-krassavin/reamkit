@@ -31,6 +31,8 @@ import type {
   TableStyleLayer,
 } from '@/core/document-model';
 
+import { mergeRunPartial } from '@/core/style-cascade/resolver';
+
 /**
  * Apply table styles across a body (ECMA-376 §17.7.6): for each table, fold its
  * `basedOn` chain and apply the base + `tblLook`-gated conditional region layers
@@ -201,7 +203,7 @@ function applyLayerToCell(
         // tbllook.docx sets its first column in 36pt).
         p.properties = {
           ...p.properties,
-          inheritedRun: { ...p.properties.inheritedRun, ...layer.runProperties },
+          inheritedRun: mergeRunPartial(p.properties.inheritedRun ?? {}, layer.runProperties),
         };
       }
     }
@@ -324,7 +326,7 @@ function mergeLayer(base: TableStyleLayer, override: TableStyleLayer): TableStyl
       : {}),
     ...((override.shading ?? base.shading) ? { shading: override.shading ?? base.shading } : {}),
     ...((override.runProperties ?? base.runProperties)
-      ? { runProperties: { ...base.runProperties, ...definedOnly(override.runProperties ?? {}) } }
+      ? { runProperties: mergeRunPartial(base.runProperties ?? {}, override.runProperties ?? {}) }
       : {}),
     ...((override.paragraphProperties ?? base.paragraphProperties)
       ? {

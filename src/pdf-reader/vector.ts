@@ -17,7 +17,7 @@ import {
 import { appearanceContent, collectPageAppearances } from './annots';
 import { patternTint, tintedHex } from './pattern-tint';
 import { hiddenProperties, hiddenXObject } from './optional-content';
-import { buildFonts } from './text';
+import { actualTextsOf, buildFonts } from './text';
 import type { ColorSpaceInfo, GsPaint, PageGradient } from './shading';
 import type {
   ContentFont,
@@ -130,6 +130,8 @@ function paintedVectors(
       maps.alphas,
       maps.spaces,
       hiddenProperties(file, resources),
+      // §14.9.4 — a glyph a replacement names is written, not drawn.
+      actualTextsOf(file, resources),
     );
     // §8.7.4.3 — a bare `sh` paints the CLIP with a shading. Where that shading
     // is axial or radial it is a gradient, and the region it fills is the clip:

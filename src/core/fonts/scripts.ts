@@ -2,10 +2,11 @@
 // needs a face for.
 //
 // The curated substitutes are Latin families. Greek, Cyrillic and Hebrew ride
-// along in them; Han, Kana, Hangul, Arabic, Thai and the geometric symbols do
-// not, and 2145 characters of the corpus are exactly those — a notdef box every
-// one. A face for them is fetched only when a document holds such a character
-// (see `fetchScriptFont`), so the question this answers is: which ones.
+// along in them; Han, Kana, Hangul, Arabic, Thai, the scripts of India and the
+// geometric symbols do not, and 2145 characters of the corpus are exactly
+// those — a notdef box every one. A face for them is fetched only when a
+// document holds such a character (see `fetchScriptFont`), so the question
+// this answers is: which ones.
 
 import type { BodyElement, ShapeBlock } from '@/core/document-model';
 import type { FlowDoc } from '@/core/ir/flow';
@@ -19,8 +20,24 @@ const RANGES: ReadonlyArray<readonly [number, number, ScriptKey | 'han']> = [
   [0x0600, 0x06ff, 'arabic'],
   [0x0750, 0x077f, 'arabic'],
   [0x08a0, 0x08ff, 'arabic'],
+  // The scripts of India, a block each. The two dandas, U+0964 and U+0965, are
+  // in the Devanagari block and are the full stop of Bengali, Gurmukhi and
+  // Odia too, so they name no face of their own: every one of these carries
+  // them, and a Bengali document that ends a sentence with one is not sent
+  // for Devanagari as well.
+  [0x0900, 0x0963, 'devanagari'],
+  [0x0966, 0x097f, 'devanagari'],
+  [0x0980, 0x09ff, 'bengali'],
+  [0x0a00, 0x0a7f, 'gurmukhi'],
+  [0x0a80, 0x0aff, 'gujarati'],
+  [0x0b00, 0x0b7f, 'oriya'],
+  [0x0b80, 0x0bff, 'tamil'],
+  [0x0c00, 0x0c7f, 'telugu'],
+  [0x0c80, 0x0cff, 'kannada'],
+  [0x0d00, 0x0d7f, 'malayalam'],
   [0x0e00, 0x0e7f, 'thai'],
   [0x1100, 0x11ff, 'kr'], // Hangul Jamo
+  [0x1cd0, 0x1cff, 'devanagari'], // Vedic extensions
   // Both symbol faces are fetched whenever either is called for, so these say
   // only which one is TRIED first — the other answers for what it lacks.
   [0x2190, 0x21ff, 'symbols1'], // arrows
@@ -33,6 +50,7 @@ const RANGES: ReadonlyArray<readonly [number, number, ScriptKey | 'han']> = [
   [0x3130, 0x318f, 'kr'], // Hangul compatibility Jamo
   [0x3400, 0x4dbf, 'han'],
   [0x4e00, 0x9fff, 'han'],
+  [0xa8e0, 0xa8ff, 'devanagari'], // Devanagari extended
   [0xac00, 0xd7af, 'kr'], // Hangul syllables
   [0xf900, 0xfaff, 'han'],
   [0xfb1d, 0xfb4f, 'hebrew'],
@@ -55,6 +73,49 @@ export function scriptForCodepoint(cp: number, hanFace: ScriptKey = 'sc'): Scrip
     if (cp <= hi) return key === 'han' ? hanFace : key;
   }
   return undefined;
+}
+
+/**
+ * §17.3.2.26 — the slot of `w:rFonts` a character is set in: `ascii`,
+ * `hAnsi` (high ANSI), `eastAsia` or `cs` (complex script).
+ */
+export type FontSlot = 'ascii' | 'hAnsi' | 'eastAsia' | 'cs';
+
+/** The scripts Word sets in a run's complex-script font, `w:cs`. */
+const COMPLEX_SCRIPTS: ReadonlySet<ScriptKey> = new Set<ScriptKey>([
+  'hebrew',
+  'arabic',
+  'thai',
+  'devanagari',
+  'bengali',
+  'gurmukhi',
+  'gujarati',
+  'oriya',
+  'tamil',
+  'telugu',
+  'kannada',
+  'malayalam',
+]);
+
+/**
+ * §17.3.2.26 — the slot of a run's fonts Word sets a character in: ASCII in
+ * `ascii`, East Asian text in `eastAsia`, complex script in `cs`, and the rest
+ * above ASCII — Cyrillic, Greek, accented Latin, curly quotes — in `hAnsi`. A
+ * `w:rtl` run is complex script whole (§17.3.2.30), its digits and Latin too.
+ *
+ * Measured in Word for Mac on a run whose ascii font is Verdana and whose
+ * hAnsi one is Courier New: "split" reports Verdana, "Кириллица" Courier New.
+ *
+ * @param cp  The code point.
+ * @param rtl Whether the run is right-to-left.
+ * @returns The slot.
+ */
+export function fontSlotOf(cp: number, rtl = false): FontSlot {
+  if (rtl) return 'cs';
+  if (cp <= 0x7f) return 'ascii';
+  const script = scriptForCodepoint(cp);
+  if (script !== undefined && COMPLEX_SCRIPTS.has(script)) return 'cs';
+  return script === 'kr' || script === 'jp' || script === 'sc' ? 'eastAsia' : 'hAnsi';
 }
 
 /**

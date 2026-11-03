@@ -24,6 +24,11 @@ export interface EmbedTtfOptions {
    * otherwise, since PDF/A-2/3 only constrain it when present).
    */
   readonly cidSet?: boolean;
+  /**
+   * The text of glyphs no character maps to — a conjunct, a reph, a vowel
+   * sign's contextual form — so that /ToUnicode names them too.
+   */
+  readonly glyphText?: ReadonlyMap<number, string>;
 }
 
 /** The result of {@link embedTtfFont}: the Type 0 font reference plus measurement/encoding helpers. */
@@ -130,7 +135,9 @@ export function embedTtfFont(
     }),
   );
 
-  const toUnicodeRef = doc.add(deflatedStream({}, buildToUnicodeCMap(parsed, subsetGids)));
+  const toUnicodeRef = doc.add(
+    deflatedStream({}, buildToUnicodeCMap(parsed, subsetGids, options.glyphText)),
+  );
 
   const type0Ref = doc.add(
     dict({
@@ -224,7 +231,11 @@ function codeRank(cp: number): 0 | 1 | 2 {
 //
 // Supplementary plane characters (U+10000+) are not yet enumerated; they
 // will render correctly but won't appear in copy-paste output.
-function buildToUnicodeCMap(parsed: ParsedTtf, subsetGids?: ReadonlyArray<number>): Uint8Array {
+function buildToUnicodeCMap(
+  parsed: ParsedTtf,
+  subsetGids?: ReadonlyArray<number>,
+  glyphText?: ReadonlyMap<number, string>,
+): Uint8Array {
   // A subset draws a handful of glyphs, and mapping every glyph the SOURCE font
   // can reach wrote 2767 bfchar entries for a document that uses fifteen — 40 KB
   // of 55906-MultiSheetRefs.xlsx's 192. §9.10.3 asks for the CIDs that are used
@@ -296,6 +307,16 @@ function buildToUnicodeCMap(parsed: ParsedTtf, subsetGids?: ReadonlyArray<number
       if (!have) order.push(ligGid);
       changed = true;
     }
+  }
+  // A glyph shaping made of several characters, which no character and no
+  // ligature reaches: what it stands for came with it from the shaper.
+  for (const [gid, text] of glyphText ?? []) {
+    if (gidToCps.has(gid)) continue;
+    gidToCps.set(
+      gid,
+      [...text].map((c) => c.codePointAt(0)!),
+    );
+    order.push(gid);
   }
   const pairs = order
     .filter((g) => inSubset === undefined || inSubset.has(g))

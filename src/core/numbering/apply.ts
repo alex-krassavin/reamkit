@@ -17,7 +17,7 @@ import type {
 } from '@/core/document-model';
 import { pt } from '@/core/ir';
 import { NumberingState, effectiveAbstract } from '@/core/numbering/state';
-import { resolveParagraphProperties } from '@/core/style-cascade';
+import { mergeRunPartial, resolveParagraphProperties } from '@/core/style-cascade';
 
 /** The height a picture bullet takes when neither the level nor the paragraph
  * mark states a font size — Word's own default text size. */
@@ -85,6 +85,11 @@ export function applyNumbering(
       p.properties.runProperties?.fontSizePt ??
       DEFAULT_BULLET_HEIGHT_PT;
     const bulletScale = pic ? Math.min(1, bulletCapPt / Math.max(1, pic.heightPt)) : 1;
+    // §17.9.29 — what parts the marker from the text: a tab unless the level
+    // asks for one space or nothing. chtoutline.docx's chapters read "第 1 章
+    // Test" with a single space in Word, and the tab we always put there stood
+    // each heading's text off at the next stop.
+    const suffix = level?.suffix ?? 'tab';
     const markerRuns: Array<Run> = pic
       ? [
           {
@@ -97,7 +102,7 @@ export function applyNumbering(
               height: pt(pic.heightPt * bulletScale),
             },
           },
-          { text: '\t', properties: {}, listMarker: true },
+          ...(suffix === 'tab' ? [{ text: '\t', properties: {}, listMarker: true as const }] : []),
         ]
       : [
           {
@@ -106,16 +111,29 @@ export function applyNumbering(
             // break but the dash the author meant. Dropped as a break would be
             // (the page never takes one), tdf101626.docx's every bullet
             // vanished and its list read as unmarked text.
-            text: `${marker.replaceAll(SOFT_HYPHEN, '-')}\t`,
+            text: `${marker.replaceAll(SOFT_HYPHEN, '-')}${suffix === 'tab' ? '\t' : ''}`,
             // §17.9.6 — the marker is formatted like the PARAGRAPH MARK, with
             // the level's own `w:rPr` on top. Taking the level's alone left the
             // marker at whatever size the paragraph's STYLE lends: fdo78420's
             // bullets are 9pt text under an 11pt list style, and an 11pt bullet
             // made every one of its lines 4pt taller — 41 pages against 23.
-            properties: { ...p.properties.runProperties, ...level?.runProperties },
+            properties: mergeRunPartial(
+              p.properties.runProperties ?? {},
+              level?.runProperties ?? {},
+            ),
             listMarker: true,
           },
         ];
+    // The space is a run of its own: Word sets it at a width of its own too
+    // (see `listMarkerSpace`), not as a space of the marker's face.
+    if (suffix === 'space') {
+      markerRuns.push({
+        text: ' ',
+        properties: markerRuns[0]!.properties,
+        listMarker: true,
+        listMarkerSpace: true,
+      });
+    }
     const newProps: ParagraphProperties = mergeIndentFromLevel(
       p.properties,
       level?.paragraphProperties,

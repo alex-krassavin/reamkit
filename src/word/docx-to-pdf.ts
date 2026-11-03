@@ -21,6 +21,8 @@ const MAIN_DOCUMENT_PART = 'word/document.xml';
 // run through tagMatches: searched for as it is, a part of `<w:rFonts` with no
 // `>` was read to its end from each of them.
 const ASCII_FONT = /<w:rFonts[^>]*?\bw:(ascii|asciiTheme)="([^"]+)"/y;
+// …and its high-ANSI one, which Word sets the letters above ASCII in.
+const HANSI_FONT = /<w:rFonts[^>]*?\bw:(hAnsi|hAnsiTheme)="([^"]+)"/y;
 
 /**
  * Options for the `.docx` → PDF converters. Extends the low-level
@@ -118,11 +120,11 @@ function prepareDocxStyledRender(
 }
 
 /**
- * The distinct curated font families the document references — the `w:ascii` of
- * `styles.xml` + `document.xml`, and the theme slots they point at instead
- * (§17.3.2.26) — always including the sans default `'arimo'` as a fallback for
- * unstyled runs / math / charts. The async path fetches one substitute set per
- * family so each run renders in the right one.
+ * The distinct curated font families the document references — the `w:ascii`
+ * and `w:hAnsi` of `styles.xml` + `document.xml`, and the theme slots they point
+ * at instead (§17.3.2.26) — always including the sans default `'arimo'` as a
+ * fallback for unstyled runs / math / charts. The async path fetches one
+ * substitute set per family so each run renders in the right one.
  *
  * @param docx The `.docx` bytes.
  * @returns The resolved {@link FamilyKey} set; just the default when the package
@@ -142,9 +144,12 @@ export function detectDocxFamilyKeys(docx: Uint8Array): Set<FamilyKey> {
     const data = pkg.getPart(part);
     if (!data) continue;
     const xml = decoder.decode(data);
-    for (const m of tagMatches(xml, '<w:rFonts', false, ASCII_FONT)) {
-      const name = m[1] === 'ascii' ? m[2] : resolveWordThemeFont(m[2], themeFonts);
-      if (name !== undefined) keys.add(resolveFamilyKey(name));
+    for (const slot of [ASCII_FONT, HANSI_FONT]) {
+      for (const m of tagMatches(xml, '<w:rFonts', false, slot)) {
+        const literal = m[1] === 'ascii' || m[1] === 'hAnsi';
+        const name = literal ? m[2] : resolveWordThemeFont(m[2], themeFonts);
+        if (name !== undefined) keys.add(resolveFamilyKey(name));
+      }
     }
   }
   return keys;

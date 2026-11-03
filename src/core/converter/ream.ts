@@ -92,11 +92,14 @@ export interface ReamParseOptions {
 
 /**
  * Options for {@link Ream.convert} and {@link Ream.convertWithReport}. Extends
- * the low-level {@link StyledRenderOptions} (minus the font `registry` and
- * `styles`, which Ream builds itself) with font resolution and source-touching
- * conveniences.
+ * the low-level {@link StyledRenderOptions} (minus the font `registry`, the
+ * `styles` and the `losses` sink, which Ream builds itself) with font
+ * resolution and source-touching conveniences.
  */
-export interface ReamConvertOptions extends Omit<StyledRenderOptions, 'registry' | 'styles'> {
+export interface ReamConvertOptions extends Omit<
+  StyledRenderOptions,
+  'registry' | 'styles' | 'losses'
+> {
   /** Explicit font bytes per variant (regular/bold/italic/bold-italic). */
   readonly fonts?: FontBytesByVariant;
   /** Shorthand for supplying a single regular-variant font as raw bytes. */
@@ -425,11 +428,12 @@ export class Ream {
       // of every family was measured in the same face.
       const faces = { registry, ...(registriesByFamily ? { registriesByFamily } : {}) };
       const laid = this.sheet
-        ? layoutSheetImages(this.sheet, faces, sheetOptions, renderOptions)
+        ? layoutSheetImages(this.sheet, faces, sheetOptions, { ...renderOptions, losses })
         : layoutStyledDocument(flow.body, {
             ...faces,
             ...flowRenderOptions(flow),
             ...renderOptions,
+            losses,
           });
       const svg = writeSvg(laid);
       losses.push(...svg.losses);
@@ -460,6 +464,7 @@ export class Ream {
       ...(attachments.length > 0 ? { attachments } : {}),
       ...(signature ? { signaturePlaceholder: signature } : {}),
       ...renderOptions,
+      losses,
     };
     // §7.6: encryption runs on this async path (WebCrypto); the plain branch
     // stays the byte-stable sync render.
@@ -524,8 +529,8 @@ export class Ream {
 
   /**
    * Fetch one face per writing system the document holds text in — the curated
-   * families are Latin, and Han, Kana, Hangul, Arabic and the geometric symbols
-   * are a notdef box in every one of them.
+   * families are Latin, and Han, Kana, Hangul, Arabic, the scripts of India and
+   * the geometric symbols are a notdef box in every one of them.
    *
    * Only the regular weight is fetched: Noto Sans SC is ten megabytes, and a
    * bold run in it is better stroked (see `SyntheticFace`) than downloaded four

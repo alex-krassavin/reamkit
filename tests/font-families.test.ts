@@ -9,6 +9,7 @@ import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
 
+import { buildDocxFromBody } from './fixtures/build-docx';
 import { buildXlsx } from './fixtures/build-xlsx';
 import { Ream } from '@/core/converter/ream';
 import { familiesInFlow } from '@/core/fonts/families';
@@ -158,6 +159,21 @@ describe('a face the font set does not carry (E-FONT F3)', () => {
     expect(text).toContain('0 Tr');
     // …while the italic leans through the text matrix's shear term.
     expect(text).toMatch(/1 0 0\.21\d* 1 [\d.]+ [\d.]+ Tm/u);
+  });
+
+  it('strokes a faked bold in the colour it fills with', async () => {
+    // The stroke is the glyphs' own weight, not a line round them: a red bold
+    // word was ringed in black, the pen's colour since the page began.
+    const body =
+      '<w:p><w:r><w:rPr><w:b/><w:color w:val="FF0000"/></w:rPr><w:t>red </w:t></w:r>' +
+      '<w:r><w:rPr><w:color w:val="0000FF"/></w:rPr><w:t>blue </w:t></w:r>' +
+      '<w:r><w:rPr><w:b/><w:color w:val="0000FF"/></w:rPr><w:t>bold</w:t></w:r></w:p>';
+    const regular = new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Regular.ttf'));
+    const pdf = await Ream.parse(buildDocxFromBody(body)).convert('pdf', { fonts: { regular } });
+    const text = Buffer.from(pdf).toString('latin1');
+    expect(text).toMatch(/2 Tr [\d.]+ w\s+1 0 0 rg 1 0 0 RG\s+[^]*?0 Tr\s+0 0 1 rg\s/u);
+    // The plain blue word fills only; the bold one after it strokes blue too.
+    expect(text).toMatch(/0 0 1 rg\s[^]*?2 Tr [\d.]+ w\s+0 0 1 RG\s/u);
   });
 
   it('squeezes a condensed face the substitute has no cut for', async () => {

@@ -15,6 +15,7 @@ import { buildPptx } from './fixtures/build-pptx';
 import type { WarpFrame } from '@/core/drawingml/text-warp';
 import { Ream } from '@/core/converter/ream';
 import { FontRegistry, createFontMeasure, parseTtf } from '@/core/font';
+import { shapeIndic } from '@/core/font/indic-shaper';
 import { flowRenderOptions } from '@/core/converter/project';
 import { layoutStyledDocument } from '@/layout/styled-layout';
 import { isTextWarp, textWarpEdges, warpGlyphMatrix } from '@/core/drawingml/text-warp';
@@ -343,5 +344,126 @@ describe('ink measurement', () => {
     // A string with no ink at all still has to answer with something usable.
     const blank = measure.textInkPt('   ', 100);
     expect(blank.above).toBeGreaterThan(0);
+  });
+});
+
+const shapingFace = (script: string): Uint8Array<ArrayBuffer> =>
+  new Uint8Array(readFileSync(`tests/fixtures/fonts/NotoSans${script}-shaping.ttf`));
+
+/**
+ * One slide holding one WordArt shape of `text`, in PDF or SVG, drawn in
+ * `regular` — or of `runs`, the paragraph's own runs, where they are given.
+ */
+async function warpedDeck(
+  fmt: 'pdf' | 'svg',
+  prst: string,
+  text: string,
+  regular: Uint8Array,
+  runs = `<a:r><a:rPr lang="hi-IN" sz="5400"/><a:t>${text}</a:t></a:r>`,
+): Promise<string> {
+  const sp =
+    `<p:sp><p:nvSpPr><p:cNvPr id="2" name="W"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>` +
+    `<p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="4000000" cy="1000000"/></a:xfrm>` +
+    `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></p:spPr>` +
+    `<p:txBody><a:bodyPr wrap="none" lIns="0" tIns="0" rIns="0" bIns="0">` +
+    `<a:prstTxWarp prst="${prst}"><a:avLst/></a:prstTxWarp></a:bodyPr>` +
+    `<a:lstStyle/><a:p>${runs}</a:p></p:txBody></p:sp>`;
+  const bytes = await Ream.parse(buildPptx([sp])).convert(fmt, { fonts: { regular } });
+  return new TextDecoder(fmt === 'pdf' ? 'latin1' : 'utf-8').decode(bytes);
+}
+
+/** Each glyph a PDF shows alone under its own text matrix: the matrix and the glyph id. */
+function placedGlyphs(pdf: string): Array<{ m: Array<number>; gid: number }> {
+  const re =
+    /(-?[\d.]+) (-?[\d.]+) (-?[\d.]+) (-?[\d.]+) (-?[\d.]+) (-?[\d.]+) Tm\s+<([\dA-F]{4})> Tj/gu;
+  return [...pdf.matchAll(re)].map((g) => ({
+    m: g.slice(1, 7).map(Number),
+    gid: Number.parseInt(g[7]!, 16),
+  }));
+}
+
+/** Each glyph an SVG draws under a group of its own: the group's matrix and the glyph id. */
+function groupedGlyphs(svg: string): Array<{ m: Array<number>; gid: number }> {
+  const re = /<g transform="matrix\(([^)]*)\)"[^>]*><use href="#g\d+-(\d+)"\/><\/g>/gu;
+  return [...svg.matchAll(re)].map((g) => ({
+    m: g[1]!.split(' ').map(Number),
+    gid: Number(g[2]),
+  }));
+}
+
+describe('the scripts of India on a curve', () => {
+  // Set character by character as Latin is, हिन्दी came out with its short i
+  // after the ha on a dotted circle and its virama standing, and a mark the
+  // face sets by its anchors sat on the baseline.
+  const DEVANAGARI = shapingFace('Devanagari');
+  const BENGALI = shapingFace('Bengali');
+
+  it('takes the shaper’s glyphs in its order, the short i first', async () => {
+    const parsed = parseTtf(DEVANAGARI);
+    const run = shapeIndic(parsed, 'हिन्दी')!;
+    expect(run.gids[0]).not.toBe(parsed.glyphForCodepoint(0x0939));
+    const pdf = await warpedDeck('pdf', 'textWave1', 'हिन्दी', DEVANAGARI);
+    // Each glyph on its own matrix, as a Latin letter on the curve is.
+    expect(placedGlyphs(pdf).map((g) => g.gid)).toEqual(run.gids);
+    const svg = await warpedDeck('svg', 'textWave1', 'हिन्दी', DEVANAGARI);
+    expect(groupedGlyphs(svg).map((g) => g.gid)).toEqual(run.gids);
+  });
+
+  it('keeps the word bracketed with the text it was written as', async () => {
+    // ISO 32000-1 §14.9.4: drawn in the shaper's order, read in the text's.
+    const pdf = await warpedDeck('pdf', 'textWave1', 'हिन्दी', DEVANAGARI);
+    const hex = [...'हिन्दी'].map((c) => c.codePointAt(0)!.toString(16).padStart(4, '0'));
+    const open = pdf.indexOf(`/Span <</ActualText <FEFF${hex.join('').toUpperCase()}>>> BDC`);
+    expect(open).toBeGreaterThan(-1);
+    expect(placedGlyphs(pdf.slice(open, pdf.indexOf('EMC', open)))).toHaveLength(5);
+  });
+
+  it('lifts a mark off the baseline in its own frame, as the face set it', async () => {
+    // The nukta of য় sits under its ya by the face's anchors. On the plain
+    // stretch every glyph shares one baseline, and the mark stands off it by
+    // its y offset, stretched with the band the warp stretches it into.
+    const parsed = parseTtf(BENGALI);
+    const run = shapeIndic(parsed, 'কোথায়')!;
+    const i = run.yOffsets.findIndex((y) => y !== 0);
+    const lift = (run.yOffsets[i]! * 54) / parsed.unitsPerEm;
+    expect(lift).toBeGreaterThan(1);
+
+    const pdf = placedGlyphs(await warpedDeck('pdf', 'textPlain', 'কোথায়', BENGALI));
+    expect(pdf.map((g) => g.gid)).toEqual(run.gids);
+    const base = pdf[0]!.m;
+    const mark = pdf[i]!.m;
+    // PDF is y-up: the text matrix's `d` is the band's stretch, and up is up.
+    expect(mark[5]! - base[5]!).toBeCloseTo(mark[3]! * lift, 2);
+    pdf.forEach((g, j) => {
+      if (j !== i) expect(g.m[5]).toBeCloseTo(base[5]!, 3);
+    });
+
+    const svg = groupedGlyphs(await warpedDeck('svg', 'textPlain', 'কোথায়', BENGALI));
+    expect(svg.map((g) => g.gid)).toEqual(run.gids);
+    // The SVG's frame runs down, and its matrix carries the size in its `d`.
+    const sBase = svg[0]!.m;
+    const sMark = svg[i]!.m;
+    expect(sMark[5]! - sBase[5]!).toBeCloseTo((sMark[3]! / 54) * lift, 1);
+    expect(sMark[5]!).toBeLessThan(sBase[5]!);
+  });
+
+  it('draws each glyph of a syllable coloured apart in its own run’s colour', async () => {
+    // कृ with its vowel sign red: one syllable, shaped whole, in two colours.
+    const COLOUR = new Uint8Array(
+      readFileSync('tests/fixtures/fonts/NotoSansDevanagari-colour.ttf'),
+    );
+    const run = (text: string, fill = ''): string =>
+      `<a:r><a:rPr lang="hi-IN" sz="5400">${fill}</a:rPr><a:t>${text}</a:t></a:r>`;
+    const runs = run('क') + run('ृ', '<a:solidFill><a:srgbClr val="FF0000"/></a:solidFill>');
+    const [ka, r] = shapeIndic(parseTtf(COLOUR), 'कृ')!.gids;
+    const hex4 = (gid: number): string => gid.toString(16).padStart(4, '0').toUpperCase();
+
+    const pdf = await warpedDeck('pdf', 'textWave1', '', COLOUR, runs);
+    expect(pdf).toMatch(
+      new RegExp(`<${hex4(ka!)}> Tj\\s+1 0 0 rg\\s+[-\\d. ]+ Tm\\s+<${hex4(r!)}>`),
+    );
+    const svg = await warpedDeck('svg', 'textWave1', '', COLOUR, runs);
+    expect(svg).toMatch(new RegExp(`fill="#000000"><use href="#g\\d+-${ka}"/>`));
+    expect(svg).toMatch(new RegExp(`fill="#FF0000"><use href="#g\\d+-${r}"/>`));
   });
 });

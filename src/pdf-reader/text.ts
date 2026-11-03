@@ -11,13 +11,14 @@ import { patternTint, tintedHex } from './pattern-tint';
 import { hiddenProperties, hiddenXObject } from './optional-content';
 import { buildColorSpaceMap, buildShadingMap } from './shading';
 import { addShown } from './face-outlines';
+import { pdfTextString } from './encodings';
 import type { Quad, TextMarkup, TextMarkupAnnot } from './annot-draw';
 import type { ContentFont, Matrix, TextRun } from './content';
 import type { ShownCodes } from './face-outlines';
 import type { PdfDict } from '@/pdf/objects';
 import type { PdfFile, PdfPage, Rectangle } from './document';
 
-import { PDF_NULL, PdfName, PdfStream } from '@/pdf/objects';
+import { PDF_NULL, PdfHexString, PdfName, PdfStream } from '@/pdf/objects';
 
 const MAX_FORM_DEPTH = 8;
 
@@ -315,6 +316,30 @@ function spacesOf(
   return made;
 }
 
+/**
+ * §14.9.4 — the replacement text of each property list the page's
+ * `/Properties` names: the content says `/Span /P1 BDC` and the `/ActualText`
+ * is in the resources, not in the stream.
+ *
+ * @param file      The owning file.
+ * @param resources The resource dictionary in force.
+ * @returns Name → the text, for the lists that hold one.
+ */
+export function actualTextsOf(file: PdfFile, resources: PdfDict | undefined): Map<string, string> {
+  const out = new Map<string, string>();
+  const props = resources ? file.get(resources, 'Properties') : undefined;
+  if (!(props instanceof Map)) return out;
+  for (const [name, value] of props) {
+    const list = file.resolve(value);
+    const text = list instanceof Map ? file.get(list, 'ActualText') : undefined;
+    if (text instanceof PdfHexString) out.set(name, pdfTextString(text.bytes));
+    else if (typeof text === 'string') {
+      out.set(name, pdfTextString(Uint8Array.from(text, (c) => c.charCodeAt(0) & 0xff)));
+    }
+  }
+  return out;
+}
+
 // Interpret one content stream (a page or a Form XObject) into runs, then recurse
 // into the Form XObjects it paints — each composing its /Matrix onto the
 // placement CTM and using its own /Resources fonts.
@@ -345,6 +370,7 @@ function collectRuns(
     // on a page that shows them plainly.
     spacesOf(file, resources),
     hiddenProperties(file, resources),
+    actualTextsOf(file, resources),
   );
   out.push(...result.texts.map((r) => withPatternColour(file, resources, r, visiting)));
   if (shown) addShown(shown, result.shown);

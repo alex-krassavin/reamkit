@@ -5,6 +5,7 @@ import { eighthPtToPt, emuToPt, halfPtToPt, twipsToPt } from '@/core/ir';
 
 import { OpcPackage } from '@/core/opc';
 import { parseDocument } from '@/word';
+import { readDocx } from '@/word/docx-reader';
 
 function parse(paragraphs: Parameters<typeof buildRichDocx>[0]) {
   const docx = buildRichDocx(paragraphs);
@@ -120,12 +121,129 @@ describe('parseDocument: tracked changes (accept-all)', () => {
 
 // §17.3.3.1 — a forced page break vs a soft line break.
 describe('parseDocument: page break', () => {
-  it('flags w:br w:type="page" as a page break; plain w:br stays a newline', () => {
+  it('cuts the run at w:br w:type="page"; plain w:br stays a newline', () => {
     const body = `<w:p><w:r><w:t>A</w:t><w:br/><w:t>B</w:t><w:br w:type="page"/></w:r></w:p>`;
     const els = parseDocument(OpcPackage.open(buildDocxFromBody(body)).getMainDocument().data);
     const para = els[0]!.kind === 'paragraph' ? els[0]!.paragraph : null;
-    const run = para!.runs[0]!;
-    expect(run.text).toBe('A\nB'); // plain w:br → newline (soft break)
-    expect(run.pageBreak).toBe(true); // w:br w:type="page" → page-break flag
+    // A plain w:br is a newline in the text; the page break is a run of its own.
+    expect(para!.runs.map((r) => [r.text, r.pageBreak === true])).toEqual([
+      ['A\nB', false],
+      ['', true],
+    ]);
+  });
+
+  it('keeps each piece of a cut run in its properties, its link and its comment', () => {
+    // Word writes "A", a page break, "B", a column break and "C" in one run
+    // when they share their formatting: the breaks stand where they are, and
+    // every piece is still bold, still the link and still under the comment.
+    const body =
+      '<w:p><w:commentRangeStart w:id="7"/><w:hyperlink w:anchor="here"><w:r><w:rPr><w:b/></w:rPr>' +
+      '<w:t>A</w:t><w:br w:type="page"/><w:t>B</w:t><w:br w:type="column"/><w:t>C</w:t>' +
+      '</w:r></w:hyperlink><w:commentRangeEnd w:id="7"/></w:p>';
+    const para = readDocx(buildDocxFromBody(body)).doc.body.find((b) => b.kind === 'paragraph');
+    if (para?.kind !== 'paragraph') throw new Error('expected a paragraph');
+    const runs = para.paragraph.runs;
+    expect(runs.map((r) => [r.text, r.pageBreak === true, r.columnBreak === true])).toEqual([
+      ['A', false, false],
+      ['', true, false],
+      ['B', false, false],
+      ['\n', false, true],
+      ['C', false, false],
+    ]);
+    for (const r of runs) {
+      expect(r.properties.bold).toBe(true);
+      expect(r.anchor).toBe('here');
+      expect(r.commentRangeRefs).toEqual(['7']);
+    }
+  });
+});
+
+// A property the schema allows once in a w:rPr / w:pPr, written twice anyway:
+// LibreOffice repeats `<w:b w:val="false"/>` in the runs of bz165965's "font
+// issues.docx", and the pair reached the toggle reader as an array, which it
+// took for "on". The run was drawn bold, and with a face that has no bold, in
+// faux bold. Word applies the occurrences in order, each over the ones before
+// it; every expectation below is what Word for Mac reads from the same XML.
+describe('parseDocument: a property written twice', () => {
+  it('reads a toggle switched off twice as off', () => {
+    const body = parse([
+      {
+        runs: [
+          {
+            text: 'plain',
+            rPrXml:
+              '<w:rPr><w:b w:val="false"/><w:b w:val="false"/>' +
+              '<w:i w:val="0"/><w:i w:val="0"/></w:rPr>',
+          },
+        ],
+      },
+    ]);
+    expect(paragraphs(body)[0]!.runs[0]!.properties).toEqual({ bold: false, italic: false });
+  });
+
+  it('lets the later occurrence of a run property win, and keeps what it leaves unsaid', () => {
+    const body = parse([
+      {
+        runs: [
+          { text: 'a', rPrXml: '<w:rPr><w:b/><w:b w:val="false"/></w:rPr>' },
+          // Bare, an on/off element says "on": this one is bold in Word.
+          { text: 'b', rPrXml: '<w:rPr><w:b w:val="false"/><w:b/></w:rPr>' },
+          { text: 'c', rPrXml: '<w:rPr><w:sz w:val="40"/><w:sz w:val="16"/></w:rPr>' },
+          {
+            text: 'd',
+            rPrXml: '<w:rPr><w:color w:val="FF0000"/><w:color w:val="0000FF"/></w:rPr>',
+          },
+          {
+            text: 'e',
+            rPrXml:
+              '<w:rPr><w:rFonts w:ascii="Courier New" w:hAnsi="Courier New"/>' +
+              '<w:rFonts w:cs="Arial"/></w:rPr>',
+          },
+          {
+            text: 'f',
+            rPrXml: '<w:rPr><w:u w:val="single" w:color="FF0000"/><w:u w:val="double"/></w:rPr>',
+          },
+        ],
+      },
+    ]);
+    expect(paragraphs(body)[0]!.runs.map((r) => r.properties)).toEqual([
+      { bold: false },
+      { bold: true },
+      { fontSizePt: halfPtToPt(16) },
+      { colorHex: '0000FF' },
+      { fontFamily: { ascii: 'Courier New', hAnsi: 'Courier New', cs: 'Arial' } },
+      { underline: 'double', underlineColorHex: 'FF0000' },
+    ]);
+  });
+
+  it('lays a paragraph property written twice over itself', () => {
+    const body = parse([
+      {
+        pPrXml:
+          '<w:pPr><w:keepNext/><w:keepNext w:val="0"/>' +
+          '<w:tabs><w:tab w:val="left" w:pos="1440"/></w:tabs>' +
+          '<w:tabs><w:tab w:val="left" w:pos="2880"/></w:tabs>' +
+          '<w:pBdr><w:top w:val="single" w:sz="4" w:space="1"/></w:pBdr>' +
+          '<w:pBdr><w:bottom w:val="single" w:sz="4" w:space="1"/></w:pBdr>' +
+          '<w:spacing w:before="240"/><w:spacing w:after="480"/>' +
+          '<w:ind w:left="1440" w:right="360"/><w:ind w:left="720"/>' +
+          '<w:jc w:val="center"/><w:jc w:val="right"/></w:pPr>',
+        runs: [{ text: 'x' }],
+      },
+    ]);
+    const rule = { style: 'single', width: eighthPtToPt(4), spacePt: 1 };
+    expect(paragraphs(body)[0]!.properties).toEqual({
+      keepNext: false,
+      tabs: [
+        { positionPt: twipsToPt(1440), alignment: 'left' },
+        { positionPt: twipsToPt(2880), alignment: 'left' },
+      ],
+      borders: { top: rule, bottom: rule },
+      spacingBefore: twipsToPt(240),
+      spacingAfter: twipsToPt(480),
+      indentLeft: twipsToPt(720),
+      indentRight: twipsToPt(360),
+      alignment: 'right',
+    });
   });
 });

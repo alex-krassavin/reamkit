@@ -13,6 +13,7 @@
 
 import type {
   BodyElement,
+  FontFamilyMap,
   Paragraph,
   ParagraphProperties,
   RunProperties,
@@ -224,7 +225,7 @@ function mergeRun(base: ResolvedRunProperties, override: RunProperties): Resolve
     smallCaps: override.smallCaps ?? base.smallCaps,
     fontSizePt: override.fontSizePt ?? base.fontSizePt,
     colorHex: override.colorHex ?? base.colorHex,
-    fontFamily: override.fontFamily ?? base.fontFamily,
+    fontFamily: mergeFontFamily(base.fontFamily, override.fontFamily),
     verticalAlign: override.verticalAlign ?? base.verticalAlign,
     rtl: override.rtl ?? base.rtl,
     ...(lang !== undefined ? { lang } : {}),
@@ -312,8 +313,57 @@ function mergePar(
   };
 }
 
-function mergeRunPartial(base: RunProperties, override: RunProperties): RunProperties {
-  return copyDefined(base, override);
+/**
+ * Lay one layer of run properties over another (§17.7.2): each property the
+ * higher layer states wins, and each slot of its `w:rFonts` on its own.
+ *
+ * @param base     The lower layer.
+ * @param override The higher layer.
+ * @returns The two as one layer.
+ */
+export function mergeRunPartial(base: RunProperties, override: RunProperties): RunProperties {
+  const out = copyDefined(base, override);
+  const fontFamily = mergeFontFamily(base.fontFamily, override.fontFamily);
+  return fontFamily === undefined || fontFamily === out.fontFamily ? out : { ...out, fontFamily };
+}
+
+// §17.3.2.26 — the four slots of `w:rFonts` are four properties, and a layer
+// that states one leaves the other three to the layers under it; Word's binary
+// format says so outright, with a sprm per slot (sprmCRgFtc0/1/2, sprmCFtcBi).
+// Replaced as a whole, a run that says only `w:ascii="Verdana"` over defaults
+// naming the theme's body font had its Cyrillic set in Verdana, where Word
+// sets it in the body font.
+function mergeFontFamily(base: FontFamilyMap, override: FontFamilyMap | undefined): FontFamilyMap;
+function mergeFontFamily(
+  base: FontFamilyMap | undefined,
+  override: FontFamilyMap | undefined,
+): FontFamilyMap | undefined;
+function mergeFontFamily(
+  base: FontFamilyMap | undefined,
+  override: FontFamilyMap | undefined,
+): FontFamilyMap | undefined {
+  if (override === undefined) return base;
+  if (base === undefined) return override;
+  const ascii = override.ascii ?? base.ascii;
+  const hAnsi = override.hAnsi ?? base.hAnsi;
+  const eastAsia = override.eastAsia ?? base.eastAsia;
+  const cs = override.cs ?? base.cs;
+  // Nothing taken from below: the higher layer's own map, so a resolved run
+  // re-resolved over the empty sheet keeps the object it had.
+  if (
+    ascii === override.ascii &&
+    hAnsi === override.hAnsi &&
+    eastAsia === override.eastAsia &&
+    cs === override.cs
+  ) {
+    return override;
+  }
+  return {
+    ...(ascii !== undefined ? { ascii } : {}),
+    ...(hAnsi !== undefined ? { hAnsi } : {}),
+    ...(eastAsia !== undefined ? { eastAsia } : {}),
+    ...(cs !== undefined ? { cs } : {}),
+  };
 }
 
 function mergeParPartial(

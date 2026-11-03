@@ -46,7 +46,7 @@ import {
 import { emitClipPath, emitVectorShape, shadowBlurLayers } from '@/pdf/vector-graphics';
 import { buildGradientAlphaMask, buildGradientPattern, shapeBbox } from '@/pdf/shading';
 import { reverseByCodePoint } from '@/core/bidi';
-import { warpGlyphMatrix } from '@/core/drawingml/text-warp';
+import { warpGlyphMatrix, warpGlyphRun } from '@/core/drawingml/text-warp';
 import { sanitizeHref } from '@/core/links';
 import { embedTtfFont } from '@/pdf/cid-font';
 import { embedAssociatedFile } from '@/pdf/embedded-file';
@@ -675,7 +675,14 @@ function embedFontResources(
   for (const [variant, res] of laid.fontResources) {
     // A resource nothing draws from carries no glyphs and needs no program.
     if (res.gids.size === 0) continue;
-    out.set(variant, embedTtfFont(doc, res.parsed, { usedGids: res.gids, cidSet }));
+    out.set(
+      variant,
+      embedTtfFont(doc, res.parsed, {
+        usedGids: res.gids,
+        cidSet,
+        ...(res.glyphText ? { glyphText: res.glyphText } : {}),
+      }),
+    );
   }
   return out;
 }
@@ -895,8 +902,61 @@ function emitPageContent(
   // font because a `Q` restores text state too: every place that forgets
   // `lastFont` must forget these with it.
   let lastFauxWidth = 0;
+  // The stroking colour the text last set, undefined where a `Q` may have
+  // undone it; and whether the stroke goes with the fill (a faked bold).
   let lastStroke: string | undefined;
+  let strokeFollowsFill = false;
   let lastTz = 100;
+  /** A run's letter spacing, in the text space `Tz` scales (§9.4.4). */
+  const spacingOf = (tok: TextToken): number => {
+    const tz = Math.round(
+      (tok.synthetic?.widthScale ?? 1) * (tok.resolvedRun.widthScale ?? 1) * 100,
+    );
+    return (tok.resolvedRun.letterSpacingPt ?? 0) / (tz > 0 ? tz / 100 : 1);
+  };
+  /**
+   * The `rg` that makes `hex` the fill colour, when it is not already, and
+   * the `RG` with it while a faked bold strokes the glyphs in their own colour.
+   */
+  const fillTo = (hex: string): string | undefined => {
+    const ops: Array<string> = [];
+    const [r, g, b] = hexToRgb01(hex);
+    const rgb = `${formatNumber(r)} ${formatNumber(g)} ${formatNumber(b)}`;
+    if (hex !== lastColor) {
+      ops.push(`${rgb} rg`);
+      lastColor = hex;
+    }
+    if (strokeFollowsFill && hex !== lastStroke) {
+      ops.push(`${rgb} RG`);
+      lastStroke = hex;
+    }
+    return ops.length > 0 ? ops.join(' ') : undefined;
+  };
+  /**
+   * The show operators for a token's text, with what the Indic shaper needs
+   * passed on. A syllable a run boundary cut is drawn in its runs' colours: the
+   * fill colour switches between its glyphs, each glyph in the colour of the
+   * first character it stands for, and the text state is left in the last.
+   *
+   * @param colours Per code point of `text`, its colour (the token's own,
+   *                reversed with the text where it is).
+   */
+  const showTextOf = (
+    tok: TextToken,
+    text: string,
+    colours: ReadonlyArray<string> | undefined = tok.charColorsHex,
+  ): string => {
+    const measure = tok.font.measure;
+    if (!measure.clustered(text)) return measure.showText(text);
+    const sources = colours ? measure.glyphSources(text) : undefined;
+    if (!colours || !sources) return measure.showText(text, tok.fontSizePt, spacingOf(tok));
+    const before = new Map<number, string>();
+    sources.forEach((s, i) => {
+      const op = fillTo(colours[s] ?? tok.resolvedRun.colorHex);
+      if (op !== undefined) before.set(i, op);
+    });
+    return measure.showText(text, tok.fontSizePt, spacingOf(tok), before);
+  };
   const switchFontIfNeeded = (tok: TextToken) => {
     const fontKey = tok.font.resourceName;
     if (fontKey !== lastFont || tok.fontSizePt !== lastSize) {
@@ -924,15 +984,15 @@ function emitPageContent(
       out.push(fauxWidth > 0 ? `2 Tr ${formatNumber(fauxWidth)} w` : '0 Tr');
       lastFauxWidth = fauxWidth;
     }
-    // The stroking colour, which faux bold leaves at the fill's and a stated
-    // outline sets for itself.
-    const strokeHex = outline?.colorHex;
-    if (strokeHex !== lastStroke) {
-      if (strokeHex !== undefined) {
-        const [sr, sg, sb] = hexToRgb01(strokeHex);
-        out.push(`${formatNumber(sr)} ${formatNumber(sg)} ${formatNumber(sb)} RG`);
-      }
-      lastStroke = strokeHex;
+    // The stroking colour. A stated outline sets its own; a faked bold strokes
+    // in the fill's, since its line is the glyphs' weight and not a line round
+    // them, and it goes with the fill wherever that changes (`fillTo`). Left to
+    // whatever the pen last was, a red word in faux bold was ringed in black.
+    strokeFollowsFill = outline === undefined && fauxWidth > 0;
+    if (outline !== undefined && outline.colorHex !== lastStroke) {
+      const [sr, sg, sb] = hexToRgb01(outline.colorHex);
+      out.push(`${formatNumber(sr)} ${formatNumber(sg)} ${formatNumber(sb)} RG`);
+      lastStroke = outline.colorHex;
     }
     // ISO 32000-1 §9.3.3 — horizontal scaling, which is how a condensed face is
     // drawn when the substitute has no condensed cut, and how a run the
@@ -948,17 +1008,16 @@ function emitPageContent(
     // glyph through `Tc` (ISO 32000-1 §9.3.2). Set only when it changes, and
     // cleared for the runs that ask for none.
     // §9.4.4 — `Tc` is scaled by `Tz` with the glyphs, and the layout measured
-    // the spacing unscaled.
-    const tc = (tok.resolvedRun.letterSpacingPt ?? 0) / (tz > 0 ? tz / 100 : 1);
+    // the spacing unscaled. A run of the scripts of India takes its spacing
+    // after each cluster, in its own show operators (see `showTextOf`), and
+    // none from `Tc`, which would put it between a consonant and its vowel sign.
+    const tc = tok.font.measure.clustered(tok.text) ? 0 : spacingOf(tok);
     if (tc !== lastTc) {
       out.push(`${formatNumber(tc)} Tc`);
       lastTc = tc;
     }
-    if (tok.resolvedRun.colorHex !== lastColor) {
-      const [r, g, b] = hexToRgb01(tok.resolvedRun.colorHex);
-      out.push(`${formatNumber(r)} ${formatNumber(g)} ${formatNumber(b)} rg`);
-      lastColor = tok.resolvedRun.colorHex;
-    }
+    const fill = fillTo(tok.resolvedRun.colorHex);
+    if (fill !== undefined) out.push(fill);
   };
   const emitImageToken = (tok: ImageToken, x: number, baselineY: number) => {
     // MS-EMF / MS-WMF — an inline metafile draws itself: its primitives live
@@ -1354,8 +1413,11 @@ function emitPageContent(
     // it draws: with no leader it draws none at all. The simple path below
     // sets the text matrix once and lets the font's own advances carry the
     // cursor, which loses that distance entirely — a numbered list printed
-    // "1.First item". Position such a line token by token instead.
-    const hasTab = line.tokens.some((t) => t.kind === 'text' && t.tab === true);
+    // "1.First item". Position such a line token by token instead; the space
+    // after a list marker (§17.9.29) is a distance of its own the same way.
+    const hasTab = line.tokens.some(
+      (t) => t.kind === 'text' && (t.tab === true || t.listMarkerSpace === true),
+    );
 
     // Encode a token's text, reversing code points for RTL (odd-level) runs
     // so glyphs lay out right-to-left as our cursor advances left-to-right.
@@ -1364,8 +1426,45 @@ function emitPageContent(
       tok.kind === 'text' && (tok.resolvedRun.underline !== 'none' || tok.resolvedRun.strike);
 
     const showToken = (tok: TextToken): string => {
-      const text = tok.bidiLevel % 2 === 1 ? reverseByCodePoint(tok.text) : tok.text;
-      return tok.font.measure.showText(text);
+      if (tok.bidiLevel % 2 === 0) return showTextOf(tok, tok.text);
+      return showTextOf(tok, reverseByCodePoint(tok.text), tok.charColorsHex?.slice().reverse());
+    };
+    // ISO 32000-1 §14.9.4 — text the Indic shaper set is drawn in an order of
+    // its own (the short i of हि before the ha), and a glyph it formed may
+    // stand for several characters, so each word of it is bracketed with the
+    // text it stands for: copied or searched, it reads as it was written. A
+    // word cut into runs — a vowel sign coloured apart — is one bracket, or a
+    // reader takes each run for a word of its own.
+    //
+    // The word, and not less, though MuPDF (1.28.5) misreads it: its
+    // `do_extract_within_actualtext` keeps the glyphs whose /ToUnicode matches
+    // the text at either end of a bracket and counts in bytes, not characters,
+    // what is left of the text for them, so a tail that matched comes out
+    // twice — हिन्दी reads "हिन्दीन्दी". Bracketing only the glyphs drawn out of
+    // order (हि, and न्दी from /ToUnicode) read right in MuPDF, but poppler
+    // takes a bracket that ends on a mark set back over its letter, the reph
+    // of कर्कश or the rakar of राष्ट्र, for the end of a word ("कर्क श"), and
+    // a bracket that keeps the mark with the letter after it ends on a tail
+    // that matches again ("कर्कशश"). LibreOffice escapes MuPDF by giving no
+    // Unicode value to any glyph of a cluster but the first, which PDF/A-2u
+    // (§6.2.11.7.2) and PDF/UA (§7.21.7) forbid.
+    const actualText = (tokens: ReadonlyArray<(typeof line.tokens)[number]>) => {
+      const open = tokens.map(() => '');
+      const close = tokens.map(() => false);
+      const shaped = (t: (typeof line.tokens)[number] | undefined): t is TextToken =>
+        t?.kind === 'text' && !t.isSpace && t.tab !== true && t.font.measure.clustered(t.text);
+      for (let i = 0; i < tokens.length; i++) {
+        if (!shaped(tokens[i])) continue;
+        let j = i;
+        let text = '';
+        for (let t = tokens[j]; shaped(t); t = tokens[++j]) text += t.text;
+        let hex = '';
+        for (const b of unicodeString(text).bytes) hex += b.toString(16).padStart(2, '0');
+        open[i] = `/Span <</ActualText <${hex.toUpperCase()}>>> BDC`;
+        close[j - 1] = true;
+        i = j - 1;
+      }
+      return { open, close };
     };
 
     // §17.3.2.32 — a run's own background, painted behind its glyphs before
@@ -1531,13 +1630,48 @@ function emitPageContent(
         out.push('BT');
         inBT = true;
       }
+      // The warp's matrix works in the page's top-left frame; PDF's is y-up, so
+      // the two terms that carry y flip and the origin reflects.
+      const placeGlyph = (m: readonly [number, number, number, number, number, number]) =>
+        `${formatNumber(m[0])} ${formatNumber(-m[1])} ${formatNumber(m[2])} ` +
+        `${formatNumber(-m[3])} ${formatNumber(m[4])} ${formatNumber(H - m[5])} Tm`;
+      const at = actualText(line.tokens);
       let cursor: number = originX;
-      for (const tok of line.tokens) {
+      for (let ti = 0; ti < line.tokens.length; ti++) {
+        const tok = line.tokens[ti]!;
         if (tok.kind !== 'text' || tok.isSpace) {
           cursor += tok.widthPt;
           continue;
         }
         switchFontIfNeeded(tok);
+        // The scripts of India go onto the curve as the shaper set them, glyph
+        // by glyph in its order, and the word stays bracketed with the text it
+        // was written as.
+        if (tok.font.measure.clustered(tok.text)) {
+          if (at.open[ti]) out.push(at.open[ti] ?? '');
+          const glyphs = warpGlyphRun(
+            warp,
+            tok.font.measure.glyphRun(tok.text),
+            cursor,
+            tok.widthPt,
+            tok.fontSizePt / tok.font.parsed.unitsPerEm,
+            cmd.baselineY,
+          );
+          // A syllable a run boundary cut: each glyph in its first character's colour.
+          const colours = tok.charColorsHex;
+          const sources = colours ? tok.font.measure.glyphSources(tok.text) : undefined;
+          for (const g of glyphs) {
+            const fill = sources
+              ? fillTo(colours?.[sources[g.index]!] ?? tok.resolvedRun.colorHex)
+              : undefined;
+            if (fill !== undefined) out.push(fill);
+            out.push(placeGlyph(g.matrix));
+            out.push(`<${g.gid.toString(16).padStart(4, '0').toUpperCase()}> Tj`);
+          }
+          if (at.close[ti]) out.push('EMC');
+          cursor += tok.widthPt;
+          continue;
+        }
         // Per-glyph placement drops the shaper's kerning, which the line was
         // measured WITH: the token's own glyphs are rescaled to the width it
         // was measured at, so the block still ends where the layout said.
@@ -1550,12 +1684,7 @@ function emitPageContent(
           const m = warpGlyphMatrix(warp, cursor, adv, cmd.baselineY);
           cursor += adv;
           if (!m) continue;
-          // The warp works in the page's top-left frame; PDF's is y-up, so the
-          // two terms that carry y flip and the origin reflects.
-          out.push(
-            `${formatNumber(m[0])} ${formatNumber(-m[1])} ${formatNumber(m[2])} ` +
-              `${formatNumber(-m[3])} ${formatNumber(m[4])} ${formatNumber(H - m[5])} Tm`,
-          );
+          out.push(placeGlyph(m));
           out.push(tok.font.measure.showText(chars[i]!));
         }
       }
@@ -1576,11 +1705,14 @@ function emitPageContent(
         `${cos} ${sin} ${formatNumber(-Math.sin(rad))} ${cos} ` +
           `${formatNumber(originX)} ${formatNumber(baselineY)} Tm`,
       );
-      for (const tok of line.tokens) {
-        if (tok.kind !== 'text') continue;
+      const at = actualText(line.tokens);
+      line.tokens.forEach((tok, i) => {
+        if (tok.kind !== 'text') return;
         switchFontIfNeeded(tok);
-        out.push(tok.font.measure.showText(tok.text));
-      }
+        if (at.open[i]) out.push(at.open[i] ?? '');
+        out.push(showTextOf(tok, tok.text));
+        if (at.close[i]) out.push('EMC');
+      });
     } else if (
       extraPerSpace !== 0 ||
       hasImageToken ||
@@ -1594,9 +1726,10 @@ function emitPageContent(
       // slack), inline images (text-mode exits), and BiDi (visual order
       // differs from logical order). Tokens are emitted in visual order.
       const order = hasRtl ? lineVisualOrder(line) : line.tokens.map((_, i) => i);
+      const at = actualText(order.map((i) => line.tokens[i]!));
       let x: number = originX;
-      for (const ti of order) {
-        const tok = line.tokens[ti]!;
+      for (let oi = 0; oi < order.length; oi++) {
+        const tok = line.tokens[order[oi]!]!;
         if (tok.kind === 'image') {
           flushLink();
           emitImageToken(tok, x, baselineY);
@@ -1621,7 +1754,9 @@ function emitPageContent(
           `1 0 ${formatNumber(slant)} 1 ` +
             `${formatNumber(x)} ${formatNumber(baselineY + (tok.risePt ?? 0))} Tm`,
         );
+        if (at.open[oi]) out.push(at.open[oi] ?? '');
         out.push(showToken(tok));
+        if (at.close[oi]) out.push('EMC');
         const tokenX0 = x;
         x += tok.widthPt;
         if (tok.isSpace) x += extraPerSpace;
@@ -1634,11 +1769,15 @@ function emitPageContent(
         inBT = true;
       }
       out.push(`1 0 0 1 ${formatNumber(originX)} ${formatNumber(baselineY)} Tm`);
+      const at = actualText(line.tokens);
       let x: number = originX;
-      for (const tok of line.tokens) {
+      for (let i = 0; i < line.tokens.length; i++) {
+        const tok = line.tokens[i]!;
         if (tok.kind !== 'text') continue; // unreachable here, but TS-narrowed
         switchFontIfNeeded(tok);
-        out.push(tok.font.measure.showText(tok.text));
+        if (at.open[i]) out.push(at.open[i] ?? '');
+        out.push(showTextOf(tok, tok.text));
+        if (at.close[i]) out.push('EMC');
         trackLink(tok.href, tok.anchor, tok.text, x, x + tok.widthPt);
         x += tok.widthPt;
       }

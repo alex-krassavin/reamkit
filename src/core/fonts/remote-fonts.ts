@@ -40,13 +40,32 @@ export type FamilyKey = 'arimo' | 'tinos' | 'cousine' | 'carlito' | 'caladea';
  * A WRITING SYSTEM the curated five cannot draw at all. They are Latin families
  * — Greek, Cyrillic and Hebrew ride along, everything else is a notdef box —
  * and 2145 characters of the corpus fall outside them: Han, Kana, Hangul,
- * Arabic, the geometric symbols a form's checkbox is made of.
+ * Arabic, the geometric symbols a form's checkbox is made of. The scripts of
+ * India are outside them too, and a line of Hindi, Tamil or Bengali came out
+ * as a row of boxes.
  *
  * These are fetched only when a document actually holds such a character, and
  * only in the regular weight: Noto Sans SC is ten megabytes, and a bold run in
  * it is better stroked (see `SyntheticFace`) than downloaded four times over.
  */
-export type ScriptKey = 'jp' | 'kr' | 'sc' | 'arabic' | 'hebrew' | 'thai' | 'symbols1' | 'symbols2';
+export type ScriptKey =
+  | 'jp'
+  | 'kr'
+  | 'sc'
+  | 'arabic'
+  | 'hebrew'
+  | 'thai'
+  | 'devanagari'
+  | 'bengali'
+  | 'gurmukhi'
+  | 'gujarati'
+  | 'oriya'
+  | 'tamil'
+  | 'telugu'
+  | 'kannada'
+  | 'malayalam'
+  | 'symbols1'
+  | 'symbols2';
 
 /** Either kind of substitute — a Latin family or a per-script face. */
 export type SubstituteKey = FamilyKey | ScriptKey;
@@ -63,6 +82,19 @@ const SCRIPTS: Record<ScriptKey, ScriptFamily> = {
   arabic: { pkg: 'noto-sans-arabic', file: 'NotoSansArabic' },
   hebrew: { pkg: 'noto-sans-hebrew', file: 'NotoSansHebrew' },
   thai: { pkg: 'noto-sans-thai', file: 'NotoSansThai' },
+  // One face per script of India, 59 to 217 KB each. Their letters are drawn
+  // from these, but not yet SHAPED: a vowel sign that stands before its
+  // consonant is set after it, and two consonants joined by a virama keep the
+  // virama instead of forming a conjunct.
+  devanagari: { pkg: 'noto-sans-devanagari', file: 'NotoSansDevanagari' },
+  bengali: { pkg: 'noto-sans-bengali', file: 'NotoSansBengali' },
+  gurmukhi: { pkg: 'noto-sans-gurmukhi', file: 'NotoSansGurmukhi' },
+  gujarati: { pkg: 'noto-sans-gujarati', file: 'NotoSansGujarati' },
+  oriya: { pkg: 'noto-sans-oriya', file: 'NotoSansOriya' },
+  tamil: { pkg: 'noto-sans-tamil', file: 'NotoSansTamil' },
+  telugu: { pkg: 'noto-sans-telugu', file: 'NotoSansTelugu' },
+  kannada: { pkg: 'noto-sans-kannada', file: 'NotoSansKannada' },
+  malayalam: { pkg: 'noto-sans-malayalam', file: 'NotoSansMalayalam' },
   // The symbol repertory did not fit in one file, and Noto ships two that
   // barely overlap: of the dingbats U+2700–27BF, 145 are in the second face and
   // 35 — the crosses U+271D–2721 among them — only in the first, and the

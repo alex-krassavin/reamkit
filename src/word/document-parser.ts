@@ -1248,22 +1248,27 @@ function collectRuns(
         ctx.openCommentRanges && ctx.openCommentRanges.size > 0
           ? [...ctx.openCommentRanges]
           : undefined;
-      const run =
-        href !== undefined || anchor !== undefined || ranges !== undefined || sdtRunProps
-          ? {
-              ...parsed.run,
-              ...(sdtRunProps ? { properties: { ...sdtRunProps, ...parsed.run.properties } } : {}),
-              ...(href !== undefined ? { href } : {}),
-              ...(anchor !== undefined ? { anchor } : {}),
-              ...(ranges !== undefined ? { commentRangeRefs: ranges } : {}),
-            }
-          : parsed.run;
-      out.push({
-        run,
-        ...(parsed.fldChar ? { fldChar: parsed.fldChar } : {}),
-        ...(parsed.instrText !== undefined ? { instrText: parsed.instrText } : {}),
-        ...(parsed.checkBox !== undefined ? { checkBox: parsed.checkBox } : {}),
-      });
+      // A run cut at its breaks is several, each in the link, the comment and
+      // the control the whole one is in. A field's run is never cut, so the
+      // field's markers ride on the only one.
+      for (const own of parsed.runs) {
+        const run =
+          href !== undefined || anchor !== undefined || ranges !== undefined || sdtRunProps
+            ? {
+                ...own,
+                ...(sdtRunProps ? { properties: { ...sdtRunProps, ...own.properties } } : {}),
+                ...(href !== undefined ? { href } : {}),
+                ...(anchor !== undefined ? { anchor } : {}),
+                ...(ranges !== undefined ? { commentRangeRefs: ranges } : {}),
+              }
+            : own;
+        out.push({
+          run,
+          ...(parsed.fldChar ? { fldChar: parsed.fldChar } : {}),
+          ...(parsed.instrText !== undefined ? { instrText: parsed.instrText } : {}),
+          ...(parsed.checkBox !== undefined ? { checkBox: parsed.checkBox } : {}),
+        });
+      }
       continue;
     }
     // OfficeMath: an inline equation (m:oMath) or a display paragraph
@@ -1435,9 +1440,24 @@ function parseRun(
   // §20.4.2.3 — out-param: the ANCHORED drawings this run carries. They are not
   // part of the line at all; the caller emits them as blocks of their own.
   anchored?: Array<BodyElement>,
-): { run: Run; fldChar?: 'begin' | 'separate' | 'end'; instrText?: string; checkBox?: boolean } {
+): {
+  runs: ReadonlyArray<Run>;
+  fldChar?: 'begin' | 'separate' | 'end';
+  instrText?: string;
+  checkBox?: boolean;
+} {
   const rPr = poChildren(r).find((c) => poIs(c, 'w:rPr'));
   const properties = parseRunProperties(rPr ? poElementToFlat(rPr) : undefined, ctx.themeFonts);
+  const children = expandMcChildren(poChildren(r));
+  // §17.3.3.1 — a page or column break happens WHERE IT STANDS in the run: what
+  // comes before it ends its line there, what comes after starts the next page
+  // or column. Read as a flag on the whole run, "Latin", a page break and
+  // "Second" in one `w:r` set both words on the first page and the break after
+  // the paragraph. So the run is cut at each such break into runs of the same
+  // properties, the break a run of its own, the way Word itself writes one. A
+  // field's run is read whole: what it holds belongs to the field.
+  const cuts = !children.some((c) => poIs(c, 'w:fldChar') || poIs(c, 'w:instrText'));
+  const runs: Array<Run> = [];
   let text = '';
   let pageBreak = false;
   let columnBreak = false;
@@ -1449,7 +1469,41 @@ function parseRun(
   let endnoteRef: string | undefined;
   let commentRef: string | undefined;
   let noteNumber = false;
-  for (const child of expandMcChildren(poChildren(r))) {
+  // The run read since the last cut, ended: kept when it holds anything, or
+  // when it is all the run there is.
+  const cut = (last: boolean): void => {
+    const holds =
+      text !== '' ||
+      inlineImage !== undefined ||
+      pageBreak ||
+      columnBreak ||
+      footnoteRef !== undefined ||
+      endnoteRef !== undefined ||
+      commentRef !== undefined ||
+      noteNumber;
+    if (holds || (last && runs.length === 0)) {
+      runs.push({
+        text,
+        properties,
+        ...(inlineImage ? { inlineImage } : {}),
+        ...(pageBreak ? { pageBreak: true } : {}),
+        ...(columnBreak ? { columnBreak: true } : {}),
+        ...(footnoteRef !== undefined ? { footnoteRef } : {}),
+        ...(endnoteRef !== undefined ? { endnoteRef } : {}),
+        ...(commentRef !== undefined ? { commentRef } : {}),
+        ...(noteNumber ? { noteNumber: true } : {}),
+      });
+    }
+    text = '';
+    pageBreak = false;
+    columnBreak = false;
+    inlineImage = undefined;
+    footnoteRef = undefined;
+    endnoteRef = undefined;
+    commentRef = undefined;
+    noteNumber = false;
+  };
+  for (const child of children) {
     if (poIs(child, 'w:rPr')) continue;
     if (poIs(child, 'w:fldChar')) {
       const t = poAttr(child, 'fldCharType');
@@ -1495,11 +1549,14 @@ function parseRun(
       // the next column; either way the line ends here, and any other break
       // type (textWrapping/none) is a soft line break within the text flow.
       const breakType = poAttr(child, 'type');
+      const forced = cuts && (breakType === 'page' || breakType === 'column');
+      if (forced) cut(false);
       if (breakType === 'page') pageBreak = true;
       else {
         if (breakType === 'column') columnBreak = true;
         text += '\n';
       }
+      if (forced) cut(false);
     } else if (poIs(child, 'w:sym')) {
       // §17.3.3.30 — a character from a SYMBOL font, named by the font and the
       // code point it sits at there (usually in the private-use area). Read
@@ -1601,18 +1658,9 @@ function parseRun(
       }
     }
   }
+  cut(true);
   return {
-    run: {
-      text,
-      properties,
-      ...(inlineImage ? { inlineImage } : {}),
-      ...(pageBreak ? { pageBreak: true } : {}),
-      ...(columnBreak ? { columnBreak: true } : {}),
-      ...(footnoteRef !== undefined ? { footnoteRef } : {}),
-      ...(endnoteRef !== undefined ? { endnoteRef } : {}),
-      ...(commentRef !== undefined ? { commentRef } : {}),
-      ...(noteNumber ? { noteNumber: true } : {}),
-    },
+    runs,
     ...(fldChar ? { fldChar } : {}),
     ...(instrText !== undefined ? { instrText } : {}),
     ...(checkBox !== undefined ? { checkBox } : {}),
