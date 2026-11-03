@@ -393,8 +393,14 @@ yourself, or `{ images: 'drop' }` to omit them.
   ("compressed") — are stitched back into the document text and split into
   paragraphs, while the CHPX and PAPX runs (located through the `PlcfBteChpx` /
   `PlcfBtePapx` bin tables and decoded from their sprms) carry **bold / italic /
-  underline / font size** onto each run and **alignment / indentation / spacing**
-  onto each paragraph. **Tables** are reconstructed too — the in-table paragraphs
+  underline / font size / font** onto each run and **alignment / indentation /
+  spacing / keeps** onto each paragraph, over what their **styles** give them (the
+  STSH: paragraph and character styles along their bases, down to the default
+  fonts the document names; the fonts by name from the `SttbfFfn`, slot by slot).
+  **Page, column and line breaks** and a paragraph set to start a page break where
+  Word breaks them. **Sections** come from the `PlcfSed`: each starts where it says
+  — a new page, an odd or even one, or the page in hand — on its own paper size,
+  inside its own margins and gutter. **Tables** are reconstructed too — the in-table paragraphs
   (marked by the `fInTable` / `fTtp` PAPX flags, cells delimited by the `0x07`
   cell mark) become a row-and-cell grid, with per-column widths, **per-cell borders
   and vertical merges** (the table definition's `TC80` array) and **per-cell
@@ -402,12 +408,15 @@ yourself, or `{ images: 'drop' }` to omit them.
   are extracted (the
   picture character's CHPX points at a PICF in the `Data` stream; the raster blip
   is pulled out and sized from the PICF). **Fields** resolve to their cached
-  result — the field code (`PAGE`, `NUMPAGES`, `REF`, …) is dropped and the stored
-  result text kept. The section's **headers and footers** are lifted from the
-  `PlcfHdd` stories (best-effort: the binary story ordering can't be ground-truthed
-  here, so only well-formed stories are surfaced). **List items** (`sprmPIlfo` /
-  `sprmPIlvl`) render with their resolved **number format** — a real "1." / "a)" /
-  "iii." or the bullet glyph, from the `LST` / `LVL` / `LFO` tables. So an old `.doc`
+  result — the field code (`REF`, `DATE`, …) is dropped and the stored result text
+  kept — but for `PAGE` and `NUMPAGES` in a header or footer, which count the
+  pages, restarting and in the numerals each section asks for. Each section's
+  **headers and footers** are lifted from the `PlcfHdd` stories — a first page's
+  own, even pages' own, and "same as previous" taken from the section before.
+  **List items** (`sprmPIlfo` / `sprmPIlvl`) render with their resolved **number
+  format** — a real "1." / "a)" / "iii." or the bullet glyph, from the `LST` /
+  `LVL` / `LFO` tables — ended by the tab, space or nothing their level asks for.
+  So an old `.doc`
   renders to PDF/SVG/HTML and re-writes to `.docx`. Legacy drawing shapes / text
   boxes and comments are not read (re-save as `.docx` for full fidelity); an
   encrypted `.doc` yields no text — the binary formats lock themselves with the
@@ -705,13 +714,28 @@ yourself, or `{ images: 'drop' }` to omit them.
 - Knuth–Plass line breaking, Liang hyphenation (en / ru).
 - OpenType ligatures and kerning (GSUB/GPOS), mark positioning.
 - BiDi (UAX #9), Arabic cursive joining.
+- **The scripts of India, shaped.** Devanagari, Bengali, Gurmukhi, Gujarati, Odia,
+  Tamil, Telugu, Kannada and Malayalam go through a restatement of HarfBuzz's Indic
+  shaper — syllables, reordering, conjuncts, the reph, vowel signs drawn on both
+  sides, marks set by their anchors — checked glyph by glyph against hb-shape. A
+  PDF's text layer reads them as written: `/ToUnicode` names each glyph by the
+  letters it was made from, and each word carries `/ActualText`. A syllable cut by
+  runs is shaped whole, each glyph in its own run's colour; a difference in
+  weight, size or face inside one goes to the run it begins in. WordArt bends them
+  shaped too.
 - **A face for the writing system the document is in.** The curated substitutes are
-  Latin, so text in Han, Kana, Hangul, Arabic, Hebrew, Thai or the geometric symbol
-  block reaches a Noto face for that script instead of a row of notdef boxes —
+  Latin, so text in Han, Kana, Hangul, Arabic, Hebrew, Thai, the scripts of India
+  or the geometric symbol block reaches a Noto face for that script instead of a
+  row of notdef boxes —
   chosen per CHARACTER, fetched only for the scripts a document actually holds, and
   in one weight rather than four. Unified Han is the document's call: the same
   character is drawn differently in Japanese, Korean and Chinese, so its neighbours
-  decide which face draws it.
+  decide which face draws it. A character no face on hand can draw is reported
+  as a `text` loss, so `strict: true` refuses it rather than printing a box.
+- **Each character in the font its slot names** (§17.3.2.26): ASCII in `w:ascii`,
+  East Asian text in `w:eastAsia`, complex script in `w:cs`, everything else —
+  Cyrillic, Greek, accented Latin — in `w:hAnsi`, each slot inherited on its own
+  through the styles and defaults.
 - **The font a document brings with it** is used ahead of any substitute — a
   `.docx` font-table part (de-obfuscated against the GUID in its name) or a `.pptx`
   `p:embeddedFontLst` face. A `w:rFonts` that names a **theme** slot rather than a
