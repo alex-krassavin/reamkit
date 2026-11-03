@@ -3,6 +3,113 @@
 All notable changes to **Ream** (`reamkit`) are documented here. The project
 follows [Semantic Versioning](https://semver.org/).
 
+## 1.34.0
+
+A release about the scripts of India, set as HarfBuzz sets them, and about
+Word's binary `.doc`, set as Word sets it.
+
+A document in Hindi came out as boxes, and nothing said so (#115). The fix
+took a face for each script, an engine for the whole of OpenType Layout and a
+shaper restated from HarfBuzz's, checked glyph by glyph against hb-shape. The
+`.doc` work came from the same documents and others like them: their pages ran
+together, their headings were plain, their fonts were nobody's. Every case was
+measured in Word for Mac on probes of our own, by page counts and by where
+each word stands.
+
+### Added
+
+- **The scripts of India are shaped.** Devanagari, Bengali, Gurmukhi,
+  Gujarati, Odia, Tamil, Telugu, Kannada and Malayalam each fetch a Noto face,
+  and a word in them is drawn as it is read, not as it is typed: the short i
+  of हिन्दी before its ha, a conjunct for na, virama and da, a Ra that starts a
+  syllable riding over it as a reph, a Tamil vowel sign drawn on both sides of
+  its consonant. The shaper restates HarfBuzz's Indic shaper over a GSUB and
+  GPOS engine of our own, and agrees with hb-shape 15 on every one of 5 530
+  words of the Universal Declaration of Human Rights in eight of the languages,
+  8 992 syllables and all but 3 of 44 646 random strings. A mark the face
+  places by its anchors stands off the line, letter spacing goes after a
+  cluster, and a line of these scripts is set in the run's complex-script font
+  (`w:cs`, §17.3.2.26). Text in any other script is drawn byte for byte as
+  before. Fixes #115.
+
+- **And read back as written.** /ToUnicode names each glyph only shaping
+  reaches by the letters it was made from, and each word is bracketed with
+  /ActualText (§14.9.4), so pdftotext reads हिन्दी and not िहन्दी. veraPDF
+  passes Hindi as PDF/A-1a, 2a, 2u and PDF/UA-1. MuPDF doubles the tail of
+  such words by its own reckoning of the bracket; the source says why.
+
+- **A syllable cut by a run keeps each sign's colour.** A syllable is shaped
+  whole in the run it begins in, and each glyph takes the colour of the
+  character it was made from, as Word draws it: the orange vowel sign of कृ in
+  a word coloured sign by sign stays orange.
+
+- **WordArt bends them shaped.** A curve (§20.1.9.10 `a:prstTxWarp`) takes the
+  shaper's glyphs, offsets and order; before, half the signs were not drawn.
+
+### Fixed
+
+- **A word bracketed with /ActualText reads as its text** in Ream's own PDF
+  reader, inline or named through the page's /Properties, nested inside a
+  tagged paragraph or not. Word, InDesign and Chrome write the same brackets
+  round ligatures and hyphens.
+
+- **A `.doc` breaks its pages.** A page break (0x0C), a column break (0x0E), a
+  line break (0x0B) and a paragraph set to start a page now do what they say;
+  they were dropped, read as a space, or not read. A paragraph that ends in a
+  break leaves its mark at the head of the next page, as Word sets it.
+
+- **Each section of a `.doc` is its own.** It starts where its SEP says — a
+  new page, an odd or an even one, or the page in hand — on its own paper,
+  inside its own margins and gutter, under its own headers and footers: a
+  first page's own, even pages' own, "same as previous" taken from the section
+  before. 53379.doc, eight sections, goes from 23 pages to 28.
+
+- **A `.doc` reads its style sheet and its fonts.** A heading is the
+  heading's weight and size, a character style's italic reaches its run, and
+  every run is set in the face Word sets it in, slot by slot, down the style
+  chain to the document's defaults ([MS-DOC] §2.9.271). Before, every run was
+  11 pt in the layout's default face.
+
+- **A page number in a `.doc`'s header or footer counts the pages**, restarting
+  and in the numerals each section asks for; it printed the number Word cached
+  on every page.
+
+- **Each character of a run is set in the font its slot names**: ASCII in
+  `w:ascii`, East Asian text in `w:eastAsia`, complex script in `w:cs`, the
+  rest — Cyrillic, Greek, accented Latin — in `w:hAnsi` (§17.3.2.26). A run
+  inherits each slot on its own, so one that names only `w:eastAsia` and
+  `w:cs`, as Word writes them by the thousand, keeps its style's ASCII font.
+
+- **A page break stands where it is in its run.** A `w:br w:type="page"` in a
+  run with text broke the page after the whole paragraph; "Latin", the break
+  and "Second" printed "LatinSecond". The run is cut at the break, as Word
+  itself writes one.
+
+- **A list marker ends in what its level puts after it** (§17.9.29 `w:suff`):
+  a tab, a space or nothing, in a `.docx` and a `.doc` alike; every marker
+  was followed by a tab. And a marker's character is asked of the face that
+  draws it: "第 1 章", Hebrew and Han numbering, and the Wingdings bullets of 13
+  corpus files were a column of dots.
+
+- **A property written twice reads as Word reads it.** LibreOffice writes
+  `<w:b w:val="false"/>` twice, and the pair read as bold; a doubled size or
+  outline level was lost.
+
+- **A faked bold strokes in the colour it fills with** (§9.3.6); it was ringed
+  in black.
+
+### Changed
+
+- **A character no font can draw is a loss.** It was drawn as an empty box with
+  nothing in the text layer and nothing in the losses, and `strict: true` let
+  it through. It is now a `text` loss naming the first characters and the page.
+
+### Internals
+
+- vitest is at 5.0.5. The Indic character table is generated from ICU by
+  `scripts/build-indic-table.ts`; the shaping tests run on Noto faces cut down
+  with hb-subset (OFL-1.1, see the fixtures' NOTICE.md).
+
 ## 1.33.2
 
 A patch for a slide's lines, from the first fixes contributed to Ream from

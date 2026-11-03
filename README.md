@@ -31,8 +31,8 @@ format is sniffed from the bytes; no fonts to wire up — an open
 metric-compatible substitute font (Arimo for sans, Tinos for serif, Cousine for
 monospace, plus Carlito/Caladea for Calibri/Cambria — the same families LibreOffice
 substitutes) is fetched automatically based on the document's referenced fonts,
-with a Noto face for the Japanese, Korean, Chinese, Arabic, Hebrew or Thai text
-the document holds:
+with a Noto face for the Japanese, Korean, Chinese, Arabic, Hebrew, Thai or
+Indic (Hindi, Bengali, Tamil and six more scripts) text the document holds:
 
 ```ts
 import { Ream } from 'reamkit';
@@ -196,11 +196,12 @@ bars, icon sets, and `expression` rules evaluated by a ~140-function formula
 engine), **sparklines** and **Excel tables**, DrawingML shapes and
 charts, OMML math, Type0+CIDFontType2 embedding with subsetting, Knuth-Plass
 line breaking, Liang hyphenation, OpenType ligatures/kerning + Arabic cursive
-joining, BiDi (UAX #9), hyperlinks (PDF link annotations + HTML anchors,
-scheme-allowlisted), tagged PDF, PDF/A-1/2/3 (a/b/u), PDF/UA-1, AES-256
-encryption, digital signatures (PKCS#7/ECDSA/PAdES/RFC 3161), SVG page
-preview, flowed HTML export, and **docx + xlsx output** (write WordprocessingML
-/ SpreadsheetML back out, incl. round-trips). Reads OOXML Transitional and Strict.
+joining + Indic shaping (GSUB/GPOS, as HarfBuzz shapes), BiDi (UAX #9),
+hyperlinks (PDF link annotations + HTML anchors, scheme-allowlisted), tagged
+PDF, PDF/A-1/2/3 (a/b/u), PDF/UA-1, AES-256 encryption, digital signatures
+(PKCS#7/ECDSA/PAdES/RFC 3161), SVG page preview, flowed HTML export, and
+**docx + xlsx output** (write WordprocessingML / SpreadsheetML back out, incl.
+round-trips). Reads OOXML Transitional and Strict.
 
 A Word document is laid out by Word's own rules, each measured in Word: a line
 as tall as Word sets its faces, two paragraphs standing the larger of their
@@ -274,9 +275,11 @@ hyperlinks — then converts onward to PDF, SVG, HTML, Markdown or DOCX like any
 
 **Reads legacy `.doc`, `.xls` and `.ppt`, too.** The binary Word / Excel /
 PowerPoint 97–2003 formats (OLE2/CFB) parse through a shared container reader: a
-`.doc` yields its text with run and paragraph formatting, tables (with cell
-borders, vertical merges and background shading), inline images, fields,
-headers/footers and lists (numbered or bulleted, in their number format);
+`.doc` yields its text with run and paragraph formatting (through its style sheet
+and font table), page, column and line breaks, sections with their own page
+size, margins and headers/footers, page numbers, tables (with cell
+borders, vertical merges and background shading), inline images, fields
+and lists (numbered or bulleted, in their number format);
 an `.xls` yields the grid with styling, embedded
 images, charts, drawing shapes, cell hyperlinks, the page-setup print model,
 defined names (named ranges, print area, repeated titles), cell comments, data
