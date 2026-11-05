@@ -48,6 +48,10 @@ jobs:
           node-version: 24
           registry-url: 'https://registry.npmjs.org'
           cache: npm
+      # npm 12 (node 24 still bundles npm 11): a dependency's install scripts
+      # run only if package.json's allowScripts allows them, so none run in
+      # the job that publishes.
+      - run: npm install -g npm@12
       - run: npm ci
 
       # Full gates before anything is tagged, published, or pushed.

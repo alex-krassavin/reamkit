@@ -20,6 +20,9 @@ jobs:
         with:
           node-version: 24
           cache: npm
+      # npm 12 (node 24 still bundles npm 11): a dependency's install scripts
+      # run only if package.json's allowScripts allows them.
+      - run: npm install -g npm@12
       - run: npm ci
       - run: npm run typecheck
       - run: npm run lint
@@ -44,6 +47,9 @@ jobs:
         with:
           node-version: 24
           cache: npm
+      # npm 12 (node 24 still bundles npm 11): a dependency's install scripts
+      # run only if package.json's allowScripts allows them.
+      - run: npm install -g npm@12
       - run: npm ci
       - name: Install LibreOffice + mupdf-tools (golden render + raster/stext)
         run: |
