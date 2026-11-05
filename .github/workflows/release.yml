@@ -21,20 +21,14 @@ name: Release
 # Publishing goes through npm Trusted Publishing (OIDC): no npm token is stored
 # in the repo. npm trades this job's GitHub OIDC token (id-token: write) for a
 # short-lived credential that can publish `reamkit` only, and only from this
-# workflow file, and attaches the provenance attestation itself. One-time setup
-# on npmjs.com: reamkit → Settings → Trusted publishing → GitHub Actions, with
-# organization or user `alex-krassavin`, repository `reamkit`, workflow
-# filename `release.yml`, no environment, and direct `npm publish` allowed. A
-# new trusted publisher expires unless it publishes within 2 days, so add it
-# just before a release. Needs npm >= 11.5.1; the job installs npm 12.
-#
-# Rollback, until the first token-less publish has succeeded: put
-#     env:
-#       NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-# back on the publish step (npm tries OIDC first and falls back to the token).
-# Granular tokens that bypass 2FA lose direct publishing around January 2027;
-# after that a token can only stage a publish (`npm stage publish`), which a
-# maintainer approves with 2FA on npmjs.com.
+# workflow file, and attaches the provenance attestation itself. The trusted
+# publisher on npmjs.com (reamkit → Settings → Trusted publishing) names GitHub
+# Actions, organization or user `alex-krassavin`, repository `reamkit`,
+# workflow filename `release.yml`, no environment, with direct `npm publish`
+# allowed; 1.34.1 was the first release it published. Renaming this file means
+# recreating it there, and a new trusted publisher expires unless it publishes
+# within 2 days, so recreate it just before a release. Needs npm >= 11.5.1; the
+# job installs npm 12.
 
 on:
   push:
