@@ -3,6 +3,27 @@
 All notable changes to **Ream** (`reamkit`) are documented here. The project
 follows [Semantic Versioning](https://semver.org/).
 
+## 1.34.1
+
+A patch with nothing new in the library: it is the first release npm
+publishes with no token, and the project moves onto npm 12.
+
+### Internals
+
+- **Published through npm trusted publishing.** The Release workflow holds no
+  npm token any more: npm trades the job's GitHub OIDC token for a short-lived
+  credential bound to this repository and its `release.yml`, and attests the
+  build's provenance as before. Granular tokens that bypass 2FA lose direct
+  publishing around January 2027.
+
+- **npm 12, and no install scripts.** npm 12 runs a dependency's install
+  scripts only when the project allows them. None of ours needs its script —
+  esbuild, unrs-resolver and fsevents find their prebuilt binaries without
+  one — so all three are denied in `allowScripts`, for the library and for the
+  documentation site, and CI installs npm 12 before every `npm ci`. Nothing
+  changes for those who install reamkit: its runtime dependencies have no
+  install scripts.
+
 ## 1.34.0
 
 A release about the scripts of India, set as HarfBuzz sets them, and about
