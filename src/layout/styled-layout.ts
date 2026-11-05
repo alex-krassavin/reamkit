@@ -7037,6 +7037,13 @@ function paragraphItemStream(
   // The widest line this paragraph will be broken to, when there is one. A word
   // wider than THAT can never be placed, and has to break inside itself.
   maxLineWidthPt?: number,
+  // Whether a line's spaces may be squeezed to make it fit: only a justified
+  // paragraph's are, since only its lines are drawn to the measure (see
+  // `computeJustifyExtra`). Offered to a ragged line, the squeeze let the
+  // breaker keep a word the line was too short for, and the line, drawn at
+  // its natural width, ran past the margin — a Chuvash sentence in Courier New
+  // by 13pt where Word broke it a word earlier.
+  squeeze = true,
 ): Array<StreamEntry> {
   const entries: Array<StreamEntry> = [];
   // Last code point of the previous text box, for CJK wrap-opportunity detection;
@@ -7091,7 +7098,7 @@ function paragraphItemStream(
               type: 'glue',
               width: tok.widthPt,
               stretch: tok.widthPt * 0.6,
-              shrink: tok.widthPt * GLUE_SHRINK_RATIO,
+              shrink: squeeze ? tok.widthPt * GLUE_SHRINK_RATIO : 0,
             }
           : { type: 'box', width: tok.widthPt },
         token: tok,
@@ -7594,7 +7601,8 @@ function wrap(
   // The WIDEST line the paragraph will be broken to: a word that fits one of
   // them can be placed, and only a word too wide for all of them has to break
   // inside itself.
-  const entries = paragraphItemStream(measured, hyphenator, Math.max(0, ...widths));
+  const justified = resolved.alignment === 'both' || resolved.alignment === 'distribute';
+  const entries = paragraphItemStream(measured, hyphenator, Math.max(0, ...widths), justified);
   const items = entries.map((e) => e.item);
   // E-PARITY FP3: a renderer-compat profile breaks lines greedily (first-fit,
   // like Word/LibreOffice); the default 'ream' keeps Knuth-Plass total-fit.
