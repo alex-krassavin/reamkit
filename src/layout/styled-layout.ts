@@ -104,6 +104,7 @@ import type { Sheet } from '@/layout/turned-section';
 import { pageItemBounds } from '@/layout/page-doc';
 import { ResourceStore, halfPtToPt, pt } from '@/core/ir';
 import { headingLevelOf } from '@/core/outline';
+import { hasCombiningMark, isCombiningMark } from '@/core/font/mark-shaper';
 import {
   createFontMeasure,
   hasSubstitutable,
@@ -5215,15 +5216,64 @@ function fallbackFaceKey(
  * @returns The text to set, which is `text` itself unless something was undrawable.
  */
 function drawableText(faces: (cp: number) => KeyedFace, text: string): string {
-  if (!hasSubstitutable(text)) return text;
-  let out = '';
-  for (const ch of text) {
-    const cp = ch.codePointAt(0)!;
-    const letters = substituteLetters(cp);
-    const drawable = letters === undefined || faces(cp).parsed.glyphForCodepoint(cp) !== 0;
-    out += drawable ? ch : letters;
+  if (!hasSubstitutable(text) && !hasCombiningMark(text)) return text;
+  return drawnPieces(faces, text).join('');
+}
+
+/**
+ * What is drawn for each character of `text` — itself, the letters of a
+ * ligature nobody can draw (see {@link drawableText}), a composed letter in
+ * place of a letter and the marks written apart after it, and nothing for those
+ * marks.
+ *
+ * A letter of the Latin, Greek or Cyrillic alphabets followed by combining
+ * marks is set as the letter that composes them (Unicode canonical
+ * composition, NFC) where the face that would draw it has one: и + U+0306 is
+ * drawn as й, а + U+0306 as Chuvash ӑ, о + U+0308 as Altai ӧ. Set as two
+ * glyphs the mark stood at its own default place, beside the letter and above
+ * it; Word draws the two exactly as it draws the composed letter. What has no
+ * composed form — the stressed а, а and U+0301 — is left to the face's anchors (see
+ * `shapeMarks`).
+ *
+ * @param faces The face each character of the run is drawn with ({@link runFaces}).
+ * @param text  The run's text.
+ * @returns One string per code point of `text`, empty where a mark went into its letter.
+ */
+function drawnPieces(faces: (cp: number) => KeyedFace, text: string): Array<string> {
+  const cps = [...text].map((ch) => ch.codePointAt(0)!);
+  const out = cps.map((cp) => String.fromCodePoint(cp));
+  for (let i = 0; i < cps.length; i++) {
+    let end = i + 1;
+    while (end < cps.length && isCombiningMark(cps[end]!)) end++;
+    if (end > i + 1 && composesInPlace(cps[i]!)) {
+      const cluster = String.fromCodePoint(...cps.slice(i, end));
+      const composed = cluster.normalize('NFC');
+      const drawable = [...composed].every(
+        (ch) => faces(ch.codePointAt(0)!).parsed.glyphForCodepoint(ch.codePointAt(0)!) !== 0,
+      );
+      if (composed !== cluster && drawable) {
+        out[i] = composed;
+        for (let k = i + 1; k < end; k++) out[k] = '';
+      }
+      i = end - 1;
+      continue;
+    }
+    const letters = substituteLetters(cps[i]!);
+    if (letters !== undefined && faces(cps[i]!).parsed.glyphForCodepoint(cps[i]!) === 0) {
+      out[i] = letters;
+    }
   }
   return out;
+}
+
+/**
+ * Whether a letter's marks are composed into it by the layout: the Latin,
+ * Greek and Cyrillic alphabets. The scripts of India compose and reorder in
+ * their own shaper, and a CJK compatibility ideograph is not a letter to
+ * recompose at all.
+ */
+function composesInPlace(cp: number): boolean {
+  return cp < 0x0530 || (cp >= 0x1e00 && cp <= 0x1fff);
 }
 
 /**
@@ -5413,10 +5463,47 @@ function runFaces(
     // for the companion it borrows what it lacks from.
     return fallbackFace(options, cp, resolved, own.fontKey.split(':')[0]) ?? own;
   };
+  const marks = markFaces(drawing, text);
+  const withMarks = marks ? (cp: number): KeyedFace => marks.get(cp) ?? drawing(cp) : drawing;
   const indic = indicFace(drawing, text);
-  if (!indic) return drawing;
+  if (!indic) return withMarks;
   return (cp) =>
-    INDIC_JOINS.has(cp) && indic.parsed.glyphForCodepoint(cp) !== 0 ? indic : drawing(cp);
+    INDIC_JOINS.has(cp) && indic.parsed.glyphForCodepoint(cp) !== 0 ? indic : withMarks(cp);
+}
+
+/**
+ * The face each combining mark of `text` is drawn in, where it is not its
+ * own: the face of the letter it sits on, when that face has it. A mark is
+ * placed on its letter by the anchors of ONE face (see `shapeMarks`), and a
+ * Cambria run sets its Cyrillic in the face Caladea borrows it from while
+ * Caladea has an acute of its own — so the acute of a stressed а was drawn by Caladea
+ * beside a letter drawn by Noto Serif, and missed it. One face per mark per
+ * run: the letter it first sits on decides.
+ *
+ * @param drawing The face each character is drawn in, letter by letter.
+ * @param text    The run's text.
+ * @returns The marks to draw in another face, or `undefined` when none.
+ */
+function markFaces(
+  drawing: (cp: number) => KeyedFace,
+  text: string,
+): Map<number, KeyedFace> | undefined {
+  if (!hasCombiningMark(text)) return undefined;
+  let out: Map<number, KeyedFace> | undefined;
+  let base: KeyedFace | undefined;
+  for (const ch of text) {
+    const cp = ch.codePointAt(0)!;
+    if (!isCombiningMark(cp)) {
+      base = drawing(cp);
+      continue;
+    }
+    if (!base || out?.has(cp) === true) continue;
+    const own = drawing(cp);
+    if (own.fontKey !== base.fontKey && base.parsed.glyphForCodepoint(cp) !== 0) {
+      (out ??= new Map()).set(cp, base);
+    }
+  }
+  return out;
 }
 
 /** The face that draws the first letter of the scripts of India in `text`. */
@@ -6335,18 +6422,20 @@ function charColours(
 ): ReadonlyArray<string> | undefined {
   const from = run.charProperties;
   if (!from) return undefined;
+  const pieces = drawn === run.text ? undefined : drawnPieces(faces, run.text);
   const hexOf = new Map<RunProperties, string>([[run.properties, resolved.colorHex]]);
   const out: Array<string> = [];
-  let i = 0;
-  for (const ch of run.text) {
-    const props = from[i++] ?? run.properties;
+  const count = [...run.text].length;
+  for (let i = 0; i < count; i++) {
+    const props = from[i] ?? run.properties;
     let hex = hexOf.get(props);
     if (hex === undefined) {
       hex = resolveRunProperties(props, paragraph.properties, options.styles).colorHex;
       hexOf.set(props, hex);
     }
-    // A ligature no face can draw is set as its letters, each in its colour.
-    const letters = drawn === run.text ? 1 : [...drawableText(faces, ch)].length;
+    // A ligature no face can draw is set as its letters, each in its colour,
+    // and a mark composed into its letter takes no colour of its own.
+    const letters = pieces ? [...pieces[i]!].length : 1;
     for (let k = 0; k < letters; k++) out.push(hex);
   }
   return out.some((hex) => hex !== resolved.colorHex) ? out : undefined;

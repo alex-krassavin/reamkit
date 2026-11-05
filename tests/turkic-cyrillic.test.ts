@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { buildDocx, buildDocxFromBody } from './fixtures/build-docx';
 import type { FetchLike } from '@/core/fonts';
 import { Ream } from '@/core/converter/ream';
+import { createFontMeasure } from '@/core/font';
 import { parseTtf } from '@/core/font/ttf-parser';
 import { clearFontCache } from '@/core/fonts/remote-fonts';
 import { PdfFile } from '@/pdf-reader/document';
@@ -243,5 +244,61 @@ describe('a Cyrillic letter a font names rather than maps (§9.6.6.1, Adobe Glyp
       .map((r) => r.text)
       .join('');
     expect(text).toBe('Қазақә');
+  });
+});
+
+describe('a letter and a combining mark written apart', () => {
+  beforeEach(() => clearFontCache());
+  afterEach(() => clearFontCache());
+
+  // Chuvash and Altai letters, й and ў, each as its letter and its mark; and
+  // the stressed а, which has no composed form at all.
+  const NFD = 'и\u0306 а\u0306 е\u0306 у\u030b у\u0306 о\u0308 у\u0308';
+  const NFC = 'й ӑ ӗ ӳ ў ӧ ӱ';
+
+  it('is drawn as the composed letter, where the face has one', async () => {
+    // Each pair was set as two glyphs, the mark at the face's default place
+    // beside the letter; Word draws the pair as it draws the composed letter.
+    expect(NFD.normalize('NFC')).toBe(NFC);
+    const text = await textOf(buildDocx([NFD]));
+    expect(text).toContain(NFC);
+    const face = parseTtf(ARIMO.regular);
+    const m = createFontMeasure(face);
+    expect(m.textWidthPt(NFD, 11)).toBeGreaterThan(0);
+    // Measured as it is drawn: the paragraph's NFD line is as wide as NFC's.
+    const widthOf = async (s: string): Promise<number> => {
+      const pdf = await Ream.parse(buildDocx([s])).convert('pdf', { fonts: ARIMO });
+      const file = PdfFile.parse(pdf);
+      const runs = extractPageText(file, file.pages()[0]!);
+      return Math.max(...runs.map((r) => r.endX)) - Math.min(...runs.map((r) => r.x));
+    };
+    expect(await widthOf(NFD)).toBeCloseTo(await widthOf(NFC), 2);
+  });
+
+  it('sets a mark with no composed letter on its letter by the face’s anchors', () => {
+    // а + U+0301, the stress mark of a Russian textbook and of Chuvash: hb-shape
+    // 15.0.0 on the same file gives acutecomb at (-284, -340) with no advance.
+    const m = createFontMeasure(parseTtf(ARIMO.regular));
+    const run = m.glyphRun('а\u0301');
+    expect(run.advances[1]).toBe(0);
+    expect(run.xOffsets?.[1]).toBe(-284);
+    expect(run.yOffsets?.[1]).toBe(-340);
+  });
+
+  it('reads back as the text it was, the mark after its letter', async () => {
+    const text = await textOf(buildDocx(['ла\u0301мпа']));
+    expect(text.normalize('NFC')).toContain('ла\u0301мпа'.normalize('NFC'));
+  });
+
+  it('is drawn in the face of the letter it sits on', async () => {
+    // A Cambria run sets а in Noto Serif (Caladea has no Cyrillic) and Caladea
+    // has an acute of its own: drawn by Caladea, the acute missed the а.
+    const docx = buildDocxFromBody(runIn('Cambria', 'Ла\u0301мпа'));
+    const pdf = await Ream.parse(docx).convert('pdf', { fontFetch });
+    const file = PdfFile.parse(pdf);
+    const runs = extractPageText(file, file.pages()[0]!);
+    const holding = runs.filter((r) => r.text.includes('\u0301'));
+    expect(holding.length).toBeGreaterThan(0);
+    for (const r of holding) expect(r.fontName).toMatch(/^notoserif/u);
   });
 });

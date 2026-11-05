@@ -21,7 +21,7 @@ The licence is reproduced in `Arimo-OFL.txt`.
 
 | File | sha256 (16) | Why it is here |
 |---|---|---|
-| `Arimo-Regular.ttf` | `02219a6ff8456d98` | `Arimo_400Regular.ttf` from `@expo-google-fonts/arimo` on jsDelivr — the face the library downloads for a document that names no font. `tests/ligatures.test.ts` turns on its coverage: no U+FB00, U+FB01/U+FB02 with their private-use twins U+F001/U+F002, and U+210E. `tests/turkic-cyrillic.test.ts` on its one glyph for the Latin and the Cyrillic schwa (U+0259/U+04D9, U+018F/U+04D8). |
+| `Arimo-Regular.ttf` | `02219a6ff8456d98` | `Arimo_400Regular.ttf` from `@expo-google-fonts/arimo` on jsDelivr — the face the library downloads for a document that names no font. `tests/ligatures.test.ts` turns on its coverage: no U+FB00, U+FB01/U+FB02 with their private-use twins U+F001/U+F002, and U+210E. `tests/turkic-cyrillic.test.ts` on its one glyph for the Latin and the Cyrillic schwa (U+0259/U+04D9, U+018F/U+04D8), its composed Cyrillic letters and its `mark` anchors (the acute over а at −284, −340, as `hb-shape` 15.0.0 gives it). |
 
 ## Caladea 1.001 — OFL-1.1
 
@@ -30,7 +30,7 @@ The licence is reproduced in `Caladea-OFL.txt`; the font reserves no name.
 
 | File | sha256 (16) | Why it is here |
 |---|---|---|
-| `Caladea-subset.ttf` | `c5ae0da4bcfc90ed` | `Caladea_400Regular.ttf` from `@expo-google-fonts/caladea` — Cambria's substitute — cut to printable ASCII with `hb-subset` 15.0.0 (`--unicodes=20-7E --layout-features='*'`). `tests/turkic-cyrillic.test.ts` turns on what it lacks: the face has no Cyrillic at all. |
+| `Caladea-subset.ttf` | `b0f5a40461161047` | `Caladea_400Regular.ttf` from `@expo-google-fonts/caladea` — Cambria's substitute — cut to printable ASCII and the combining acute with `hb-subset` 15.0.0 (`--unicodes=20-7E,301 --layout-features='*'`). `tests/turkic-cyrillic.test.ts` turns on what it lacks — the face has no Cyrillic at all — and on the acute it has. |
 
 ## Noto Serif 2.015 — OFL-1.1
 
@@ -39,7 +39,7 @@ The licence, with its copyright line, is reproduced in `Noto-OFL.txt`.
 
 | File | sha256 (16) | Why it is here |
 |---|---|---|
-| `NotoSerif-subset.ttf` | `b3798896e354ce59` | `NotoSerif_400Regular.ttf` from `@expo-google-fonts/noto-serif` — the face Cambria's Cyrillic is borrowed from — cut with `hb-subset` 15.0.0 to the Cyrillic letters of `tests/turkic-cyrillic.test.ts` (`--unicodes=<them> --layout-features='*'`). |
+| `NotoSerif-subset.ttf` | `48fb9db4c1d019c5` | `NotoSerif_400Regular.ttf` from `@expo-google-fonts/noto-serif` — the face Cambria's Cyrillic is borrowed from — cut with `hb-subset` 15.0.0 to the Cyrillic letters of `tests/turkic-cyrillic.test.ts` and the combining acute (`--unicodes=<them>,301 --layout-features='*'`), its `mark` anchors kept. |
 
 ## Noto Sans of the scripts of India, and of Newa — OFL-1.1
 

@@ -7,6 +7,7 @@
 import type { IndicRun } from '@/core/font/indic-shaper';
 import type { ParsedTtf } from '@/core/font/ttf-parser';
 import { hasIndic, shapeIndic } from '@/core/font/indic-shaper';
+import { hasCombiningMark, shapeMarks } from '@/core/font/mark-shaper';
 import { shapeText } from '@/core/font/opentype-layout';
 
 /**
@@ -106,7 +107,11 @@ export function shapeGlyphs(
   parsed: ParsedTtf,
   text: string,
 ): { readonly gids: ReadonlyArray<number>; readonly glyphText?: ReadonlyMap<number, string> } {
-  const run = hasIndic(text) ? shapeIndic(parsed, text) : undefined;
+  const run = hasIndic(text)
+    ? shapeIndic(parsed, text)
+    : hasCombiningMark(text)
+      ? shapeMarks(parsed, text)
+      : undefined;
   if (!run) {
     const shaped = shapeText(
       text,
@@ -347,6 +352,16 @@ export function createFontMeasure(parsed: ParsedTtf, kern = true): FontMeasure {
       if (run === undefined) {
         if (indicRuns.size >= SHAPED_CACHE) indicRuns.clear();
         run = shapeIndic(parsed, text, kern) ?? null;
+        indicRuns.set(text, run);
+      }
+      if (run) return { gids: run.gids, advances: run.advances, indic: run };
+    } else if (hasCombiningMark(text)) {
+      // A letter and a mark written apart: the face's anchors set the mark on
+      // the letter (see `shapeMarks`), kept like the scripts of India's.
+      let run = indicRuns.get(text);
+      if (run === undefined) {
+        if (indicRuns.size >= SHAPED_CACHE) indicRuns.clear();
+        run = shapeMarks(parsed, text, kern) ?? null;
         indicRuns.set(text, run);
       }
       if (run) return { gids: run.gids, advances: run.advances, indic: run };
