@@ -681,6 +681,7 @@ function embedFontResources(
         usedGids: res.gids,
         cidSet,
         ...(res.glyphText ? { glyphText: res.glyphText } : {}),
+        ...(res.glyphChars ? { glyphChars: res.glyphChars } : {}),
       }),
     );
   }

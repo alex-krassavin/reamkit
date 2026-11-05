@@ -104,7 +104,13 @@ import type { Sheet } from '@/layout/turned-section';
 import { pageItemBounds } from '@/layout/page-doc';
 import { ResourceStore, halfPtToPt, pt } from '@/core/ir';
 import { headingLevelOf } from '@/core/outline';
-import { createFontMeasure, hasSubstitutable, shapeGlyphs, substituteLetters } from '@/core/font';
+import {
+  createFontMeasure,
+  hasSubstitutable,
+  shapeGlyphs,
+  sharedGlyphCodes,
+  substituteLetters,
+} from '@/core/font';
 import { hasIndic, syllableStarts } from '@/core/font/indic-shaper';
 import { resolveFamilyStyle } from '@/core/fonts';
 import { fontSlotOf, scriptForCodepoint } from '@/core/fonts/scripts';
@@ -5480,7 +5486,13 @@ function collectFontResources(
 ): Map<string, FontResource> {
   const used = new Map<
     string,
-    { parsed: ParsedTtf; gids: Set<number>; glyphText?: Map<number, string> }
+    {
+      parsed: ParsedTtf;
+      gids: Set<number>;
+      glyphText?: Map<number, string>;
+      /** Per shared glyph, how often each of its characters drew it. */
+      drawnAs?: Map<number, Map<number, number>>;
+    }
   >();
   // §17.6.12 — a PAGE field prints in the numerals its section names, so
   // every numeral a section may print goes into the subset with the digits:
@@ -5546,6 +5558,9 @@ function collectFontResources(
         sink.glyphText ??= new Map();
         if (!sink.glyphText.has(g)) sink.glyphText.set(g, t);
       }
+      // A glyph two characters share — the Latin and the Cyrillic schwa in
+      // Arimo — is named in /ToUnicode after the one the page drew.
+      if (!shaped.glyphText) countSharedGlyphs(sink, span.parsed, shown);
     }
     // §17.3.1.38 — a tab's leader characters are drawn but written nowhere: the
     // layout makes them, from the stop, long after the subset is chosen from
@@ -5777,7 +5792,55 @@ function collectFontResources(
       measure: createFontMeasure(info.parsed, options.layoutProfile !== 'word'),
       gids: info.gids,
       ...(info.glyphText ? { glyphText: info.glyphText } : {}),
+      ...(info.drawnAs ? { glyphChars: mostDrawn(info.drawnAs) } : {}),
     });
+  }
+  return out;
+}
+
+/**
+ * Count, for each glyph of `text` that several characters share in the face's
+ * `cmap`, which of them drew it (see `sharedGlyphCodes`).
+ *
+ * @param sink   The face's collected glyphs, which the counts are kept with.
+ * @param parsed The face.
+ * @param text   The text the face draws.
+ */
+function countSharedGlyphs(
+  sink: { drawnAs?: Map<number, Map<number, number>> },
+  parsed: ParsedTtf,
+  text: string,
+): void {
+  for (const ch of text) {
+    const cp = ch.codePointAt(0)!;
+    if (cp < 0x80) continue;
+    const gid = parsed.glyphForCodepoint(cp);
+    if (gid === 0 || sharedGlyphCodes(parsed, gid) === undefined) continue;
+    sink.drawnAs ??= new Map();
+    let counts = sink.drawnAs.get(gid);
+    if (!counts) sink.drawnAs.set(gid, (counts = new Map()));
+    counts.set(cp, (counts.get(cp) ?? 0) + 1);
+  }
+}
+
+/**
+ * The character each shared glyph was drawn for most often; the first drawn
+ * where two tie. One /ToUnicode entry cannot name both, and a document that
+ * spells the same word in both alphabets with one glyph is rarer than one
+ * that does not.
+ */
+function mostDrawn(drawnAs: ReadonlyMap<number, ReadonlyMap<number, number>>): Map<number, number> {
+  const out = new Map<number, number>();
+  for (const [gid, counts] of drawnAs) {
+    let best = -1;
+    let most = 0;
+    for (const [cp, n] of counts) {
+      if (n > most) {
+        best = cp;
+        most = n;
+      }
+    }
+    out.set(gid, best);
   }
   return out;
 }
