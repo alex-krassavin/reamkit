@@ -176,6 +176,10 @@ export interface Companion {
 // 4.6 % italic, 5.0 % bold italic). The factors are the width of Cambria's
 // letters over Noto Serif's, measured on running Russian and Turkic text
 // (Cyrillic) and Greek text, so that a line holds about as much as Word's.
+//
+// Each factor is kept to a tenth of a percent, the step the PDF writer sets
+// horizontal scaling (`Tz`) in: a factor between two steps is measured at one
+// width and drawn at another.
 const CAMBRIA_CYRILLIC: Readonly<Record<FontVariant, number>> = {
   regular: 0.894,
   bold: 0.918,

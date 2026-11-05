@@ -910,9 +910,8 @@ function emitPageContent(
   let lastTz = 100;
   /** A run's letter spacing, in the text space `Tz` scales (§9.4.4). */
   const spacingOf = (tok: TextToken): number => {
-    const tz = Math.round(
-      (tok.synthetic?.widthScale ?? 1) * (tok.resolvedRun.widthScale ?? 1) * 100,
-    );
+    const tz =
+      Math.round((tok.synthetic?.widthScale ?? 1) * (tok.resolvedRun.widthScale ?? 1) * 1000) / 10;
     return (tok.resolvedRun.letterSpacingPt ?? 0) / (tz > 0 ? tz / 100 : 1);
   };
   /**
@@ -1000,7 +999,9 @@ function emitPageContent(
     // document sets narrower than its face (§17.3.2.43) is drawn. Layout
     // measured through the same fraction, so the glyphs and the line agree.
     const scale = (tok.synthetic?.widthScale ?? 1) * (tok.resolvedRun.widthScale ?? 1);
-    const tz = Math.round(scale * 100);
+    // To a tenth of a percent, not a whole one: Cambria's Cyrillic is borrowed
+    // squeezed to 89.4 %, and drawn at 89 % it ran past what was measured.
+    const tz = Math.round(scale * 1000) / 10;
     if (tz !== lastTz) {
       out.push(`${formatNumber(tz)} Tz`);
       lastTz = tz;

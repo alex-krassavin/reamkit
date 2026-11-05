@@ -135,6 +135,21 @@ describe("Cambria's Cyrillic, which its twin does not draw", () => {
     expect(squeeze).toBeLessThan(0.9);
   });
 
+  it('is drawn at the squeeze it was measured at, to a tenth of a percent', async () => {
+    // Horizontal scaling was written in whole percent: the regular face's
+    // 0.894 was drawn at 89 % and the bold's 0.918 at 92 %, so a bold line of
+    // the Cambria probe ran 0.9pt, and a bold italic one 2.2pt, past the
+    // margin the layout had kept it inside.
+    const body =
+      runIn('Cambria', 'Барлық адамдар') +
+      '<w:p><w:r><w:rPr><w:rFonts w:ascii="Cambria" w:hAnsi="Cambria"/><w:b/></w:rPr><w:t>Барлық адамдар</w:t></w:r></w:p>';
+    const pdf = await Ream.parse(buildDocxFromBody(body)).convert('pdf', { fontFetch });
+    const file = PdfFile.parse(pdf);
+    const content = new TextDecoder('latin1').decode(file.pageContent(file.pages()[0]!));
+    const scales = [...content.matchAll(/([\d.]+) Tz/gu)].map((m) => m[1]);
+    expect(scales).toContain('89.4');
+  });
+
   it('is fetched only for a document that holds such a letter', async () => {
     const asked: Array<string> = [];
     const spy: FetchLike = (url) => {
