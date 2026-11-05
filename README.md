@@ -30,7 +30,8 @@ Parse once into the format-neutral interlayer, convert to any target. The
 format is sniffed from the bytes; no fonts to wire up — an open
 metric-compatible substitute font (Arimo for sans, Tinos for serif, Cousine for
 monospace, plus Carlito/Caladea for Calibri/Cambria — the same families LibreOffice
-substitutes) is fetched automatically based on the document's referenced fonts,
+substitutes, with Cambria's Cyrillic and Greek from Noto Serif) is fetched
+automatically based on the document's referenced fonts,
 with a Noto face for the Japanese, Korean, Chinese, Arabic, Hebrew, Thai or
 Indic (Hindi, Bengali, Tamil and six more scripts) text the document holds:
 

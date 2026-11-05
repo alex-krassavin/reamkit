@@ -3,6 +3,76 @@
 All notable changes to **Ream** (`reamkit`) are documented here. The project
 follows [Semantic Versioning](https://semver.org/).
 
+## 1.35.0
+
+A release about the letters Kazakh, Tatar, Bashkir, Chuvash, Uzbek,
+Azerbaijani, Sakha, Altai and Khakas add to the Russian alphabet — ә ғ қ ң ө
+ұ ү һ і, and җ ҙ ҡ ҫ ӑ ӗ ӳ ў ҳ ҹ ј ҝ ҕ ҥ ӧ ӱ ӌ with them — drawn and read back as
+the letters they are.
+
+Every case was measured on probe documents of our own in the six faces an
+Office document most often names — Calibri, Cambria, Arial, Times New Roman,
+Courier New and Aptos — in all four styles, against the PDFs Word, Excel and
+PowerPoint for Mac export of the same documents and the `.doc`, `.xls` and
+`.ppt` they save. Carlito, Arimo, Tinos and Cousine draw all 52 letters at
+exactly the widths of the faces they stand in for; Cambria's substitute draws
+none of them.
+
+### Added
+
+- **Cambria's Cyrillic and Greek are drawn in a roman.** Caladea, Cambria's
+  substitute, is a Latin face with no Cyrillic and no Greek, and every Russian,
+  Kazakh or Greek letter of a Cambria run was drawn in Arimo, a sans, in the
+  middle of a roman line. They are now borrowed from Noto Serif, squeezed in
+  each style to Cambria's own widths, and fetched only for a document whose
+  text holds such a letter; the Latin stays in Caladea. Against Cambria 6.90
+  the Cyrillic advances go from 9–11 % off on average, 67 % for one letter, to
+  4–5 %, and the lines of the Cambria probe that break where Word's do not from
+  27 to 7. The HTML writer's stack for Cambria names Noto Serif too.
+
+- **A letter and a combining mark written apart are drawn as one letter.** A
+  decomposed й, ӑ, ӗ, ӳ, ӧ, ӱ or ў is drawn as its composed letter, and a mark
+  with no composed form — the stress on а́ — is set on its letter by the face's
+  own anchors (GPOS `mark` and `mkmk`), as HarfBuzz sets it. Before, the mark
+  stood beside its letter in every face. Calibri's stress mark is still drawn
+  beside it: Carlito has no combining acute.
+
+- **The Cyrillic of the Adobe Glyph List.** A PDF whose font names its codes
+  instead of mapping them — TeX in T2A, an old Type 1 Cyrillic face — reads as
+  text: the reader knows all 327 names the list gives the Cyrillic block
+  (`afii10017`…, `schwacyrillic`, `kadescendercyrillic`, `obarredcyrillic`).
+  Only `uni04D9` was read before.
+
+### Fixed
+
+- **ә and Ә read back as Cyrillic.** The substitutes for Arial, Times New
+  Roman and Courier New draw the Latin and the Cyrillic schwa with one glyph,
+  and /ToUnicode named it Latin: every "және" of a Kazakh document read back,
+  copied and searched as "жəне". A glyph two letters share is now named after
+  the letter the page drew.
+
+- **And so does the Latin schwa a PDF from Office for Mac wrote for them.**
+  Word, Excel and PowerPoint for Mac export a Kazakh ә as ə in those faces.
+  The reader reads a schwa among Cyrillic letters as Cyrillic, across the runs
+  such a PDF cuts a word into, and leaves a word of the Latin alphabet
+  ("Azərbaycan") as it is.
+
+- **A line no longer runs past the right margin.** A left-, centre- or
+  right-aligned paragraph was broken as if its spaces could be squeezed, which
+  only a justified line is drawn with: lines ran up to 13 pt into the margin,
+  4 to 25 of them in each probe document, where Word's have none. Such a
+  paragraph may now break a word earlier than before. The last line of a
+  justified paragraph is pulled in where it was packed past the measure.
+
+- **Horizontal scaling is drawn as it was measured,** to a tenth of a percent
+  (`Tz`); it was rounded to a whole one.
+
+### Internals
+
+- The tests cut Caladea and Noto Serif down with hb-subset (OFL-1.1, see the
+  fixtures' NOTICE.md). The byte gate's `text-basic.docx` changes: its first
+  line reached 0.6 pt into the margin.
+
 ## 1.34.1
 
 A patch with nothing new in the library: it is the first release npm
