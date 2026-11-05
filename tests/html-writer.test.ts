@@ -390,7 +390,7 @@ describe('html writer (FlowDoc adapter)', () => {
         html,
       )?.[1];
     expect(family('calibri')).toBe("'Calibri',Carlito,sans-serif");
-    expect(family('cambria')).toBe("'Cambria',Caladea,serif");
+    expect(family('cambria')).toBe("'Cambria',Caladea,Noto Serif,serif");
     expect(family('courier')).toBe("'Courier New',monospace");
     // A quote of either kind stays inside the name: escaped for CSS, then for the attribute.
     expect(family('quoted')).toBe("'O\\'Brien &quot;Sans&quot;',sans-serif");

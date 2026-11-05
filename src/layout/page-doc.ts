@@ -34,6 +34,12 @@ export interface FontResource {
    * a reph, a vowel sign's contextual form — for the PDF's /ToUnicode.
    */
   readonly glyphText?: ReadonlyMap<number, string>;
+  /**
+   * For each collected glyph several characters share in the face's `cmap`,
+   * the one the document drew it for most often — what the PDF's /ToUnicode
+   * names it (see `sharedGlyphCodes`).
+   */
+  readonly glyphChars?: ReadonlyMap<number, number>;
 }
 
 /**

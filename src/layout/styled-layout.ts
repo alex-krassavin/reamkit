@@ -104,9 +104,16 @@ import type { Sheet } from '@/layout/turned-section';
 import { pageItemBounds } from '@/layout/page-doc';
 import { ResourceStore, halfPtToPt, pt } from '@/core/ir';
 import { headingLevelOf } from '@/core/outline';
-import { createFontMeasure, hasSubstitutable, shapeGlyphs, substituteLetters } from '@/core/font';
+import { hasCombiningMark, isCombiningMark } from '@/core/font/mark-shaper';
+import {
+  createFontMeasure,
+  hasSubstitutable,
+  shapeGlyphs,
+  sharedGlyphCodes,
+  substituteLetters,
+} from '@/core/font';
 import { hasIndic, syllableStarts } from '@/core/font/indic-shaper';
-import { resolveFamilyStyle } from '@/core/fonts';
+import { companionOf, companionScale, resolveFamilyStyle } from '@/core/fonts';
 import { fontSlotOf, scriptForCodepoint } from '@/core/fonts/scripts';
 import { prepareImage } from '@/core/images';
 import { isEmf, readEmf } from '@/core/metafile/emf';
@@ -5156,9 +5163,22 @@ function fallbackFaceKey(
   cp: number,
   bold: boolean,
   italic: boolean,
-): { fontKey: string; parsed: ParsedTtf } | undefined {
+  own?: string,
+): { fontKey: string; parsed: ParsedTtf; widthScale?: number } | undefined {
   const byFamily = options.registriesByFamily;
   if (!byFamily || byFamily.size === 0) return undefined;
+  // A twin that lacks a whole alphabet borrows it from a family chosen for it,
+  // squeezed to the width of the face the twin stands in for: Cambria's
+  // Cyrillic is drawn from Noto Serif, not from the first family loaded.
+  const companion = own === undefined ? undefined : companionOf(own);
+  const borrowed = companion ? byFamily.get(companion.family) : undefined;
+  if (companion && borrowed) {
+    const { variant, parsed } = borrowed.resolveByStyle(bold, italic);
+    const widthScale = companionScale(companion, cp, variant);
+    if (widthScale !== undefined && parsed.glyphForCodepoint(cp) !== 0) {
+      return { fontKey: `${companion.family}:${variant}`, parsed, widthScale };
+    }
+  }
   // Which face draws unified Han is a property of the DOCUMENT, and the answer
   // is already in the map: the converter fetched the one its text called for.
   const hanFace = byFamily.has('jp') ? 'jp' : byFamily.has('kr') ? 'kr' : 'sc';
@@ -5196,15 +5216,64 @@ function fallbackFaceKey(
  * @returns The text to set, which is `text` itself unless something was undrawable.
  */
 function drawableText(faces: (cp: number) => KeyedFace, text: string): string {
-  if (!hasSubstitutable(text)) return text;
-  let out = '';
-  for (const ch of text) {
-    const cp = ch.codePointAt(0)!;
-    const letters = substituteLetters(cp);
-    const drawable = letters === undefined || faces(cp).parsed.glyphForCodepoint(cp) !== 0;
-    out += drawable ? ch : letters;
+  if (!hasSubstitutable(text) && !hasCombiningMark(text)) return text;
+  return drawnPieces(faces, text).join('');
+}
+
+/**
+ * What is drawn for each character of `text` — itself, the letters of a
+ * ligature nobody can draw (see {@link drawableText}), a composed letter in
+ * place of a letter and the marks written apart after it, and nothing for those
+ * marks.
+ *
+ * A letter of the Latin, Greek or Cyrillic alphabets followed by combining
+ * marks is set as the letter that composes them (Unicode canonical
+ * composition, NFC) where the face that would draw it has one: и + U+0306 is
+ * drawn as й, а + U+0306 as Chuvash ӑ, о + U+0308 as Altai ӧ. Set as two
+ * glyphs the mark stood at its own default place, beside the letter and above
+ * it; Word draws the two exactly as it draws the composed letter. What has no
+ * composed form — the stressed а, а and U+0301 — is left to the face's anchors (see
+ * `shapeMarks`).
+ *
+ * @param faces The face each character of the run is drawn with ({@link runFaces}).
+ * @param text  The run's text.
+ * @returns One string per code point of `text`, empty where a mark went into its letter.
+ */
+function drawnPieces(faces: (cp: number) => KeyedFace, text: string): Array<string> {
+  const cps = [...text].map((ch) => ch.codePointAt(0)!);
+  const out = cps.map((cp) => String.fromCodePoint(cp));
+  for (let i = 0; i < cps.length; i++) {
+    let end = i + 1;
+    while (end < cps.length && isCombiningMark(cps[end]!)) end++;
+    if (end > i + 1 && composesInPlace(cps[i]!)) {
+      const cluster = String.fromCodePoint(...cps.slice(i, end));
+      const composed = cluster.normalize('NFC');
+      const drawable = [...composed].every(
+        (ch) => faces(ch.codePointAt(0)!).parsed.glyphForCodepoint(ch.codePointAt(0)!) !== 0,
+      );
+      if (composed !== cluster && drawable) {
+        out[i] = composed;
+        for (let k = i + 1; k < end; k++) out[k] = '';
+      }
+      i = end - 1;
+      continue;
+    }
+    const letters = substituteLetters(cps[i]!);
+    if (letters !== undefined && faces(cps[i]!).parsed.glyphForCodepoint(cps[i]!) === 0) {
+      out[i] = letters;
+    }
   }
   return out;
+}
+
+/**
+ * Whether a letter's marks are composed into it by the layout: the Latin,
+ * Greek and Cyrillic alphabets. The scripts of India compose and reorder in
+ * their own shaper, and a CJK compatibility ideograph is not a letter to
+ * recompose at all.
+ */
+function composesInPlace(cp: number): boolean {
+  return cp < 0x0530 || (cp >= 0x1e00 && cp <= 0x1fff);
 }
 
 /**
@@ -5347,13 +5416,15 @@ function fallbackFace(
   options: StyledRenderOptions,
   cp: number,
   resolved: ResolvedRunProperties,
+  own?: string,
 ): KeyedFace | undefined {
-  const face = fallbackFaceKey(options, cp, resolved.bold, resolved.italic);
-  if (!face) return undefined;
+  const found = fallbackFaceKey(options, cp, resolved.bold, resolved.italic, own);
+  if (!found) return undefined;
+  const { widthScale, ...face } = found;
   const variant = face.fontKey.split(':')[1];
   const got: FontVariant =
     variant === 'bold' || variant === 'boldItalic' || variant === 'italic' ? variant : 'regular';
-  return { ...face, ...syntheticFace(got, resolved.bold, resolved.italic) };
+  return { ...face, ...syntheticFace(got, resolved.bold, resolved.italic, widthScale) };
 }
 
 /**
@@ -5388,12 +5459,51 @@ function runFaces(
     const own = slots?.get(fontSlotOf(cp, resolved.rtl)) ?? primary;
     if (own.parsed.glyphForCodepoint(cp) !== 0) return own;
     if (own !== primary && primary.parsed.glyphForCodepoint(cp) !== 0) return primary;
-    return fallbackFace(options, cp, resolved) ?? own;
+    // The family the face is a substitute of — `caladea` of `caladea:bold` —
+    // for the companion it borrows what it lacks from.
+    return fallbackFace(options, cp, resolved, own.fontKey.split(':')[0]) ?? own;
   };
+  const marks = markFaces(drawing, text);
+  const withMarks = marks ? (cp: number): KeyedFace => marks.get(cp) ?? drawing(cp) : drawing;
   const indic = indicFace(drawing, text);
-  if (!indic) return drawing;
+  if (!indic) return withMarks;
   return (cp) =>
-    INDIC_JOINS.has(cp) && indic.parsed.glyphForCodepoint(cp) !== 0 ? indic : drawing(cp);
+    INDIC_JOINS.has(cp) && indic.parsed.glyphForCodepoint(cp) !== 0 ? indic : withMarks(cp);
+}
+
+/**
+ * The face each combining mark of `text` is drawn in, where it is not its
+ * own: the face of the letter it sits on, when that face has it. A mark is
+ * placed on its letter by the anchors of ONE face (see `shapeMarks`), and a
+ * Cambria run sets its Cyrillic in the face Caladea borrows it from while
+ * Caladea has an acute of its own — so the acute of a stressed а was drawn by Caladea
+ * beside a letter drawn by Noto Serif, and missed it. One face per mark per
+ * run: the letter it first sits on decides.
+ *
+ * @param drawing The face each character is drawn in, letter by letter.
+ * @param text    The run's text.
+ * @returns The marks to draw in another face, or `undefined` when none.
+ */
+function markFaces(
+  drawing: (cp: number) => KeyedFace,
+  text: string,
+): Map<number, KeyedFace> | undefined {
+  if (!hasCombiningMark(text)) return undefined;
+  let out: Map<number, KeyedFace> | undefined;
+  let base: KeyedFace | undefined;
+  for (const ch of text) {
+    const cp = ch.codePointAt(0)!;
+    if (!isCombiningMark(cp)) {
+      base = drawing(cp);
+      continue;
+    }
+    if (!base || out?.has(cp) === true) continue;
+    const own = drawing(cp);
+    if (own.fontKey !== base.fontKey && base.parsed.glyphForCodepoint(cp) !== 0) {
+      (out ??= new Map()).set(cp, base);
+    }
+  }
+  return out;
 }
 
 /** The face that draws the first letter of the scripts of India in `text`. */
@@ -5480,7 +5590,13 @@ function collectFontResources(
 ): Map<string, FontResource> {
   const used = new Map<
     string,
-    { parsed: ParsedTtf; gids: Set<number>; glyphText?: Map<number, string> }
+    {
+      parsed: ParsedTtf;
+      gids: Set<number>;
+      glyphText?: Map<number, string>;
+      /** Per shared glyph, how often each of its characters drew it. */
+      drawnAs?: Map<number, Map<number, number>>;
+    }
   >();
   // §17.6.12 — a PAGE field prints in the numerals its section names, so
   // every numeral a section may print goes into the subset with the digits:
@@ -5546,6 +5662,9 @@ function collectFontResources(
         sink.glyphText ??= new Map();
         if (!sink.glyphText.has(g)) sink.glyphText.set(g, t);
       }
+      // A glyph two characters share — the Latin and the Cyrillic schwa in
+      // Arimo — is named in /ToUnicode after the one the page drew.
+      if (!shaped.glyphText) countSharedGlyphs(sink, span.parsed, shown);
     }
     // §17.3.1.38 — a tab's leader characters are drawn but written nowhere: the
     // layout makes them, from the stop, long after the subset is chosen from
@@ -5777,7 +5896,55 @@ function collectFontResources(
       measure: createFontMeasure(info.parsed, options.layoutProfile !== 'word'),
       gids: info.gids,
       ...(info.glyphText ? { glyphText: info.glyphText } : {}),
+      ...(info.drawnAs ? { glyphChars: mostDrawn(info.drawnAs) } : {}),
     });
+  }
+  return out;
+}
+
+/**
+ * Count, for each glyph of `text` that several characters share in the face's
+ * `cmap`, which of them drew it (see `sharedGlyphCodes`).
+ *
+ * @param sink   The face's collected glyphs, which the counts are kept with.
+ * @param parsed The face.
+ * @param text   The text the face draws.
+ */
+function countSharedGlyphs(
+  sink: { drawnAs?: Map<number, Map<number, number>> },
+  parsed: ParsedTtf,
+  text: string,
+): void {
+  for (const ch of text) {
+    const cp = ch.codePointAt(0)!;
+    if (cp < 0x80) continue;
+    const gid = parsed.glyphForCodepoint(cp);
+    if (gid === 0 || sharedGlyphCodes(parsed, gid) === undefined) continue;
+    sink.drawnAs ??= new Map();
+    let counts = sink.drawnAs.get(gid);
+    if (!counts) sink.drawnAs.set(gid, (counts = new Map()));
+    counts.set(cp, (counts.get(cp) ?? 0) + 1);
+  }
+}
+
+/**
+ * The character each shared glyph was drawn for most often; the first drawn
+ * where two tie. One /ToUnicode entry cannot name both, and a document that
+ * spells the same word in both alphabets with one glyph is rarer than one
+ * that does not.
+ */
+function mostDrawn(drawnAs: ReadonlyMap<number, ReadonlyMap<number, number>>): Map<number, number> {
+  const out = new Map<number, number>();
+  for (const [gid, counts] of drawnAs) {
+    let best = -1;
+    let most = 0;
+    for (const [cp, n] of counts) {
+      if (n > most) {
+        best = cp;
+        most = n;
+      }
+    }
+    out.set(gid, best);
   }
   return out;
 }
@@ -6255,18 +6422,20 @@ function charColours(
 ): ReadonlyArray<string> | undefined {
   const from = run.charProperties;
   if (!from) return undefined;
+  const pieces = drawn === run.text ? undefined : drawnPieces(faces, run.text);
   const hexOf = new Map<RunProperties, string>([[run.properties, resolved.colorHex]]);
   const out: Array<string> = [];
-  let i = 0;
-  for (const ch of run.text) {
-    const props = from[i++] ?? run.properties;
+  const count = [...run.text].length;
+  for (let i = 0; i < count; i++) {
+    const props = from[i] ?? run.properties;
     let hex = hexOf.get(props);
     if (hex === undefined) {
       hex = resolveRunProperties(props, paragraph.properties, options.styles).colorHex;
       hexOf.set(props, hex);
     }
-    // A ligature no face can draw is set as its letters, each in its colour.
-    const letters = drawn === run.text ? 1 : [...drawableText(faces, ch)].length;
+    // A ligature no face can draw is set as its letters, each in its colour,
+    // and a mark composed into its letter takes no colour of its own.
+    const letters = pieces ? [...pieces[i]!].length : 1;
     for (let k = 0; k < letters; k++) out.push(hex);
   }
   return out.some((hex) => hex !== resolved.colorHex) ? out : undefined;
@@ -6957,6 +7126,13 @@ function paragraphItemStream(
   // The widest line this paragraph will be broken to, when there is one. A word
   // wider than THAT can never be placed, and has to break inside itself.
   maxLineWidthPt?: number,
+  // Whether a line's spaces may be squeezed to make it fit: only a justified
+  // paragraph's are, since only its lines are drawn to the measure (see
+  // `computeJustifyExtra`). Offered to a ragged line, the squeeze let the
+  // breaker keep a word the line was too short for, and the line, drawn at
+  // its natural width, ran past the margin — a Chuvash sentence in Courier New
+  // by 13pt where Word broke it a word earlier.
+  squeeze = true,
 ): Array<StreamEntry> {
   const entries: Array<StreamEntry> = [];
   // Last code point of the previous text box, for CJK wrap-opportunity detection;
@@ -7011,7 +7187,7 @@ function paragraphItemStream(
               type: 'glue',
               width: tok.widthPt,
               stretch: tok.widthPt * 0.6,
-              shrink: tok.widthPt * GLUE_SHRINK_RATIO,
+              shrink: squeeze ? tok.widthPt * GLUE_SHRINK_RATIO : 0,
             }
           : { type: 'box', width: tok.widthPt },
         token: tok,
@@ -7514,7 +7690,8 @@ function wrap(
   // The WIDEST line the paragraph will be broken to: a word that fits one of
   // them can be placed, and only a word too wide for all of them has to break
   // inside itself.
-  const entries = paragraphItemStream(measured, hyphenator, Math.max(0, ...widths));
+  const justified = resolved.alignment === 'both' || resolved.alignment === 'distribute';
+  const entries = paragraphItemStream(measured, hyphenator, Math.max(0, ...widths), justified);
   const items = entries.map((e) => e.item);
   // E-PARITY FP3: a renderer-compat profile breaks lines greedily (first-fit,
   // like Word/LibreOffice); the default 'ream' keeps Knuth-Plass total-fit.

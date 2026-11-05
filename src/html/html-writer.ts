@@ -858,10 +858,14 @@ function fontStack(family: string): string {
 /** What follows a family in its stack, by the open substitute it maps to. */
 const FALLBACKS: Readonly<Record<FamilyKey, ReadonlyArray<string>>> = {
   carlito: ['Carlito', 'sans-serif'],
-  caladea: ['Caladea', 'serif'],
+  // Caladea draws no Cyrillic and no Greek; a browser takes each letter it
+  // lacks from the next family in the stack, and Noto Serif is the one the
+  // PDF borrows them from (see `companionOf`).
+  caladea: ['Caladea', 'Noto Serif', 'serif'],
   arimo: ['sans-serif'],
   tinos: ['serif'],
   cousine: ['monospace'],
+  notoserif: ['Noto Serif', 'serif'],
 };
 
 function decorationStyle(u: ResolvedRunProperties['underline'] & string): string | undefined {

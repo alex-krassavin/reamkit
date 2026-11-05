@@ -62,7 +62,7 @@ export function extractPageText(
   for (let i = own; i < runs.length; i++) runs[i] = { ...runs[i]!, annotation: true };
   const links = collectLinks(file, page);
   const marks = collectTextMarkup(file, page);
-  const shown = withAccentsComposed(withoutRestrikes(runs));
+  const shown = withCyrillicSchwa(withAccentsComposed(withoutRestrikes(runs)));
   if (links.length === 0 && marks.length === 0) return shown;
   return shown.flatMap((run) => {
     const link = links.find((l) => inRect(run.x, run.y, l.rect));
@@ -234,6 +234,84 @@ function withAccentsComposed(runs: ReadonlyArray<TextRun>): Array<TextRun> {
   }
   return out;
 }
+
+/**
+ * The Latin schwa a page wrote for the Cyrillic one, read as the Cyrillic.
+ *
+ * Arial, Times New Roman and Courier New draw ә (U+04D9) with the glyph of the
+ * Latin schwa ə (U+0259), Ә with that of Ə, and a writer that names a glyph
+ * after the first character reaching it says Latin: Word, Excel and PowerPoint
+ * for Mac export every ә of a Kazakh, Tatar, Bashkir or Azerbaijani document
+ * set in those faces as ə (probes of 2026-11-06), and Ream itself did until
+ * it named each glyph after the letter it drew. Read as written, "және" is a
+ * Cyrillic word with a Latin letter in it, which no language spells.
+ *
+ * A schwa is read as Cyrillic where its word's other letters are Cyrillic and
+ * none Latin, and a word that is nothing but schwas (an alphabet's "Әә") where
+ * its line's letters are: Cyrillic, at least three of them, and no Latin besides.
+ * An Azerbaijani word in the Latin alphabet — "Azərbaycan" — is left as it is.
+ *
+ * @param runs The page's runs.
+ * @returns The runs, each schwa among Cyrillic letters made Cyrillic.
+ */
+function withCyrillicSchwa(runs: ReadonlyArray<TextRun>): Array<TextRun> {
+  if (!runs.some((r) => /[\u0259\u018f]/u.test(r.text))) return [...runs];
+  const out = [...runs];
+  // Word for Mac shows the schwa from a font object of its own, so the word
+  // "және" arrives as three runs, "ж", "ə", "не": the runs that touch on one
+  // baseline are read together, as the line they draw.
+  let from = 0;
+  for (let i = 1; i <= runs.length; i++) {
+    const prev = runs[i - 1]!;
+    const run = runs[i];
+    if (run && continuesLine(prev, run)) continue;
+    if (runs.slice(from, i).some((r) => /[\u0259\u018f]/u.test(r.text))) {
+      const texts = runs.slice(from, i).map((r) => r.text);
+      // One schwa for another: the same length in UTF-16, so each run gets back
+      // the stretch of the line it gave.
+      const line = cyrillicSchwas(texts.join(''));
+      let at = 0;
+      texts.forEach((t, k) => {
+        const mine = line.slice(at, at + t.length);
+        at += t.length;
+        if (mine !== t) out[from + k] = { ...runs[from + k]!, text: mine };
+      });
+    }
+    from = i;
+  }
+  return out;
+}
+
+/** Whether one run takes up where another left off, on its baseline. */
+function continuesLine(a: TextRun, b: TextRun): boolean {
+  if (a.angleDeg !== undefined || b.angleDeg !== undefined) return false;
+  const size = b.fontSizePt || a.fontSizePt || 10;
+  return Math.abs(a.y - b.y) < size * 0.3 && Math.abs(b.x - a.endX) < size * 0.3;
+}
+
+/** A line's schwas among Cyrillic letters, made Cyrillic (see {@link withCyrillicSchwa}). */
+function cyrillicSchwas(line: string): string {
+  const letters = [...line].filter((ch) => /\p{L}/u.test(ch));
+  const cyrillic = letters.filter((ch) => /\p{Script=Cyrillic}/u.test(ch)).length;
+  const otherLatin = letters.some((ch) => /\p{Script=Latin}/u.test(ch) && !SCHWA.has(ch));
+  const lineIsCyrillic = cyrillic >= 3 && !otherLatin;
+  return line.replace(/[\p{L}\p{M}]+/gu, (word) => {
+    if (!/[\u0259\u018f]/u.test(word)) return word;
+    const rest = [...word].filter((ch) => !SCHWA.has(ch) && /\p{L}/u.test(ch));
+    const cyrillicWord =
+      rest.length > 0
+        ? rest.some((ch) => /\p{Script=Cyrillic}/u.test(ch)) &&
+          !rest.some((ch) => /\p{Script=Latin}/u.test(ch))
+        : lineIsCyrillic;
+    return cyrillicWord ? word.replace(/[\u0259\u018f]/gu, (ch) => SCHWA.get(ch)!) : word;
+  });
+}
+
+/** The Latin schwas, and the Cyrillic letters a page drawn in Cyrillic meant by them. */
+const SCHWA: ReadonlyMap<string, string> = new Map([
+  ['\u0259', '\u04d9'],
+  ['\u018f', '\u04d8'],
+]);
 
 /**
  * Whether an accent stands over the first letter of a run (the pen taken back

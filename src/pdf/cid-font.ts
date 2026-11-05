@@ -29,6 +29,12 @@ export interface EmbedTtfOptions {
    * sign's contextual form — so that /ToUnicode names them too.
    */
   readonly glyphText?: ReadonlyMap<number, string>;
+  /**
+   * The character each glyph that several characters share was drawn for —
+   * the Cyrillic schwa, say, where the face draws the Latin one with the same
+   * glyph — so that /ToUnicode names the one the page means.
+   */
+  readonly glyphChars?: ReadonlyMap<number, number>;
 }
 
 /** The result of {@link embedTtfFont}: the Type 0 font reference plus measurement/encoding helpers. */
@@ -136,7 +142,10 @@ export function embedTtfFont(
   );
 
   const toUnicodeRef = doc.add(
-    deflatedStream({}, buildToUnicodeCMap(parsed, subsetGids, options.glyphText)),
+    deflatedStream(
+      {},
+      buildToUnicodeCMap(parsed, subsetGids, options.glyphText, options.glyphChars),
+    ),
   );
 
   const type0Ref = doc.add(
@@ -226,8 +235,8 @@ function codeRank(cp: number): 0 | 1 | 2 {
 
 // PDF spec Annex D — ToUnicode CMap.
 // We scan the BMP (U+0020..U+FFFF) once and emit a bfchar entry for every
-// codepoint mapped to a non-.notdef glyph. Each glyph keeps only its first
-// codepoint mapping — adequate for copy-paste of the dominant script.
+// codepoint mapped to a non-.notdef glyph. A glyph several codepoints reach
+// keeps the one the document drew it for (`glyphChars`), else the first.
 //
 // Supplementary plane characters (U+10000+) are not yet enumerated; they
 // will render correctly but won't appear in copy-paste output.
@@ -235,6 +244,7 @@ function buildToUnicodeCMap(
   parsed: ParsedTtf,
   subsetGids?: ReadonlyArray<number>,
   glyphText?: ReadonlyMap<number, string>,
+  glyphChars?: ReadonlyMap<number, number>,
 ): Uint8Array {
   // A subset draws a handful of glyphs, and mapping every glyph the SOURCE font
   // can reach wrote 2767 bfchar entries for a document that uses fifteen — 40 KB
@@ -268,6 +278,14 @@ function buildToUnicodeCMap(
     }
     gidToCps.set(gid, [cp]);
     order.push(gid);
+  }
+  // One glyph, two letters: Arimo draws the Latin schwa and the Cyrillic one
+  // alike, and the scan above, running upward, named it Latin — a Kazakh
+  // "және" read back "жəне". The document says which it drew.
+  for (const [gid, cp] of glyphChars ?? []) {
+    if (gidToCps.get(gid)?.length === 1 && parsed.glyphForCodepoint(cp) === gid) {
+      gidToCps.set(gid, [cp]);
+    }
   }
   // A ligature the font gives a code point of its own is still those letters:
   // "ﬂ" is a shape, and a search for "flavor" does not find "ﬂavor".

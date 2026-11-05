@@ -43,8 +43,8 @@ export function lineVisualOrder(line: Line): Array<number> {
 
 /**
  * The extra width each space of a justified line takes — 0 for a line that is
- * not justified, or the last line of a paragraph (which stays flush by
- * convention).
+ * not justified. The last line of a paragraph stays flush by convention: it is
+ * never stretched, only pulled in where the breaker packed it past the measure.
  *
  * @param line The laid-out line.
  * @returns Points added to (or, squeezed, taken from) each space token.
@@ -54,9 +54,10 @@ export function computeJustifyExtra(line: Line): number {
   if (alignment !== 'both' && alignment !== 'distribute') return 0;
   // §17.3.1.13 — `distribute` justifies EVERY line, the last one included;
   // `both` leaves the last alone. para-adjust-distribute.docx sets one of each
-  // and we wrote both flush left.
-  if (line.noJustify === true) return 0;
-  if (line.isLastInParagraph && alignment !== 'distribute') return 0;
+  // and we wrote both flush left. Left alone means not STRETCHED: the breaker
+  // weighed the last line with the same squeeze as the others, and one it
+  // packed that tight is still pulled in, or it runs past the margin.
+  const flush = line.noJustify === true || (line.isLastInParagraph && alignment !== 'distribute');
   // A space at the END of a line justifies nothing: there is no glyph after it
   // to push, and counted in it left the line short of the measure by its own
   // width. Word and LibreOffice both hang it past the margin instead.
@@ -81,7 +82,8 @@ export function computeJustifyExtra(line: Line): number {
   // lines 1 to 10pt into the margin while the fourth sat short of it, which
   // reads as no justification at all.
   const extra = (line.availableWidthPt - contentWidthPt) / spaces;
-  return extra < 0 ? Math.max(extra, -narrowest * GLUE_SHRINK_RATIO) : extra;
+  if (extra < 0) return Math.max(extra, -narrowest * GLUE_SHRINK_RATIO);
+  return flush ? 0 : extra;
 }
 
 /**

@@ -7,6 +7,7 @@
 import type { IndicRun } from '@/core/font/indic-shaper';
 import type { ParsedTtf } from '@/core/font/ttf-parser';
 import { hasIndic, shapeIndic } from '@/core/font/indic-shaper';
+import { hasCombiningMark, shapeMarks } from '@/core/font/mark-shaper';
 import { shapeText } from '@/core/font/opentype-layout';
 
 /**
@@ -106,7 +107,11 @@ export function shapeGlyphs(
   parsed: ParsedTtf,
   text: string,
 ): { readonly gids: ReadonlyArray<number>; readonly glyphText?: ReadonlyMap<number, string> } {
-  const run = hasIndic(text) ? shapeIndic(parsed, text) : undefined;
+  const run = hasIndic(text)
+    ? shapeIndic(parsed, text)
+    : hasCombiningMark(text)
+      ? shapeMarks(parsed, text)
+      : undefined;
   if (!run) {
     const shaped = shapeText(
       text,
@@ -140,6 +145,29 @@ function namesOf(parsed: ParsedTtf): ReadonlyMap<number, ReadonlyArray<number>> 
     cmapNames.set(parsed, names);
   }
   return names;
+}
+
+/**
+ * The characters a face's `cmap` sends to one glyph, when it sends more than
+ * one: a /ToUnicode can name only one of them, and which one is a question of
+ * what the document drew.
+ *
+ * Arimo, Tinos and Cousine draw the Latin schwa U+0259 and the Cyrillic one
+ * U+04D9 with the same glyph (U+018F and U+04D8 likewise), and a scan that
+ * keeps the first code reaching a glyph named it Latin: every "және" of a
+ * Kazakh document set in Arial read back as "жəне".
+ *
+ * @param parsed The face.
+ * @param gid    The glyph.
+ * @returns The code points mapped to it, lowest first, or `undefined` when at
+ *          most one is.
+ */
+export function sharedGlyphCodes(
+  parsed: ParsedTtf,
+  gid: number,
+): ReadonlyArray<number> | undefined {
+  const codes = namesOf(parsed).get(gid);
+  return codes !== undefined && codes.length > 1 ? codes : undefined;
 }
 
 /** A character's canonical parts: क़ is क and the nukta, ো is ে and া. */
@@ -324,6 +352,16 @@ export function createFontMeasure(parsed: ParsedTtf, kern = true): FontMeasure {
       if (run === undefined) {
         if (indicRuns.size >= SHAPED_CACHE) indicRuns.clear();
         run = shapeIndic(parsed, text, kern) ?? null;
+        indicRuns.set(text, run);
+      }
+      if (run) return { gids: run.gids, advances: run.advances, indic: run };
+    } else if (hasCombiningMark(text)) {
+      // A letter and a mark written apart: the face's anchors set the mark on
+      // the letter (see `shapeMarks`), kept like the scripts of India's.
+      let run = indicRuns.get(text);
+      if (run === undefined) {
+        if (indicRuns.size >= SHAPED_CACHE) indicRuns.clear();
+        run = shapeMarks(parsed, text, kern) ?? null;
         indicRuns.set(text, run);
       }
       if (run) return { gids: run.gids, advances: run.advances, indic: run };

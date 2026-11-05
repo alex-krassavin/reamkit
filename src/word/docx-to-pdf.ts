@@ -4,7 +4,7 @@ import type { FamilyKey, FetchLike } from '@/core/fonts';
 import type { ThemeFonts } from '@/core/drawingml/theme-parser';
 import type { SignatureOptions, StyledRenderOptions } from '@/pdf';
 import { FontRegistry } from '@/core/font';
-import { fetchFontSet, resolveFamilyKey } from '@/core/fonts';
+import { companionOf, fetchFontSet, resolveFamilyKey } from '@/core/fonts';
 import { parseThemeFonts } from '@/core/drawingml/theme-parser';
 import { resolveWordThemeFont } from '@/word/theme-fonts';
 import { OpcPackage } from '@/core/opc';
@@ -227,8 +227,10 @@ export async function resolveDocxAutoFonts(
     ? new Set<FamilyKey>([resolveFamilyKey(options.fontFamily)])
     : detectDocxFamilyKeys(docx);
 
+  const companions = detectDocxCompanions(docx, keys);
+
   // Single family (e.g. an all-sans document) → simple one-family path.
-  if (keys.size <= 1) {
+  if (keys.size <= 1 && companions.size === 0) {
     const family = keys.values().next().value;
     return { fonts: await fetchFontSet({ ...(family ? { family } : {}), ...fetchOpt }) };
   }
@@ -241,7 +243,56 @@ export async function resolveDocxAutoFonts(
     registriesByFamily.set(key, FontRegistry.fromBytes(bytes));
     if (key === 'arimo' || !baseBytes) baseBytes = bytes;
   }
+  // …and the family each twin borrows what it lacks from, best effort: its
+  // letters still fall to another face when it cannot be fetched.
+  for (const family of companions) {
+    if (registriesByFamily.has(family)) continue;
+    try {
+      registriesByFamily.set(
+        family,
+        FontRegistry.fromBytes(await fetchFontSet({ family, ...fetchOpt })),
+      );
+    } catch {
+      // The run resolver falls back to the families it has.
+    }
+  }
   return { fonts: baseBytes!, registriesByFamily };
+}
+
+/**
+ * The companions a `.docx`'s substitutes need (see `companionOf`): those whose
+ * blocks the document's text holds a character of — a Cambria document in
+ * Russian needs Noto Serif for its letters, one in English does not.
+ *
+ * @param docx     The `.docx` bytes.
+ * @param families The substitute families it names.
+ * @returns The companion families to fetch.
+ */
+function detectDocxCompanions(docx: Uint8Array, families: ReadonlySet<FamilyKey>): Set<FamilyKey> {
+  const wanted = [...families].flatMap((key) => {
+    const companion = companionOf(key);
+    return companion ? [companion] : [];
+  });
+  const out = new Set<FamilyKey>();
+  if (wanted.length === 0) return out;
+  let xml: string;
+  try {
+    const main = OpcPackage.open(docx).getPart(MAIN_DOCUMENT_PART);
+    if (!main) return out;
+    xml = new TextDecoder('utf-8').decode(main);
+  } catch {
+    return out;
+  }
+  for (const c of wanted) {
+    for (const ch of xml) {
+      const cp = ch.codePointAt(0)!;
+      if (c.ranges.some(([lo, hi]) => cp >= lo && cp <= hi)) {
+        out.add(c.family);
+        break;
+      }
+    }
+  }
+  return out;
 }
 
 /**

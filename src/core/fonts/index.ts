@@ -1,4 +1,6 @@
 export {
+  companionOf,
+  companionScale,
   fetchFontSet,
   fetchScriptFont,
   isScriptKey,
@@ -9,6 +11,7 @@ export {
 } from '@/core/fonts/remote-fonts';
 export { scriptForCodepoint, scriptsInFlow } from '@/core/fonts/scripts';
 export type {
+  Companion,
   FamilyKey,
   FamilyStyle,
   FetchFontSetOptions,

@@ -33,8 +33,12 @@ const VARIANT_SUFFIX: Record<FontVariant, string> = {
   boldItalic: '700Bold_Italic',
 };
 
-/** A curated open substitute family (the Croscore + Carlito/Caladea set, like LibreOffice). */
-export type FamilyKey = 'arimo' | 'tinos' | 'cousine' | 'carlito' | 'caladea';
+/**
+ * A curated open substitute family (the Croscore + Carlito/Caladea set, like
+ * LibreOffice), or the family a twin borrows the letters it lacks from (see
+ * {@link companionOf}).
+ */
+export type FamilyKey = 'arimo' | 'tinos' | 'cousine' | 'carlito' | 'caladea' | 'notoserif';
 
 /**
  * A WRITING SYSTEM the curated five cannot draw at all. They are Latin families
@@ -141,7 +145,91 @@ const FAMILIES: Record<FamilyKey, CuratedFamily> = {
   cousine: { pkg: 'cousine', file: 'Cousine' },
   carlito: { pkg: 'carlito', file: 'Carlito', nested: true },
   caladea: { pkg: 'caladea', file: 'Caladea' },
+  notoserif: { pkg: 'noto-serif', file: 'NotoSerif', nested: true },
 };
+
+/**
+ * The letters a metric twin does not draw, and the family it borrows them
+ * from — squeezed, per writing system and face, to the width of the face the
+ * twin stands in for.
+ */
+export interface Companion {
+  /** The family that draws them. */
+  readonly family: FamilyKey;
+  /**
+   * The blocks it is borrowed for (inclusive ranges), each with the factor
+   * its advances are multiplied by in each face.
+   */
+  readonly ranges: ReadonlyArray<readonly [number, number, Readonly<Record<FontVariant, number>>]>;
+}
+
+// Caladea, Cambria's twin, is a Latin face: its cmap stops at U+017F and a few
+// more (fc-query, 2026-11-06), with no Greek and no Cyrillic, so every Russian,
+// Kazakh, Uzbek or Greek letter of a Cambria run fell to whichever family was
+// loaded first — Arimo, a grotesque, beside the roman Latin around it.
+//
+// Noto Serif is the roman that comes closest to Cambria's Cyrillic. Against
+// Cambria 6.90 (Microsoft Office for Mac), letter by letter over the Russian
+// and the 52 Turkic letters, Tinos is off by 8.0 % on average and Arimo by
+// 8.6 %; Noto Serif by 11.6 %, but almost all of it is one factor — it is 12 %
+// wider throughout — and with that taken out it is off by 4.2 % (3.5 % bold,
+// 4.6 % italic, 5.0 % bold italic). The factors are the width of Cambria's
+// letters over Noto Serif's, measured on running Russian and Turkic text
+// (Cyrillic) and Greek text, so that a line holds about as much as Word's.
+//
+// Each factor is kept to a tenth of a percent, the step the PDF writer sets
+// horizontal scaling (`Tz`) in: a factor between two steps is measured at one
+// width and drawn at another.
+const CAMBRIA_CYRILLIC: Readonly<Record<FontVariant, number>> = {
+  regular: 0.894,
+  bold: 0.918,
+  italic: 0.9,
+  boldItalic: 0.915,
+};
+const CAMBRIA_GREEK: Readonly<Record<FontVariant, number>> = {
+  regular: 0.932,
+  bold: 0.953,
+  italic: 0.909,
+  boldItalic: 0.938,
+};
+
+const COMPANIONS: Partial<Record<FamilyKey, Companion>> = {
+  caladea: {
+    family: 'notoserif',
+    ranges: [
+      [0x0370, 0x03ff, CAMBRIA_GREEK],
+      [0x0400, 0x052f, CAMBRIA_CYRILLIC],
+      [0x1f00, 0x1fff, CAMBRIA_GREEK],
+    ],
+  },
+};
+
+/**
+ * The family a substitute borrows the letters it lacks from, if it borrows any.
+ *
+ * @param key The substitute.
+ * @returns Its companion, or `undefined`.
+ */
+export function companionOf(key: string): Companion | undefined {
+  return Object.hasOwn(COMPANIONS, key) ? COMPANIONS[key as FamilyKey] : undefined;
+}
+
+/**
+ * How much a companion squeezes a character it draws in a face.
+ *
+ * @param companion The companion.
+ * @param cp        The code point.
+ * @param variant   The face it is drawn in.
+ * @returns The factor, or `undefined` when the companion is not borrowed for it.
+ */
+export function companionScale(
+  companion: Companion,
+  cp: number,
+  variant: FontVariant,
+): number | undefined {
+  for (const [lo, hi, scale] of companion.ranges) if (cp >= lo && cp <= hi) return scale[variant];
+  return undefined;
+}
 
 // Metric-compatible twins: an open font engineered to reproduce the named
 // proprietary font's advance widths 1:1. Matched before the class fallback so
