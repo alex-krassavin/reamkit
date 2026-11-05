@@ -33,6 +33,11 @@ jobs:
           cache: npm
           cache-dependency-path: '**/package-lock.json'
 
+      # npm 12 (node 24 still bundles npm 11): a dependency's install scripts
+      # run only if allowScripts in package.json allows them; the root and
+      # docs/ each keep their own list.
+      - run: npm install -g npm@12
+
       # Root deps — TypeDoc resolves the API reference from ../src.
       - name: Install module deps
         run: npm ci

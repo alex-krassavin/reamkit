@@ -113,5 +113,10 @@
   },
   "engines": {
     "node": ">=20"
+  },
+  "allowScripts": {
+    "esbuild": false,
+    "unrs-resolver": false,
+    "fsevents": false
   }
 }
