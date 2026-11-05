@@ -112,7 +112,7 @@ import {
   substituteLetters,
 } from '@/core/font';
 import { hasIndic, syllableStarts } from '@/core/font/indic-shaper';
-import { resolveFamilyStyle } from '@/core/fonts';
+import { companionOf, companionScale, resolveFamilyStyle } from '@/core/fonts';
 import { fontSlotOf, scriptForCodepoint } from '@/core/fonts/scripts';
 import { prepareImage } from '@/core/images';
 import { isEmf, readEmf } from '@/core/metafile/emf';
@@ -5162,9 +5162,22 @@ function fallbackFaceKey(
   cp: number,
   bold: boolean,
   italic: boolean,
-): { fontKey: string; parsed: ParsedTtf } | undefined {
+  own?: string,
+): { fontKey: string; parsed: ParsedTtf; widthScale?: number } | undefined {
   const byFamily = options.registriesByFamily;
   if (!byFamily || byFamily.size === 0) return undefined;
+  // A twin that lacks a whole alphabet borrows it from a family chosen for it,
+  // squeezed to the width of the face the twin stands in for: Cambria's
+  // Cyrillic is drawn from Noto Serif, not from the first family loaded.
+  const companion = own === undefined ? undefined : companionOf(own);
+  const borrowed = companion ? byFamily.get(companion.family) : undefined;
+  if (companion && borrowed) {
+    const { variant, parsed } = borrowed.resolveByStyle(bold, italic);
+    const widthScale = companionScale(companion, cp, variant);
+    if (widthScale !== undefined && parsed.glyphForCodepoint(cp) !== 0) {
+      return { fontKey: `${companion.family}:${variant}`, parsed, widthScale };
+    }
+  }
   // Which face draws unified Han is a property of the DOCUMENT, and the answer
   // is already in the map: the converter fetched the one its text called for.
   const hanFace = byFamily.has('jp') ? 'jp' : byFamily.has('kr') ? 'kr' : 'sc';
@@ -5353,13 +5366,15 @@ function fallbackFace(
   options: StyledRenderOptions,
   cp: number,
   resolved: ResolvedRunProperties,
+  own?: string,
 ): KeyedFace | undefined {
-  const face = fallbackFaceKey(options, cp, resolved.bold, resolved.italic);
-  if (!face) return undefined;
+  const found = fallbackFaceKey(options, cp, resolved.bold, resolved.italic, own);
+  if (!found) return undefined;
+  const { widthScale, ...face } = found;
   const variant = face.fontKey.split(':')[1];
   const got: FontVariant =
     variant === 'bold' || variant === 'boldItalic' || variant === 'italic' ? variant : 'regular';
-  return { ...face, ...syntheticFace(got, resolved.bold, resolved.italic) };
+  return { ...face, ...syntheticFace(got, resolved.bold, resolved.italic, widthScale) };
 }
 
 /**
@@ -5394,7 +5409,9 @@ function runFaces(
     const own = slots?.get(fontSlotOf(cp, resolved.rtl)) ?? primary;
     if (own.parsed.glyphForCodepoint(cp) !== 0) return own;
     if (own !== primary && primary.parsed.glyphForCodepoint(cp) !== 0) return primary;
-    return fallbackFace(options, cp, resolved) ?? own;
+    // The family the face is a substitute of — `caladea` of `caladea:bold` —
+    // for the companion it borrows what it lacks from.
+    return fallbackFace(options, cp, resolved, own.fontKey.split(':')[0]) ?? own;
   };
   const indic = indicFace(drawing, text);
   if (!indic) return drawing;

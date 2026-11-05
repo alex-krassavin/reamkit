@@ -23,6 +23,24 @@ The licence is reproduced in `Arimo-OFL.txt`.
 |---|---|---|
 | `Arimo-Regular.ttf` | `02219a6ff8456d98` | `Arimo_400Regular.ttf` from `@expo-google-fonts/arimo` on jsDelivr — the face the library downloads for a document that names no font. `tests/ligatures.test.ts` turns on its coverage: no U+FB00, U+FB01/U+FB02 with their private-use twins U+F001/U+F002, and U+210E. `tests/turkic-cyrillic.test.ts` on its one glyph for the Latin and the Cyrillic schwa (U+0259/U+04D9, U+018F/U+04D8). |
 
+## Caladea 1.001 — OFL-1.1
+
+Copyright 2012 The Caladea Project Authors (<https://github.com/huertatipografica/Caladea>).
+The licence is reproduced in `Caladea-OFL.txt`; the font reserves no name.
+
+| File | sha256 (16) | Why it is here |
+|---|---|---|
+| `Caladea-subset.ttf` | `c5ae0da4bcfc90ed` | `Caladea_400Regular.ttf` from `@expo-google-fonts/caladea` — Cambria's substitute — cut to printable ASCII with `hb-subset` 15.0.0 (`--unicodes=20-7E --layout-features='*'`). `tests/turkic-cyrillic.test.ts` turns on what it lacks: the face has no Cyrillic at all. |
+
+## Noto Serif 2.015 — OFL-1.1
+
+Copyright 2022 The Noto Project Authors (<https://github.com/notofonts/latin-greek-cyrillic>).
+The licence, with its copyright line, is reproduced in `Noto-OFL.txt`.
+
+| File | sha256 (16) | Why it is here |
+|---|---|---|
+| `NotoSerif-subset.ttf` | `b3798896e354ce59` | `NotoSerif_400Regular.ttf` from `@expo-google-fonts/noto-serif` — the face Cambria's Cyrillic is borrowed from — cut with `hb-subset` 15.0.0 to the Cyrillic letters of `tests/turkic-cyrillic.test.ts` (`--unicodes=<them> --layout-features='*'`). |
+
 ## Noto Sans of the scripts of India, and of Newa — OFL-1.1
 
 Devanagari 2.007, Bengali 3.011, Gurmukhi 2.004, Gujarati 2.106, Oriya 2.007,

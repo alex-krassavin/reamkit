@@ -1,8 +1,9 @@
 // Which writing system a character belongs to, and which of them a document
 // needs a face for.
 //
-// The curated substitutes are Latin families. Greek, Cyrillic and Hebrew ride
-// along in them; Han, Kana, Hangul, Arabic, Thai, the scripts of India and the
+// The curated substitutes are Latin families. Greek and Cyrillic ride along in
+// all but Caladea, which borrows them (see `companionsInFlow`); Hebrew in the
+// Croscore three. Han, Kana, Hangul, Arabic, Thai, the scripts of India and the
 // geometric symbols do not, and 2145 characters of the corpus are exactly
 // those — a notdef box every one. A face for them is fetched only when a
 // document holds such a character (see `fetchScriptFont`), so the question
@@ -10,7 +11,8 @@
 
 import type { BodyElement, ShapeBlock } from '@/core/document-model';
 import type { FlowDoc } from '@/core/ir/flow';
-import type { ScriptKey } from '@/core/fonts/remote-fonts';
+import type { FamilyKey, ScriptKey } from '@/core/fonts/remote-fonts';
+import { companionOf } from '@/core/fonts/remote-fonts';
 
 // The blocks each face covers. Ordered: the first range that contains the code
 // point wins, and HAN is deliberately last because which of the three CJK faces
@@ -163,6 +165,24 @@ export function scriptsInFlow(flow: FlowDoc): {
     }
   };
 
+  forEachTextInFlow(flow, read);
+
+  // Kana wins over Hangul: a Japanese document quotes Korean far less often
+  // than the other way round, and either face draws the Han it shares.
+  const hanFace: ScriptKey = scripts.has('jp') ? 'jp' : scripts.has('kr') ? 'kr' : 'sc';
+  if (marks.has('han')) scripts.add(hanFace);
+  return { scripts, hanFace };
+}
+
+/**
+ * Hand every run's text in a document to `read`: the body, the bands, the
+ * notes and the comments, the cells of a table, the text of every shape and
+ * of the drawings over a spreadsheet grid.
+ *
+ * @param flow The parsed document.
+ * @param read Called with each run's text.
+ */
+export function forEachTextInFlow(flow: FlowDoc, read: (text: string) => void): void {
   const shapeText = (shape: ShapeBlock): void => {
     if (shape.text) visit(shape.text.content);
     for (const child of shape.children ?? []) shapeText(child.shape);
@@ -185,10 +205,33 @@ export function scriptsInFlow(flow: FlowDoc): {
   for (const note of flow.footnotes?.values() ?? []) visit(note);
   for (const note of flow.endnotes?.values() ?? []) visit(note);
   for (const comment of flow.comments?.values() ?? []) visit(comment.content);
+}
 
-  // Kana wins over Hangul: a Japanese document quotes Korean far less often
-  // than the other way round, and either face draws the Han it shares.
-  const hanFace: ScriptKey = scripts.has('jp') ? 'jp' : scripts.has('kr') ? 'kr' : 'sc';
-  if (marks.has('han')) scripts.add(hanFace);
-  return { scripts, hanFace };
+/**
+ * The companions a document's families need: those whose blocks its text
+ * holds a character of (see `companionOf`). A Cambria document in Russian
+ * needs Noto Serif for its letters; one in English does not, and is not sent
+ * for it.
+ *
+ * @param flow     The parsed document.
+ * @param families The substitute families it names.
+ * @returns The companion families to fetch.
+ */
+export function companionsInFlow(flow: FlowDoc, families: Iterable<FamilyKey>): Set<FamilyKey> {
+  const wanted = [...families].flatMap((key) => {
+    const companion = companionOf(key);
+    return companion ? [companion] : [];
+  });
+  const out = new Set<FamilyKey>();
+  if (wanted.length === 0) return out;
+  forEachTextInFlow(flow, (text) => {
+    if (out.size === wanted.length) return;
+    for (const ch of text) {
+      const cp = ch.codePointAt(0) ?? 0;
+      if (cp < 0x0370) continue;
+      for (const c of wanted)
+        if (c.ranges.some(([lo, hi]) => cp >= lo && cp <= hi)) out.add(c.family);
+    }
+  });
+  return out;
 }

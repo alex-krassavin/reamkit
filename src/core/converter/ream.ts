@@ -31,7 +31,7 @@ import { flowRenderOptions } from '@/core/converter/project';
 import { layoutSheetImages } from '@/core/converter/sheet-images';
 import { FontRegistry, createFontMeasure } from '@/core/font';
 import { fetchFontSet, fetchScriptFont, resolveFamilyKey } from '@/core/fonts';
-import { scriptsInFlow } from '@/core/fonts/scripts';
+import { companionsInFlow, scriptsInFlow } from '@/core/fonts/scripts';
 import { familiesInFlow } from '@/core/fonts/families';
 import { ConversionLossError } from '@/core/ir';
 import { decryptPackage, isEncryptedPackage } from '@/core/crypto/offcrypto';
@@ -511,7 +511,8 @@ export class Ream {
     const keys = options.fontFamily
       ? new Set<FamilyKey>([resolveFamilyKey(options.fontFamily)])
       : familiesInFlow(flow);
-    if (keys.size <= 1 && scriptsInFlow(flow).scripts.size === 0) {
+    const companions = companionsInFlow(flow, keys);
+    if (keys.size <= 1 && companions.size === 0 && scriptsInFlow(flow).scripts.size === 0) {
       const family = keys.values().next().value;
       return { fonts: await fetchFontSet({ ...(family ? { family } : {}), ...fetchOpt }) };
     }
@@ -523,8 +524,43 @@ export class Ream {
       // The registry a run falls back to when its family is none of these.
       if (key === 'arimo' || !baseBytes) baseBytes = bytes;
     }
+    await this.addCompanionFonts(registriesByFamily, companions, fetchOpt, losses);
     await this.addScriptFonts(registriesByFamily, flow, options, losses);
     return { fonts: baseBytes!, registriesByFamily };
+  }
+
+  /**
+   * Fetch the family each twin borrows the letters it lacks from: Caladea,
+   * Cambria's twin, has no Cyrillic and no Greek, and without its companion a
+   * Cambria run set every Russian or Kazakh letter in whichever face was loaded
+   * first — a grotesque beside the roman around it.
+   *
+   * A companion that fails to arrive is a recorded loss, not a throw: its
+   * letters still fall to another face on hand.
+   *
+   * @param into       The registry map the run resolver looks in.
+   * @param companions The companion families the document's text needs.
+   * @param fetchOpt   The injectable `fetch`, when the caller gave one.
+   * @param losses     Where a companion that could not be fetched records itself.
+   */
+  private async addCompanionFonts(
+    into: Map<SubstituteKey, FontRegistry>,
+    companions: ReadonlySet<FamilyKey>,
+    fetchOpt: { readonly fetch?: FetchLike },
+    losses: Array<Loss>,
+  ): Promise<void> {
+    for (const family of companions) {
+      if (into.has(family)) continue;
+      try {
+        into.set(family, FontRegistry.fromBytes(await fetchFontSet({ family, ...fetchOpt })));
+      } catch {
+        losses.push({
+          feature: 'font',
+          detail: `the ${family} face could not be fetched; the letters it draws for a substitute fall to another face`,
+          severity: 'substituted',
+        });
+      }
+    }
   }
 
   /**

@@ -6,11 +6,13 @@
 
 import { readFileSync } from 'node:fs';
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { buildDocx } from './fixtures/build-docx';
+import { buildDocx, buildDocxFromBody } from './fixtures/build-docx';
+import type { FetchLike } from '@/core/fonts';
 import { Ream } from '@/core/converter/ream';
 import { parseTtf } from '@/core/font/ttf-parser';
+import { clearFontCache } from '@/core/fonts/remote-fonts';
 import { PdfFile } from '@/pdf-reader/document';
 import { extractPageText } from '@/pdf-reader/text';
 
@@ -56,5 +58,92 @@ describe('one glyph for two letters: the schwa (ISO 32000-1 §9.10.3)', () => {
     // letters can be right about only one, and it is the one it uses most.
     const text = await textOf(buildDocx(['және әке әже', 'Azərbaycan']));
     expect(text).toContain('және әке әже');
+  });
+});
+
+// Cut-down copies of the files the CDN serves (tests/fixtures/fonts/NOTICE.md):
+// Caladea to printable ASCII, which is all it draws of what the test sets, and
+// Noto Serif to the Cyrillic letters the test sets.
+const CALADEA = new Uint8Array(readFileSync('tests/fixtures/fonts/Caladea-subset.ttf'));
+const NOTO_SERIF = new Uint8Array(readFileSync('tests/fixtures/fonts/NotoSerif-subset.ttf'));
+
+/** The CDN, from disk: the regular face of each family the test needs, and nothing else. */
+const fontFetch: FetchLike = (url) => {
+  const regular = /_400Regular\.ttf$/u.test(url);
+  const bytes = !regular
+    ? undefined
+    : url.includes('/caladea/')
+      ? CALADEA
+      : url.includes('/noto-serif/')
+        ? NOTO_SERIF
+        : url.includes('/arimo/')
+          ? ARIMO.regular
+          : undefined;
+  return Promise.resolve({
+    ok: bytes !== undefined,
+    arrayBuffer: () => Promise.resolve((bytes ?? new Uint8Array(0)).buffer.slice(0)),
+  });
+};
+
+/** A paragraph of one run in a named family. */
+function runIn(family: string, text: string): string {
+  return `<w:p><w:r><w:rPr><w:rFonts w:ascii="${family}" w:hAnsi="${family}"/></w:rPr><w:t xml:space="preserve">${text}</w:t></w:r></w:p>`;
+}
+
+describe("Cambria's Cyrillic, which its twin does not draw", () => {
+  // The download cache is keyed by URL and outlives a test: what this one
+  // serves for Caladea must not be what the next one is given.
+  beforeEach(() => clearFontCache());
+  afterEach(() => clearFontCache());
+
+  it('is a face the twin lacks, which is what puts the question', () => {
+    const face = parseTtf(CALADEA);
+    expect(face.glyphForCodepoint('Б'.codePointAt(0)!)).toBe(0);
+    expect(face.glyphForCodepoint('C'.codePointAt(0)!)).not.toBe(0);
+  });
+
+  it('is drawn in Noto Serif, squeezed to Cambria’s width, beside Caladea’s Latin', async () => {
+    // Every Cyrillic letter of a Cambria run fell to the first family loaded,
+    // Arimo: a grotesque in a roman line, its letters 9 to 11 % off Cambria's
+    // widths on average and up to 67 % for one letter.
+    const word = 'Барлық';
+    const docx = buildDocxFromBody(runIn('Cambria', `Cambria ${word} адамдар және`));
+    const { bytes, losses } = await Ream.parse(docx).convertWithReport('pdf', { fontFetch });
+    expect(losses).toEqual([]);
+    const file = PdfFile.parse(bytes);
+    const runs = extractPageText(file, file.pages()[0]!);
+    const text = runs.map((r) => r.text).join('');
+    expect(text).toContain(`Cambria ${word} адамдар және`);
+    const faceOf = (s: string): string | undefined =>
+      runs.find((r) => r.text.includes(s))?.fontName;
+    expect(faceOf('Cambria')).toMatch(/^caladea/u);
+    expect(faceOf(word)).toMatch(/^notoserif/u);
+    // The word is as wide as Noto Serif sets it, times the regular face's
+    // factor: 0.894, Cambria 6.90's Cyrillic over Noto Serif's. Kerning and the
+    // PDF's rounded widths move it by a fraction of a percent; unsqueezed it
+    // would be 1.
+    const run = runs.find((r) => r.text === word)!;
+    const noto = parseTtf(NOTO_SERIF);
+    const natural = [...word].reduce(
+      (sum, ch) => sum + noto.advanceWidths[noto.glyphForCodepoint(ch.codePointAt(0)!)]!,
+      0,
+    );
+    const squeeze = (run.endX - run.x) / ((natural / noto.unitsPerEm) * 11);
+    expect(squeeze).toBeGreaterThan(0.88);
+    expect(squeeze).toBeLessThan(0.9);
+  });
+
+  it('is fetched only for a document that holds such a letter', async () => {
+    const asked: Array<string> = [];
+    const spy: FetchLike = (url) => {
+      asked.push(url);
+      return fontFetch(url);
+    };
+    await Ream.parse(buildDocxFromBody(runIn('Cambria', 'Only Latin here.'))).convert('pdf', {
+      fontFetch: spy,
+    });
+    expect(asked.some((u) => u.includes('/noto-serif/'))).toBe(false);
+    await Ream.parse(buildDocxFromBody(runIn('Cambria', 'Әке'))).convert('pdf', { fontFetch: spy });
+    expect(asked.some((u) => u.includes('/noto-serif/'))).toBe(true);
   });
 });
