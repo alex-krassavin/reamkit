@@ -18,9 +18,23 @@ name: Release
 # Prereleases (a version with a hyphen, e.g. 1.5.0-alpha.1) publish to a
 # non-default npm dist-tag, so a plain `npm install reamkit` never pulls one.
 #
-# One-time npm setup (not done here): claim `reamkit` on npmjs.com, and either
-# add an `NPM_TOKEN` repo secret or configure npm Trusted Publishing for this
-# repo (then NODE_AUTH_TOKEN can be dropped).
+# Publishing goes through npm Trusted Publishing (OIDC): no npm token is stored
+# in the repo. npm trades this job's GitHub OIDC token (id-token: write) for a
+# short-lived credential that can publish `reamkit` only, and only from this
+# workflow file, and attaches the provenance attestation itself. One-time setup
+# on npmjs.com: reamkit → Settings → Trusted publishing → GitHub Actions, with
+# organization or user `alex-krassavin`, repository `reamkit`, workflow
+# filename `release.yml`, no environment, and direct `npm publish` allowed. A
+# new trusted publisher expires unless it publishes within 2 days, so add it
+# just before a release. Needs npm >= 11.5.1; the job installs npm 12.
+#
+# Rollback, until the first token-less publish has succeeded: put
+#     env:
+#       NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+# back on the publish step (npm tries OIDC first and falls back to the token).
+# Granular tokens that bypass 2FA lose direct publishing around January 2027;
+# after that a token can only stage a publish (`npm stage publish`), which a
+# maintainer approves with 2FA on npmjs.com.
 
 on:
   push:
@@ -30,7 +44,7 @@ on:
 
 permissions:
   contents: write # push the tag + create the GitHub Release
-  id-token: write # provenance attestation (and tokenless trusted publishing)
+  id-token: write # trusted publishing to npm, and its provenance attestation
 
 # Never run two releases at once; never cancel one mid-publish.
 concurrency:
@@ -85,7 +99,10 @@ jobs:
           fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
-      - name: Publish to npm (provenance)
+      # Trusted publishing: no token. Provenance needs no flag either: npm adds
+      # it under OIDC, and publishConfig.provenance in package.json makes it
+      # mandatory (the publish fails rather than going out without it).
+      - name: Publish to npm (trusted publishing, provenance)
         run: |
           set -euo pipefail
           VERSION=$(node -p "require('./package.json').version")
@@ -93,10 +110,8 @@ jobs:
             *-*) TAG=$(printf '%s' "$VERSION" | sed -E 's/^[0-9.]+-([A-Za-z]+).*/\1/; t; s/.*/next/') ;;
             *)   TAG=latest ;;
           esac
-          echo "Publishing $VERSION to dist-tag '$TAG'"
-          npm publish --provenance --access public --tag "$TAG"
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          echo "Publishing $VERSION to dist-tag '$TAG' with npm $(npm --version)"
+          npm publish --access public --tag "$TAG"
 
       # Publish succeeded — push the tag (dispatch only; a tag push already has it).
       - name: Push the tag (manual dispatch)
