@@ -86,7 +86,12 @@ declares (Annex D.2 Standard, WinAnsi and MacRoman, or a symbolic font's own
 built-in one — ZapfDingbats is a font of PICTURES and is read as pictures,
 Annex D.6), and a code the differences leave `.notdef` is no character at all.
 The names TeX gives its Greek and its mathematics — `alpha`, `epsilon1`,
-`asteriskmath` — are read like any other, and an accent TeX strikes over a letter
+`asteriskmath` — are read like any other, and so are the Cyrillic names of the
+Adobe Glyph List — `afii10017`, `schwacyrillic`, `kadescendercyrillic` — every
+Turkic letter among them. A Latin schwa among Cyrillic letters, which is how
+Word, Excel and PowerPoint for Mac export a Kazakh ә set in Arial, Times New
+Roman or Courier New, is read as the Cyrillic one; a word of the Latin alphabet
+keeps its ə. An accent TeX strikes over a letter
 it has no glyph for is composed with that letter: "naïve", not "na¨ıve". A word
 space is read where the page STEPS one as wide as most of its face's space as
 well as where it draws one, a dot stepped on after a word is the rest of an
@@ -732,6 +737,18 @@ yourself, or `{ images: 'drop' }` to omit them.
   character is drawn differently in Japanese, Korean and Chinese, so its neighbours
   decide which face draws it. A character no face on hand can draw is reported
   as a `text` loss, so `strict: true` refuses it rather than printing a box.
+- **The Turkic letters of Cyrillic.** Kazakh, Tatar, Bashkir, Chuvash, Uzbek,
+  Azerbaijani, Sakha, Altai and Khakas — ә ғ қ ң ө ұ ү һ і and the rest — are drawn
+  at the widths of the faces the substitutes stand in for, and read back as
+  written: where a face draws two letters with one glyph (the Latin and the
+  Cyrillic schwa), `/ToUnicode` names it after the one the page drew. Caladea,
+  Cambria's substitute, has no Cyrillic and no Greek; a Cambria run borrows them
+  from Noto Serif, squeezed in each style to Cambria's widths, fetched only when the
+  document holds such a letter.
+- **Combining marks.** A letter and a mark written apart — a decomposed й, ӑ or ӧ —
+  are drawn as the composed letter where the face has it; a mark with none, the
+  stress on а́, is set on its letter by the face's own anchors, in the face that
+  draws the letter.
 - **Each character in the font its slot names** (§17.3.2.26): ASCII in `w:ascii`,
   East Asian text in `w:eastAsia`, complex script in `w:cs`, everything else —
   Cyrillic, Greek, accented Latin — in `w:hAnsi`, each slot inherited on its own
