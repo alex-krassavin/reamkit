@@ -1089,6 +1089,10 @@ export function parseTxBody(
   const tIns = bodyPr ? poIntAttr(bodyPr, 'tIns') : undefined;
   const rIns = bodyPr ? poIntAttr(bodyPr, 'rIns') : undefined;
   const bIns = bodyPr ? poIntAttr(bodyPr, 'bIns') : undefined;
+  // ST_TextWrappingType §20.1.10.85 — `wrap="none"` lets every line run as far
+  // as its words do, whatever the box's width. The layout already reads
+  // `noWrap` as an unbounded inner width; nothing fed it from a slide.
+  const wrap = bodyPr ? poAttr(bodyPr, 'wrap') : undefined;
   const a = bodyPr ? poAttr(bodyPr, 'anchor') : undefined;
   // §20.1.10.42 — a `normAutofit` that carries no scale of its own is a box
   // whose text has never been fitted; the layout measures it and shrinks it.
@@ -1118,6 +1122,7 @@ export function parseTxBody(
     ...(anchor ? { anchor } : {}),
     ...(vertical ? { vertical } : {}),
     ...(upright ? { upright } : {}),
+    ...(wrap === 'none' ? { noWrap: true } : {}),
     ...(shrink ? { shrinkToFit: true } : {}),
     ...(warp ? { warp } : {}),
   };
