@@ -247,12 +247,12 @@ const FONTS = {
  * The box is 4 000 000 × 1 000 000 EMU = 315 × 79 pt, and the text is far too
  * wide for it at 54 pt: an ordinary body would break it over three lines.
  */
-function warpedPage(prst: string, text = 'Text Wave One Two') {
+function warpedPage(prst: string, text = 'Text Wave One Two', wrapNone = true) {
   const sp =
     `<p:sp><p:nvSpPr><p:cNvPr id="2" name="W"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>` +
     `<p:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="4000000" cy="1000000"/></a:xfrm>` +
     `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></p:spPr>` +
-    `<p:txBody><a:bodyPr wrap="none" lIns="0" tIns="0" rIns="0" bIns="0">` +
+    `<p:txBody><a:bodyPr${wrapNone ? ' wrap="none"' : ''} lIns="0" tIns="0" rIns="0" bIns="0">` +
     (prst === '' ? '' : `<a:prstTxWarp prst="${prst}"><a:avLst/></a:prstTxWarp>`) +
     `</a:bodyPr><a:lstStyle/><a:p><a:r><a:rPr lang="en-US" sz="5400" b="1"/>` +
     `<a:t>${text}</a:t></a:r></a:p></p:txBody></p:sp>`;
@@ -278,8 +278,9 @@ describe('a WordArt body through the layout', () => {
     // block.
     const bent = warpedPage('textWave1');
     expect(bent).toHaveLength(1);
-    // The same body without a warp is the ordinary box it always was.
-    const flat = warpedPage('');
+    // The same body without a warp (and without its no-wrap) is the ordinary
+    // box it always was; with `wrap="none"` read, that body is one line too.
+    const flat = warpedPage('', undefined, false);
     expect(flat.length).toBeGreaterThan(1);
   });
 

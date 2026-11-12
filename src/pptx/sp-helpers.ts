@@ -103,6 +103,11 @@ export function rPrToRunProps(
 ): RunProperties {
   if (!rPr) return {};
   const sz = poIntAttr(rPr, 'sz');
+  // §21.1.2.3.9 — `spc` tracks the run, in the same hundredths of a point `sz`
+  // is stated in. The IR's `letterSpacingPt` feeds measurement and every
+  // writer already; only this reader stood between a deck's tracking and the
+  // page.
+  const spc = poIntAttr(rPr, 'spc');
   const u = poAttr(rPr, 'u');
   const colorHex = solidFillColor(rPr, colors);
   const latin = poChildren(rPr).find((c) => poIs(c, 'a:latin'));
@@ -130,6 +135,7 @@ export function rPrToRunProps(
       ? { underline: u === 'none' ? ('none' as const) : ('single' as const) }
       : {}),
     ...(sz !== undefined ? { fontSizePt: pt(sz / 100) } : {}),
+    ...(spc !== undefined ? { letterSpacingPt: pt(spc / 100) } : {}),
     ...(colorHex ? { colorHex } : {}),
     // §21.1.2.3.7 — `a:latin` is the font of everything neither East Asian nor
     // complex script: both of WordprocessingML's slots for it. Named as the
