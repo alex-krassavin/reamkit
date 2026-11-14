@@ -13,7 +13,7 @@
   "dependencies": {
     "@astrojs/starlight": "^0.42.5",
     "@expressive-code/plugin-line-numbers": "^0.43.1",
-    "astro": "^7.3.5",
+    "astro": "^7.4.12",
     "marked": "^18.0.9",
     "marked-footnote": "^1.4.0",
     "reamkit": "^1.35.0",
