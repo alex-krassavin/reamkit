@@ -326,7 +326,12 @@ yourself, or `{ images: 'drop' }` to omit them.
 - Tables — auto / fixed layout, §17.4 border-conflict resolution, cell shading,
   vertical merge and grid span, nested tables, **table styles** (`w:tblStyle` with
   conditional formats: banding, first/last row/column).
-- Lists and numbering (`abstractNum`, level overrides), multi-level.
+- Lists and numbering (`abstractNum`, level overrides), multi-level. A bullet
+  set in a symbol face — Symbol, Wingdings — is the character the face draws;
+  items that ask for contextual spacing (§17.3.1.9 `w:contextualSpacing`) stand
+  line to line in the body, a table cell, a header or a footnote alike; and the
+  tab after a marker, like any tab past a paragraph's own stops, falls on the
+  document's grid (§17.15.1.25 `w:defaultTabStop`).
 - Sections — per-section page size and orientation, headers and footers (a
   pair for the even and the odd pages, `w:evenAndOddHeaders`, and a first page
   of its own), **multi-column layout** (`w:cols`), and **lines that run down the
@@ -399,7 +404,7 @@ yourself, or `{ images: 'drop' }` to omit them.
   paragraphs, while the CHPX and PAPX runs (located through the `PlcfBteChpx` /
   `PlcfBtePapx` bin tables and decoded from their sprms) carry **bold / italic /
   underline / font size / font** onto each run and **alignment / indentation /
-  spacing / keeps** onto each paragraph, over what their **styles** give them (the
+  spacing / keeps / tab stops** onto each paragraph, over what their **styles** give them (the
   STSH: paragraph and character styles along their bases, down to the default
   fonts the document names; the fonts by name from the `SttbfFfn`, slot by slot).
   **Page, column and line breaks** and a paragraph set to start a page break where
