@@ -132,6 +132,13 @@ export interface ResolvedParagraphProperties {
    * layout stamps it here so a line knows the grid it stands on.
    */
   readonly gridLinePitchPt?: Pt;
+  /**
+   * §17.15.1.25 — the interval of the document's automatic tab stops, in
+   * points. Not the paragraph's either: the document's settings own it, and
+   * the layout stamps it here, beside the grid, so a tab knows where the stops
+   * past the paragraph's own fall. Absent ⇒ half an inch.
+   */
+  readonly defaultTabStopPt?: Pt;
 }
 
 /** Word's empty-document run defaults (used when `docDefaults` is absent). */

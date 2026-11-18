@@ -3,8 +3,10 @@
 
 import { XMLParser } from 'fast-xml-parser';
 
+import type { Pt } from '@/core/ir/units';
 import type { PoNode } from '@/core/po-helpers';
-import { poAttr, poChildren, poFindByPath, poIs } from '@/core/po-helpers';
+import { twipsToPt } from '@/core/ir/units';
+import { poAttr, poChildren, poFindByPath, poIntAttr, poIs } from '@/core/po-helpers';
 
 const decoder = new TextDecoder('utf-8');
 
@@ -56,6 +58,13 @@ export interface DocumentSettings {
    * still HTML's 14pt rather than nothing.
    */
   readonly compatibilityMode?: number;
+  /**
+   * ECMA-376 §17.15.1.25 — `w:defaultTabStop`: the interval of the automatic
+   * tab stops a tab falls to once it is past every stop of its own paragraph,
+   * in points. Absent where the document states none, which §17.15.1.25
+   * reads as 720 twips — half an inch.
+   */
+  readonly defaultTabStopPt?: Pt;
 }
 
 /** The all-defaults {@link DocumentSettings}, returned when no `w:settings` root is found. */
@@ -84,6 +93,7 @@ export function parseSettings(data: Uint8Array): DocumentSettings {
   let displayBackgroundShape = false;
   let gutterAtTop = false;
   let compatibilityMode: number | undefined;
+  let defaultTabStopPt: Pt | undefined;
   for (const child of poChildren(settings)) {
     if (poIs(child, 'w:evenAndOddHeaders')) {
       evenAndOddHeaders = onOff(child);
@@ -91,6 +101,11 @@ export function parseSettings(data: Uint8Array): DocumentSettings {
       displayBackgroundShape = onOff(child);
     } else if (poIs(child, 'w:gutterAtTop')) {
       gutterAtTop = onOff(child);
+    } else if (poIs(child, 'w:defaultTabStop')) {
+      // §22.9.2.14 ST_TwipsMeasure — twips, or a number with a unit; never
+      // negative. Zero is a value like any other (see the layout's tabs).
+      const twips = poIntAttr(child, 'val');
+      if (twips !== undefined && twips >= 0) defaultTabStopPt = twipsToPt(twips);
       // §17.15.1.35 lives one level down, inside w:compat — and a file may
       // carry more than one of those (fdo106029.docx writes the flag in the
       // first and an empty second one), so every compat block is read.
@@ -110,6 +125,7 @@ export function parseSettings(data: Uint8Array): DocumentSettings {
     displayBackgroundShape,
     gutterAtTop,
     ...(compatibilityMode !== undefined ? { compatibilityMode } : {}),
+    ...(defaultTabStopPt !== undefined ? { defaultTabStopPt } : {}),
   };
 }
 

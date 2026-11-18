@@ -469,6 +469,11 @@ export interface StyledRenderOptions {
    */
   readonly compatibilityMode?: number;
   /**
+   * ECMA-376 §17.15.1.25 `w:defaultTabStop` — the interval of the automatic
+   * tab stops, in points. Absent ⇒ 36 (half an inch, the standard's default).
+   */
+  readonly defaultTabStopPt?: Pt;
+  /**
    * §7.6 PDF encryption (AES-256, R6). Only honoured on the ASYNC conversion
    * path (WebCrypto); mutually exclusive with `pdfA` (ISO 19005 forbids
    * `/Encrypt`) and with signatures (v1).
@@ -6082,10 +6087,16 @@ function layoutParagraphBlock(
   // its lines know the pitch they stand on. A paragraph that says
   // `w:snapToGrid w:val="0"` is off the grid — which is what Word's own header
   // and footer styles say, and cjklist30.docx says it in both.
-  const baseResolved: ResolvedParagraphProperties =
+  const onGrid: ResolvedParagraphProperties =
     options.gridLinePitchPt !== undefined && cascaded.snapToGrid !== false
       ? { ...cascaded, gridLinePitchPt: options.gridLinePitchPt }
       : cascaded;
+  // §17.15.1.25 — the document's automatic tab stops are stamped the same way:
+  // a setting of the whole document that every line's tabs fall back to.
+  const baseResolved: ResolvedParagraphProperties =
+    options.defaultTabStopPt !== undefined
+      ? { ...onGrid, defaultTabStopPt: options.defaultTabStopPt }
+      : onGrid;
   // §17.6.17 — the paragraph mark IS the section break, so a paragraph that
   // holds one and nothing else takes no room: no line, no spacing.
   if (paragraph.properties.sectionBreak === true && paragraph.runs.length === 0) {
@@ -7350,7 +7361,11 @@ function paragraphItemStream(
   return entries;
 }
 
-/** Word's own default when a document names none (§17.15.1.25): half an inch. */
+/**
+ * The automatic tab stops' interval when a document names none: §17.15.1.25
+ * reads an absent `w:defaultTabStop` as 720 twips, half an inch. A document
+ * that names one is laid on its own (see {@link ResolvedParagraphProperties.defaultTabStopPt}).
+ */
 const DEFAULT_TAB_STOP_PT = 36;
 
 const TAB_LEADER_CHARS: ReadonlyMap<string, string> = new Map([
@@ -7430,10 +7445,18 @@ function resolveTabs(
         ? resolved.indentLeft
         : undefined;
     const explicitAt = stop ? stopAt(stop) : undefined;
+    // §17.15.1.25 — past every stop of its own, a tab falls to the document's
+    // automatic grid, counted from the text margin, not the indent. Word lays
+    // a 708-twip grid at 35.4pt steps (ten tabs end at 354pt where a 720-twip
+    // one ends at 360), and twelve tabs and 42pt of Courier fit a 468pt line
+    // on it where at 36pt they wrap; LibreOffice agrees. A grid of zero is no
+    // grid: there both give a tab no width at all.
+    const grid = resolved.defaultTabStopPt ?? DEFAULT_TAB_STOP_PT;
+    const gridAt = grid > 0 ? (Math.floor(x / grid) + 1) * grid : x;
     const position =
       explicitAt !== undefined && (hangingStop === undefined || explicitAt <= hangingStop)
         ? explicitAt
-        : (hangingStop ?? (Math.floor(x / DEFAULT_TAB_STOP_PT) + 1) * DEFAULT_TAB_STOP_PT);
+        : (hangingStop ?? gridAt);
     const alignment = stop?.alignment ?? 'left';
     // A right/centre/decimal stop places the segment AFTER the tab against the
     // stop, so a tab with nothing to place claims nothing and the stop falls to

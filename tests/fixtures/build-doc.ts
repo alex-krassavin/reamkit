@@ -136,6 +136,7 @@ export function buildDoc(
     // previous section's; an empty string is a story of one empty paragraph.
     readonly headerFooter?: DocBands | ReadonlyArray<DocBands>;
     readonly facingPages?: boolean; // Dop.fFacingPages — even pages have their own bands
+    readonly dxaTab?: number; // Dop.dxaTab — the automatic tab stops' interval, in twips
     // List tables (DOC-10): `lfos` maps each 1-based ilfo to a list's lsid; `lstfs`
     // gives each list its levels (nfc + iStartAt + the xst number-text code units
     // + the ixchFollow after it).
@@ -266,9 +267,15 @@ export function buildDoc(
     headerCps.forEach((cp, i) => hv.setUint32(i * 4, cp, true));
     fibFields.push({ fc: 0xf2, off: addBinTable(plcfHdd), lcb: plcfHdd.length }); // PlcfHdd
   }
-  if (opts.facingPages) {
-    // A Dop of its first bits only: fFacingPages is bit 0 of byte 0.
-    const dop = Uint8Array.from([0x01, 0x00, 0x00, 0x00]);
+  if (opts.facingPages || opts.dxaTab !== undefined) {
+    // A Dop of its first bits only: fFacingPages is bit 0 of byte 0. With a
+    // dxaTab it runs on to the u16 at byte 10, past copts60.
+    const dop = new Uint8Array(opts.dxaTab !== undefined ? 12 : 4);
+    if (opts.facingPages) dop[0] = 0x01;
+    if (opts.dxaTab !== undefined) {
+      dop[10] = opts.dxaTab & 0xff;
+      dop[11] = opts.dxaTab >> 8;
+    }
     fibFields.push({ fc: 0x192, off: addBinTable(dop), lcb: dop.length }); // fcDop/lcbDop
   }
   if (opts.styles) {

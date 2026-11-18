@@ -320,6 +320,9 @@ export function readDoc(bytes: Uint8Array): ReadResult<FlowDoc> {
     styles: EMPTY_STYLE_SHEET,
     resources,
     ...(headersFooters.size > 0 ? { headersFooters } : {}),
+    ...(content.defaultTabTwips !== undefined
+      ? { defaultTabStopPt: twipsToPt(content.defaultTabTwips) }
+      : {}),
     typesetBy: 'word',
   };
   return { doc, losses: [content.encrypted ? DOC_ENCRYPTED_LOSS : DOC_TEXT_LOSS] };

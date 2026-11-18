@@ -30,6 +30,7 @@ const OFF_FCPLCFHDD = 0xf2; // fibRgFcLcb97.fcPlcfHdd — header/footer story di
 const OFF_LCBPLCFHDD = 0xf6;
 const OFF_FCDOP = 0x192; // fibRgFcLcb97.fcDop — the document properties (Dop)
 const OFF_LCBDOP = 0x196;
+const DOP_DXATAB = 0x0a; // DopBase.dxaTab — the automatic tab stops' interval, in twips
 const OFF_FCSTSHF = 0xa2; // fibRgFcLcb97.fcStshf — the style sheet (STSH)
 const OFF_LCBSTSHF = 0xa6;
 const OFF_FCSTTBFFFN = 0x112; // fibRgFcLcb97.fcSttbfFfn — the font table
@@ -381,6 +382,12 @@ export interface DocContent {
   readonly headerFooters?: ReadonlyArray<DocHeaderFooters>;
   /** `Dop.fFacingPages` — even pages show the even header and footer. */
   readonly facingPages?: boolean;
+  /**
+   * `Dop.dxaTab` — the interval of the automatic tab stops, in twips: what a
+   * .docx states as §17.15.1.25 `w:defaultTabStop`. Absent when the Dop is too
+   * short to hold it.
+   */
+  readonly defaultTabTwips?: number;
   /** The list tables resolving a paragraph's (ilfo, ilvl) to its number format. */
   readonly listTables?: DocListTables;
   /**
@@ -565,12 +572,19 @@ export function extractDocContent(bytes: Uint8Array): DocContent {
   const listTables = parseListTables(wd, table);
   // Dop.fFacingPages, the first bit of the Dop.
   const fcDop = u32(wd, OFF_FCDOP);
-  const facingPages =
-    u32(wd, OFF_LCBDOP) > 0 && fcDop < table.length && (table[fcDop]! & 0x01) !== 0;
+  const lcbDop = u32(wd, OFF_LCBDOP);
+  const facingPages = lcbDop > 0 && fcDop < table.length && (table[fcDop]! & 0x01) !== 0;
+  // [MS-DOC] DopBase — dxaTab is the u16 after two 32-bit words of bits and
+  // copts60, at byte 10 of the Dop.
+  const dxaTab =
+    lcbDop >= DOP_DXATAB + 2 && fcDop + DOP_DXATAB + 2 <= table.length
+      ? u16(table, fcDop + DOP_DXATAB)
+      : undefined;
   return {
     paragraphs: main,
     ...(headerFooters ? { headerFooters } : {}),
     ...(facingPages ? { facingPages } : {}),
+    ...(dxaTab !== undefined ? { defaultTabTwips: dxaTab } : {}),
     ...(listTables ? { listTables } : {}),
     ...(sections.length > 0 ? { sections } : {}),
     encrypted: false,

@@ -25,6 +25,7 @@ import type {
 } from '@/core/document-model';
 import type { FontRegistry, GlyphSeg } from '@/core/font';
 import type { ResourceStore } from '@/core/ir/resources';
+import type { Pt } from '@/core/ir/units';
 
 /**
  * A face's family as a word processor names it (ECMA-376 §17.8.3.9 `w:font`).
@@ -175,6 +176,14 @@ export interface FlowDoc {
    * faces carry.
    */
   readonly compatibilityMode?: number;
+  /**
+   * ECMA-376 §17.15.1.25 `w:defaultTabStop` (a `.doc`'s `Dop.dxaTab`) — the
+   * interval of the automatic tab stops a tab falls to past the paragraph's
+   * own. Absent ⇒ the standard's half inch. Word writes 708 twips in a
+   * Russian-locale document, not 720, and every tab past the last explicit
+   * stop lands by that.
+   */
+  readonly defaultTabStopPt?: Pt;
   /**
    * The application whose rules the document is set by: `'word'` for one Word
    * sets — lines as tall as the faces on them make them (§17.3.1.33), table
