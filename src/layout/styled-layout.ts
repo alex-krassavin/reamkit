@@ -7644,21 +7644,28 @@ function lineFromRange(
 
 // The paragraph's LEADING tabs, each carrying the width that takes it to its
 // stop on the first line. Only the leading run: every other tab's stop depends
-// on where its line starts, which is what the breaker is deciding.
+// on where its line starts, which is what the breaker is deciding. A list
+// marker belongs to that run — it opens the first line wherever the breaker
+// puts the rest — and so does the tab it ends in.
 function withLeadingTabWidths(
   tokens: ReadonlyArray<Token>,
   resolved: ResolvedParagraphProperties,
   firstLineWidth: number,
 ): ReadonlyArray<Token> {
-  const first = tokens[0];
-  if (!(first?.kind === 'text' && first.tab === true)) return tokens;
+  const isTab = (t: Token): boolean => t.kind === 'text' && t.tab === true;
+  let end = 0;
+  while (end < tokens.length) {
+    const t = tokens[end]!;
+    if (!(isTab(t) || (t.kind === 'text' && t.listMarker === true))) break;
+    end++;
+  }
+  if (!tokens.slice(0, end).some(isTab)) return tokens;
   const probe = tokens.map((t) => ({ ...t }));
   resolveTabs(probe, resolved, true, firstLineWidth);
   const out = tokens.slice();
-  for (let i = 0; i < out.length; i++) {
+  for (let i = 0; i < end; i++) {
     const tok = out[i]!;
-    if (!(tok.kind === 'text' && tok.tab === true)) break;
-    out[i] = { ...tok, widthPt: probe[i]!.widthPt };
+    if (isTab(tok)) out[i] = { ...tok, widthPt: probe[i]!.widthPt };
   }
   return out;
 }
@@ -7685,7 +7692,12 @@ function wrap(
   // Word's own way of indenting a first line — that is half an inch the first
   // line does not know it has spent, and FDO76248.docx runs its Malthus
   // paragraph a tab-stop past the right margin. Those tabs get their width up
-  // front; `resolveTabs` still settles every tab per line afterwards.
+  // front; `resolveTabs` still settles every tab per line afterwards. So does
+  // the tab after a list marker: seen as nothing, it left the first line of
+  // every item some 30pt it did not have: justified bulleted items ran up to
+  // 21pt into the right margin where LibreOffice keeps them in, and the
+  // marker's own width decided the breaks — a dash 2.5pt wider than a dot
+  // moved a word down a line.
   const measured = withLeadingTabWidths(tokens, resolved, widths[0] ?? firstLineWidth);
   // The WIDEST line the paragraph will be broken to: a word that fits one of
   // them can be placed, and only a word too wide for all of them has to break
