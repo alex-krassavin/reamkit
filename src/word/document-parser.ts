@@ -1376,9 +1376,11 @@ const WINGDINGS_TO_UNICODE: ReadonlyMap<number, string> = new Map([
 ]);
 
 // Symbol: the Greek alphabet sits where the Latin one does, plus the operators.
+// 0x2D is SymbolMT's `minus` and 0xD7 its `dotmath`, by the font's glyph names.
 const SYMBOL_TO_UNICODE: ReadonlyMap<number, string> = new Map([
   [0x22, '\u2200'],
   [0x24, '\u2203'],
+  [0x2d, '\u2212'],
   [0x40, '\u2245'],
   [0x5c, '\u2234'],
   [0x61, '\u03b1'],
@@ -1415,6 +1417,7 @@ const SYMBOL_TO_UNICODE: ReadonlyMap<number, string> = new Map([
   [0xba, '\u2261'],
   [0xbb, '\u2248'],
   [0xd6, '\u221a'],
+  [0xd7, '\u22c5'],
   [0xe5, '\u2211'],
 ]);
 
