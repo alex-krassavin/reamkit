@@ -3,6 +3,55 @@
 All notable changes to **Ream** (`reamkit`) are documented here. The project
 follows [Semantic Versioning](https://semver.org/).
 
+## 1.35.1
+
+A patch about lists and tabs, set where Word sets them. Every case was
+measured on probe documents of our own in Word for Mac: where each paragraph
+and each tab stands, read back through AppleScript.
+
+### Fixed
+
+- **A bullet in a symbol font is the character the font draws.** Word stores
+  such a bullet in the font's own code — U+F02D is the minus sign of Symbol —
+  and every private-use code used to print as "•", so a list Word marks with
+  dashes came out dotted. The code is now read in the marker's own fonts, the
+  paragraph mark's with the list level's on top: Symbol's dash prints as "−",
+  its bullet as "•", Wingdings' square as "▪". Only a code no table knows
+  still falls back to "•".
+
+- **A list in a table cell sits together.** `w:contextualSpacing` — "don't add
+  space between paragraphs of the same style" — was applied to the body alone,
+  so a list set in a borderless table, a common way to lay out a form, stood
+  each item apart from the next, and the text after it slid down the page.
+  It now holds in table cells, headers, footers and footnotes too, as Word
+  applies it: a paragraph that asks gives up its own space before and after
+  next to a paragraph of the same style, and the paragraph beside it keeps
+  its own.
+
+- **The first line of a list item knows what its tab costs.** The tab after a
+  list marker was measured only once the line was set, so the line breaker
+  took the first line of every item to be some 30pt wider than it is: a
+  justified bulleted item could run up to 21pt into the right margin, and the
+  width of the marker itself decided where the line broke.
+
+- **Tabs fall on the document's own grid.** `w:defaultTabStop` was not read,
+  and every tab past a paragraph's own stops went to a 36pt grid. Word in a
+  Russian locale writes 708 twips, 35.4pt, so each step of the grid put the
+  text 0.6pt further right than Word does, and could move a line break. The
+  interval is read from a `.docx`'s settings and a `.doc`'s document
+  properties, and written back by the DOCX writer.
+
+- **A tab in a `.doc` is a tab.** The `.doc` reader turned every tab into a
+  space and read no tab stops, so a form's underlined blanks — runs of tabs out
+  to a stop — came out as stubs. Tabs now reach the layout as tabs, set on each
+  paragraph's own stops and its style's, with deletions, leaders, bar stops
+  and list stops read as Word reads them.
+
+- **Symbol's signs.** In the Symbol font 0xB4 is the times sign, 0xD7 the dot
+  operator and 0x2D the minus sign; 0xD7 was read as the times sign and 0x2D
+  not at all. This reaches the text of embedded metafiles, PowerPoint bullets
+  and Word's `w:sym` characters.
+
 ## 1.35.0
 
 A release about the letters Kazakh, Tatar, Bashkir, Chuvash, Uzbek,
