@@ -469,6 +469,11 @@ export interface StyledRenderOptions {
    */
   readonly compatibilityMode?: number;
   /**
+   * ECMA-376 §17.15.1.25 `w:defaultTabStop` — the interval of the automatic
+   * tab stops, in points. Absent ⇒ 36 (half an inch, the standard's default).
+   */
+  readonly defaultTabStopPt?: Pt;
+  /**
    * §7.6 PDF encryption (AES-256, R6). Only honoured on the ASYNC conversion
    * path (WebCrypto); mutually exclusive with `pdfA` (ISO 19005 forbids
    * `/Encrypt`) and with signatures (v1).
@@ -1346,6 +1351,60 @@ function commentTailBlocks(
   ];
 }
 
+/** Which of the spaces between two paragraphs `w:contextualSpacing` drops. */
+interface ContextualDrop {
+  /** The upper paragraph's space after. */
+  readonly after: boolean;
+  /** The lower paragraph's space before. */
+  readonly before: boolean;
+}
+
+const KEEP_BOTH: ContextualDrop = { after: false, before: false };
+
+/**
+ * §17.3.1.9 `w:contextualSpacing` — which of the spaces between two paragraphs
+ * set one under the other go. A paragraph that asks loses its space after when
+ * the one below is in the same style, and its space before when the one above
+ * is; the other paragraph keeps its own. It is how a list sits together while
+ * keeping its distance from the text around it.
+ *
+ * Measured in Word for Mac on a probe of dash-bulleted items between headings,
+ * all of one style, each gap read ±0.8pt: no space between the items, in the
+ * body and in a table cell alike (12.65pt line to line, 19.8 after a heading);
+ * an asking paragraph's 12pt after gone above a plain one (11.9), a plain
+ * one's 12pt before kept under an asking one (23.75); both kept between two
+ * styles (19.8). Word also takes a paragraph that names no style to be in the
+ * one that is the default (12.7 between such a paragraph and one naming
+ * Normal); the readers fold the styles into the body before layout, so that
+ * pair still reads as two styles here.
+ *
+ * @param above The upper paragraph, laid out.
+ * @param below The lower one.
+ * @returns Which of the two spaces go.
+ */
+function contextualDrop(above: ParagraphBlock, below: ParagraphBlock): ContextualDrop {
+  if (!above.resolved.contextualSpacing && !below.resolved.contextualSpacing) return KEEP_BOTH;
+  if (above.source?.properties.styleId !== below.source?.properties.styleId) return KEEP_BOTH;
+  return { after: above.resolved.contextualSpacing, before: below.resolved.contextualSpacing };
+}
+
+/**
+ * §17.3.1.9 — drop the spaces `w:contextualSpacing` takes out between each
+ * two paragraphs that stand next to each other in a run of blocks.
+ *
+ * @param blocks The blocks in order, replaced in place.
+ */
+function dropContextualSpacing(blocks: Array<LaidOutBlock>): void {
+  for (let i = 0; i + 1 < blocks.length; i++) {
+    const here = blocks[i]!;
+    const next = blocks[i + 1]!;
+    if (here.kind !== 'paragraph' || next.kind !== 'paragraph') continue;
+    const drop = contextualDrop(here, next);
+    if (drop.after) blocks[i] = { ...here, spacingAfterPt: 0 };
+    if (drop.before) blocks[i + 1] = { ...next, spacingBeforePt: 0 };
+  }
+}
+
 // What pagination needs to place footnotes: per-id content, numbers, and a
 // per-section lazily-cached layout of each note at that section's width.
 interface NotePlan {
@@ -1442,18 +1501,9 @@ export function layoutStyledDocument(
     );
   });
 
-  // §17.3.1.9 `w:contextualSpacing` — the space between two paragraphs of the
-  // SAME style is dropped, which is how a list sits together while keeping its
-  // distance from the text around it. Read nowhere, every item of
-  // ComplexNumberedLists.docx stood ten points from the next.
-  for (let i = 0; i < blocks.length; i++) {
-    const here = blocks[i];
-    const next = blocks[i + 1];
-    if (here?.kind !== 'paragraph' || next?.kind !== 'paragraph') continue;
-    if (here.source?.properties.styleId !== next.source?.properties.styleId) continue;
-    if (here.resolved.contextualSpacing) blocks[i] = { ...here, spacingAfterPt: 0 };
-    if (next.resolved.contextualSpacing) blocks[i + 1] = { ...next, spacingBeforePt: 0 };
-  }
+  // §17.3.1.9 — read nowhere, every item of ComplexNumberedLists.docx stood
+  // ten points from the next.
+  dropContextualSpacing(blocks);
 
   flowLinkedTextBoxes(blocks);
 
@@ -1486,6 +1536,7 @@ export function layoutStyledDocument(
                   sectionCtx.pageContentHeight,
                 ),
               );
+              dropContextualSpacing(noteBlocks);
               const spacing = new SpacingStack(collapsesSpacing(sectionCtx.options ?? options));
               const heightPt = noteBlocks.reduce((sum, b) => {
                 if (b.kind !== 'paragraph') return sum;
@@ -2683,7 +2734,7 @@ function laidOutBlocksFor(
   box?: RelativeBox,
 ): Array<LaidOutBlock> {
   const frames = frameGroups(elements);
-  return elements.map((el, idx) => {
+  const blocks = elements.map((el, idx) => {
     const group = frames.starts.get(idx);
     if (group) return layoutFrameBlock(group, options, fontResources, imageResources, contentWidth);
     if (frames.continued.has(idx)) return emptyBlock(options);
@@ -2697,6 +2748,8 @@ function laidOutBlocksFor(
       box,
     );
   });
+  dropContextualSpacing(blocks);
+  return blocks;
 }
 
 function layoutBodyElement(
@@ -6034,10 +6087,16 @@ function layoutParagraphBlock(
   // its lines know the pitch they stand on. A paragraph that says
   // `w:snapToGrid w:val="0"` is off the grid — which is what Word's own header
   // and footer styles say, and cjklist30.docx says it in both.
-  const baseResolved: ResolvedParagraphProperties =
+  const onGrid: ResolvedParagraphProperties =
     options.gridLinePitchPt !== undefined && cascaded.snapToGrid !== false
       ? { ...cascaded, gridLinePitchPt: options.gridLinePitchPt }
       : cascaded;
+  // §17.15.1.25 — the document's automatic tab stops are stamped the same way:
+  // a setting of the whole document that every line's tabs fall back to.
+  const baseResolved: ResolvedParagraphProperties =
+    options.defaultTabStopPt !== undefined
+      ? { ...onGrid, defaultTabStopPt: options.defaultTabStopPt }
+      : onGrid;
   // §17.6.17 — the paragraph mark IS the section break, so a paragraph that
   // holds one and nothing else takes no room: no line, no spacing.
   if (paragraph.properties.sectionBreak === true && paragraph.runs.length === 0) {
@@ -7302,7 +7361,11 @@ function paragraphItemStream(
   return entries;
 }
 
-/** Word's own default when a document names none (§17.15.1.25): half an inch. */
+/**
+ * The automatic tab stops' interval when a document names none: §17.15.1.25
+ * reads an absent `w:defaultTabStop` as 720 twips, half an inch. A document
+ * that names one is laid on its own (see {@link ResolvedParagraphProperties.defaultTabStopPt}).
+ */
 const DEFAULT_TAB_STOP_PT = 36;
 
 const TAB_LEADER_CHARS: ReadonlyMap<string, string> = new Map([
@@ -7382,10 +7445,18 @@ function resolveTabs(
         ? resolved.indentLeft
         : undefined;
     const explicitAt = stop ? stopAt(stop) : undefined;
+    // §17.15.1.25 — past every stop of its own, a tab falls to the document's
+    // automatic grid, counted from the text margin, not the indent. Word lays
+    // a 708-twip grid at 35.4pt steps (ten tabs end at 354pt where a 720-twip
+    // one ends at 360), and twelve tabs and 42pt of Courier fit a 468pt line
+    // on it where at 36pt they wrap; LibreOffice agrees. A grid of zero is no
+    // grid: there both give a tab no width at all.
+    const grid = resolved.defaultTabStopPt ?? DEFAULT_TAB_STOP_PT;
+    const gridAt = grid > 0 ? (Math.floor(x / grid) + 1) * grid : x;
     const position =
       explicitAt !== undefined && (hangingStop === undefined || explicitAt <= hangingStop)
         ? explicitAt
-        : (hangingStop ?? (Math.floor(x / DEFAULT_TAB_STOP_PT) + 1) * DEFAULT_TAB_STOP_PT);
+        : (hangingStop ?? gridAt);
     const alignment = stop?.alignment ?? 'left';
     // A right/centre/decimal stop places the segment AFTER the tab against the
     // stop, so a tab with nothing to place claims nothing and the stop falls to
@@ -7644,21 +7715,28 @@ function lineFromRange(
 
 // The paragraph's LEADING tabs, each carrying the width that takes it to its
 // stop on the first line. Only the leading run: every other tab's stop depends
-// on where its line starts, which is what the breaker is deciding.
+// on where its line starts, which is what the breaker is deciding. A list
+// marker belongs to that run — it opens the first line wherever the breaker
+// puts the rest — and so does the tab it ends in.
 function withLeadingTabWidths(
   tokens: ReadonlyArray<Token>,
   resolved: ResolvedParagraphProperties,
   firstLineWidth: number,
 ): ReadonlyArray<Token> {
-  const first = tokens[0];
-  if (!(first?.kind === 'text' && first.tab === true)) return tokens;
+  const isTab = (t: Token): boolean => t.kind === 'text' && t.tab === true;
+  let end = 0;
+  while (end < tokens.length) {
+    const t = tokens[end]!;
+    if (!(isTab(t) || (t.kind === 'text' && t.listMarker === true))) break;
+    end++;
+  }
+  if (!tokens.slice(0, end).some(isTab)) return tokens;
   const probe = tokens.map((t) => ({ ...t }));
   resolveTabs(probe, resolved, true, firstLineWidth);
   const out = tokens.slice();
-  for (let i = 0; i < out.length; i++) {
+  for (let i = 0; i < end; i++) {
     const tok = out[i]!;
-    if (!(tok.kind === 'text' && tok.tab === true)) break;
-    out[i] = { ...tok, widthPt: probe[i]!.widthPt };
+    if (isTab(tok)) out[i] = { ...tok, widthPt: probe[i]!.widthPt };
   }
   return out;
 }
@@ -7685,7 +7763,12 @@ function wrap(
   // Word's own way of indenting a first line — that is half an inch the first
   // line does not know it has spent, and FDO76248.docx runs its Malthus
   // paragraph a tab-stop past the right margin. Those tabs get their width up
-  // front; `resolveTabs` still settles every tab per line afterwards.
+  // front; `resolveTabs` still settles every tab per line afterwards. So does
+  // the tab after a list marker: seen as nothing, it left the first line of
+  // every item some 30pt it did not have: justified bulleted items ran up to
+  // 21pt into the right margin where LibreOffice keeps them in, and the
+  // marker's own width decided the breaks — a dash 2.5pt wider than a dot
+  // moved a word down a line.
   const measured = withLeadingTabWidths(tokens, resolved, widths[0] ?? firstLineWidth);
   // The WIDEST line the paragraph will be broken to: a word that fits one of
   // them can be placed, and only a word too wide for all of them has to break
@@ -8725,8 +8808,13 @@ function layoutTableCell(
   };
   // Continuation cells (vMerge=continue) render no content — their text lives
   // in the 'start' cell above.
+  // The paragraph just laid out, while nothing else has come between it and
+  // the next element.
+  let abovePara: ParagraphBlock | undefined;
   if (mergeRole !== 'middle' && mergeRole !== 'end') {
     for (const el of cell.content) {
+      const above = abovePara;
+      abovePara = undefined;
       if (el.kind === 'paragraph') {
         // A spreadsheet cell that does not ask to wrap never does: the text runs
         // as far as its box allows and the rest is cut. Only the layout knows
@@ -8762,7 +8850,13 @@ function layoutTableCell(
         // height for an EMPTY paragraph: the mark is all such a line holds.
         const markOnly =
           cell.properties.hideMark === true && el.paragraph.runs.every((r) => r.text === '');
-        if (!markOnly) openParagraph(block.spacingBeforePt);
+        // §17.3.1.9 — a list in a cell sits together as it does in the body
+        // (see contextualDrop). Applied to the body alone, the items of a list
+        // set in a borderless one-cell table — a common way to lay out a form —
+        // each stood 8pt from the next where Word and LibreOffice set none.
+        const drop = above ? contextualDrop(above, block) : KEEP_BOTH;
+        if (drop.after) pendingGapPt = 0;
+        if (!markOnly) openParagraph(drop.before ? 0 : block.spacingBeforePt);
         for (const line of keep) {
           lines.push(line);
           if (!markOnly) contentHeightPt += computeLineHeight(line, block.resolved);
@@ -8774,6 +8868,7 @@ function layoutTableCell(
         // more than the page it fits on, and the row was split where no reader
         // splits it.
         if (!markOnly) pendingGapPt = block.spacingAfterPt;
+        abovePara = block;
       } else if (el.kind === 'table') {
         // Nested table (a w:tbl inside this w:tc): lay it out within the cell's
         // inner width; it renders below the cell's paragraph lines.

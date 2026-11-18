@@ -7,12 +7,15 @@
 
 import type {
   AbstractNumbering,
+  FontFamilyMap,
   Numbering,
   NumberingFormat,
   NumberingInstance,
   NumberingLevel,
   NumberingReference,
 } from '@/core/document-model';
+import { fontSlotOf } from '@/core/fonts/scripts';
+import { fromSymbolFont } from '@/core/metafile/symbol-fonts';
 
 /**
  * §17.9.27 — the levels an INSTANCE actually numbers by: its abstract
@@ -70,10 +73,17 @@ export class NumberingState {
    *
    * @param numbering The parsed numbering definitions.
    * @param ref       The paragraph's `numId` + `ilvl` reference.
+   * @param fonts     The fonts the marker is set in — the paragraph mark's with
+   *                  the level's on top; the level's own when omitted. A bullet
+   *                  stored in a symbol face's code is read in them.
    * @returns The formatted marker (e.g. `"2."`, `"•"`), or `null` when the
    *          reference does not resolve to a known list level.
    */
-  resolveMarker(numbering: Numbering, ref: NumberingReference): string | null {
+  resolveMarker(
+    numbering: Numbering,
+    ref: NumberingReference,
+    fonts?: FontFamilyMap,
+  ): string | null {
     const instance = numbering.numInstances.get(ref.numId);
     if (!instance) return null;
     const abstractNum = effectiveAbstract(numbering, instance);
@@ -107,17 +117,29 @@ export class NumberingState {
     // A level that has not been reached yet still numbers the levels ABOVE it
     // in a multi-level marker; an unstarted one counts as its own start.
     const counts = arr.map((n, i) => n ?? startAt(i, abstractNum.levels.get(i)?.start));
-    return formatLevelMarker(abstractNum, level, counts);
+    return formatLevelMarker(abstractNum, level, counts, fonts);
   }
 }
 
+/**
+ * A level's marker text for the given counters: the `w:lvlText` template with
+ * each `%N` filled in, or the bullet character the level draws.
+ *
+ * @param abstractNum  The list definition the level belongs to.
+ * @param currentLevel The level being numbered.
+ * @param counters     The current counter of every level, by `ilvl`.
+ * @param fonts        The fonts the marker is set in (the level's own by
+ *                     default), which a symbol-face bullet is read in.
+ * @returns The marker text.
+ */
 export function formatLevelMarker(
   abstractNum: AbstractNumbering,
   currentLevel: NumberingLevel,
   counters: ReadonlyArray<number>,
+  fonts: FontFamilyMap | undefined = currentLevel.runProperties.fontFamily,
 ): string {
   if (currentLevel.format === 'bullet') {
-    return normalizeBullet(currentLevel.lvlText);
+    return normalizeBullet(currentLevel.lvlText, fonts);
   }
   return currentLevel.lvlText.replace(/%(\d)/g, (_match, n) => {
     const lvlIdx = Number(n) - 1;
@@ -374,13 +396,21 @@ function toRoman(n: number): string {
   return s;
 }
 
-// Word's default bullets use private-use codepoints from the Symbol font
-// (e.g. U+F0B7). Our substitute text fonts have no Symbol glyph, so we
-// substitute the Unicode bullet (U+2022) which every general-purpose font
-// covers.
-function normalizeBullet(lvlText: string): string {
+// Word stores a bullet set in a symbol face in that face's own code — U+F0xx,
+// or the plain byte — and draws it with the face: in the SymbolMT Word ships,
+// U+F0B7 is the glyph `bullet` and U+F02D the glyph `minus`. The face a
+// document is rendered with has no such codes, so each is translated for the
+// face its slot names (§17.3.2.26), the slot the layout will draw it in. Every
+// private-use code used to become "•" whatever it drew, and a list Word marks
+// with Symbol dashes printed dots; only a code no table knows still does.
+function normalizeBullet(lvlText: string, fonts: FontFamilyMap | undefined): string {
   if (lvlText.length === 0) return '•';
-  const cp = lvlText.codePointAt(0)!;
-  if (cp >= 0xe000 && cp <= 0xf8ff) return '•';
-  return lvlText;
+  let out = '';
+  for (const ch of lvlText) {
+    const cp = ch.codePointAt(0) ?? 0;
+    const drawn = fromSymbolFont(ch, fonts?.[fontSlotOf(cp)] ?? fonts?.ascii);
+    const code = drawn.codePointAt(0) ?? 0;
+    out += code >= 0xe000 && code <= 0xf8ff ? '•' : drawn;
+  }
+  return out;
 }

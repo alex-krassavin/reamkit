@@ -270,6 +270,9 @@ export function readDocx(docx: Uint8Array): ReadResult<FlowDoc> {
     ...(settings.compatibilityMode !== undefined
       ? { compatibilityMode: settings.compatibilityMode }
       : {}),
+    ...(settings.defaultTabStopPt !== undefined
+      ? { defaultTabStopPt: settings.defaultTabStopPt }
+      : {}),
     typesetBy: 'word',
   };
   return { doc, losses };

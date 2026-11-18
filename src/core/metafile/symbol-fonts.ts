@@ -171,8 +171,12 @@ const WEBDINGS: ReadonlyMap<number, string> = new Map([
   [0xa1, '●'], // ¡
 ]);
 
-// Symbol — a Greek/mathematical face; the letters ARE Greek.
+// Symbol — a Greek/mathematical face; the letters ARE Greek. The signs are
+// read off the glyph names of the SymbolMT Word itself draws with: 0x2D is
+// `minus`, not a hyphen (the dash a Word list in Symbol marks its items with,
+// 0.549 em wide), 0xB4 is `multiply` and 0xD7 `dotmath`.
 const SYMBOL: ReadonlyMap<number, string> = new Map([
+  [0x2d, '−'],
   [0x61, 'α'],
   [0x62, 'β'],
   [0x63, 'χ'],
@@ -189,7 +193,8 @@ const SYMBOL: ReadonlyMap<number, string> = new Map([
   [0x74, 'τ'],
   [0x77, 'ω'],
   [0xb7, '•'], // · — bullet
-  [0xd7, '×'],
+  [0xb4, '×'],
+  [0xd7, '⋅'],
   [0xb1, '±'],
   [0xa3, '≤'],
   [0xb3, '≥'],

@@ -62,13 +62,23 @@ export function applyNumbering(
     if (p.properties.sectionBreak === true && p.runs.every((r) => r.text === '')) return p;
     const ref = numberingOf(p);
     if (!ref) return p;
-    const marker = state.resolveMarker(numbering, ref);
-    if (marker === null) return p;
     const instance = numbering.numInstances.get(ref.numId);
     // §17.9.27 — an instance may redefine a level whole, and the marker's font
     // and indent come from the level it actually numbers by.
     const abstractNum = instance ? effectiveAbstract(numbering, instance) : undefined;
     const level = abstractNum?.levels.get(ref.ilvl);
+    // §17.9.6 — the marker is formatted like the PARAGRAPH MARK, with the
+    // level's own `w:rPr` on top. Taking the level's alone left the marker at
+    // whatever size the paragraph's STYLE lends: fdo78420's bullets are 9pt
+    // text under an 11pt list style, and an 11pt bullet made every one of its
+    // lines 4pt taller — 41 pages against 23. A bullet stored in a symbol
+    // face's code is read in these fonts too.
+    const markerProps = mergeRunPartial(
+      p.properties.runProperties ?? {},
+      level?.runProperties ?? {},
+    );
+    const marker = state.resolveMarker(numbering, ref, markerProps.fontFamily);
+    if (marker === null) return p;
 
     // §17.9.9 — a level whose bullet is a PICTURE puts the image where the
     // glyph would go; the `w:lvlText` character beside it is only Word's
@@ -112,15 +122,7 @@ export function applyNumbering(
             // (the page never takes one), tdf101626.docx's every bullet
             // vanished and its list read as unmarked text.
             text: `${marker.replaceAll(SOFT_HYPHEN, '-')}${suffix === 'tab' ? '\t' : ''}`,
-            // §17.9.6 — the marker is formatted like the PARAGRAPH MARK, with
-            // the level's own `w:rPr` on top. Taking the level's alone left the
-            // marker at whatever size the paragraph's STYLE lends: fdo78420's
-            // bullets are 9pt text under an 11pt list style, and an 11pt bullet
-            // made every one of its lines 4pt taller — 41 pages against 23.
-            properties: mergeRunPartial(
-              p.properties.runProperties ?? {},
-              level?.runProperties ?? {},
-            ),
+            properties: markerProps,
             listMarker: true,
           },
         ];

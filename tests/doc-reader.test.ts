@@ -126,9 +126,9 @@ describe('doc reader (DOC-1)', () => {
     expect(paragraphTexts(doc)).toEqual(['Zero table stream']);
   });
 
-  it('drops control characters and turns tabs into spaces', () => {
+  it('drops control characters and keeps a tab a tab', () => {
     const doc = readDoc(buildDoc([{ text: 'a\tbc\r', compressed: false }])).doc;
-    expect(paragraphTexts(doc)).toEqual(['a bc']); // tab → space
+    expect(paragraphTexts(doc)).toEqual(['a\tbc']); // the layout sets it on a stop
   });
 
   it('reads a line break (0x0B) as the end of a line within the paragraph', () => {

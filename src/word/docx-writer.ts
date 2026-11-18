@@ -543,7 +543,8 @@ export function writeDocx(flow: FlowDoc): WriteResult {
  * §17.15.1.78 `w:settings` — the document-wide settings the model carries, in
  * the order CT_Settings declares them: `w:embedTrueTypeFonts` and
  * `w:saveSubsetFonts` (§17.15.1.42, .74) where the package embeds its faces,
- * `w:gutterAtTop` (§17.15.1.49), `w:evenAndOddHeaders` (§17.15.1.36, which a
+ * `w:gutterAtTop` (§17.15.1.49), the automatic tab stops' interval
+ * `w:defaultTabStop` (§17.15.1.25), `w:evenAndOddHeaders` (§17.15.1.36, which a
  * section carries in the model), and inside `w:compat` §17.15.3.4's
  * `w:doNotExpandShiftReturn` before the version of Word the document is laid
  * out for ([MS-DOCX] `w:compatSetting` `compatibilityMode`), which CT_Compat
@@ -563,6 +564,9 @@ function settingsXml(
   const parts: Array<string> = [];
   if (embedsFonts) parts.push('<w:embedTrueTypeFonts/><w:saveSubsetFonts/>');
   if (flow.gutterAtTop === true) parts.push('<w:gutterAtTop/>');
+  if (flow.defaultTabStopPt !== undefined) {
+    parts.push(`<w:defaultTabStop w:val="${String(twips(flow.defaultTabStopPt))}"/>`);
+  }
   if (sections.some((sec) => sec.properties.evenAndOddHeaders === true)) {
     parts.push('<w:evenAndOddHeaders/>');
   }

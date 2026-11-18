@@ -30,6 +30,7 @@ const OFF_FCPLCFHDD = 0xf2; // fibRgFcLcb97.fcPlcfHdd — header/footer story di
 const OFF_LCBPLCFHDD = 0xf6;
 const OFF_FCDOP = 0x192; // fibRgFcLcb97.fcDop — the document properties (Dop)
 const OFF_LCBDOP = 0x196;
+const DOP_DXATAB = 0x0a; // DopBase.dxaTab — the automatic tab stops' interval, in twips
 const OFF_FCSTSHF = 0xa2; // fibRgFcLcb97.fcStshf — the style sheet (STSH)
 const OFF_LCBSTSHF = 0xa6;
 const OFF_FCSTTBFFFN = 0x112; // fibRgFcLcb97.fcSttbfFfn — the font table
@@ -103,13 +104,30 @@ const SPRM_S_DYA_HDR_BOTTOM = 0xb018; // footer's distance from the bottom edge 
 const SPRM_S_DZA_GUTTER = 0xb025; // binding space beside the left margin (twips)
 const MAX_PAGE_TWIPS = 31680; // Word's max page dimension (22 inches) — sanity bound
 const SPRA_LEN = [1, 1, 2, 4, 2, 2, 0, 3];
-// spra-6 sprms whose operand is prefixed by a 2-byte (not 1-byte) length.
-const SPRM_LONG_OPERAND = new Set([0xd608, 0xc60d]); // sprmTDefTable, sprmPChgTabs
+// spra-6 sprms whose operand is prefixed by a 2-byte (not 1-byte) length. Only
+// sprmTDefTable: sprmPChgTabsPapx (0xC60D) was listed here too, and its cb read
+// as two bytes with the deletion count ran past the grpprl whenever it deleted
+// a stop, losing every sprm after it — a centring read as left.
+const SPRM_LONG_OPERAND = new Set([0xd608]); // sprmTDefTable
+// [MS-DOC] §2.6.2 — the paragraph's custom tab stops: sprmPChgTabsPapx (a
+// PChgTabsPapxOperand, in PAPXs and styles) and sprmPChgTabs (§2.9.182
+// PChgTabsOperand, whose deletions carry a tolerance each). Both delete stops
+// from the ones the paragraph has so far, then add their own.
+const SPRM_P_CHG_TABS_PAPX = 0xc60d;
+const SPRM_P_CHG_TABS = 0xc615;
+// PChgTabsDel / PChgTabsDelClose — a deletion takes out any stop within 25
+// twips of where it is, or within its rgdxaClose if that is wider.
+const TAB_DEL_CLOSE_MIN = 25;
+// sprmPChgTabs' cb of 255: the operand is longer than a byte can say, and its
+// size is read from its own counts.
+const CB_COMPUTED = 255;
+const MAX_TABS = 64; // PChgTabsAdd.cTabs and PChgTabsDel.cTabs — at most 64 each
 
 const CELL_MARK = 0x07; // ends a table cell (and, on the TTP, a row)
 const PAGE_BREAK = 0x0c; // a manual page break — or, closing a section, its section mark
 const COLUMN_BREAK = 0x0e; // a manual column break
 const LINE_BREAK = 0x0b; // a manual line break, within the paragraph
+const TAB = 0x09; // a tab character
 const FIELD_BEGIN = 0x13; // a field begins; its code (read, never shown) follows
 const FIELD_SEPARATOR = 0x14; // the code ends; the cached result (shown) follows
 const FIELD_END = 0x15; // the field ends
@@ -179,6 +197,19 @@ export interface DocTc {
   readonly vMerge?: 'restart' | 'continue';
 }
 
+/**
+ * One custom tab stop ([MS-DOC] PChgTabsAdd and its TBD): where it stands, in
+ * twips from the text margin (signed), how text sits against it — `jc`, a
+ * TabJC: 0 left, 1 center, 2 right, 3 decimal, 4 bar, 6 list — and the leader
+ * drawn up to it — `tlc`, a TabLC: 0 none, 1 dot, 2 hyphen, 3 underscore,
+ * 4 heavy (drawn as the underscore), 5 middle dot, 7 none.
+ */
+export interface DocTab {
+  readonly posTwips: number;
+  readonly jc: number;
+  readonly tlc: number;
+}
+
 /** Paragraph formatting decoded from a PAPX grpprl. */
 export interface DocParaProps {
   /** Word justification (0 left, 1 center, 2 right, 3 both, 4 distribute). */
@@ -220,6 +251,13 @@ export interface DocParaProps {
   readonly keepLines?: boolean;
   /** `sprmPFPageBreakBefore` — the paragraph starts a new page. */
   readonly pageBreakBefore?: boolean;
+  /**
+   * The paragraph's custom tab stops in ascending position: its style's (and
+   * that style's bases'), as the tab sprms of each style down the chain and of
+   * the paragraph's own PAPX delete and add them. Absent when none of them
+   * says anything about tabs.
+   */
+  readonly tabs?: ReadonlyArray<DocTab>;
 }
 
 /** One maximal same-formatting run of text, or an embedded picture. */
@@ -344,6 +382,12 @@ export interface DocContent {
   readonly headerFooters?: ReadonlyArray<DocHeaderFooters>;
   /** `Dop.fFacingPages` — even pages show the even header and footer. */
   readonly facingPages?: boolean;
+  /**
+   * `Dop.dxaTab` — the interval of the automatic tab stops, in twips: what a
+   * .docx states as §17.15.1.25 `w:defaultTabStop`. Absent when the Dop is too
+   * short to hold it.
+   */
+  readonly defaultTabTwips?: number;
   /** The list tables resolving a paragraph's (ilfo, ilvl) to its number format. */
   readonly listTables?: DocListTables;
   /**
@@ -528,12 +572,19 @@ export function extractDocContent(bytes: Uint8Array): DocContent {
   const listTables = parseListTables(wd, table);
   // Dop.fFacingPages, the first bit of the Dop.
   const fcDop = u32(wd, OFF_FCDOP);
-  const facingPages =
-    u32(wd, OFF_LCBDOP) > 0 && fcDop < table.length && (table[fcDop]! & 0x01) !== 0;
+  const lcbDop = u32(wd, OFF_LCBDOP);
+  const facingPages = lcbDop > 0 && fcDop < table.length && (table[fcDop]! & 0x01) !== 0;
+  // [MS-DOC] DopBase — dxaTab is the u16 after two 32-bit words of bits and
+  // copts60, at byte 10 of the Dop.
+  const dxaTab =
+    lcbDop >= DOP_DXATAB + 2 && fcDop + DOP_DXATAB + 2 <= table.length
+      ? u16(table, fcDop + DOP_DXATAB)
+      : undefined;
   return {
     paragraphs: main,
     ...(headerFooters ? { headerFooters } : {}),
     ...(facingPages ? { facingPages } : {}),
+    ...(dxaTab !== undefined ? { defaultTabTwips: dxaTab } : {}),
     ...(listTables ? { listTables } : {}),
     ...(sections.length > 0 ? { sections } : {}),
     encrypted: false,
@@ -633,7 +684,7 @@ function parseStyles(
     p += cbStd;
   }
 
-  const none = { para: {}, chars: defaults };
+  const none: { para: DocParaProps; chars: DocCharProps } = { para: {}, chars: defaults };
   const memo = new Map<number, { readonly para: DocParaProps; readonly chars: DocCharProps }>();
   const paragraph = (istd: number, depth = 0): { para: DocParaProps; chars: DocCharProps } => {
     const hit = memo.get(istd);
@@ -647,7 +698,14 @@ function parseStyles(
       const base =
         std.base !== ISTD_NIL && std.base !== istd ? paragraph(std.base, depth + 1) : none;
       out = {
-        para: std.papx ? { ...base.para, ...decodePapxGrpprl(std.papx) } : base.para,
+        para: std.papx
+          ? {
+              ...base.para,
+              ...decodePapxGrpprl(std.papx),
+              // A style's tab sprms change its base's stops, not none.
+              ...tabsOver(std.papx, base.para.tabs),
+            }
+          : base.para,
         chars: std.chpx
           ? { ...base.chars, ...decodeChpxGrpprl(std.chpx, base.chars, fonts) }
           : base.chars,
@@ -1213,8 +1271,9 @@ function decodePapxGrpprl(d: Uint8Array): DocParaProps {
   };
 }
 
-// Iterate a grpprl, yielding each sprm opcode and the offset of its operand.
-function* sprms(d: Uint8Array): Generator<{ sprm: number; op: number }> {
+// Iterate a grpprl, yielding each sprm opcode, the offset of its operand and
+// the operand's length past any count that prefixes it.
+function* sprms(d: Uint8Array): Generator<{ sprm: number; op: number; len: number }> {
   let p = 0;
   while (p + 2 <= d.length) {
     const sprm = u16(d, p);
@@ -1233,12 +1292,68 @@ function* sprms(d: Uint8Array): Generator<{ sprm: number; op: number }> {
         if (p >= d.length) break;
         len = d[p]!;
         op = p + 1;
+        if (sprm === SPRM_P_CHG_TABS && len === CB_COMPUTED) {
+          // §2.9.182 — the two counts, four bytes for each deletion (where and
+          // how close) and three for each addition (where and its TBD).
+          const cDel = d[op] ?? 0;
+          const cAdd = d[op + 1 + 4 * cDel] ?? 0;
+          len = 2 + 4 * cDel + 3 * cAdd;
+        }
       }
     }
     if (op + len > d.length) break;
-    yield { sprm, op };
+    yield { sprm, op, len };
     p = op + len;
   }
+}
+
+// The custom tab stops a grpprl leaves a paragraph with, over the ones it had
+// (`under`): each tab sprm in turn deletes the stops near its deletions, then
+// adds its own, an addition replacing a stop at the same place. Undefined when
+// the grpprl has no tab sprm. A malformed operand — counts that run past it or
+// past 64 — changes nothing, the way LibreOffice discards it.
+function changeTabs(
+  d: Uint8Array,
+  under: ReadonlyArray<DocTab> = [],
+): ReadonlyArray<DocTab> | undefined {
+  let tabs: Array<DocTab> | undefined;
+  for (const s of sprms(d)) {
+    if (s.sprm !== SPRM_P_CHG_TABS_PAPX && s.sprm !== SPRM_P_CHG_TABS) continue;
+    const close = s.sprm === SPRM_P_CHG_TABS; // PChgTabsDelClose, with rgdxaClose
+    const end = s.op + s.len;
+    const cDel = d[s.op] ?? 0;
+    const delStride = close ? 4 : 2;
+    const addAt = s.op + 1 + delStride * cDel;
+    if (cDel > MAX_TABS || addAt + 1 > end) continue;
+    const cAdd = d[addAt]!;
+    if (cAdd > MAX_TABS || addAt + 1 + 3 * cAdd > end) continue;
+    let next = [...(tabs ?? under)];
+    for (let i = 0; i < cDel; i++) {
+      const at = i16(d, s.op + 1 + 2 * i);
+      // rgdxaClose follows the whole of rgdxaDel; one under 25 twips is 25.
+      const within = close
+        ? Math.max(TAB_DEL_CLOSE_MIN, i16(d, s.op + 1 + 2 * cDel + 2 * i))
+        : TAB_DEL_CLOSE_MIN;
+      next = next.filter((t) => Math.abs(t.posTwips - at) > within);
+    }
+    for (let i = 0; i < cAdd; i++) {
+      const posTwips = i16(d, addAt + 1 + 2 * i);
+      const tbd = d[addAt + 1 + 2 * cAdd + i]!;
+      next = next.filter((t) => t.posTwips !== posTwips);
+      next.push({ posTwips, jc: tbd & 0x07, tlc: (tbd >> 3) & 0x07 });
+    }
+    tabs = next.sort((a, b) => a.posTwips - b.posTwips);
+  }
+  return tabs;
+}
+
+// The `tabs` field a grpprl gives a paragraph over `under`, to spread.
+function tabsOver(
+  d: Uint8Array | undefined,
+  under: ReadonlyArray<DocTab> | undefined,
+): { tabs?: ReadonlyArray<DocTab> } {
+  const tabs = d ? changeTabs(d, under) : undefined;
+  return tabs ? { tabs } : {};
 }
 
 // A toggle sprm operand: 0 off, 1 on, 0x80 what the style says, 0x81 the
@@ -1383,9 +1498,17 @@ function buildParagraphs(
     });
     const markChpx = lookupRun(chpx, fc);
     const mark = style ? runProps(markChpx, style.chars) : markChpx?.props;
+    // The PAPX's tab sprms delete and add over its style's stops: read over
+    // none, a paragraph that adds one stop would lose every stop its style
+    // gives it.
+    const props: DocParaProps = {
+      ...style?.para,
+      ...pap?.props,
+      ...tabsOver(pap?.grpprl, style?.para.tabs),
+    };
     paragraphs.push({
       runs: settled,
-      props: style ? { ...style.para, ...(pap?.props ?? {}) } : (pap?.props ?? {}),
+      props,
       ...(cellMark ? { cellMark: true } : {}),
       ...(sectionEnd !== undefined ? { sectionEnd } : {}),
       ...(mark && Object.keys(mark).length > 0 ? { mark } : {}),
@@ -1499,11 +1622,13 @@ function buildParagraphs(
       }
       // A line break ends its line and goes on in the paragraph, as `\n` does in a
       // docx run: read as a space, "Latin", a break and "Second" set one line.
+      // A tab is a tab, as `\t` is in a docx run: read as a space, the text
+      // after it fell wherever the space before it ended, not on a stop.
       const ch =
         code === LINE_BREAK
           ? '\n'
-          : code === 0x09
-            ? ' '
+          : code === TAB
+            ? '\t'
             : code < 0x20
               ? ''
               : String.fromCharCode(code);

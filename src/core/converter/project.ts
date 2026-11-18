@@ -47,5 +47,6 @@ export function flowRenderOptions(flow: FlowDoc): FlowRenderOptions {
     ...(flow.typesetBy ? { typesetBy: flow.typesetBy } : {}),
     ...(flow.floatsOverText ? { floatsOverText: true } : {}),
     ...(flow.compatibilityMode !== undefined ? { compatibilityMode: flow.compatibilityMode } : {}),
+    ...(flow.defaultTabStopPt !== undefined ? { defaultTabStopPt: flow.defaultTabStopPt } : {}),
   };
 }

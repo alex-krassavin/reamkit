@@ -231,6 +231,42 @@ describe('NumberingState marker generation', () => {
     expect(state.resolveMarker(numbering, { numId: '1', ilvl: 0 })).toBe('•');
   });
 
+  it('reads a symbol-face bullet as the character the face draws', () => {
+    // SymbolMT's U+F02D is its glyph `minus`: Word marks the items with a dash.
+    const level = (ilvl: number, code: number, font: string): string =>
+      `<w:lvl w:ilvl="${ilvl}"><w:numFmt w:val="bullet"/><w:lvlText w:val="&#x${code.toString(16)};"/>` +
+      `<w:rPr><w:rFonts w:ascii="${font}" w:hAnsi="${font}" w:hint="default"/></w:rPr></w:lvl>`;
+    const numbering = parse(`
+      <w:abstractNum w:abstractNumId="0">
+        ${level(0, 0xf02d, 'Symbol')}${level(1, 0xf0b7, 'Symbol')}${level(2, 0xf0a7, 'Wingdings')}
+        ${level(3, 0xf0ff, 'Symbol')}${level(4, 0x6f, 'Courier New')}
+      </w:abstractNum>
+      <w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>
+    `);
+    const state = new NumberingState();
+    const marker = (ilvl: number): string | null =>
+      state.resolveMarker(numbering, { numId: '1', ilvl });
+    expect([0, 1, 2, 3, 4].map(marker)).toEqual(['−', '•', '▪', '•', 'o']);
+  });
+
+  it('reads the bullet in the paragraph mark’s font when the level names none', () => {
+    const numberingXml =
+      '<w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:numFmt w:val="bullet"/>' +
+      '<w:lvlText w:val="&#xF02D;"/></w:lvl></w:abstractNum>' +
+      '<w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num>';
+    const item = (font: string): string =>
+      '<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr>' +
+      `<w:rPr><w:rFonts w:ascii="${font}" w:hAnsi="${font}"/></w:rPr></w:pPr>` +
+      '<w:r><w:t>x</w:t></w:r></w:p>';
+    const { doc } = readDocx(
+      buildDocxFromBody(item('Symbol') + item('Times New Roman'), { numberingXml }),
+    );
+    const markers = doc.body.flatMap((b) =>
+      b.kind === 'paragraph' ? b.paragraph.runs.filter((r) => r.listMarker).map((r) => r.text) : [],
+    );
+    expect(markers).toEqual(['−\t', '•\t']);
+  });
+
   it('respects per-level start value', () => {
     const numbering = parse(`
       <w:abstractNum w:abstractNumId="0">
