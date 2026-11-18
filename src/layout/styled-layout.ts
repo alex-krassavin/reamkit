@@ -1346,6 +1346,60 @@ function commentTailBlocks(
   ];
 }
 
+/** Which of the spaces between two paragraphs `w:contextualSpacing` drops. */
+interface ContextualDrop {
+  /** The upper paragraph's space after. */
+  readonly after: boolean;
+  /** The lower paragraph's space before. */
+  readonly before: boolean;
+}
+
+const KEEP_BOTH: ContextualDrop = { after: false, before: false };
+
+/**
+ * §17.3.1.9 `w:contextualSpacing` — which of the spaces between two paragraphs
+ * set one under the other go. A paragraph that asks loses its space after when
+ * the one below is in the same style, and its space before when the one above
+ * is; the other paragraph keeps its own. It is how a list sits together while
+ * keeping its distance from the text around it.
+ *
+ * Measured in Word for Mac on a probe of dash-bulleted items between headings,
+ * all of one style, each gap read ±0.8pt: no space between the items, in the
+ * body and in a table cell alike (12.65pt line to line, 19.8 after a heading);
+ * an asking paragraph's 12pt after gone above a plain one (11.9), a plain
+ * one's 12pt before kept under an asking one (23.75); both kept between two
+ * styles (19.8). Word also takes a paragraph that names no style to be in the
+ * one that is the default (12.7 between such a paragraph and one naming
+ * Normal); the readers fold the styles into the body before layout, so that
+ * pair still reads as two styles here.
+ *
+ * @param above The upper paragraph, laid out.
+ * @param below The lower one.
+ * @returns Which of the two spaces go.
+ */
+function contextualDrop(above: ParagraphBlock, below: ParagraphBlock): ContextualDrop {
+  if (!above.resolved.contextualSpacing && !below.resolved.contextualSpacing) return KEEP_BOTH;
+  if (above.source?.properties.styleId !== below.source?.properties.styleId) return KEEP_BOTH;
+  return { after: above.resolved.contextualSpacing, before: below.resolved.contextualSpacing };
+}
+
+/**
+ * §17.3.1.9 — drop the spaces `w:contextualSpacing` takes out between each
+ * two paragraphs that stand next to each other in a run of blocks.
+ *
+ * @param blocks The blocks in order, replaced in place.
+ */
+function dropContextualSpacing(blocks: Array<LaidOutBlock>): void {
+  for (let i = 0; i + 1 < blocks.length; i++) {
+    const here = blocks[i]!;
+    const next = blocks[i + 1]!;
+    if (here.kind !== 'paragraph' || next.kind !== 'paragraph') continue;
+    const drop = contextualDrop(here, next);
+    if (drop.after) blocks[i] = { ...here, spacingAfterPt: 0 };
+    if (drop.before) blocks[i + 1] = { ...next, spacingBeforePt: 0 };
+  }
+}
+
 // What pagination needs to place footnotes: per-id content, numbers, and a
 // per-section lazily-cached layout of each note at that section's width.
 interface NotePlan {
@@ -1442,18 +1496,9 @@ export function layoutStyledDocument(
     );
   });
 
-  // §17.3.1.9 `w:contextualSpacing` — the space between two paragraphs of the
-  // SAME style is dropped, which is how a list sits together while keeping its
-  // distance from the text around it. Read nowhere, every item of
-  // ComplexNumberedLists.docx stood ten points from the next.
-  for (let i = 0; i < blocks.length; i++) {
-    const here = blocks[i];
-    const next = blocks[i + 1];
-    if (here?.kind !== 'paragraph' || next?.kind !== 'paragraph') continue;
-    if (here.source?.properties.styleId !== next.source?.properties.styleId) continue;
-    if (here.resolved.contextualSpacing) blocks[i] = { ...here, spacingAfterPt: 0 };
-    if (next.resolved.contextualSpacing) blocks[i + 1] = { ...next, spacingBeforePt: 0 };
-  }
+  // §17.3.1.9 — read nowhere, every item of ComplexNumberedLists.docx stood
+  // ten points from the next.
+  dropContextualSpacing(blocks);
 
   flowLinkedTextBoxes(blocks);
 
@@ -1486,6 +1531,7 @@ export function layoutStyledDocument(
                   sectionCtx.pageContentHeight,
                 ),
               );
+              dropContextualSpacing(noteBlocks);
               const spacing = new SpacingStack(collapsesSpacing(sectionCtx.options ?? options));
               const heightPt = noteBlocks.reduce((sum, b) => {
                 if (b.kind !== 'paragraph') return sum;
@@ -2683,7 +2729,7 @@ function laidOutBlocksFor(
   box?: RelativeBox,
 ): Array<LaidOutBlock> {
   const frames = frameGroups(elements);
-  return elements.map((el, idx) => {
+  const blocks = elements.map((el, idx) => {
     const group = frames.starts.get(idx);
     if (group) return layoutFrameBlock(group, options, fontResources, imageResources, contentWidth);
     if (frames.continued.has(idx)) return emptyBlock(options);
@@ -2697,6 +2743,8 @@ function laidOutBlocksFor(
       box,
     );
   });
+  dropContextualSpacing(blocks);
+  return blocks;
 }
 
 function layoutBodyElement(
@@ -8737,8 +8785,13 @@ function layoutTableCell(
   };
   // Continuation cells (vMerge=continue) render no content — their text lives
   // in the 'start' cell above.
+  // The paragraph just laid out, while nothing else has come between it and
+  // the next element.
+  let abovePara: ParagraphBlock | undefined;
   if (mergeRole !== 'middle' && mergeRole !== 'end') {
     for (const el of cell.content) {
+      const above = abovePara;
+      abovePara = undefined;
       if (el.kind === 'paragraph') {
         // A spreadsheet cell that does not ask to wrap never does: the text runs
         // as far as its box allows and the rest is cut. Only the layout knows
@@ -8774,7 +8827,13 @@ function layoutTableCell(
         // height for an EMPTY paragraph: the mark is all such a line holds.
         const markOnly =
           cell.properties.hideMark === true && el.paragraph.runs.every((r) => r.text === '');
-        if (!markOnly) openParagraph(block.spacingBeforePt);
+        // §17.3.1.9 — a list in a cell sits together as it does in the body
+        // (see contextualDrop). Applied to the body alone, the items of a list
+        // set in a borderless one-cell table — a common way to lay out a form —
+        // each stood 8pt from the next where Word and LibreOffice set none.
+        const drop = above ? contextualDrop(above, block) : KEEP_BOTH;
+        if (drop.after) pendingGapPt = 0;
+        if (!markOnly) openParagraph(drop.before ? 0 : block.spacingBeforePt);
         for (const line of keep) {
           lines.push(line);
           if (!markOnly) contentHeightPt += computeLineHeight(line, block.resolved);
@@ -8786,6 +8845,7 @@ function layoutTableCell(
         // more than the page it fits on, and the row was split where no reader
         // splits it.
         if (!markOnly) pendingGapPt = block.spacingAfterPt;
+        abovePara = block;
       } else if (el.kind === 'table') {
         // Nested table (a w:tbl inside this w:tc): lay it out within the cell's
         // inner width; it renders below the cell's paragraph lines.
