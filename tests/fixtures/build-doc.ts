@@ -71,6 +71,25 @@ export interface DocParaFormat {
   readonly listIlfo?: number; // sprmPIlfo — list override (>0 ⇒ a list item)
   readonly listIlvl?: number; // sprmPIlvl — list level
   readonly istd?: number; // the paragraph's style (the istd before its grpprl)
+  // Custom tab stops (§2.6.2), written first in the grpprl so the sprms after
+  // them are read only if its operand is skipped by its true length: a
+  // sprmPChgTabsPapx deleting the stops at `del` and adding `add` (position in
+  // twips, TabJC, TabLC); with `close` (one per deletion), a sprmPChgTabs whose
+  // deletions take out the stops that near, and with `cb255` its operand says
+  // its size is to be counted (cb 255).
+  readonly tabs?: DocTabsChange;
+}
+
+// One tab sprm of a fixture paragraph or style.
+export interface DocTabsChange {
+  readonly del?: ReadonlyArray<number>;
+  readonly add?: ReadonlyArray<{
+    readonly pos: number;
+    readonly jc?: number;
+    readonly tlc?: number;
+  }>;
+  readonly close?: ReadonlyArray<number>;
+  readonly cb255?: boolean;
 }
 
 // One Brc80 edge for the fixture: width in eighths of a point, brcType (1 single /
@@ -686,6 +705,21 @@ function buildPapxGrpprl(run: DocParaFormat): Uint8Array {
     parts.push(op & 0xff, (op >> 8) & 0xff, ...operand);
   };
   const i16 = (v: number): Array<number> => [v & 0xff, (v >> 8) & 0xff];
+  if (run.tabs) {
+    // PChgTabsPapxOperand / PChgTabsOperand: cb, then the deletions (with
+    // their tolerances, for sprmPChgTabs), then the additions and their TBDs.
+    const { del = [], add = [], close } = run.tabs;
+    const operand = [
+      del.length,
+      ...del.flatMap(i16),
+      ...(close ? close.flatMap(i16) : []),
+      add.length,
+      ...add.flatMap((t) => i16(t.pos)),
+      ...add.map((t) => ((t.jc ?? 0) & 0x07) | (((t.tlc ?? 0) & 0x07) << 3)),
+    ];
+    const cb = run.tabs.cb255 ? 255 : operand.length;
+    sprm(close ? 0xc615 : 0xc60d, cb, ...operand); // sprmPChgTabs / sprmPChgTabsPapx
+  }
   if (run.jc !== undefined) sprm(0x2403, run.jc & 0xff); // sprmPJc
   if (run.indentLeftTwips !== undefined) sprm(0x840f, ...i16(run.indentLeftTwips)); // sprmPDxaLeft
   if (run.indentRightTwips !== undefined) sprm(0x840e, ...i16(run.indentRightTwips)); // sprmPDxaRight

@@ -7,7 +7,7 @@
 // CFB container reader (`src/core/ole`) is the keystone both legacy formats reuse.
 //
 // Scope: paragraphs of formatted runs — bold / italic / underline / font size /
-// fonts (CHPX) on each run, alignment / indentation / spacing (PAPX) on each paragraph,
+// fonts (CHPX) on each run, alignment / indentation / spacing / tab stops (PAPX) on each paragraph,
 // tables (in-table paragraphs grouped into a row/cell grid, with per-column widths
 // from sprmTDefTable), inline images (the picture char's CHPX → a PICF in the Data
 // stream), fields (resolved to their cached result), the section's headers/footers
@@ -32,6 +32,7 @@ import type {
   RunProperties,
   Section,
   SectionProperties,
+  TabStop,
   Table,
   TableCell,
   TableRow,
@@ -51,6 +52,7 @@ import type {
   DocParagraph,
   DocPicture,
   DocSection,
+  DocTab,
   DocTc,
 } from '@/word/doc/doc-text';
 
@@ -674,7 +676,47 @@ function toParaProperties(p: DocParaProps): ParagraphProperties {
     ...(p.keepNext !== undefined ? { keepNext: p.keepNext } : {}),
     ...(p.keepLines !== undefined ? { keepLines: p.keepLines } : {}),
     ...(p.pageBreakBefore !== undefined ? { pageBreakBefore: p.pageBreakBefore } : {}),
+    ...(p.tabs ? { tabs: toTabStops(p.tabs) } : {}),
   };
+}
+
+// [MS-DOC] TabJC → the stop's alignment. A bar tab (4) draws a rule and places
+// no text, so it is no stop. A list tab (6) is the docx `num` stop, and Word
+// sets text at it as at a left one: on a Courier probe, "ab", a tab and "N"
+// with a `num` stop at 72pt put the N at 72.0, where the 36pt grid would have
+// put it at 36. LibreOffice reads it as a left stop too.
+const TAB_JC: ReadonlyArray<TabStop['alignment'] | undefined> = [
+  'left',
+  'center',
+  'right',
+  'decimal',
+  undefined,
+  undefined,
+  'left',
+];
+
+// [MS-DOC] TabLC → the leader; tlcHeavy is, by the spec, the underscore.
+const TAB_TLC: ReadonlyArray<TabStop['leader'] | undefined> = [
+  undefined,
+  'dot',
+  'hyphen',
+  'underscore',
+  'underscore',
+  'middleDot',
+];
+
+// The paragraph's custom tab stops as the docx reader gives them. Every one is
+// stated, the style's included, so an empty list still says "none": the
+// paragraph's style sheet holds nothing to fall back on.
+function toTabStops(tabs: ReadonlyArray<DocTab>): Array<TabStop> {
+  const out: Array<TabStop> = [];
+  for (const t of tabs) {
+    const alignment = TAB_JC[t.jc];
+    if (!alignment) continue;
+    const leader = TAB_TLC[t.tlc];
+    out.push({ positionPt: twipsToPt(t.posTwips), alignment, ...(leader ? { leader } : {}) });
+  }
+  return out;
 }
 
 // Word's `kul` underline code → the document-model underline style.
