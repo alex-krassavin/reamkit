@@ -1530,9 +1530,21 @@ function emitPageContent(
     const linkDescent = Math.max(lineFs * 0.2, line.mathDescentPt ?? 0);
     let linkHref: string | undefined;
     let linkAnchor: string | undefined;
-    let linkText = '';
+    // The link's text, token by token with each token's place in the line as
+    // written. A right-to-left line is walked in the order it is DRAWN, and
+    // its text joined on that walk read the words backwards: a bidi
+    // paragraph's link "العنوان الرئيسي" came back from macOS PDFKit as
+    // "الرئيسي العنوان". The rectangle is the stretch drawn; the text, what
+    // was written, in the order it was written.
+    let linkText: Array<{ readonly at: number; readonly text: string }> = [];
     let linkX0 = 0;
     let linkX1 = 0;
+    // The line's links, each with the logical place of its first token. The
+    // same walk meets them drawn left to right, and in tagged output the
+    // annotations' Link elements follow that order — which is the reading
+    // order a screen reader lists links in and, under /Tabs /S, the order Tab
+    // visits them: on a right-to-left line, the link written second first.
+    const lineLinks: Array<{ readonly at: number; readonly region: LinkRegion }> = [];
     const flushLink = () => {
       if (linkHref === undefined && linkAnchor === undefined) return;
       // External targets pass the scheme allowlist; an anchor is a bookmark
@@ -1545,20 +1557,45 @@ function emitPageContent(
             ? { anchor: linkAnchor }
             : undefined;
       if (target) {
-        links.push({
-          ...target,
-          text: linkText.trim(),
-          rect: [linkX0, baselineY - linkDescent, linkX1, baselineY + linkAscent],
-          ...(cmd.structId !== undefined ? { structId: cmd.structId } : {}),
+        linkText.sort((a, b) => a.at - b.at);
+        lineLinks.push({
+          at: linkText[0]?.at ?? 0,
+          region: {
+            ...target,
+            text: linkText
+              .map((piece) => piece.text)
+              .join('')
+              .trim(),
+            rect: [linkX0, baselineY - linkDescent, linkX1, baselineY + linkAscent],
+            ...(cmd.structId !== undefined ? { structId: cmd.structId } : {}),
+          },
         });
       }
       linkHref = undefined;
       linkAnchor = undefined;
-      linkText = '';
+      linkText = [];
     };
+    /** Closes the line's last link and hands its links on in written order. */
+    const endLinks = () => {
+      flushLink();
+      lineLinks.sort((a, b) => a.at - b.at);
+      for (const l of lineLinks) links.push(l.region);
+    };
+    /**
+     * Extends the link being drawn by one token, or closes it and opens the
+     * next when the token's target differs.
+     *
+     * @param href   The token's external target, if any.
+     * @param anchor The token's bookmark target, if any.
+     * @param at     The token's index in `line.tokens` — its logical place.
+     * @param text   The token's text.
+     * @param x0     Where the token starts on the page.
+     * @param x1     Where it ends.
+     */
     const trackLink = (
       href: string | undefined,
       anchor: string | undefined,
+      at: number,
       text: string,
       x0: number,
       x1: number,
@@ -1573,7 +1610,7 @@ function emitPageContent(
       }
       if (href !== undefined || anchor !== undefined) {
         linkX1 = x1;
-        linkText += text;
+        linkText.push({ at, text });
       }
     };
     const extraPerSpace = computeJustifyExtra(line);
@@ -1934,9 +1971,9 @@ function emitPageContent(
         const tokenX0 = x;
         x += tok.widthPt;
         if (tok.isSpace) x += extraPerSpace;
-        trackLink(tok.href, tok.anchor, tok.text, tokenX0, x);
+        trackLink(tok.href, tok.anchor, order[oi]!, tok.text, tokenX0, x);
       }
-      flushLink();
+      endLinks();
     } else {
       if (!inBT) {
         out.push('BT');
@@ -1952,10 +1989,10 @@ function emitPageContent(
         if (at.open[i]) out.push(at.open[i] ?? '');
         out.push(showTextOf(tok, tok.text));
         if (at.close[i]) out.push('EMC');
-        trackLink(tok.href, tok.anchor, tok.text, x, x + tok.widthPt);
+        trackLink(tok.href, tok.anchor, i, tok.text, x, x + tok.widthPt);
         x += tok.widthPt;
       }
-      flushLink();
+      endLinks();
     }
   };
 
