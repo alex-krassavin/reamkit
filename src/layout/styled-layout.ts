@@ -130,6 +130,8 @@ import { applyNumbering, applyNumberingToHeadersFooters, formatCounter } from '@
 import {
   DEFAULT_RESOLVED_PARAGRAPH,
   DEFAULT_RESOLVED_RUN,
+  resolveAutoTextColors,
+  resolveAutoTextColorsOfEach,
   resolveParagraphProperties,
   resolveRunProperties,
 } from '@/core/style-cascade';
@@ -1432,20 +1434,50 @@ interface NotePlan {
 }
 
 /**
+ * §17.3.2.6 — a Word document's automatic text colour, chosen as Word chooses
+ * it (white over a dark background; see `resolveAutoTextColors`) in the body,
+ * the header and footer bands and the notes. Drawn black whatever was behind
+ * it, issue #137's header cell — words naming no colour on 25397D — could not
+ * be read. Other sources state their colours, and are left as they are.
+ *
+ * @param body    The document body.
+ * @param options The render options, carrying the bands and the notes.
+ * @returns The body and options to lay out.
+ */
+function withAutoTextColors(
+  body: ReadonlyArray<BodyElement>,
+  options: StyledRenderOptions,
+): { body: ReadonlyArray<BodyElement>; options: StyledRenderOptions } {
+  if (options.typesetBy !== 'word') return { body, options };
+  const each = (bodies: ReadonlyMap<string, ReadonlyArray<BodyElement>>) =>
+    resolveAutoTextColorsOfEach(bodies, options.styles);
+  return {
+    body: resolveAutoTextColors(body, options.styles),
+    options: {
+      ...options,
+      ...(options.headersFooters ? { headersFooters: each(options.headersFooters) } : {}),
+      ...(options.footnotes ? { footnotes: each(options.footnotes) } : {}),
+      ...(options.endnotes ? { endnotes: each(options.endnotes) } : {}),
+    },
+  };
+}
+
+/**
  * Layout phase (the FlowDoc→PageDoc transform of ir-design §7): body →
  * positioned pages (PageItems), font/image resources, logical structure. Drives
  * the whole pass — numbering and note numbering, per-section geometry, per-block
  * layout, the footnote/endnote/comment tails, then pagination — and returns the
  * {@link LaidOutPdfDocument} (the PageDoc plus its PDF companion).
  *
- * @param body    The document body the section model partitions.
- * @param options The resolved fonts, styles, section model, and PDF-output toggles.
+ * @param documentBody    The document body the section model partitions.
+ * @param documentOptions The resolved fonts, styles, section model, and PDF-output toggles.
  * @returns The positioned pages plus the PDF-only {@link PdfLayoutAux} companion.
  */
 export function layoutStyledDocument(
-  body: ReadonlyArray<BodyElement>,
-  options: StyledRenderOptions,
+  documentBody: ReadonlyArray<BodyElement>,
+  documentOptions: StyledRenderOptions,
 ): LaidOutPdfDocument {
+  const { body, options } = withAutoTextColors(documentBody, documentOptions);
   const sectionList = resolveSectionList(body, options);
 
   const noteAssigned = assignNoteNumbers(

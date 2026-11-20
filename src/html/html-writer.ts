@@ -69,9 +69,36 @@ import { headingLevelOf } from '@/core/outline';
 import { resolveFamilyStyle } from '@/core/fonts/remote-fonts';
 import {
   EMPTY_STYLE_SHEET,
+  resolveAutoTextColors,
+  resolveAutoTextColorsOfEach,
   resolveParagraphProperties,
   resolveRunProperties,
+  runBackgroundHex,
 } from '@/core/style-cascade';
+
+/**
+ * §17.3.2.6 — a Word document's automatic text colour as Word chooses it,
+ * white over a dark background (see `resolveAutoTextColors`): a browser draws
+ * text with no colour of its own black on whatever the cell, the box or the
+ * paragraph paints, and issue #137's header cell came out black on 25397D.
+ * Other sources state their colours, and are left as they are.
+ *
+ * @param flow The document.
+ * @returns The document with those colours stated.
+ */
+function withAutoTextColors(flow: FlowDoc): FlowDoc {
+  if (flow.typesetBy !== 'word') return flow;
+  return {
+    ...flow,
+    body: resolveAutoTextColors(flow.body, EMPTY_STYLE_SHEET),
+    ...(flow.footnotes
+      ? { footnotes: resolveAutoTextColorsOfEach(flow.footnotes, EMPTY_STYLE_SHEET) }
+      : {}),
+    ...(flow.endnotes
+      ? { endnotes: resolveAutoTextColorsOfEach(flow.endnotes, EMPTY_STYLE_SHEET) }
+      : {}),
+  };
+}
 
 /**
  * Render a {@link FlowDoc} to a self-contained HTML document (ir-design §7).
@@ -84,10 +111,11 @@ import {
  * out of scope (reported as losses): inline math and headers/footers (no fixed
  * pages to band them onto). Page-break hints map to CSS `break-before`.
  *
- * @param flow The format-neutral interlayer document tree.
+ * @param source The format-neutral interlayer document tree.
  * @returns The encoded HTML bytes plus the recorded {@link Loss} list.
  */
-export function writeHtml(flow: FlowDoc): WriteResult {
+export function writeHtml(source: FlowDoc): WriteResult {
+  const flow = withAutoTextColors(source);
   const losses: Array<Loss> = [];
   const out: Array<string> = [];
   const notes = collectNoteNumbers(flow);
@@ -744,6 +772,9 @@ function paragraphCss(r: ResolvedParagraphProperties): string {
     else css.push(`line-height:${fmt(r.spacingLine)}pt`);
   }
   if (r.pageBreakBefore) css.push('break-before:page');
+  // §17.3.1.31 — the band behind the paragraph, which the page draws and this
+  // did not; text whose colour is automatic is judged against it.
+  if (r.shading) css.push(`background-color:#${r.shading.colorHex}`);
   return css.join(';');
 }
 
@@ -836,6 +867,10 @@ function runCss(r: ResolvedRunProperties): string {
     if (style) css.push(`text-decoration-style:${style}`);
   }
   if (r.colorHex !== '000000') css.push(`color:#${r.colorHex}`);
+  // §17.3.2.32 / §17.3.2.15 — the run's own background, its shading or its
+  // highlight, which the page draws and this did not.
+  const behind = runBackgroundHex(r);
+  if (behind !== undefined) css.push(`background-color:#${behind}`);
   return css.join(';');
 }
 

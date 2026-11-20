@@ -56,6 +56,7 @@ import { addImage } from '@/pdf/image-xobject';
 import { dict, name, ref, stream, unicodeString } from '@/pdf/objects';
 import { addSignaturePlaceholder } from '@/pdf/signature';
 import { buildXmpPacket } from '@/pdf/xmp';
+import { runBackgroundHex } from '@/core/style-cascade';
 
 const encoder = new TextEncoder();
 
@@ -1523,7 +1524,7 @@ function emitPageContent(
     // §17.3.2.32 — a run's own background, painted behind its glyphs before
     // anything else on the line. Same shape as the highlight below, but each
     // run carries its own colour; runs that share one are painted together.
-    if (line.tokens.some((t) => t.kind === 'text' && t.resolvedRun.shadingColorHex)) {
+    if (line.tokens.some((t) => t.kind === 'text' && runBackgroundHex(t.resolvedRun))) {
       if (inBT) {
         out.push('ET');
         inBT = false;
@@ -1535,7 +1536,7 @@ function emitPageContent(
       let painted = '';
       for (const tok of line.tokens) {
         const w = tok.widthPt + (tok.kind === 'text' && tok.isSpace ? extraPerSpace : 0);
-        const hex = tok.kind === 'text' ? tok.resolvedRun.shadingColorHex : undefined;
+        const hex = tok.kind === 'text' ? runBackgroundHex(tok.resolvedRun) : undefined;
         if (hex !== undefined) {
           if (hex !== painted) {
             if (painted !== '') out.push('f');

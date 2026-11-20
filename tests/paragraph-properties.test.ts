@@ -252,13 +252,23 @@ describe('paragraph shading (§17.3.1.31)', () => {
     ).toEqual({ colorHex: 'F4E7D3' });
   });
 
-  it('leaves an auto or absent fill unshaded', () => {
+  it('leaves an auto fill unshaded, and paints a pattern over white', () => {
     expect(
       parseParagraphProperties(parsePpr('<w:pPr><w:shd w:val="clear" w:fill="auto"/></w:pPr>'))
         .shading,
     ).toBeUndefined();
+    // A pattern with neither colour is black over white, blended: Word paints
+    // `pct25` BFBFBF and `pct75` 404040 behind a paragraph, a cell and a run.
     expect(
       parseParagraphProperties(parsePpr('<w:pPr><w:shd w:val="pct25"/></w:pPr>')).shading,
+    ).toEqual({ colorHex: 'BFBFBF' });
+    expect(
+      parseParagraphProperties(parsePpr('<w:pPr><w:shd w:val="pct75"/></w:pPr>')).shading,
+    ).toEqual({ colorHex: '404040' });
+    expect(
+      parseParagraphProperties(
+        parsePpr('<w:pPr><w:shd w:val="nil" w:color="auto" w:fill="25397D"/></w:pPr>'),
+      ).shading,
     ).toBeUndefined();
   });
 });

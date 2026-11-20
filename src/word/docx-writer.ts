@@ -73,6 +73,7 @@ import { chartSpaceXml } from '@/core/drawingml/chart-serializer';
 import { detectImageFormat } from '@/core/images';
 import { buildOpcPackage } from '@/core/opc';
 import { OBFUSCATED_FONT_CONTENT_TYPE, embedFaces } from '@/word/font-embed';
+import { HIGHLIGHT_COLORS } from '@/word/run-properties';
 import {
   EMPTY_STYLE_SHEET,
   resolveParagraphProperties,
@@ -2076,7 +2077,12 @@ function rPrXml(r: ResolvedRunProperties, state?: WriteState): string {
   if (states('bold')) out.push(toggle('w:b', r.bold), toggle('w:bCs', r.bold));
   if (states('italic')) out.push(toggle('w:i', r.italic), toggle('w:iCs', r.italic));
   if (states('strike')) out.push(toggle('w:strike', r.strike));
-  if (states('colorHex')) out.push(`<w:color w:val="${r.colorHex}"/>`);
+  // §17.3.2.6 — a stated 000000 is not the automatic colour, which Word sets
+  // white over a dark background; equal to the default's hex, it was left out
+  // and read back as automatic.
+  if (states('colorHex') || r.colorAuto !== DEFAULT_RUN.colorAuto) {
+    out.push(`<w:color w:val="${r.colorAuto === true ? 'auto' : r.colorHex}"/>`);
+  }
   // §17.3.2.35 `w:spacing` — how much wider or tighter the characters stand,
   // in twips, between the colour and the kerning. Read from a .docx and never
   // written back: text set expanded or condensed came back at the face's own
@@ -2101,6 +2107,7 @@ function rPrXml(r: ResolvedRunProperties, state?: WriteState): string {
     const half = Math.round(r.fontSizePt * 2);
     out.push(`<w:sz w:val="${half}"/>`, `<w:szCs w:val="${half}"/>`);
   }
+  out.push(...highlightXml(r.highlightColorHex));
   // §17.3.2.40 — `w:u @w:color`, the rule's own colour where it has one: a
   // PDF's `/Underline` annotation states its colour and nothing else does.
   if (states('underline')) out.push(underlineXml(r));
@@ -2124,6 +2131,20 @@ function rPrXml(r: ResolvedRunProperties, state?: WriteState): string {
 function underlineXml(r: { underline: string; underlineColorHex?: string }): string {
   const color = r.underlineColorHex !== undefined ? ` w:color="${r.underlineColorHex}"` : '';
   return `<w:u w:val="${r.underline}"${color}/>`;
+}
+
+/** §17.18.40 — each highlight colour's name, the way `w:highlight` states it. */
+const HIGHLIGHT_NAMES: ReadonlyMap<string, string> = new Map(
+  [...HIGHLIGHT_COLORS].map(([colorName, hex]) => [hex, colorName] as const),
+);
+
+// §17.3.2.15 `w:highlight` — the marker pen, by name, where the schema puts it
+// (after the size, before the underline). Written as the run's `w:shd` it was
+// read back as shading, which Word judges an automatic colour by and a
+// highlight it does not.
+function highlightXml(hex: string | undefined): Array<string> {
+  const colorName = hex !== undefined ? HIGHLIGHT_NAMES.get(hex) : undefined;
+  return colorName !== undefined ? [`<w:highlight w:val="${colorName}"/>`] : [];
 }
 
 // §17.3.2.32 `w:rPr/w:shd` — a solid wash behind the run's own glyphs.
@@ -2379,6 +2400,7 @@ function rawRunPrXml(r: RunProperties): string {
   if (r.strike !== undefined) out.push(toggle('w:strike', r.strike));
   if (r.colorHex !== undefined) out.push(`<w:color w:val="${r.colorHex}"/>`);
   if (r.fontSizePt !== undefined) out.push(`<w:sz w:val="${Math.round(r.fontSizePt * 2)}"/>`);
+  out.push(...highlightXml(r.highlightColorHex));
   if (r.underline !== undefined) out.push(underlineXml({ ...r, underline: r.underline }));
   if (r.shadingColorHex !== undefined) out.push(runShdXml(r.shadingColorHex));
   if (r.verticalAlign !== undefined) out.push(`<w:vertAlign w:val="${r.verticalAlign}"/>`);

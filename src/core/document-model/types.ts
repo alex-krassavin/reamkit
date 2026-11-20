@@ -88,6 +88,13 @@ export interface RunProperties {
   readonly smallCaps?: boolean;
   readonly fontSizePt?: Pt;
   readonly colorHex?: string;
+  /**
+   * §17.3.2.6 — the colour is the AUTOMATIC one (`w:color w:val="auto"`, with
+   * `colorHex` 000000; on a resolved run, also a run no layer gave a colour).
+   * Word draws it black, or white over a dark background (see
+   * `resolveAutoTextColors`); a stated 000000 stays black whatever is behind.
+   */
+  readonly colorAuto?: boolean;
   readonly fontFamily?: FontFamilyMap;
   readonly verticalAlign?: VerticalAlign;
   /**
@@ -105,6 +112,12 @@ export interface RunProperties {
    * glyphs, already blended from the pattern, its colour and the fill.
    */
   readonly shadingColorHex?: string;
+  /**
+   * §17.3.2.15 `w:highlight` — the marker pen's colour behind the run. Where
+   * the run is shaded as well the highlight is what shows; but an automatic
+   * colour is judged by the shading alone (see `resolveAutoTextColors`).
+   */
+  readonly highlightColorHex?: string;
   /**
    * §17.3.2.35 `w:rPr/w:spacing` — extra space between the run's characters
    * (negative tightens). Word states it in twentieths of a point.

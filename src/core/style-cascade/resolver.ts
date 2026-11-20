@@ -225,12 +225,20 @@ function mergeRun(base: ResolvedRunProperties, override: RunProperties): Resolve
     smallCaps: override.smallCaps ?? base.smallCaps,
     fontSizePt: override.fontSizePt ?? base.fontSizePt,
     colorHex: override.colorHex ?? base.colorHex,
+    // §17.3.2.6 — whether that colour is the automatic one goes with it: a
+    // layer that states a colour states which (see `RunProperties.colorAuto`).
+    ...((override.colorHex !== undefined ? override.colorAuto : base.colorAuto) === true
+      ? { colorAuto: true }
+      : {}),
     fontFamily: mergeFontFamily(base.fontFamily, override.fontFamily),
     verticalAlign: override.verticalAlign ?? base.verticalAlign,
     rtl: override.rtl ?? base.rtl,
     ...(lang !== undefined ? { lang } : {}),
     ...((override.shadingColorHex ?? base.shadingColorHex) !== undefined
       ? { shadingColorHex: override.shadingColorHex ?? base.shadingColorHex }
+      : {}),
+    ...((override.highlightColorHex ?? base.highlightColorHex) !== undefined
+      ? { highlightColorHex: override.highlightColorHex ?? base.highlightColorHex }
       : {}),
     ...((override.textOutline ?? base.textOutline) !== undefined
       ? { textOutline: override.textOutline ?? base.textOutline }
@@ -314,6 +322,17 @@ function mergePar(
 }
 
 /**
+ * What is painted behind a run's glyphs: its highlight (§17.3.2.15), which
+ * shows over its shading, else its shading (§17.3.2.32).
+ *
+ * @param r The run's resolved properties.
+ * @returns The 6-hex colour, or `undefined` when nothing is painted.
+ */
+export function runBackgroundHex(r: ResolvedRunProperties): string | undefined {
+  return r.highlightColorHex ?? r.shadingColorHex;
+}
+
+/**
  * Lay one layer of run properties over another (§17.7.2): each property the
  * higher layer states wins, and each slot of its `w:rFonts` on its own.
  *
@@ -322,7 +341,13 @@ function mergePar(
  * @returns The two as one layer.
  */
 export function mergeRunPartial(base: RunProperties, override: RunProperties): RunProperties {
-  const out = copyDefined(base, override);
+  let out = copyDefined(base, override);
+  // A colour and whether it is the automatic one are one property: a layer
+  // that states the first states the second, and its silence on it is "no".
+  if (override.colorHex !== undefined && override.colorAuto !== true && out.colorAuto === true) {
+    const { colorAuto: _auto, ...rest } = out;
+    out = rest;
+  }
   const fontFamily = mergeFontFamily(base.fontFamily, override.fontFamily);
   return fontFamily === undefined || fontFamily === out.fontFamily ? out : { ...out, fontFamily };
 }

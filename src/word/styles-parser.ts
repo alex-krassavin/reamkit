@@ -26,6 +26,7 @@ import { eighthPtToPt, twipsToPt } from '@/core/ir';
 
 import { parseParagraphProperties } from '@/word/paragraph-properties';
 import { parseRunProperties } from '@/word/run-properties';
+import { shadingFillHex } from '@/word/shading';
 import { asArray, asElement, getAttr, getVal, parseIntAttr } from '@/word/xml-helpers';
 
 const decoder = new TextDecoder('utf-8');
@@ -268,15 +269,13 @@ function parseFlatCellMargins(el: Record<string, unknown> | undefined): CellMarg
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
-// §17.4.33 w:shd — direct @w:fill hex only (same policy as the table parser).
+// §17.4.33 w:shd — the colour the shading paints, its pattern blended in (the
+// table parser's policy; see `shadingFillHex`).
 function parseFlatShading(node: unknown): CellShading | undefined {
   const el = asElement(node);
   if (!el) return undefined;
-  const fill = getAttr(el, 'fill');
-  if (fill && fill !== 'auto' && /^[0-9A-Fa-f]{6}$/.test(fill)) {
-    return { colorHex: fill.toUpperCase() };
-  }
-  return undefined;
+  const hex = shadingFillHex(getVal(el), getAttr(el, 'color'), getAttr(el, 'fill'));
+  return hex !== undefined ? { colorHex: hex } : undefined;
 }
 
 function intVal(node: unknown): number | undefined {

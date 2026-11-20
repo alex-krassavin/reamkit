@@ -30,6 +30,7 @@ import type { GradientStop, ShapeGradient } from '@/core/vector';
 import { buildStroke } from '@/core/drawingml/shape-render';
 import { placeholderColors, readColorMods, resolveColorNode } from '@/core/drawingml/colors';
 import { emuToPt, pt } from '@/core/ir';
+import { mergeRunPartial } from '@/core/style-cascade';
 import {
   poAttr,
   poAttrLocal,
@@ -2436,7 +2437,10 @@ export function withStyleFontColor(
               // none, drew black on blue where both references draw white.
               properties: {
                 ...block.paragraph.properties,
-                inheritedRun: { ...block.paragraph.properties.inheritedRun, colorHex },
+                // A stated colour, not the automatic one (§17.3.2.6).
+                inheritedRun: mergeRunPartial(block.paragraph.properties.inheritedRun ?? {}, {
+                  colorHex,
+                }),
               },
             },
           }
