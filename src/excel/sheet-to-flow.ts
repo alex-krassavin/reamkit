@@ -63,6 +63,10 @@ const PAGE_BREAK_PARAGRAPH = {
   runs: [],
 };
 
+// …and the same line of no height without the break: what carries the first
+// sheet's outline entry, where no page has to be started.
+const NO_HEIGHT_PARAGRAPH = { spacingLine: pt(0), spacingLineRule: 'exact' as const };
+
 /**
  * Projection knobs (E-SHEET W9).
  */
@@ -114,6 +118,15 @@ export interface ProjectSheetOptions {
    * which is which; markdown asks for this, and gets `# Sheet1`.
    */
   readonly sheetHeadings?: boolean;
+  /**
+   * Open each printed sheet with an entry in the PDF's document outline
+   * (ISO 32000-1 §12.3.3) under the sheet's NAME, jumping to its first page —
+   * the outline LibreOffice exports for a workbook. The entry rides a paragraph
+   * that takes no room (the one that breaks the page, or one of its own before
+   * the first sheet), so the page shows nothing new. For the PDF target only:
+   * a medium that writes paragraphs out would print the first one.
+   */
+  readonly outlineEntries?: boolean;
   /**
    * Project for a SCREEN rather than for paper: each sheet as Excel shows it in
    * its window, not as it prints. One table a sheet with all of its columns —
@@ -328,6 +341,17 @@ export function projectSheetDoc(sheet: SheetDoc, options: ProjectSheetOptions = 
             ...(printed > 0 && !screen ? { pageBreakBefore: true } : {}),
           },
           runs: [{ text: ws.name, properties: {} }],
+        },
+      });
+    } else if (options.outlineEntries === true && !screen) {
+      // The same paragraph of no height, carrying the sheet's outline entry —
+      // and before the first sheet too, which no break opens.
+      body.push({
+        kind: 'paragraph',
+        paragraph: {
+          properties: printed > 0 ? PAGE_BREAK_PARAGRAPH.properties : NO_HEIGHT_PARAGRAPH,
+          runs: [],
+          outlineEntries: [{ title: ws.name, level: 1 }],
         },
       });
     } else if (printed > 0 && !screen) {

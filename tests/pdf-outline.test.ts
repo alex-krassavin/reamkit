@@ -7,12 +7,17 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
+import { buildPptx } from './fixtures/build-pptx';
+import { buildXlsx } from './fixtures/build-xlsx';
 import type { ReamConvertOptions } from '@/core/converter/ream';
 import type { PdfDict, PdfValue } from '@/pdf/objects';
 import { Ream } from '@/core/converter/ream';
-import { PdfHexString, PdfName, PdfRef } from '@/pdf/objects';
+import { PDF_NULL, PdfHexString, PdfName, PdfRef, dict, name, stream } from '@/pdf/objects';
 import { PdfFile } from '@/pdf-reader/document';
 import { pdfTextString } from '@/pdf-reader/encodings';
+import { readPdfOutline } from '@/pdf-reader/outline';
+import { extractPageText } from '@/pdf-reader/text';
+import { PdfDocument } from '@/pdf/writer';
 
 const FONTS = {
   regular: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Regular.ttf')),
@@ -253,5 +258,209 @@ describe('PDF document outline from headings (#138)', () => {
     expect(readOutline(locked, 'pw').items.map((i) => i.title)).toEqual(['Қазақ тілі', 'Plain']);
     const archival = await convert(xml, { pdfA: 'PDF/A-2b' });
     expect(readOutline(archival).items.map((i) => i.title)).toEqual(['Қазақ тілі', 'Plain']);
+  });
+});
+
+describe('PDF document outline for workbooks and decks (#138)', () => {
+  /**
+   * What every page shows — each piece of text and where it stands — to show
+   * an outline adds nothing to the pages. (The first sheet's carrier paragraph
+   * does add one `Tm` that sets nothing; the text is what is compared.)
+   */
+  const shown = (bytes: Uint8Array): Array<Array<string>> => {
+    const file = PdfFile.parse(bytes);
+    return file
+      .pages()
+      .map((p) =>
+        extractPageText(file, p).map((r) => `${r.text}@${r.x.toFixed(2)},${r.y.toFixed(2)}`),
+      );
+  };
+
+  it("names each sheet, as LibreOffice's export does, at its first page", async () => {
+    const xlsx = buildXlsx({
+      sheets: [
+        { name: 'Итоги 2026', rows: [['first'], ['sheet']] },
+        { name: 'Data', rows: [['second']] },
+      ],
+    });
+    const bytes = await Ream.parse(xlsx).convert('pdf', { fonts: FONTS });
+    const { items } = readOutline(bytes);
+    expect(items.map((i) => [i.depth, i.title, i.page])).toEqual([
+      [0, 'Итоги 2026', 0],
+      [0, 'Data', 1],
+    ]);
+    // The entries ride paragraphs of no height: the pages are what they were.
+    const plain = await Ream.parse(xlsx).convert('pdf', { fonts: FONTS, outline: false });
+    expect(readOutline(plain).root).toBeUndefined();
+    expect(shown(bytes)).toEqual(shown(plain));
+  });
+
+  it('titles each slide by its title placeholder, else by its number', async () => {
+    const title = (type: string, paragraphs: ReadonlyArray<string>): string =>
+      '<p:sp><p:nvSpPr><p:cNvPr id="2" name="Title"/><p:cNvSpPr/>' +
+      `<p:nvPr><p:ph type="${type}"/></p:nvPr></p:nvSpPr>` +
+      '<p:spPr><a:xfrm><a:off x="457200" y="274638"/><a:ext cx="8229600" cy="1143000"/></a:xfrm></p:spPr>' +
+      '<p:txBody><a:bodyPr/>' +
+      paragraphs.map((t) => `<a:p><a:r><a:rPr lang="en-US"/><a:t>${t}</a:t></a:r></a:p>`).join('') +
+      '</p:txBody></p:sp>';
+    const pptx = buildPptx(
+      [
+        title('ctrTitle', ['Қазақ тілі']),
+        '',
+        // A hidden slide prints no page and takes no entry.
+        title('title', ['Hidden']),
+        `<p:grpSp><p:nvGrpSpPr><p:cNvPr id="9" name="G"/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/>${title('title', ['Line one', 'Line two'])}</p:grpSp>`,
+      ],
+      { hiddenSlides: [false, false, true, false] },
+    );
+    const { items } = readOutline(await Ream.parse(pptx).convert('pdf', { fonts: FONTS }));
+    expect(items.map((i) => [i.depth, i.title, i.page])).toEqual([
+      [0, 'Қазақ тілі', 0],
+      [0, 'Slide 2', 1],
+      [0, 'Line one Line two', 2],
+    ]);
+  });
+});
+
+describe("a source PDF's own outline, read and carried to the PDF written from it (#138)", () => {
+  const utf16 = (s: string): PdfHexString => {
+    const out = [0xfe, 0xff];
+    for (let i = 0; i < s.length; i++) out.push(s.charCodeAt(i) >> 8, s.charCodeAt(i) & 0xff);
+    return new PdfHexString(Uint8Array.from(out));
+  };
+
+  /**
+   * Three pages of Helvetica text and an outline that uses every way an item
+   * can say where it jumps: an explicit /Dest, a go-to action naming a string
+   * destination in the /Names tree (under a Kids node), a name looked up in the
+   * catalog's /Dests, and none at all; one item closed, one title behind a
+   * language escape, and a /Next that runs back to the first item.
+   */
+  function sourcePdf(): Uint8Array {
+    const doc = new PdfDocument();
+    const font = doc.add(
+      dict({ Type: name('Font'), Subtype: name('Type1'), BaseFont: name('Helvetica') }),
+    );
+    const pagesMap = dict({ Type: name('Pages'), Kids: [], Count: 3 });
+    const pagesRef = doc.add(pagesMap);
+    const texts = [
+      [
+        [700, 'Chapter One'],
+        [600, 'Section One A'],
+      ],
+      [
+        [700, 'Chapter Two'],
+        [500, 'Section Two A'],
+      ],
+      [[700, 'Appendix text']],
+    ] as const;
+    const pageRefs = texts.map((lines) => {
+      const ops = ['BT /F1 12 Tf', ...lines.map(([y, t]) => `1 0 0 1 72 ${y} Tm (${t}) Tj`), 'ET'];
+      const content = doc.add(stream({}, new TextEncoder().encode(ops.join('\n'))));
+      const page = doc.add(
+        dict({
+          Type: name('Page'),
+          Parent: pagesRef,
+          MediaBox: [0, 0, 612, 792],
+          Resources: dict({ Font: dict({ F1: font }) }),
+          Contents: content,
+        }),
+      );
+      (pagesMap.get('Kids') as Array<PdfValue>).push(page);
+      return page;
+    });
+    const root = dict({ Type: name('Outlines') });
+    const rootRef = doc.add(root);
+    const item = (entries: Record<string, PdfValue>): { d: PdfDict; r: PdfRef } => {
+      const d = dict({ ...entries, Parent: rootRef });
+      return { d, r: doc.add(d) };
+    };
+    const ch1 = item({ Title: 'Chapter One', Dest: [pageRefs[0]!, name('XYZ'), 0, 700, 0] });
+    const s1a = item({
+      Title: 'Section One A',
+      A: dict({ S: name('GoTo'), D: 'sec1a' }),
+    });
+    const ch2 = item({ Title: 'Chapter Two', Dest: name('Ch2') });
+    const s2a = item({ Title: 'Section Two A', Dest: [pageRefs[1]!, name('XYZ'), 0, 500, 0] });
+    const group = item({ Title: 'Grouping only' });
+    // ESC "ru" ESC — §7.9.2.2's language escape, which no panel shows.
+    const app = item({
+      Title: utf16('\u001bru\u001bПриложение'),
+      Dest: [pageRefs[2]!, name('Fit')],
+    });
+    const link = (parent: { d: PdfDict; r: PdfRef }, kids: Array<{ d: PdfDict; r: PdfRef }>) => {
+      parent.d.set('First', kids[0]!.r);
+      parent.d.set('Last', kids[kids.length - 1]!.r);
+      kids.forEach((k, i) => {
+        k.d.set('Parent', parent.r);
+        if (i > 0) k.d.set('Prev', kids[i - 1]!.r);
+        if (i < kids.length - 1) k.d.set('Next', kids[i + 1]!.r);
+      });
+    };
+    link({ d: root, r: rootRef }, [ch1, ch2, group]);
+    link(ch1, [s1a]);
+    link(ch2, [s2a]);
+    link(group, [app]);
+    ch1.d.set('Count', 1);
+    ch2.d.set('Count', -1); // closed
+    group.d.set('Count', 1);
+    root.set('Count', 5);
+    // A /Next back to the first item: a cycle the reader must not follow.
+    group.d.set('Next', ch1.r);
+    const leaf = doc.add(
+      dict({ Names: ['sec1a', dict({ D: [pageRefs[0]!, name('FitH'), 600] })] }),
+    );
+    const destsTree = doc.add(dict({ Kids: [leaf] }));
+    const catalog = doc.add(
+      dict({
+        Type: name('Catalog'),
+        Pages: pagesRef,
+        Outlines: rootRef,
+        Dests: dict({ Ch2: [pageRefs[1]!, name('XYZ'), PDF_NULL, 700, PDF_NULL] }),
+        Names: dict({ Dests: destsTree }),
+      }),
+    );
+    return doc.build(catalog);
+  }
+
+  it('reads every way an item jumps, its depth and whether it stands open', () => {
+    const items = readPdfOutline(PdfFile.parse(sourcePdf()));
+    expect(items).toEqual([
+      { title: 'Chapter One', level: 1, open: true, pageIndex: 0, topPt: 700 },
+      { title: 'Section One A', level: 2, open: false, pageIndex: 0, topPt: 600 },
+      { title: 'Chapter Two', level: 1, open: false, pageIndex: 1, topPt: 700 },
+      { title: 'Section Two A', level: 2, open: false, pageIndex: 1, topPt: 500 },
+      // An item that jumps nowhere takes its first descendant's place.
+      { title: 'Grouping only', level: 1, open: true, pageIndex: 2 },
+      { title: 'Приложение', level: 2, open: false, pageIndex: 2 },
+    ]);
+  });
+
+  it('writes the same outline into the PDF made from it — order, nesting, open state', async () => {
+    const out = await Ream.parse(sourcePdf()).convert('pdf', { fonts: FONTS });
+    const { items } = readOutline(out);
+    expect(items.map((i) => [i.depth, i.title, i.page])).toEqual([
+      [0, 'Chapter One', 0],
+      [1, 'Section One A', 0],
+      [0, 'Chapter Two', 1],
+      [1, 'Section Two A', 1],
+      [0, 'Grouping only', 2],
+      [1, 'Приложение', 2],
+    ]);
+    // Table 153 — the closed chapter counts its one child negative.
+    expect(items.map((i) => i.count)).toEqual([1, undefined, -1, undefined, 1, undefined]);
+  });
+
+  it('keeps the outline a document of ours had through a PDF round trip', async () => {
+    const xml =
+      para('Heading1', 'Қазақ тілі') +
+      body() +
+      para('Heading2', 'Second level') +
+      para('Heading1', 'Third', '<w:pageBreakBefore/>') +
+      body();
+    const first = await convert(xml);
+    const again = await Ream.parse(first).convert('pdf', { fonts: FONTS });
+    const shape = (b: Uint8Array) => readOutline(b).items.map((i) => [i.depth, i.title, i.page]);
+    expect(shape(again)).toEqual(shape(first));
   });
 });

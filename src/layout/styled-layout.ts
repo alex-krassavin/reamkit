@@ -1771,6 +1771,18 @@ export function layoutStyledDocument(
     options.compatibilityMode,
     outlineMarks,
   );
+  // A document that states its outline (Paragraph.outlineEntries) takes those
+  // entries alone: a PDF's own bookmarks and the headings read off its pages
+  // would otherwise list every chapter twice.
+  // Stated in an order of its own, an outline keeps it (OutlineEntry.order).
+  const marks = outlineMarks ? [...outlineMarks.values()] : undefined;
+  const stated = marks?.filter((m) => m.stated === true) ?? [];
+  const outline =
+    stated.length === 0
+      ? marks
+      : stated.every((m) => m.order !== undefined)
+        ? [...stated].sort((a, b) => a.order! - b.order!)
+        : stated;
   if (options.losses) {
     const undrawn = undrawnLoss(pages);
     if (undrawn) options.losses.push(undrawn);
@@ -1787,7 +1799,7 @@ export function layoutStyledDocument(
       pdfaProfile,
       tagged,
       bookmarks,
-      ...(outlineMarks ? { outline: [...outlineMarks.values()] } : {}),
+      ...(outline ? { outline } : {}),
       ...(commentNotes ? { commentNotes } : {}),
     },
   };
@@ -9129,7 +9141,7 @@ function layoutTableCell(
         // Word gives it its level (a Heading 1 in a cell reads as level 1) and
         // LibreOffice bookmarks it. Its first line carries the item to the
         // page it is printed on.
-        const seed = keep.length > 0 ? outlineSeedOf(block.resolved, el.paragraph) : undefined;
+        const seed = keep.length > 0 ? outlineSeedsOf(block.resolved, el.paragraph)[0] : undefined;
         for (const [i, line] of keep.entries()) {
           lines.push(i === 0 && seed ? { ...line, outline: seed } : line);
           if (!markOnly) contentHeightPt += computeLineHeight(line, block.resolved);
@@ -9386,17 +9398,30 @@ function paragraphStructType(resolved: ResolvedParagraphProperties): StructType 
   return lvl !== undefined ? (`H${String(lvl)}` as StructType) : 'P';
 }
 
-// The document-outline item a paragraph opens (ISO 32000-1 §12.3.3): a heading
-// with something to say. A heading with no words opens none — LibreOffice drops
-// an empty one too, and an item without a title is a blank line in the panel.
-function outlineSeedOf(
+// The document-outline items a paragraph opens (ISO 32000-1 §12.3.3): the
+// entries it states (a sheet's, a slide's, a source PDF's bookmarks), or else
+// the one a heading with something to say opens. A heading with no words opens
+// none — LibreOffice drops an empty one too, and an item without a title is a
+// blank line in the panel.
+function outlineSeedsOf(
   resolved: ResolvedParagraphProperties,
   paragraph: Paragraph,
-): OutlineSeed | undefined {
+): ReadonlyArray<OutlineSeed> {
+  const stated = (paragraph.outlineEntries ?? []).filter((e) => e.title.trim() !== '');
+  if (stated.length > 0) {
+    return stated.map((e) => ({
+      title: e.title.trim(),
+      level: Math.min(Math.max(1, Math.floor(e.level)), 9),
+      stated: true,
+      ...(e.open === false ? { open: false } : {}),
+      ...(e.topPt !== undefined ? { topPt: e.topPt } : {}),
+      ...(e.order !== undefined ? { order: e.order } : {}),
+    }));
+  }
   const level = outlineLevelOf(resolved);
-  if (level === undefined) return undefined;
+  if (level === undefined) return [];
   const title = outlineTitleOf(paragraph.runs);
-  return title !== '' ? { title, level } : undefined;
+  return title !== '' ? [{ title, level }] : [];
 }
 
 // The dominant natural language of a paragraph's text tokens (weighted by
@@ -10971,8 +10996,10 @@ function paginateSections(
           // edge, and an RTL heading set at the right would otherwise start
           // off the window to its left.
           if (outlineMarks && pb.source) {
-            const seed = outlineSeedOf(pb.resolved, pb.source);
-            if (seed) asm.markOutline(blockIdx, seed, asm.colLeft(), asm.cursorY);
+            for (const [k, seed] of outlineSeedsOf(pb.resolved, pb.source).entries()) {
+              const key = k === 0 ? blockIdx : `${String(blockIdx)}/${String(k)}`;
+              asm.markOutline(key, seed, asm.colLeft(), seed.topPt ?? asm.cursorY);
+            }
           }
           if (pb.bookmarks && asm.bookmarkPositions) {
             for (const bookmarkName of pb.bookmarks) {

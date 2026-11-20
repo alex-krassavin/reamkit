@@ -606,10 +606,12 @@ const MAX_OUTLINE_LEVEL = 9;
  * it of a SHALLOWER level, so a Heading 3 straight after a Heading 1 is that
  * heading's child, and a Heading 2 before any Heading 1 stands at the top.
  *
- * Every item is open, as LibreOffice writes them: an item's `/Count` is the
- * number of its descendants, all visible, and the outline's own `/Count` the
- * number of items. A leaf has no `/Count` — Table 153 asks for one only of an
- * item with descendants.
+ * Every item is open, as LibreOffice writes them, unless the document says
+ * otherwise (a source PDF's bookmark that stood closed): an open item's
+ * `/Count` is the number of descendants it shows, a closed one's the number it
+ * would show, negative; the outline's own `/Count` is the number of items in
+ * view. A leaf has no `/Count` — Table 153 asks for one only of an item with
+ * descendants.
  *
  * Each destination is `[page /XYZ left top 0]` (Table 151): the heading's
  * first line at the top of the window, the column's left edge at its left,
@@ -669,8 +671,9 @@ function buildOutline(
       visible++;
       if (kid.kids.length > 0) {
         const below = hang(kid.dict, kid.kids);
-        kid.dict.set('Count', below);
-        visible += below;
+        const open = kid.mark.open !== false;
+        kid.dict.set('Count', open ? below : -below);
+        if (open) visible += below;
       }
     });
     return visible;

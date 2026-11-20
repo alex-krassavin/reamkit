@@ -282,6 +282,17 @@ export interface OutlineSeed {
   readonly title: string;
   /** Its level, 1–9: a deeper item hangs under the nearest shallower one before it. */
   readonly level: number;
+  /** Whether the item stands open, its children shown. Absent ⇒ open. */
+  readonly open?: boolean;
+  /**
+   * The item is one the document states (`Paragraph.outlineEntries`), not one
+   * a heading opens. A document with any such item takes those alone.
+   */
+  readonly stated?: boolean;
+  /** The y-up height on its page the item jumps to, where the source named one. */
+  readonly topPt?: number;
+  /** Its place in the outline the source states (`OutlineEntry.order`). */
+  readonly order?: number;
 }
 
 /** An image bound into a {@link LaidOutDocument}: its resource name plus the decoded/validated bytes. */

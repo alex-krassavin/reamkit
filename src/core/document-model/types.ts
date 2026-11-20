@@ -619,6 +619,43 @@ export interface Paragraph {
    * is the paragraph's first line.
    */
   readonly bookmarks?: ReadonlyArray<string>;
+  /**
+   * The entries this paragraph opens in the document's navigation outline — a
+   * PDF's bookmarks (ISO 32000-1 §12.3.3) — when the document STATES its
+   * outline rather than leaving it to its headings: the page that starts a
+   * worksheet, under the sheet's name; the page that starts a slide, under its
+   * title; the place a source PDF's own bookmark jumps to. A document that
+   * states any entry has those entries for its outline, and its headings open
+   * none — a PDF's own bookmarks and the headings read out of its pages would
+   * otherwise each list the chapters once.
+   */
+  readonly outlineEntries?: ReadonlyArray<OutlineEntry>;
+}
+
+/**
+ * An entry in a document's navigation outline that a paragraph stands for
+ * (see {@link Paragraph.outlineEntries}).
+ */
+export interface OutlineEntry {
+  /** The text the entry shows. */
+  readonly title: string;
+  /** Its level, 1–9: a deeper entry hangs under the nearest shallower one before it. */
+  readonly level: number;
+  /** Whether the entry stands open, its children shown. Absent ⇒ open. */
+  readonly open?: boolean;
+  /**
+   * The height on its page the entry jumps to, y-up in points, where the
+   * source names one and the page stands as the source drew it (a PDF read as
+   * a page). Absent ⇒ the top of the paragraph's first line.
+   */
+  readonly topPt?: number;
+  /**
+   * The entry's place in the outline the source states, where that order is
+   * not the order of the pages: a PDF's bookmarks are listed as its author
+   * listed them, wherever on the pages each one jumps. Absent ⇒ where the
+   * paragraph stands.
+   */
+  readonly order?: number;
 }
 
 /**
