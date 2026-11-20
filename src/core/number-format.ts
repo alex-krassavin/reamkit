@@ -94,6 +94,47 @@ export function applyNumberFormat(
 }
 
 /**
+ * Render a TEXT cell's string through its number format (§18.8.31). Only the
+ * text section applies — the fourth, or a format's only section when it holds
+ * `@` — with `@` standing for the text and the literals around it written as
+ * they are: Excel shows "abc" under `0;-0;0;"["@"]"` as [abc], under `@" kg"`
+ * as "abc kg" and under `_(@_)` as " abc " (2026-11-20). Any other format,
+ * number or date, leaves the text as it is, as Excel does under `0.00`.
+ *
+ * @param text          The cell's string.
+ * @param numFmtId      The number-format id from the cell's `cellXf`.
+ * @param customFormats Custom format codes by id (from `<numFmts>`).
+ * @returns The displayed text.
+ */
+export function applyTextFormat(
+  text: string,
+  numFmtId: number,
+  customFormats: ReadonlyMap<number, string>,
+): string {
+  if (numFmtId === 0 || numFmtId === 49) return text;
+  const format = customFormats.get(numFmtId) ?? BUILTIN.get(numFmtId);
+  if (format === undefined) return text;
+  return formatText(text, splitSections(format));
+}
+
+/**
+ * `text` under the text section of a format, or as it is when the format has
+ * none. A fourth section that is empty hides the text: `;;;` shows nothing.
+ * `@` may stand more than once (`@"x"@` reads abcxabc) and `\@` is an at sign.
+ */
+function formatText(text: string, sections: ReadonlyArray<string>): string {
+  const only = sections.length === 1 ? tokenizeSection(resolveBracketCodes(sections[0]!)) : [];
+  const tokens =
+    sections.length >= 4
+      ? tokenizeSection(resolveBracketCodes(sections[3]!))
+      : only.some((t) => t.kind === 'text')
+        ? only
+        : undefined;
+  if (tokens === undefined) return text;
+  return tokens.map((t) => (t.kind === 'text' ? text : tokenText(t))).join('');
+}
+
+/**
  * The colour a number format paints its cell in (§18.8.31), as a 6-digit RRGGBB,
  * or undefined when the section that applies declares none.
  *
@@ -733,13 +774,7 @@ function applyFormatString(rawValue: string, format: string): string {
   const n = Number(rawValue);
   const sections = splitSections(format);
 
-  if (!Number.isFinite(n)) {
-    const textSection = sections[3];
-    if (textSection !== undefined) {
-      return textSection.replace(/@/g, rawValue);
-    }
-    return rawValue;
-  }
+  if (!Number.isFinite(n)) return formatText(rawValue, sections);
 
   const choice = sectionFor(n, sections);
   if (choice.index < 0) {
@@ -921,13 +956,38 @@ function formatScientific(
  * from `[$$-409]#,##0`. The symbol becomes a quoted literal so the placeholder
  * grammar treats it as text. Everything else in brackets (colours, locales,
  * conditions) is decoration here and goes.
+ *
+ * A bracket inside quotes or after a backslash is text, not a code: Excel
+ * reads 5 under `0" [kg]"` as "5 [kg]", under `\[0\]` as [5] and "abc" under
+ * `0;-0;0;"["@"]"` as [abc] (2026-11-20). Taken for codes, they went — the
+ * last of them with the `@` inside, leaving nothing at all.
  */
 function resolveBracketCodes(format: string): string {
-  return replaceBracketCodes(format, (body) => {
-    const currency = /^\$([^-]*)(?:-.*)?$/.exec(body);
-    const symbol = currency?.[1]?.replace(/"/g, '') ?? '';
-    return symbol.length > 0 ? `"${symbol}"` : '';
-  });
+  // No code opens after the last `]`, so a `[` past it is text, and is not
+  // searched for its end again and again.
+  const lastClose = format.lastIndexOf(']');
+  let out = '';
+  for (let i = 0; i < format.length; i++) {
+    const ch = format[i]!;
+    if (ch === '"') {
+      const close = format.indexOf('"', i + 1);
+      const end = close < 0 ? format.length - 1 : close;
+      out += format.slice(i, end + 1);
+      i = end;
+    } else if (ch === '\\' && i + 1 < format.length) {
+      out += format.slice(i, i + 2);
+      i++;
+    } else if (ch === '[' && i < lastClose) {
+      const close = format.indexOf(']', i);
+      const currency = /^\$([^-]*)(?:-.*)?$/.exec(format.slice(i + 1, close));
+      const symbol = currency?.[1]?.replace(/"/g, '') ?? '';
+      if (symbol.length > 0) out += `"${symbol}"`;
+      i = close;
+    } else {
+      out += ch;
+    }
+  }
+  return out;
 }
 
 const isPlaceholder = (c: string | undefined): boolean => c === '0' || c === '#' || c === '?';

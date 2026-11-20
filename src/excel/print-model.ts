@@ -60,6 +60,7 @@ import type { DrawingBox } from '@/excel/column-bands';
 import { FEATURES } from '@/core/ir/features';
 import { eighthPtToPt, halfPtToPt, pt, twipsToPt } from '@/core/ir';
 import { firstStrongDirection } from '@/core/bidi';
+import { applyTextFormat } from '@/core/number-format';
 import {
   applyNumberFormat,
   generalToWidth,
@@ -1686,6 +1687,13 @@ function gridBody(
       }
       // The full (pre-truncation) text feeds conditional-format text/dup rules (W5).
       const cfText = text.length > 0 ? text : undefined;
+      // …and a text cell then SHOWS its string through the format's text
+      // section — `_(@_)` pads it, `"["@"]"` brackets it, `;;;` hides it. The
+      // conditional-format rules keep `cfText`: they test the value, not its display.
+      if (ws && (ws.type === 's' || ws.type === 'str' || ws.type === 'inlineStr')) {
+        const numFmtId = styles.cellXfs[ws.styleIndex ?? 0]?.numFmtId ?? 0;
+        text = applyTextFormat(text, numFmtId, styles.numFmts);
+      }
       if (text.length > textBudget) {
         text = text.slice(0, Math.max(0, textBudget));
         if (!textBudgetReported) {
@@ -3299,7 +3307,11 @@ function overflowColumnsPastUsedRange(
     const xf = styles.cellXfs[cell.styleIndex ?? 0];
     const align = xf?.alignment;
     if (align?.wrapText || align?.shrinkToFit || align?.textRotation) continue;
-    const text = resolveCellText(cell, sharedStrings, styles, date1904);
+    const text = applyTextFormat(
+      resolveCellText(cell, sharedStrings, styles, date1904),
+      xf?.numFmtId ?? 0,
+      styles.numFmts,
+    );
     const side = alignmentFromXf(xf, cell.type, text);
     if (flowAlignment(side, worksheet.rightToLeft === true) !== 'left') continue;
     let room = 0;

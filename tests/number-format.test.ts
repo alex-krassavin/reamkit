@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { buildXlsx } from './fixtures/build-xlsx';
 import { Ream } from '@/core/converter/ream';
+import { applyTextFormat } from '@/core/number-format';
 import { applyNumberFormat, generalToWidth, numberFormatColorHex } from '@/excel';
 
 const noCustom = new Map<number, string>();
@@ -984,5 +985,88 @@ describe('applyNumberFormat — the digits Excel shows', () => {
     const xlsx = buildXlsx({ rows: [[{ value: 1.5, styleIndex: 1 }]], stylesXml: styles });
     const html = new TextDecoder().decode(await Ream.parse(xlsx).convert('html'));
     expect(html).toContain(`1.5${'0'.repeat(100)}`);
+  });
+});
+
+describe('a text cell shows its string through the text section', () => {
+  // Each expectation is Excel's own `string value` of the same cell in a probe
+  // workbook (Excel for Mac, 2026-11-20).
+  const cases = (rows: ReadonlyArray<readonly [string, string, string]>): void => {
+    for (const [code, value, want] of rows) {
+      const got = applyTextFormat(value, 164, new Map([[164, code]]));
+      expect([code, value, got]).toEqual([code, value, want]);
+    }
+  };
+
+  it('writes the fourth section, or a lone section holding @, around the text', () => {
+    cases([
+      ['0;-0;0;"["@"]"', 'abc', '[abc]'],
+      ['#,##0;-#,##0;"-";"t:"@', 'abc', 't:abc'],
+      ['0;-0;0;"x"', 'abc', 'x'],
+      ['0;0;0;@@', 'abc', 'abcabc'],
+      [';;;', 'abc', ''],
+      ['0;-0;0;', 'abc', ''],
+      ['@" kg"', 'abc', 'abc kg'],
+      ['"<"@">"', 'abc', '<abc>'],
+      ['"a"@', 'abc', 'aabc'],
+      ['@"x"@', 'abc', 'abcxabc'],
+      ['_(@_)', 'abc', ' abc '],
+      ['_-@_-', 'abc', ' abc '],
+      ['\\(@\\)', 'abc', '(abc)'],
+      ['\\@@', 'abc', '@abc'],
+    ]);
+  });
+
+  it('leaves the text as it is under a format with no text section', () => {
+    cases([
+      ['0.00', 'abc', 'abc'],
+      ['0;0;0', 'abc', 'abc'],
+      ['0;-0', 'abc', 'abc'],
+      // A string of digits is still text: no number format reads it.
+      ['0.00', '123', '123'],
+    ]);
+    expect(applyTextFormat('abc', 0, noCustom)).toBe('abc');
+    expect(applyTextFormat('abc', 49, noCustom)).toBe('abc');
+    expect(applyTextFormat('abc', 4, noCustom)).toBe('abc');
+  });
+
+  it('reads a bracket inside quotes or after a backslash as text, not a code', () => {
+    const show = (code: string, value: number): string =>
+      applyNumberFormat(String(value), 164, new Map([[164, code]]));
+    expect(show('0" [kg]"', 5)).toBe('5 [kg]');
+    expect(show('\\[0\\]', 5)).toBe('[5]');
+    expect(show('"["0"]"', -5)).toBe('-[5]');
+    expect(show('[Red]"[x]"0', 5)).toBe('[x]5');
+    expect(applyNumberFormat('abc', 164, new Map([[164, '0;-0;0;"["@"]"']]))).toBe('[abc]');
+  });
+
+  it('converts the issue’s workbook as Excel shows it, text cells included', async () => {
+    const codes = ['$#,##0', '000-00-0000', '(###) ###-####', '#.##', '0.###', '0;-0;0;"["@"]"'];
+    const attr = (s: string): string => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+    const styles =
+      `<numFmts count="${codes.length}">` +
+      codes.map((c, i) => `<numFmt numFmtId="${164 + i}" formatCode="${attr(c)}"/>`).join('') +
+      '</numFmts>' +
+      '<fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts>' +
+      '<fills count="2"><fill><patternFill patternType="none"/></fill>' +
+      '<fill><patternFill patternType="gray125"/></fill></fills>' +
+      '<borders count="1"><border/></borders>' +
+      '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>' +
+      `<cellXfs count="${codes.length + 1}"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>` +
+      codes
+        .map(
+          (_, i) =>
+            `<xf numFmtId="${164 + i}" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>`,
+        )
+        .join('') +
+      '</cellXfs>';
+    const values = [-5, 123456789, 5551234567, 1, 2, 'abc'];
+    const xlsx = buildXlsx({
+      rows: values.map((value, i) => [{ value, styleIndex: i + 1 }]),
+      stylesXml: styles,
+    });
+    const html = new TextDecoder().decode(await Ream.parse(xlsx).convert('html'));
+    const cells = [...html.matchAll(/<span[^>]*>(.*?)<\/span>/g)].map((m) => m[1]);
+    expect(cells).toEqual(['-$5', '123-45-6789', '(555) 123-4567', '1.', '2.', '[abc]']);
   });
 });
