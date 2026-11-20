@@ -29,7 +29,7 @@ function textShape(opts: {
   readonly cx?: number;
   readonly cy?: number;
   readonly sz?: number;
-  readonly spc?: number;
+  readonly spc?: number | undefined;
   readonly wrapNone?: boolean;
 }): string {
   const { text, cx = 3657600, cy = 1828800, sz, spc, wrapNone } = opts;
