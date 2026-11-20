@@ -11,6 +11,7 @@ import type { ResourceId } from '@/core/ir';
 import type { EmbeddedFont } from '@/pdf/cid-font';
 import type { PdfDict, PdfRef, PdfValue } from '@/pdf/objects';
 import type {
+  BorderItem,
   FontResource,
   ImageItem,
   ImageResource,
@@ -826,6 +827,56 @@ interface LinkRegion {
 function dashPatternFor(style: BorderStyle | undefined): string {
   const pattern = style !== undefined ? BORDER_DASHES.get(style) : undefined;
   return pattern ? `[${pattern.map(formatNumber).join(' ')}]` : '';
+}
+
+/**
+ * The width a border's pen strokes at: a `double` is two rules, each a third of
+ * the declared width with the middle third the gap between them.
+ *
+ * @param b The border.
+ * @returns The line width, in points.
+ */
+function borderStrokeWidth(b: BorderItem): number {
+  return b.borderStyle === 'double' ? Math.max(0.25, b.borderSizePt / 3) : b.borderSizePt;
+}
+
+/**
+ * The path a border strokes — its edge, or for a `double` the two rules that
+ * straddle it — as `m`/`l` operators in the y-up page frame.
+ *
+ * @param b The border.
+ * @param H The page's height.
+ * @returns The path operators, without the `S` that strokes them.
+ */
+function borderPathOps(b: BorderItem, H: number): Array<string> {
+  const width = b.borderSizePt;
+  const x = b.x;
+  const y = H - b.y - b.height; // box bottom edge in PDF's y-up frame
+  const w = b.width;
+  const h = b.height;
+  // The edge as a segment plus the direction to offset it in: a `double` rule
+  // is TWO lines straddling the edge, and every other style is the one line
+  // down the middle of it.
+  const [x1, y1, x2, y2, nx, ny]: readonly [number, number, number, number, number, number] =
+    b.side === 'top'
+      ? [x, y + h, x + w, y + h, 0, 1]
+      : b.side === 'bottom'
+        ? [x, y, x + w, y, 0, 1]
+        : b.side === 'left'
+          ? [x, y, x, y + h, 1, 0]
+          : [x + w, y, x + w, y + h, 1, 0];
+  // §18.18.3 `double` is a pair of rules with a gap between them, not a
+  // heavier single one — 59264.xlsx labels its sampler cell DOUBLE and both
+  // references draw two lines where we drew one. Each line takes a third of
+  // the declared width and the gap the middle third, which is how Excel and
+  // Calc split it.
+  const offsets = b.borderStyle === 'double' ? [-width / 3, width / 3] : [0];
+  const out: Array<string> = [];
+  for (const d of offsets) {
+    out.push(`${formatNumber(x1 + nx * d)} ${formatNumber(y1 + ny * d)} m`);
+    out.push(`${formatNumber(x2 + nx * d)} ${formatNumber(y2 + ny * d)} l`);
+  }
+  return out;
 }
 
 /**
@@ -1886,7 +1937,24 @@ function emitPageContent(
       );
       return;
     }
-    if (item.type !== 'line') return;
+    if (item.type === 'border') {
+      // A rule inside a picture — a text box's own table — strokes where the
+      // picture puts it, in a state of its own: the cap and dash the border
+      // pass sets for its whole batch are not in force here. Dropped, the
+      // table in issue #136's text box lost its grid.
+      const dash = dashPatternFor(item.borderStyle);
+      const [r, g, b] = hexToRgb01(item.borderColorHex);
+      out.push(
+        'q',
+        dash === '' ? '2 J' : `${dash} 0 d 0 J`,
+        `${formatNumber(borderStrokeWidth(item))} w`,
+        `${formatNumber(r)} ${formatNumber(g)} ${formatNumber(b)} RG`,
+        ...borderPathOps(item, H),
+        'S',
+        'Q',
+      );
+      return;
+    }
     // Set with the SAME emitter the page's own text uses: a line is a line
     // wherever it paints. Written here as "the first token at a point" — which
     // is all a metafile's label ever is — a master's caption lost every word
@@ -1979,7 +2047,6 @@ function emitPageContent(
     let lastStroke = '';
     let lastDash = '';
     for (const b of borders) {
-      const width = b.borderSizePt;
       const color = b.borderColorHex;
       // §18.18.3 names line PATTERNS, not just weights, and ISO 32000-1 §8.4.3.6
       // is where they belong. 57423.xlsx rules a whole band `dashed` and we drew
@@ -1992,7 +2059,7 @@ function emitPageContent(
         lastDash = dash;
       }
       // Each rule of a `double` takes a third of the declared width.
-      const strokeW = b.borderStyle === 'double' ? Math.max(0.25, width / 3) : width;
+      const strokeW = borderStrokeWidth(b);
       if (strokeW !== lastWidth) {
         out.push(`${formatNumber(strokeW)} w`);
         lastWidth = strokeW;
@@ -2002,31 +2069,7 @@ function emitPageContent(
         out.push(`${formatNumber(r)} ${formatNumber(g)} ${formatNumber(bl)} RG`);
         lastStroke = color;
       }
-      const x = b.x;
-      const y = H - b.y - b.height; // box bottom edge in PDF's y-up frame
-      const w = b.width;
-      const h = b.height;
-      // The edge as a segment plus the direction to offset it in: a `double`
-      // rule is TWO lines straddling the edge, and every other style is the one
-      // line down the middle of it.
-      const [x1, y1, x2, y2, nx, ny]: readonly [number, number, number, number, number, number] =
-        b.side === 'top'
-          ? [x, y + h, x + w, y + h, 0, 1]
-          : b.side === 'bottom'
-            ? [x, y, x + w, y, 0, 1]
-            : b.side === 'left'
-              ? [x, y, x, y + h, 1, 0]
-              : [x + w, y, x + w, y + h, 1, 0];
-      // §18.18.3 `double` is a pair of rules with a gap between them, not a
-      // heavier single one — 59264.xlsx labels its sampler cell DOUBLE and both
-      // references draw two lines where we drew one. Each line takes a third of
-      // the declared width and the gap the middle third, which is how Excel and
-      // Calc split it.
-      const offsets = b.borderStyle === 'double' ? [-width / 3, width / 3] : [0];
-      for (const d of offsets) {
-        out.push(`${formatNumber(x1 + nx * d)} ${formatNumber(y1 + ny * d)} m`);
-        out.push(`${formatNumber(x2 + nx * d)} ${formatNumber(y2 + ny * d)} l`);
-      }
+      out.push(...borderPathOps(b, H));
       out.push('S');
     }
     out.push('Q');
@@ -2082,10 +2125,12 @@ function emitPageContent(
   }
 
   // §19.3.1 — and a page that states its own order paints in it, kind by kind
-  // ignored. A slide's shape tree IS that order.
-  for (const run of plan.ordered) {
-    for (const item of run) emitInOrder(item);
-  }
+  // ignored. A slide's shape tree IS that order. Tagged, each item is marked as
+  // the shape pass marks its own (a figure's part, or an artifact): a floating
+  // text box paints here with its table's shading and rules, and left
+  // unmarked they were content outside any marked sequence (ISO 32000-1
+  // §14.8.2.2), which PDF/UA does not allow.
+  for (const run of plan.ordered) emitTaggedRuns(out, run, tagging, emitInOrder);
 
   emitLinesPass();
 

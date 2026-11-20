@@ -4388,9 +4388,40 @@ function emitShapeText(
   } else {
     textY = shapeTop - sh.insetTopPt;
   }
+  // Where the paragraph the current line belongs to began (y-up), for the band
+  // its `w:shd` paints behind it.
+  let paragraphTop: number | undefined;
   sh.textLines.forEach((line, i) => {
+    const lineTop = textY;
     textY -= computeLineHeight(line, line.resolved);
     const lineOffset = alignmentOffset(line.resolved.alignment, line.contentWidthPt, innerWidth);
+    if (line.firstLine || paragraphTop === undefined) paragraphTop = lineTop;
+    // §17.3.1.31 — the band behind the paragraph, as the page draws it, from
+    // its first line's top to its last line's foot between its indents. A text
+    // box drew none: issue #136's probe shades a paragraph white inside a dark
+    // box, and Word paints the white band where we left the box's blue. A box
+    // that turns would need the band turned with it, which a fill cannot be.
+    if (line.isLastInParagraph || i === sh.textLines.length - 1) {
+      // A table, chart or drawing stands on a line of its own with no
+      // paragraph's properties behind it.
+      const block =
+        sh.textTables?.has(i) === true ||
+        sh.textCharts?.has(i) === true ||
+        sh.textShapes?.has(i) === true;
+      const band =
+        turnDeg === 0 && !block
+          ? paragraphShadingItem(
+              line.resolved,
+              x + sh.insetLeftPt + line.resolved.indentLeft,
+              x + sh.insetLeftPt + innerWidth - line.resolved.indentRight,
+              paragraphTop,
+              textY,
+              pageHeight,
+            )
+          : undefined;
+      if (band) sink.push(band);
+      paragraphTop = undefined;
+    }
     const nested = sh.textCharts?.get(i);
     if (nested) {
       sink.push(
@@ -4408,9 +4439,10 @@ function emitShapeText(
       // The line reserved the table's height, so its rows run from the line's
       // TOP down, the way the band and the page draw a table.
       let rowY = textY + table.heightPt;
+      const drawn: Array<PageItem> = [];
       for (const row of table.rows) {
         emitRowChunk(
-          sink,
+          drawn,
           row,
           x + sh.insetLeftPt + lineOffset + table.xOffsetPt,
           rowY,
@@ -4419,6 +4451,12 @@ function emitShapeText(
         );
         rowY -= row.heightPt;
       }
+      // The table paints inside the box's picture, in the order it is pushed
+      // (see emitShapeItems), so it is pushed in the order the page's passes
+      // would paint it: every fill, then images, then every rule, then shapes.
+      // Row by row instead, the next row's shading lands on the rule under
+      // the row above it.
+      sink.push(...inPassOrder(drawn));
       return;
     }
     // §17.3.1.12 — the paragraph's indent, which the page, the band and a table
@@ -4659,6 +4697,44 @@ function emitDrawing(
 }
 
 function emitShapeItems(
+  sh: ShapeBlockLaidOut,
+  x: number,
+  bottomYUp: number,
+  sink: Array<PageItem>,
+  pageHeight: number,
+  figId: number | undefined,
+): void {
+  const items: Array<PageItem> = [];
+  emitShapeParts(sh, x, bottomYUp, items, pageHeight, figId);
+  // §17.3.1 — a text box holding a table, or a shaded paragraph, draws cell
+  // shading and rules of its OWN, and they lie on the box's fill. Left to the
+  // page's passes they were painted with the page's tables — every fill and
+  // rule before every shape — and the box's white fill then covered them:
+  // issue #136's dark-blue header cell came out white, and its table lost its
+  // grid. Word draws the box, then what its text draws, then the text. So the
+  // box and everything it draws but its words paint as one PICTURE, in the
+  // order they were pushed; the words stay in the text pass, over all of it.
+  if (!items.some((c) => c.type === 'fill' || c.type === 'border')) {
+    sink.push(...items);
+    return;
+  }
+  const pictureId = nextPictureId++;
+  for (const c of items) sink.push(c.type === 'line' ? c : { ...c, pictureId });
+}
+
+/**
+ * Everything a shape draws — its shadow, fill, outline, the members of a group
+ * and its text — in paint order, into `sink`. {@link emitShapeItems} decides
+ * how the page is to paint them.
+ *
+ * @param sh         The laid-out shape.
+ * @param x          Left edge of its box.
+ * @param bottomYUp  Bottom edge of its box, in the y-up page frame.
+ * @param sink       Where the items go.
+ * @param pageHeight The page's height, for the flip to the page frame.
+ * @param figId      Tagged-PDF structure node the shape belongs to.
+ */
+function emitShapeParts(
   sh: ShapeBlockLaidOut,
   x: number,
   bottomYUp: number,
@@ -5102,6 +5178,61 @@ function drawBlocksSequentially(
 }
 
 /**
+ * §17.3.1.31 `w:shd` — the band behind a paragraph occupying `topY`…`bottomY`
+ * (both in the y-up page frame) between `x0` and `x1`.
+ *
+ * @param resolved   The paragraph's resolved properties.
+ * @param x0         Left edge of the band.
+ * @param x1         Right edge of the band.
+ * @param topY       Top of the paragraph's first line (y-up).
+ * @param bottomY    Foot of its last line (y-up).
+ * @param pageHeight The page's height, for the flip to the page frame.
+ * @returns The fill, or `undefined` when the paragraph is not shaded.
+ */
+function paragraphShadingItem(
+  resolved: ResolvedParagraphProperties,
+  x0: number,
+  x1: number,
+  topY: number,
+  bottomY: number,
+  pageHeight: number,
+): FillItem | undefined {
+  if (!resolved.shading) return undefined;
+  return {
+    type: 'fill',
+    x: pt(x0),
+    y: pt(pageHeight - topY),
+    width: pt(Math.max(0, x1 - x0)),
+    height: pt(Math.max(0, topY - bottomY)),
+    fillColorHex: resolved.shading.colorHex,
+  };
+}
+
+/** The page's paint passes, in order: what {@link inPassOrder} sorts by. */
+const PASS_RANK: Readonly<Record<PageItem['type'], number>> = {
+  fill: 0,
+  image: 1,
+  border: 2,
+  shape: 3,
+  line: 4,
+};
+
+/**
+ * Items in the order the page's passes paint them — fills, images, rules,
+ * shapes, text — each kind kept in the order it came in. For items that will
+ * paint in the order they are listed (a picture), as a table's own would.
+ *
+ * @param items The items, in the order they were made.
+ * @returns A new array, stably sorted by pass.
+ */
+function inPassOrder(items: ReadonlyArray<PageItem>): Array<PageItem> {
+  return items
+    .map((item, at) => ({ item, at }))
+    .sort((a, b) => PASS_RANK[a.item.type] - PASS_RANK[b.item.type] || a.at - b.at)
+    .map(({ item }) => item);
+}
+
+/**
  * §17.3.1.31 `w:shd` and §17.3.1.24 `w:pBdr` — the band behind a paragraph and
  * the rules around it, for a paragraph occupying `topY`…`bottomY` (both in the
  * y-up page frame) between `x0` and `x1`.
@@ -5118,16 +5249,8 @@ function paragraphDecoration(
 ): Array<PageItem> {
   const out: Array<PageItem> = [];
   const width = Math.max(0, x1 - x0);
-  if (resolved.shading) {
-    out.push({
-      type: 'fill',
-      x: pt(x0),
-      y: pt(pageHeight - topY),
-      width: pt(width),
-      height: pt(Math.max(0, topY - bottomY)),
-      fillColorHex: resolved.shading.colorHex,
-    });
-  }
+  const band = paragraphShadingItem(resolved, x0, x1, topY, bottomY, pageHeight);
+  if (band) out.push(band);
   const borders = resolved.borders;
   if (!borders) return out;
   for (const side of ['top', 'bottom', 'left', 'right'] as const) {
@@ -11599,11 +11722,30 @@ function emitRowChunk(
       drawNestedBefore(cell.lines.length);
       continue;
     }
+    // Where the paragraph the current line belongs to began (y-up).
+    let paragraphTop: number | undefined;
     for (const [lineIdx, line] of cell.lines.entries()) {
       drawNestedBefore(lineIdx);
       textY -= cell.lineGaps?.get(lineIdx) ?? 0;
+      if (line.firstLine || paragraphTop === undefined) paragraphTop = textY;
       const h = computeLineHeight(line, line.resolved);
       textY -= h;
+      // §17.3.1.31 — a paragraph shaded inside a cell is shaded there too, over
+      // the cell's own fill (pushed first, above). We drew the cell's alone:
+      // issue #137's probe shades a paragraph white in a dark-blue cell, and
+      // Word paints the white band — and its text black on it.
+      if (line.isLastInParagraph || lineIdx === cell.lines.length - 1) {
+        const band = paragraphShadingItem(
+          line.resolved,
+          cellX + cell.padLeftPt + line.resolved.indentLeft,
+          cellX + cell.widthPt - cell.padRightPt - line.resolved.indentRight,
+          paragraphTop,
+          textY,
+          pageHeight,
+        );
+        if (band) out.push(band);
+        paragraphTop = undefined;
+      }
       // A clipped cell's line may be wider than its box, and it is set the way
       // its alignment says all the same — centred over the box, or ending at
       // its right — for the box to cut it on the side Excel cuts it.

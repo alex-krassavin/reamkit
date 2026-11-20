@@ -12,7 +12,13 @@
 
 import type { DocumentWriter, WriteResult } from '@/core/ir/adapters';
 import type { Loss } from '@/core/ir';
-import type { ImageItem, LaidOutDocument, LaidOutPage, PageItem } from '@/layout/page-doc';
+import type {
+  BorderItem,
+  ImageItem,
+  LaidOutDocument,
+  LaidOutPage,
+  PageItem,
+} from '@/layout/page-doc';
 import type { PathSegment, VectorShape } from '@/core/vector';
 import type { PlacedImage, SvgLineCtx } from '@/svg/svg-text';
 import { svgPathData } from '@/core/vector';
@@ -129,26 +135,7 @@ function emitLayer(out: Array<string>, commands: ReadonlyArray<PageItem>, ctx: S
 
   for (const img of plan.images) emitImage(out, img, ctx);
 
-  for (const b of plan.borders) {
-    const x2 = b.x + b.width;
-    const yTop = b.y;
-    const yBottom = b.y + b.height;
-    const [ax, ay, bx, by] =
-      b.side === 'top'
-        ? [b.x, yTop, x2, yTop]
-        : b.side === 'bottom'
-          ? [b.x, yBottom, x2, yBottom]
-          : b.side === 'left'
-            ? [b.x, yTop, b.x, yBottom]
-            : [x2, yTop, x2, yBottom];
-    // §18.18.3's dashed/dotted are line patterns, not weights — the PDF's own.
-    const dash = b.borderStyle !== undefined ? BORDER_DASHES.get(b.borderStyle) : undefined;
-    out.push(
-      `<line x1="${fmt(ax)}" y1="${fmt(ay)}" x2="${fmt(bx)}" y2="${fmt(by)}" stroke="#${b.borderColorHex}" stroke-width="${fmt(b.borderSizePt)}"${
-        dash ? ` stroke-dasharray="${dash.map(fmt).join(' ')}"` : ''
-      }/>`,
-    );
-  }
+  for (const b of plan.borders) out.push(borderSvg(b));
 
   for (const sh of plan.shapes) {
     emitShape(out, sh.shape, ctx.ids);
@@ -327,7 +314,35 @@ function emitPageItem(out: Array<string>, item: PageItem, ctx: SvgLineCtx): void
     out.push(
       `<rect x="${fmt(item.x)}" y="${fmt(item.y)}" width="${fmt(item.width)}" height="${fmt(item.height)}" fill="#${item.fillColorHex}"/>`,
     );
+    return;
   }
+  // A rule inside a picture — a text box's own table (issue #136).
+  out.push(borderSvg(item));
+}
+
+/**
+ * A border as the SVG line along its edge.
+ *
+ * @param b The border.
+ * @returns The `<line>` element.
+ */
+function borderSvg(b: BorderItem): string {
+  const x2 = b.x + b.width;
+  const yTop = b.y;
+  const yBottom = b.y + b.height;
+  const [ax, ay, bx, by] =
+    b.side === 'top'
+      ? [b.x, yTop, x2, yTop]
+      : b.side === 'bottom'
+        ? [b.x, yBottom, x2, yBottom]
+        : b.side === 'left'
+          ? [b.x, yTop, b.x, yBottom]
+          : [x2, yTop, x2, yBottom];
+  // §18.18.3's dashed/dotted are line patterns, not weights — the PDF's own.
+  const dash = b.borderStyle !== undefined ? BORDER_DASHES.get(b.borderStyle) : undefined;
+  return `<line x1="${fmt(ax)}" y1="${fmt(ay)}" x2="${fmt(bx)}" y2="${fmt(by)}" stroke="#${b.borderColorHex}" stroke-width="${fmt(b.borderSizePt)}"${
+    dash ? ` stroke-dasharray="${dash.map(fmt).join(' ')}"` : ''
+  }/>`;
 }
 
 function emitShape(out: Array<string>, shape: VectorShape, ids: { n: number }): void {

@@ -579,11 +579,13 @@ export function paintPlan(commands: ReadonlyArray<PageItem>): PagePaintPlan {
     // pass they were painted before every picture on the page, and each of
     // activex_picture.pptx's thirteen buttons then covered its own caption with
     // its own face.
+    //
+    // A text box's own table is not the page's, either: its cell shading and
+    // its rules belong to the box and paint over its fill, so they travel in
+    // the box's picture (see `pictureId`) like everything else it draws.
     if (
       c.z !== undefined &&
-      c.type !== 'fill' &&
-      c.type !== 'border' &&
-      (c.type !== 'line' || c.pictureId !== undefined)
+      (c.pictureId !== undefined || (c.type !== 'fill' && c.type !== 'border' && c.type !== 'line'))
     ) {
       const key = c.pictureId !== undefined ? `p${c.pictureId}` : `i${orderOf.size}`;
       const run = ordered.get(key);
