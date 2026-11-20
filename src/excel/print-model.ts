@@ -60,6 +60,7 @@ import type { DrawingBox } from '@/excel/column-bands';
 import { FEATURES } from '@/core/ir/features';
 import { eighthPtToPt, halfPtToPt, pt, twipsToPt } from '@/core/ir';
 import { firstStrongDirection } from '@/core/bidi';
+import { langOfCharset } from '@/core/fonts/scripts';
 import { applyTextFormat } from '@/core/number-format';
 import {
   applyNumberFormat,
@@ -2480,6 +2481,8 @@ function runPropsFromXf(xf: XlsxCellXf, styles: XlsxStyles): RunProperties {
   // and the substitute chooser, which reads the model, saw a document that
   // named no font at all and set the whole book in the default sans.
   if (font.name) props.fontFamily = { ascii: font.name };
+  const eastAsianLang = langOfCharset(font.charset);
+  if (eastAsianLang !== undefined) props.eastAsianLang = eastAsianLang;
   return props;
 }
 
@@ -2521,6 +2524,13 @@ function richRunProps(base: RunProperties, rr: SheetRichRun): RunProperties {
   if (rr.colorHex) out.colorHex = rr.colorHex;
   if (rr.sizePt !== undefined) out.fontSizePt = halfPtToPt(Math.round(rr.sizePt * 2));
   if (rr.vertAlign) out.verticalAlign = rr.vertAlign;
+  // A run that names no character set keeps the cell's: LibreOffice writes a
+  // run's `<rPr>` without one, and the cell's font is still the better word.
+  if (rr.charset !== undefined) {
+    const eastAsianLang = langOfCharset(rr.charset);
+    if (eastAsianLang !== undefined) out.eastAsianLang = eastAsianLang;
+    else delete out.eastAsianLang;
+  }
   return out;
 }
 

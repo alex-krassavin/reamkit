@@ -108,6 +108,15 @@ export interface RunProperties {
    */
   readonly lang?: string;
   /**
+   * The language the run's EAST ASIAN text is written in, as a language tag
+   * (`"zh-CN"`, `"ja-JP"`): §17.3.2.20 `w:lang @w:eastAsia`, DrawingML's
+   * §21.1.2.3.9 `a:rPr @lang` (or `@altLang`) where it names one, a
+   * spreadsheet font's §18.4.1 `charset`. Unified Han is one character in
+   * Chinese, Japanese and Korean and a different drawing in each; this says
+   * which one the run is in.
+   */
+  readonly eastAsianLang?: string;
+  /**
    * §17.3.2.32 `w:rPr/w:shd` — the background painted behind the run's own
    * glyphs, already blended from the pattern, its colour and the fill.
    */

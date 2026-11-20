@@ -30,6 +30,7 @@ import type {
 } from '@/core/ir/sheet';
 import type { DrawingBox } from '@/excel/column-bands';
 
+import { langOfCharset } from '@/core/fonts/scripts';
 import { pt } from '@/core/ir';
 import { EMPTY_STYLE_SHEET, resolveBodyStyles } from '@/core/style-cascade';
 import { buildHeaderFooterContent } from '@/excel/header-footer';
@@ -754,7 +755,9 @@ function noteParagraphs(
 
 function noteRunProps(r: SheetRichRun): RunProperties {
   const face = r.fontName ?? NOTE_FACE;
+  const eastAsianLang = langOfCharset(r.charset);
   return {
+    ...(eastAsianLang !== undefined ? { eastAsianLang } : {}),
     fontFamily: { ascii: face, hAnsi: face, cs: face },
     fontSizePt: pt(r.sizePt ?? NOTE_SIZE_PT),
     colorHex: r.colorHex ?? '000000',

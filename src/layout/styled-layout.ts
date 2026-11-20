@@ -115,7 +115,7 @@ import {
 } from '@/core/font';
 import { hasIndic, syllableStarts } from '@/core/font/indic-shaper';
 import { companionOf, companionScale, resolveFamilyStyle } from '@/core/fonts';
-import { fontSlotOf, scriptForCodepoint } from '@/core/fonts/scripts';
+import { fontSlotOf, hanFaceOfLang, scriptForCodepoint } from '@/core/fonts/scripts';
 import { prepareImage } from '@/core/images';
 import { isEmf, readEmf } from '@/core/metafile/emf';
 import { isWmf, readWmf } from '@/core/metafile/wmf';
@@ -5459,6 +5459,9 @@ function runFontKeyAndParsed(
  * @param cp      The code point with no glyph in the run's own face.
  * @param bold    Whether the run is bold…
  * @param italic  …and whether it is italic.
+ * @param own     The family the run's own face substitutes, for its companion.
+ * @param eastAsianLang The language of the run's East Asian text, which picks
+ *                the face of its unified Han.
  * @returns The face to draw it with, or `undefined` when nobody has it.
  */
 function fallbackFaceKey(
@@ -5467,6 +5470,7 @@ function fallbackFaceKey(
   bold: boolean,
   italic: boolean,
   own?: string,
+  eastAsianLang?: string,
 ): { fontKey: string; parsed: ParsedTtf; widthScale?: number } | undefined {
   const byFamily = options.registriesByFamily;
   if (!byFamily || byFamily.size === 0) return undefined;
@@ -5482,9 +5486,13 @@ function fallbackFaceKey(
       return { fontKey: `${companion.family}:${variant}`, parsed, widthScale };
     }
   }
-  // Which face draws unified Han is a property of the DOCUMENT, and the answer
-  // is already in the map: the converter fetched the one its text called for.
-  const hanFace = byFamily.has('jp') ? 'jp' : byFamily.has('kr') ? 'kr' : 'sc';
+  // Which face draws unified Han is the run's LANGUAGE where it names one, and
+  // the document's where it does not — and that answer is already in the map:
+  // the converter fetched JP exactly when it is JP, else KR when it is KR (see
+  // `scriptsInFlow`). A face the language asks for and the map lacks is no
+  // dead end: the loop below goes on to every other face on hand.
+  const hanFace =
+    hanFaceOfLang(eastAsianLang) ?? (byFamily.has('jp') ? 'jp' : byFamily.has('kr') ? 'kr' : 'sc');
   const script = scriptForCodepoint(cp, hanFace);
   const order: Array<SubstituteKey> = script ? [script] : [];
   for (const key of byFamily.keys()) if (key !== script) order.push(key);
@@ -5721,7 +5729,14 @@ function fallbackFace(
   resolved: ResolvedRunProperties,
   own?: string,
 ): KeyedFace | undefined {
-  const found = fallbackFaceKey(options, cp, resolved.bold, resolved.italic, own);
+  const found = fallbackFaceKey(
+    options,
+    cp,
+    resolved.bold,
+    resolved.italic,
+    own,
+    resolved.eastAsianLang,
+  );
   if (!found) return undefined;
   const { widthScale, ...face } = found;
   const variant = face.fontKey.split(':')[1];

@@ -233,6 +233,11 @@ export function parseRunProperties(rPr: unknown, themeFonts?: ThemeFonts): RunPr
   if ('w:lang' in el) {
     const v = getAttr(el['w:lang'], 'val');
     if (v) out.lang = v;
+    // …and @w:eastAsia, the language of the run's East Asian text: Word keeps
+    // one per slot, and the Latin one says nothing about which drawing of an
+    // ideograph the run is in.
+    const eastAsia = getAttr(el['w:lang'], 'eastAsia');
+    if (eastAsia) out.eastAsianLang = eastAsia;
   }
 
   return out;

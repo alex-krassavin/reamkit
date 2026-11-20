@@ -47,6 +47,11 @@ export interface ResolvedRunProperties {
    * specifies one; consumed by the tagged-PDF per-element `/Lang`, never layout.
    */
   readonly lang?: string;
+  /**
+   * The language the run's East Asian text is written in, where the source
+   * names one: which of the Han faces draws its ideographs.
+   */
+  readonly eastAsianLang?: string;
   /** §17.3.2.32 — the background painted behind the run's glyphs. */
   readonly shadingColorHex?: string;
   /** §17.3.2.15 — the run's highlight, which shows over its shading. */

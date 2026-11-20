@@ -220,6 +220,7 @@ function resolveStyleChain(styleId: string, sheet: StyleSheet): StyleChainResult
 
 function mergeRun(base: ResolvedRunProperties, override: RunProperties): ResolvedRunProperties {
   const lang = override.lang ?? base.lang;
+  const eastAsianLang = override.eastAsianLang ?? base.eastAsianLang;
   return {
     bold: override.bold ?? base.bold,
     italic: override.italic ?? base.italic,
@@ -241,6 +242,7 @@ function mergeRun(base: ResolvedRunProperties, override: RunProperties): Resolve
     verticalAlign: override.verticalAlign ?? base.verticalAlign,
     rtl: override.rtl ?? base.rtl,
     ...(lang !== undefined ? { lang } : {}),
+    ...(eastAsianLang !== undefined ? { eastAsianLang } : {}),
     ...((override.shadingColorHex ?? base.shadingColorHex) !== undefined
       ? { shadingColorHex: override.shadingColorHex ?? base.shadingColorHex }
       : {}),
