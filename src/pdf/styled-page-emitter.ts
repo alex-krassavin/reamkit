@@ -49,7 +49,7 @@ import { emitClipPath, emitVectorShape, shadowBlurLayers } from '@/pdf/vector-gr
 import { buildGradientAlphaMask, buildGradientPattern, shapeBbox } from '@/pdf/shading';
 import { reverseByCodePoint } from '@/core/bidi';
 import { warpGlyphMatrix, warpGlyphRun } from '@/core/drawingml/text-warp';
-import { sanitizeHref } from '@/core/links';
+import { iriToUri, sanitizeHref } from '@/core/links';
 import { embedTtfFont } from '@/pdf/cid-font';
 import { embedAssociatedFile } from '@/pdf/embedded-file';
 import { buildSrgbIccProfile } from '@/pdf/icc-profile';
@@ -387,9 +387,12 @@ function assembleStyledPdf(
           F: 4,
           // §12.6.4: URI action for external targets; a GoTo with a string
           // destination (resolved via /Names /Dests) for internal ones.
+          // §12.6.4.7 wants the URI in 7-bit ASCII: a viewer reads the string's
+          // bytes as single characters, so raw UTF-8 sent PDFKit to
+          // "/wiki/%C3%92%C2%9A…" for "/wiki/Қазақ" — map the IRI first.
           A:
             l.href !== undefined
-              ? dict({ S: name('URI'), URI: l.href })
+              ? dict({ S: name('URI'), URI: iriToUri(l.href) })
               : dict({ S: name('GoTo'), D: l.anchor ?? '' }),
           // ISO 14289-1 §7.18.5 — alternate description: the link's visible
           // text, falling back to its target. /Contents is a text string
