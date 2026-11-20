@@ -47,8 +47,12 @@ export interface BreakResult {
    */
   readonly breaks: ReadonlyArray<number>;
   /**
-   * Per-line adjustment ratio in `[-1, ∞)`. Used by the layout consumer to
-   * distribute extra space across the glues on each line.
+   * Per-line adjustment ratio in `[-1, ∞]`. Used by the layout consumer to
+   * distribute extra space across the glues on each line. `+Infinity` marks a
+   * line short of the measure with no glue to stretch — one total-fit cannot
+   * rate. A chosen line like that means EVERY way to break the paragraph had
+   * one (a finite answer would have won), so the breaks are a tie-break among
+   * equally infinite answers, not an optimum.
    */
   readonly ratios: ReadonlyArray<number>;
 }

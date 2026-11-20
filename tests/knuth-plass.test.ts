@@ -95,6 +95,29 @@ describe('Knuth-Plass: breakLines', () => {
     expect(breaks.length).toBeGreaterThanOrEqual(2);
   });
 
+  it('reports a line it cannot rate — short, with nothing to stretch — as an infinite ratio', () => {
+    // A run of ideographs: a box per character, a free break between each, no
+    // glue (core/line-breaker/cjk). Every line but the last is short of the
+    // measure and cannot stretch, so every answer scores ∞ — and the layout
+    // reads the infinite ratio as "this is a tie-break, not an optimum"
+    // (issue #131: 33 characters at 8 a line came back 1/8/8/8/8).
+    const ideographs: Array<Item> = [];
+    for (let i = 0; i < 33; i++) {
+      if (i > 0) ideographs.push({ type: 'penalty', width: 0, penalty: 0, flagged: false });
+      ideographs.push({ type: 'box', width: 18 });
+    }
+    ideographs.push({ type: 'glue', width: 0, stretch: 1e6, shrink: 0 });
+    ideographs.push({ type: 'penalty', width: 0, penalty: -10_000, flagged: false });
+    const { breaks, ratios } = breakLines(ideographs, 150);
+    expect(breaks).toHaveLength(5);
+    expect(ratios.slice(0, -1).every((r) => r === Infinity)).toBe(true);
+    // The last line has the paragraph's own fill to stretch.
+    expect(Number.isFinite(ratios.at(-1))).toBe(true);
+    // Words with spaces between them are always rated.
+    const words = paragraph(Array.from({ length: 30 }, () => ({ width: 15 })));
+    expect(breakLines(words, 80).ratios.every((r) => Number.isFinite(r))).toBe(true);
+  });
+
   it('wraps loosely rather than overflowing when no tight break fits', () => {
     // Each word is 45pt in a 78pt column: one word fits (loose), two overflow.
     // A too-loose line is acceptable; an overfull one would spill past the column

@@ -7948,9 +7948,33 @@ function wrap(
   const entries = paragraphItemStream(measured, hyphenator, Math.max(0, ...widths), justified);
   const items = entries.map((e) => e.item);
   // E-PARITY FP3: a renderer-compat profile breaks lines greedily (first-fit,
-  // like Word/LibreOffice); the default 'ream' keeps Knuth-Plass total-fit.
+  // like Word/LibreOffice); the default 'ream' keeps Knuth-Plass total-fit —
+  // where total-fit can rate the paragraph at all.
+  //
+  // It rates a line by how far its glue must stretch, and a line with no glue
+  // is infinitely loose: every line of a run of Chinese or Japanese, whose
+  // break opportunities are penalties between glyph boxes, and a long word
+  // alone in a narrow cell. When EVERY way to break the paragraph holds such a
+  // line, every answer scores ∞, and which one comes back is the DP's tie-break:
+  // it keeps the oldest node, which fills the lines from the paragraph's END
+  // and leaves the remainder on its FIRST line. Issue #131: a 33-character
+  // Chinese sentence at 18pt in an eight-character text box came out 1/8/8/8/8,
+  // where PowerPoint sets 8/8/8/8/1; Japanese, a long Chinese paragraph and
+  // words in a narrow cell fell the same way. TeX's number for that line —
+  // badness 10 000 instead of ∞ — does not break the tie (still 1/8/8/8/8: all
+  // such lines cost the same), and capping a line's badness lets a lone word
+  // beat a loose pair in a paragraph total-fit CAN rate ([15, 15, 40] on 50pt
+  // went from two lines to three). Nor does rating the line by the room it
+  // leaves (TeX's \emergencystretch pass): that balances the paragraph's ragged
+  // edge, and moved a kana down a line where PowerPoint fills the line to the
+  // measure. So an unrated answer is not used: such a paragraph breaks
+  // first-fit, as PowerPoint and Word set it and the 'word' profile already
+  // does. A paragraph total-fit can rate keeps every break it had.
+  const total = profile === 'ream' ? breakLines(items, widths) : undefined;
   const breaks =
-    profile === 'ream' ? breakLines(items, widths).breaks : greedyBreakLines(items, widths);
+    total !== undefined && !total.ratios.includes(Infinity)
+      ? total.breaks
+      : greedyBreakLines(items, widths);
 
   const buildLines = (at: ReadonlyArray<number>): Array<Line> => {
     const out: Array<Line> = [];
