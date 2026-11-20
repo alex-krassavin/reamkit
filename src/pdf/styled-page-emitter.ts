@@ -392,8 +392,11 @@ function assembleStyledPdf(
               ? dict({ S: name('URI'), URI: l.href })
               : dict({ S: name('GoTo'), D: l.anchor ?? '' }),
           // ISO 14289-1 §7.18.5 — alternate description: the link's visible
-          // text, falling back to its target.
-          Contents: l.text !== '' ? l.text : (l.href ?? l.anchor ?? ''),
+          // text, falling back to its target. /Contents is a text string
+          // (ISO 32000-1 Table 164): written as a bare JS string it went out as
+          // UTF-8 bytes, and macOS PDFKit read "Қазақ тілі 中文" back as
+          // "ÒıÐ°Ð·Ð°Òł Ñ‡ÑŒÐ»ÑŒ ä¸ æŒ⁄" (PDFDocEncoding, as §7.9.2.2 says to).
+          Contents: textString(l.text !== '' ? l.text : (l.href ?? l.anchor ?? '')),
         };
         if (l.anchor !== undefined) referencedAnchors.add(l.anchor);
         if (structBuilder && l.structId !== undefined) {
@@ -410,6 +413,9 @@ function assembleStyledPdf(
         // CM2b — a native /Text sticky note at the comment marker, carrying the
         // comment's author and text for an interactive pop-up (ISO 32000-1
         // §12.5.6.4). Gated to non-PDF/A, non-tagged output via `commentNotes`.
+        // The body (/Contents) and the author (/T, Table 170) are text strings
+        // like the link's, so a Cyrillic reviewer's name reaches the pop-up as
+        // written, not as PDFKit's "ÓŸÐ»Ð¸Ñ‘ Ð¡ÓŽÑ•Ñ†ÐµÐ½Ð¾Ð²Ð°" for "Әлия Сәрсенова".
         const note = l.anchor !== undefined ? commentNotes?.get(l.anchor) : undefined;
         if (note) {
           const textAnnot = doc.add(
@@ -419,8 +425,8 @@ function assembleStyledPdf(
               Name: name('Comment'),
               Rect: [l.rect[0], l.rect[1], l.rect[2], l.rect[3]],
               F: 28, // Print + NoZoom + NoRotate — a fixed-size note icon
-              Contents: note.contents,
-              ...(note.author !== undefined ? { T: note.author } : {}),
+              Contents: textString(note.contents),
+              ...(note.author !== undefined ? { T: textString(note.author) } : {}),
             }),
           );
           annots.push(ref(textAnnot.id));
