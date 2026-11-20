@@ -8967,7 +8967,12 @@ function layoutTableRow(
     if (c.totalHeightPt > heightPt) heightPt = c.totalHeightPt;
   }
   if (row.properties.height && row.properties.heightRule === 'exact') {
-    heightPt = row.properties.height;
+    // §17.4.81 — the rule above a pinned row is inside its height, the
+    // table's bottom edge under its last row is not. Word, under 3pt rules:
+    // 34pt rows 33.98pt apart; the paragraph after the table 34.05pt below
+    // the last row's text, which stands 3.2pt below the row's top — a 37.25pt
+    // last row.
+    heightPt = row.properties.height + (bandSpread ? bandSpread.bottomPt : 0);
     // A row pinned to a height keeps it, and what does not fit is CUT — Excel
     // and Word both clip a cell to its row rather than run it over the row
     // below. Drawing the overflow instead put tdf118668.xlsx's second lines on
@@ -8983,9 +8988,17 @@ function layoutTableRow(
       ...borderBands,
     };
   }
+  // §17.4.81 — a minimum is the row's own, and the room its borders take
+  // (withBorderBands) comes on top of it, as it does on top of a row's text.
+  // Word, rows of one 13.4pt line under a 34pt minimum: 37.00pt apart under
+  // 3pt rules, in compatibility modes 15, 14 and none alike, whether the rule
+  // is the table's, the cell's own top or only the bottom of the cell above
+  // it (LibreOffice gives that last one 34: tdf127814.docx's rows); 34.5pt
+  // under 0.5pt rules. The last row has the table's bottom edge on top as
+  // well: the paragraph after stands 36.4pt below its text, a 39.6pt row.
   const minHeightPt =
     row.properties.height && row.properties.heightRule === 'atLeast'
-      ? row.properties.height
+      ? row.properties.height + (bandSpread ? bandSpread.topPt + bandSpread.bottomPt : 0)
       : undefined;
   if (minHeightPt !== undefined) heightPt = Math.max(heightPt, minHeightPt);
   return {

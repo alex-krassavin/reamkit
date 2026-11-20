@@ -111,9 +111,18 @@ const para = (text: string, pitch = 300, after = 0): string =>
   `<w:p><w:pPr><w:spacing w:before="0" w:after="${String(after)}" w:line="${String(pitch)}"` +
   ` w:lineRule="exact"/></w:pPr><w:r><w:t xml:space="preserve">${text}</w:t></w:r></w:p>`;
 
-/** A two-column table: `R<i>` on the left, `right(i)` on the right, every row with `trPr`. */
-function tableDoc(rows: number, trPr: string, right: (i: number) => string): Uint8Array {
-  let body = '<w:tbl><w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="7638"/></w:tblGrid>';
+/**
+ * A two-column table: `R<i>` on the left, `right(i)` on the right, every row
+ * with `trPr`, and `tblPr` as the table's properties.
+ */
+function tableDoc(
+  rows: number,
+  trPr: string,
+  right: (i: number) => string,
+  tblPr = '',
+): Uint8Array {
+  let body = `<w:tbl><w:tblPr>${tblPr}</w:tblPr>`;
+  body += '<w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="7638"/></w:tblGrid>';
   for (let i = 1; i <= rows; i++) {
     body += `<w:tr><w:trPr>${trPr}</w:trPr><w:tc>${para(`R${String(i)}`)}</w:tc><w:tc>${right(i)}</w:tc></w:tr>`;
   }
@@ -280,5 +289,79 @@ describe('a row with a height rule at a page break (§17.4.81, issue #139)', () 
     // bottom margin (785.2pt), and nothing past it is drawn.
     expect(huge.length).toBe(32);
     expect(pages[2]!.map((l) => l.text)).toEqual(['R3', 'Row 3', 'R4', 'Row 4', 'R5', 'Row 5']);
+  });
+});
+
+describe('a row height under borders (§17.4.81)', () => {
+  // The probes measured in Word for Mac: rows of one line, rules on every edge
+  // or on the cells' bottoms only.
+  const rule = (e: string, sz: number) =>
+    `<w:${e} w:val="single" w:sz="${String(sz)}" w:space="0" w:color="000000"/>`;
+  const ruled = (sz: number) =>
+    '<w:tblBorders>' +
+    ['top', 'left', 'bottom', 'right', 'insideH', 'insideV'].map((e) => rule(e, sz)).join('') +
+    '</w:tblBorders>';
+
+  /** `rows` rows, each cell with `tcPr`, then a paragraph "After". */
+  function ruledDoc(rows: number, trPr: string, tblPr: string, tcPr = ''): Uint8Array {
+    let body = `<w:tbl><w:tblPr>${tblPr}</w:tblPr>`;
+    body += '<w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="7638"/></w:tblGrid>';
+    for (let i = 1; i <= rows; i++) {
+      body +=
+        `<w:tr><w:trPr>${trPr}</w:trPr>` +
+        `<w:tc><w:tcPr>${tcPr}</w:tcPr>${para(`R${String(i)}`)}</w:tc>` +
+        `<w:tc><w:tcPr>${tcPr}</w:tcPr>${para(`Row ${String(i)}`)}</w:tc></w:tr>`;
+    }
+    return buildDocxFromBody(`${body}</w:tbl>${para('After')}${A4}`);
+  }
+
+  /** Inner row pitches, and how far the paragraph after stands below the last row's text. */
+  function measure(docx: Uint8Array): { inner: Array<number>; after: number } {
+    const page = linesByPage(layoutOf(docx))[0]!;
+    const labels = page.filter((l) => /^R\d+$/.test(l.text));
+    const after = page.find((l) => l.text === 'After')!;
+    return { inner: pitches(labels).slice(1), after: after.y - labels[labels.length - 1]!.y };
+  }
+
+  it('puts the rule above a row on top of its atLeast minimum', () => {
+    // Word: 34pt minimum, one line a row — 37.00pt apart under 3pt rules
+    // (compatibility modes 15, 14 and none), 34.5 under 0.5pt ones.
+    for (const [sz, pitch] of [
+      [24, 37],
+      [4, 34.5],
+    ] as const) {
+      const { inner } = measure(ruledDoc(10, AT_LEAST, ruled(sz)));
+      for (const p of inner) expect(p).toBeCloseTo(pitch, 2);
+    }
+  });
+
+  it('counts a rule that is only the bottom of the cell above', () => {
+    // tdf127814.docx's rows: no top border of their own, the rule between
+    // them the upper cell's bottom. Word: 37.00pt apart still (LibreOffice
+    // gives 34).
+    const tcPr =
+      '<w:tcBorders><w:top w:val="nil"/>' +
+      rule('left', 24) +
+      rule('bottom', 24) +
+      rule('right', 24) +
+      '</w:tcBorders>';
+    const { inner } = measure(ruledDoc(10, AT_LEAST, '', tcPr));
+    for (const p of inner) expect(p).toBeCloseTo(37, 2);
+  });
+
+  it('keeps the rule above a row inside an exact height', () => {
+    // Word: 33.98pt apart under 3pt rules, and 34pt under 0.5pt ones.
+    for (const sz of [24, 4]) {
+      const { inner } = measure(ruledDoc(10, EXACT, ruled(sz)));
+      for (const p of inner) expect(p).toBeCloseTo(34, 2);
+    }
+  });
+
+  it('puts the table’s bottom edge under its last row, whatever the rule', () => {
+    // Word, 3pt rules: the paragraph after stands 34.05pt below the text of a
+    // last exact row and 36.4 below an atLeast one's, the text 3.2pt down
+    // from the row's top — rows of 37 and 40.
+    expect(measure(ruledDoc(10, EXACT, ruled(24))).after).toBeCloseTo(34, 2);
+    expect(measure(ruledDoc(10, AT_LEAST, ruled(24))).after).toBeCloseTo(37, 2);
   });
 });
