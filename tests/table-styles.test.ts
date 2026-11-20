@@ -1,8 +1,19 @@
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
+import type { BorderItem } from '@/layout/page-doc';
 import { Ream } from '@/core/converter/ream';
+import { flowRenderOptions } from '@/core/converter/project';
+import { FontRegistry } from '@/core/font';
+import { layoutStyledDocument } from '@/layout/styled-layout';
 import { readDocx } from '@/word/docx-reader';
+
+const FONTS = {
+  regular: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Regular.ttf')),
+  bold: new Uint8Array(readFileSync('tests/fixtures/fonts/Roboto-Bold.ttf')),
+};
 
 // A 3×3 table referencing a style, with explicit tblLook flags.
 const tbl = (look: string, extraRow1Cell = '') =>
@@ -173,6 +184,66 @@ describe('a table style’s borders against the table’s own', () => {
   it('still lends the grid to a table that declares none', () => {
     const t = tableOf('');
     expect(t.properties.borders?.insideV?.style).toBe('single');
+  });
+
+  // §17.4.39 / §17.4.23 — a side the table's own `w:tblBorders` leaves out
+  // comes from the style, side by side (issue #135). Word, on a probe of nine
+  // such tables over TableGrid: frame and verticals off with `insideH` left
+  // out → the style's rules between the rows and nothing else; only `insideH`
+  // off → the frame and the verticals; only a red top → the red top over the
+  // rest of the grid; an empty `w:tblBorders` → the whole grid.
+  it('takes each side the table leaves out from the style (issue #135)', () => {
+    const none = (side: string) => `<w:${side} w:val="none" w:sz="0" w:space="0" w:color="auto"/>`;
+    const t = tableOf(
+      `<w:tblBorders>${['top', 'left', 'bottom', 'right', 'insideV'].map(none).join('')}</w:tblBorders>`,
+    );
+    expect(t.properties.borders?.insideH?.style).toBe('single');
+    expect(t.properties.borders?.top?.style).toBe('none');
+    expect(t.properties.borders?.insideV?.style).toBe('none');
+
+    const red = tableOf(
+      '<w:tblBorders><w:top w:val="single" w:sz="12" w:color="FF0000"/></w:tblBorders>',
+    );
+    expect(red.properties.borders?.top?.colorHex).toBe('FF0000');
+    expect(red.properties.borders?.left?.style).toBe('single');
+    expect(red.properties.borders?.insideH?.style).toBe('single');
+    expect(red.properties.borders?.insideV?.style).toBe('single');
+
+    const empty = tableOf('<w:tblBorders/>');
+    expect(empty.properties.borders?.bottom?.style).toBe('single');
+  });
+
+  it('draws the style’s rules between the rows when the table turns the rest off', () => {
+    const none = (side: string) => `<w:${side} w:val="none" w:sz="0" w:space="0" w:color="auto"/>`;
+    const row = (r: number) =>
+      '<w:tr>' +
+      [0, 1]
+        .map((c) => `<w:tc><w:p><w:r><w:t>r${String(r)}c${String(c)}</w:t></w:r></w:p></w:tc>`)
+        .join('') +
+      '</w:tr>';
+    const body =
+      '<w:tbl><w:tblPr><w:tblStyle w:val="Grid"/><w:tblBorders>' +
+      ['top', 'left', 'bottom', 'right', 'insideV'].map(none).join('') +
+      '</w:tblBorders></w:tblPr>' +
+      '<w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="2000"/></w:tblGrid>' +
+      [0, 1, 2].map(row).join('') +
+      '</w:tbl>' +
+      '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/>' +
+      '<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr>';
+    const flow = Ream.parse(buildDocxFromBody(body, { stylesXml: STYLE })).flow;
+    const laid = layoutStyledDocument(flow.body, {
+      registry: FontRegistry.fromBytes(FONTS),
+      ...flowRenderOptions(flow),
+    });
+    const rules = laid.pages[0]!.commands.filter(
+      (c): c is BorderItem => c.type === 'border' && c.borderStyle !== 'none',
+    );
+    // Two rules, one between each pair of rows, and no frame or verticals.
+    expect(rules.every((b) => b.side === 'top' || b.side === 'bottom')).toBe(true);
+    const ys = [
+      ...new Set(rules.map((b) => Math.round((b.side === 'top' ? b.y : b.y + b.height) * 100))),
+    ];
+    expect(ys).toHaveLength(2);
   });
 });
 

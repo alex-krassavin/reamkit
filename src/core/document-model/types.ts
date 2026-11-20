@@ -847,7 +847,7 @@ export interface Border {
   readonly spacePt?: Pt;
 }
 
-/** §17.4.39 `w:tcBorders` — the per-edge borders of a cell (or table). */
+/** §17.4.67 `w:tcBorders` — the per-edge borders of a cell (or, §17.4.39 `w:tblBorders`, a table). */
 export interface CellBorders {
   readonly top?: Border;
   readonly right?: Border;

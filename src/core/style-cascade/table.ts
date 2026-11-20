@@ -84,7 +84,15 @@ function applyTableStyle(table: Table, sheet: StyleSheet): void {
   // regions too, so which sides it states has to be known before they are
   // back-filled from the style below.
   const directBorders = tp.borders;
-  if (!tp.borders && folded.base.borders) tp.borders = folded.base.borders;
+  // §17.4.39 / §17.4.23 — and they are back-filled SIDE BY SIDE: an edge the
+  // table leaves out "shall have the border specified by the associated table
+  // style". Taken as a whole set, a table that turned off its frame and its
+  // verticals over TableGrid lost the style's rules between its rows too
+  // (issue #135), where Word draws them; so does a table that only recolours
+  // its top edge, which kept that edge and nothing else.
+  if (folded.base.borders) {
+    tp.borders = { ...folded.base.borders, ...definedOnly(tp.borders ?? {}) };
+  }
   if (!tp.defaultCellMargins && folded.base.cellMargins) {
     tp.defaultCellMargins = folded.base.cellMargins;
   }
