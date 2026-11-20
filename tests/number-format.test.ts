@@ -470,6 +470,92 @@ describe('a section may state a CONDITION, and then it is not the sign that pick
     expect(fmt('#,##0;[Red]-#,##0', '-1234')).toBe('-1,234');
     expect(fmt('0.0;(0.0);"zero"', '0')).toBe('zero');
   });
+
+  // Each expectation below is Excel's own `string value` of the same cell in a
+  // probe workbook (Excel for Mac, 2026-11-20).
+  const cases = (rows: ReadonlyArray<readonly [string, number, string]>): void => {
+    for (const [code, value, want] of rows) {
+      expect([code, value, fmt(code, String(value))]).toEqual([code, value, want]);
+    }
+  };
+
+  it('writes no minus sign in a section that admits only negative numbers', () => {
+    cases([
+      ['[<0]0', -5, '5'],
+      ['[<0]"neg "0;"pos "0', -5, 'neg 5'],
+      ['[<0]"neg "0;"pos "0', 5, 'pos 5'],
+      ['[<-1]"n"0;"p"0', -5, 'n5'],
+      ['[<=-1]"n"0;"p"0', -5, 'n5'],
+      ['[=-5]"n"0;"p"0', -5, 'n5'],
+      ['[>0]"p"0;[<0]"n"0', -5, 'n5'],
+      ['[>0]"p"0;[<0]"n"0;"z"0', -5, 'n5'],
+      ['[<0]"n"0;[>0]"p"0', -5, 'n5'],
+      ['[>100]"a"0;[<-100]"b"0;"c"0', -500, 'b500'],
+      ['[<0]"("0.0")";0.0', -0.04, '(0.0)'],
+      // …and keeps it where positive numbers or zero would pass too.
+      ['[<=0]"n"0;"p"0', -5, '-n5'],
+      ['[<1]"n"0;"p"0', -5, '-n5'],
+      ['[<>0]"n"0;"p"0', -5, '-n5'],
+      ['[<5]"n"0;"p"0', -5, '-n5'],
+      ['[<10]"$"0', -5, '-$5'],
+      ['[<>-5]"a"0;"b"0', -3, '-a3'],
+      ['[>-10]"p"0;"n"0', -5, '-p5'],
+      ['[>0]"a"0;[>-10]"b"0;"c"0', -5, '-b5'],
+      ['[<=0]"a"0;"b"0;"c"0', -5, '-a5'],
+    ]);
+  });
+
+  it('signs the else of two sections by the limit of the first', () => {
+    cases([
+      ['[>=0]"p"0;"n"0', -5, 'n5'],
+      ['[>0]"p"0;"n"0', -5, 'n5'],
+      ['[>-10]"p"0;"n"0', -20, 'n20'],
+      ['[>=-1]"a"0;"b"0', -5, 'b5'],
+      ['[<-10]"b"0;"c"0', -5, 'c5'],
+      ['[<-1]"a"0;"b"0', -0.5, 'b1'],
+      ['[<>-5]"a"0;"b"0', -5, 'b5'],
+      ['[<-1]"n"0;"c"0.0', -0.5, 'c0.5'],
+      ['[>5]"p"0;"n"0', -5, '-n5'],
+      ['[>0.5]"a"0;"b"0', -5, '-b5'],
+      ['[>=1]"a"0;"b"0', -5, '-b5'],
+      ['[>=100]"big"0;"$"0', -5, '-$5'],
+      ['[=0]"z"0;"o"0', -5, '-o5'],
+      ['[=-5]"a"0;"b"0', -6, '-b6'],
+      // The else of three always keeps it.
+      ['[>100]"a"0;[<-100]"b"0;"c"0', -5, '-c5'],
+      ['[>0]"a"0;[<-10]"b"0;"c"0', -5, '-c5'],
+      ['[>=0]0;[<-10]"b"0;"c"0', -5, '-c5'],
+    ]);
+  });
+
+  it('gives an unconditioned section the place its sign would have', () => {
+    cases([
+      // Of three: the first is [>0], the second [<0], only the third the else.
+      ['[>100]"a"0;"b"0;"c"0', -5, 'b5'],
+      ['[>100]"a"0;"b"0;"c"0', 5, 'c5'],
+      ['[>100]"a"0;"b"0;"c"0', 0, 'c0'],
+      ['[<0]"a"0;"b"0;"c"0', 5, 'c5'],
+      ['[>5]"a"0;"b"0;"c"0', 3, 'c3'],
+      ['[<-10]"b"0;"c"0;"z"0', -5, 'c5'],
+      ['[<-10]"b"0;"c"0;"z"0', 5, 'z5'],
+      ['"a"0;[<-10]"b"0;"c"0', 5, 'a5'],
+      ['"a"0;[<-10]"b"0;"c"0', 0, 'c0'],
+      ['"a"0;[<-10]"b"0;"c"0', -5, '-c5'],
+      // Of two, the first is [>0] and the second the else.
+      ['"a"0;[<-10]"b"0', 5, 'a5'],
+      ['"a"0;[<-10]"b"0', -50, 'b50'],
+      ['[<0]"a"0;"b"0', 5, 'b5'],
+    ]);
+  });
+
+  it('shows a value one condition does not admit as General, unsigned', () => {
+    cases([
+      ['[>0]"a"0', -5, '5'],
+      ['[>0]"a"0', -5.5, '5.5'],
+      ['[<0]"a"0', 5, '5'],
+      ['[<0]"a"0.00', 5.5, '5.5'],
+    ]);
+  });
 });
 
 describe('applyNumberFormat — a format code built to stall it', () => {

@@ -115,7 +115,7 @@ export function numberFormatColorHex(
   if (format === undefined || !format.includes('[')) return undefined;
   const sections = splitSections(format);
   const n = Number(rawValue);
-  const idx = Number.isFinite(n) ? sectionIndexFor(n, sections) : 3;
+  const idx = Number.isFinite(n) ? sectionFor(n, sections).index : 3;
   // A value that satisfies no condition is not formatted by any section, so it
   // takes no colour from one either.
   if (idx < 0) return undefined;
@@ -200,26 +200,70 @@ function conditionHolds(n: number, c: { op: string; rhs: number }): boolean {
   }
 }
 
+/** The section a number is shown in, and whether it is shown without its sign. */
+interface SectionChoice {
+  /** The section's index, or -1 when the value passes none of the conditions. */
+  readonly index: number;
+  /** Whether the section writes the magnitude only, as a negative section does. */
+  readonly unsigned: boolean;
+}
+
 /**
- * The section that applies to `n`, or -1 when the format is all conditions and
- * the value passes none of them — Excel then shows the number plainly, which is
- * what FormatChoiceTests.xlsx expects of `[<10]#" Wow"` at 11.
+ * The section that applies to `n`, and whether it prints the minus sign.
+ *
+ * Without conditions the sections are positive;negative;zero, and the negative
+ * one writes its own sign or none. With conditions, Excel's own `string value`
+ * of a probe (2026-11-20, 83 cells) shows:
+ *  - an unconditioned section takes the place a sign would have given it: in a
+ *    format of three, the first is `[>0]` and the second `[<0]`, and only the
+ *    third is "anything else" — `[>100]"a"0;"b"0;"c"0` reads 5 as c5 and -5
+ *    as b5; in a format of two, the first is `[>0]` and the second is the
+ *    else. We took every unconditioned section for the else: b5 at 5;
+ *  - a section whose own condition admits only negative numbers (`[<0]`,
+ *    `[<-1]`, `[<=-1]`, `[=-5]`, the implied `[<0]`) writes no minus sign:
+ *    `[<0]"neg "0` reads -5 as "neg 5", but `[<=0]`, `[<1]` and `[<>0]` keep
+ *    it, "-n5";
+ *  - the else of a two-section format writes none when the first's limit is
+ *    zero or below and it is not an equality — `[>0]`, `[>=0]`, `[>-10]`,
+ *    `[<-10]`, `[<>-5]` — and keeps it after `[>5]`, `[>0.5]` or any `[=…]`;
+ *    the else of three always keeps it.
+ * We printed the value's own sign under every condition.
  */
-function sectionIndexFor(n: number, sections: ReadonlyArray<string>): number {
+function sectionFor(n: number, sections: ReadonlyArray<string>): SectionChoice {
   // At most three sections take conditions; a fourth is the text section and is
   // never a number's.
   const numeric = Math.min(sections.length, 3);
   const conditions = sections.slice(0, numeric).map(conditionOf);
-  if (conditions.some((c) => c !== undefined)) {
-    for (let i = 0; i < numeric; i++) {
-      const c = conditions[i];
-      if (c === undefined || conditionHolds(n, c)) return i;
-    }
-    return -1;
+  if (!conditions.some((c) => c !== undefined)) {
+    if (n > 0) return { index: 0, unsigned: false };
+    if (n < 0) return { index: sections.length > 1 ? 1 : 0, unsigned: sections.length > 1 };
+    return { index: sections.length > 2 ? 2 : 0, unsigned: false };
   }
-  if (n > 0) return 0;
-  if (n < 0) return sections.length > 1 ? 1 : 0;
-  return sections.length > 2 ? 2 : 0;
+  for (let i = 0; i < numeric; i++) {
+    const c = conditions[i] ?? impliedCondition(i, numeric);
+    if (c === undefined) {
+      const first = conditions[0];
+      const unsigned = numeric === 2 && first !== undefined && first.op !== '=' && first.rhs <= 0;
+      return { index: i, unsigned };
+    }
+    if (conditionHolds(n, c)) return { index: i, unsigned: onlyNegatives(c) };
+  }
+  return { index: -1, unsigned: false };
+}
+
+/** The test an unconditioned section stands for in a format that has conditions. */
+function impliedCondition(
+  index: number,
+  sections: number,
+): { op: string; rhs: number } | undefined {
+  if (index === 0) return { op: '>', rhs: 0 };
+  if (index === 1 && sections === 3) return { op: '<', rhs: 0 };
+  return undefined;
+}
+
+/** Whether every number that passes the condition is negative. */
+function onlyNegatives(c: { op: string; rhs: number }): boolean {
+  return (c.op === '<' && c.rhs <= 0) || ((c.op === '<=' || c.op === '=') && c.rhs < 0);
 }
 
 /**
@@ -697,14 +741,18 @@ function applyFormatString(rawValue: string, format: string): string {
     return rawValue;
   }
 
-  const sectionIdx = sectionIndexFor(n, sections);
-  if (sectionIdx < 0) return defaultNumberRender(rawValue);
-  const section = sections[sectionIdx] ?? sections[0]!;
-  // The second section is the NEGATIVE one and prints its own sign (or none) —
-  // but only when the sections mean positive/negative/zero. Under conditions
-  // they mean whatever the tests say, and the sign is the value's own.
-  const negativeSection = sectionIdx === 1 && conditionOf(sections[0] ?? '') === undefined;
-  return applyNumericSection(n, section, negativeSection);
+  const choice = sectionFor(n, sections);
+  if (choice.index < 0) {
+    // A value no condition admits: a format of one section shows it as General
+    // without its sign — Excel reads -5 under `[>0]"a"0` as 5 and 5.5 under
+    // `[<0]"a"0.00` as 5.5 (2026-11-20). A format of two or three fills the
+    // cell with `#`, which needs the cell's width; we write the number.
+    return Math.min(sections.length, 3) === 1
+      ? defaultNumberRender(String(Math.abs(n)))
+      : defaultNumberRender(rawValue);
+  }
+  const section = sections[choice.index] ?? sections[0]!;
+  return applyNumericSection(n, section, choice.unsigned);
 }
 
 // Split on top-level ';' — ignore ';' inside quoted strings and brackets.
