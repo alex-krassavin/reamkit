@@ -6070,12 +6070,21 @@ function collectFontResources(
             // of the subset, the page encodes a glyph the embedded font no
             // longer has: bug69812.xlsx is one such cell, and its page came out
             // blank where both references print a number.
-            if (cell.properties.hashOnOverflow === true) {
+            if (cell.properties.hashOnOverflow === true || cell.properties.showHashes === true) {
               for (const inner of cell.content) {
                 if (inner.kind !== 'paragraph') continue;
                 for (const run of inner.paragraph.runs) {
                   addRun({ text: '#', properties: run.properties }, inner.paragraph);
                 }
+              }
+            }
+            // …and so is the character a number format fills its cell with
+            // (Run.fillChar): the run that stands for it holds no text at all.
+            for (const inner of cell.content) {
+              if (inner.kind !== 'paragraph') continue;
+              for (const run of inner.paragraph.runs) {
+                if (run.fillChar === undefined) continue;
+                addRun({ text: run.fillChar, properties: run.properties }, inner.paragraph);
               }
             }
             visit(cell.content);
@@ -7093,6 +7102,10 @@ function tokenizePlansLtr(plans: ReadonlyArray<RunPlan>): Array<Token> {
       tokens.push(markerSpaceToken(plan, 0));
       continue;
     }
+    if (plan.run.blankWidthOf !== undefined || plan.run.fillChar !== undefined) {
+      tokens.push(formatPieceToken(plan, 0));
+      continue;
+    }
     const highlight = (plan.run.commentRangeRefs?.length ?? 0) > 0;
     // The code point of the run's text the next token starts at, for its share
     // of the per-character colours (counted only where there are some).
@@ -7181,6 +7194,48 @@ function markerSpaceToken(plan: RunPlan, bidiLevel: number): TextToken {
     fontSizePt: plan.fontSizePt,
     widthPt: MARKER_SPACE_EM * plan.fontSizePt,
     bidiLevel,
+  };
+}
+
+/**
+ * A blank or the fill of a spreadsheet number format (Run.blankWidthOf,
+ * Run.fillChar) as the single token it is. Neither is whitespace to the line:
+ * a blank holds its room at the end of a right-aligned cell, where a space is
+ * dropped, and is never stretched. The blank draws the space it reads as, so
+ * the page's text says what the cell says, and is measured as the character it
+ * keeps room for, in the face that would draw that character. The fill starts
+ * out empty, to be filled against its cell's width (fillCellLine).
+ */
+function formatPieceToken(plan: RunPlan, bidiLevel: number): TextToken {
+  const sized = plan.run.fillChar ?? plan.run.blankWidthOf ?? ' ';
+  const face = splitByFace(plan, sized)[0]?.face ?? { font: plan.font };
+  const base = {
+    kind: 'text' as const,
+    isSpace: false,
+    ...(plan.run.href !== undefined ? { href: plan.run.href } : {}),
+    ...(plan.run.anchor !== undefined ? { anchor: plan.run.anchor } : {}),
+    resolvedRun: plan.resolvedRun,
+    fontSizePt: plan.fontSizePt,
+    ...(plan.risePt !== undefined ? { risePt: plan.risePt } : {}),
+    bidiLevel,
+  };
+  if (plan.run.fillChar !== undefined) {
+    return {
+      ...base,
+      text: '',
+      fill: plan.run.fillChar,
+      font: face.font,
+      ...(face.synthetic ? { synthetic: face.synthetic } : {}),
+      widthPt: 0,
+    };
+  }
+  return {
+    ...base,
+    text: plan.run.text,
+    gap: true,
+    font: plan.font,
+    ...(plan.synthetic ? { synthetic: plan.synthetic } : {}),
+    widthPt: measureRunText(plan, sized, face),
   };
 }
 
@@ -7292,6 +7347,11 @@ function tokenizePlansBidi(
     }
     if (plan.run.listMarkerSpace === true) {
       tokens.push(markerSpaceToken(plan, realLevels[realIdx] ?? 0));
+      realIdx += [...plan.run.text].length;
+      continue;
+    }
+    if (plan.run.blankWidthOf !== undefined || plan.run.fillChar !== undefined) {
+      tokens.push(formatPieceToken(plan, realLevels[realIdx] ?? 0));
       realIdx += [...plan.run.text].length;
       continue;
     }
@@ -9137,10 +9197,17 @@ function layoutTableCell(
         // instead, tdf167019's dates lost their last digit and printed
         // "25/10/201".
         const cutAt = widthPt - padLeftPt;
-        if (noWrap && (block.lines[0]?.contentWidthPt ?? 0) > cutAt) clipped = true;
-        const keep = noWrap
-          ? oneLineInBox(block.lines, cutAt, cell.properties.hashOnOverflow === true)
-          : block.lines;
+        // §18.8.31 `*x` — a line its number format fills runs from edge to edge
+        // of the room it is set in, which only now is known.
+        const room = innerWidth - block.resolved.indentLeft - block.resolved.indentRight;
+        const filled = block.lines.map((line) => fillCellLine(line, room));
+        if (noWrap && (filled[0]?.contentWidthPt ?? 0) > cutAt) clipped = true;
+        const keep =
+          cell.properties.showHashes === true
+            ? filled.slice(0, 1).map((line) => hashFill(line, innerWidth))
+            : noWrap
+              ? oneLineInBox(filled, cutAt, innerWidth, cell.properties.hashOnOverflow === true)
+              : filled;
         // §17.4.20 — a cell that hides its end-of-cell mark contributes no
         // height for an EMPTY paragraph: the mark is all such a line holds.
         const markOnly =
@@ -12297,20 +12364,77 @@ const NO_WRAP_MEASURE_WIDTH = 1e6;
  *
  * @param lines          The cell paragraph's lines, laid out unbroken.
  * @param widthPt        How far the cell's box reaches.
+ * @param innerWidthPt   The room inside the cell's padding, which `#` fill.
  * @param hashOnOverflow Whether a number too wide for the box shows as `#`.
  * @returns The first line, or the `#` that stand for it.
  */
 function oneLineInBox(
   lines: ReadonlyArray<Line>,
   widthPt: number,
+  innerWidthPt: number,
   hashOnOverflow = false,
 ): Array<Line> {
   const line = lines[0];
   if (!line) return [];
   // A number under its own format is never shown truncated — see
   // CellProperties.hashOnOverflow.
-  if (hashOnOverflow && line.contentWidthPt > widthPt) return [hashFill(line, widthPt)];
+  if (hashOnOverflow && line.contentWidthPt > widthPt) return [hashFill(line, innerWidthPt)];
   return [line];
+}
+
+/**
+ * §18.8.31 `*x` — a spreadsheet cell's line with its fill (TextToken.fill)
+ * spread across what `roomPt` leaves of it, or the line as it is when it has
+ * no fill, or no room for one.
+ *
+ * Excel's own PDF (2026-11-20) repeats only WHOLE characters, as many as the
+ * room takes, and keeps the text after the `*` against the right edge whatever
+ * the cell's alignment says — `"$"* #,##0` writes $ at the left and 1,234 at
+ * the right of a left-, right- or centre-aligned cell alike. What alignment
+ * decides is where the room the fill cannot use goes (the line's alignment is
+ * set for that by the print model's fillAlignment): left, between the fill
+ * and the text after it; right, before everything; centre, half of each. So the
+ * line is made exactly as wide as the room, the leading share a gap of its own
+ * and the rest inside the fill token, after its characters.
+ *
+ * @param line   The laid-out line.
+ * @param roomPt The width the line is set in.
+ */
+function fillCellLine(line: Line, roomPt: number): Line {
+  const at = line.tokens.findIndex((t) => t.kind === 'text' && t.fill !== undefined);
+  if (at < 0) return line;
+  const tok = line.tokens[at] as TextToken;
+  const free = roomPt - line.contentWidthPt;
+  const unit =
+    tok.font.measure.textWidthPt(tok.fill!, tok.fontSizePt) *
+    (tok.synthetic?.widthScale ?? 1) *
+    (tok.resolvedRun.widthScale ?? 1);
+  if (!(free > 0) || !(unit > 0)) return line;
+  // A hair under a whole character is a whole character: the room is a sum
+  // of measured widths and need not come out exact.
+  const count = Math.floor(free / unit + 1e-6);
+  const spare = Math.max(0, free - count * unit);
+  const alignment = line.resolved.alignment;
+  const lead = alignment === 'right' ? spare : alignment === 'center' ? spare / 2 : 0;
+  const tokens: Array<Token> = [...line.tokens];
+  tokens[at] = { ...tok, text: tok.fill!.repeat(count), widthPt: count * unit + spare - lead };
+  if (lead > 0) tokens.unshift(leadGap(tok, lead));
+  return { ...line, tokens, contentWidthPt: roomPt };
+}
+
+/** An empty gap of `widthPt` at the head of a line, in the style of `like`. */
+function leadGap(like: TextToken, widthPt: number): TextToken {
+  return {
+    kind: 'text',
+    text: '',
+    isSpace: false,
+    gap: true,
+    resolvedRun: like.resolvedRun,
+    font: like.font,
+    fontSizePt: like.fontSizePt,
+    widthPt,
+    bidiLevel: like.bidiLevel,
+  };
 }
 
 /**
@@ -12329,22 +12453,43 @@ function overrunOffset(
 }
 
 /**
- * The line as a row of `#` filling `widthPt` — what Excel and LibreOffice put in
- * a cell whose number does not fit. At least one, so the cell is never blank:
- * a column too narrow even for a single `#` still has to say something.
+ * The line as a row of `#` across `widthPt`, the room inside the cell's
+ * padding — what Excel and LibreOffice put in a cell whose number does not fit.
+ * At least one, so the cell is never blank: a column too narrow even for a
+ * single `#` still has to say something.
+ *
+ * As many as fit that room, centred in it whatever the cell's alignment: Excel's
+ * own PDF (2026-11-20) sets 18 `#` of 5px in a cell with 91px inside its
+ * padding 1px in from the left, in one with 94px 2px in from each side, and 15
+ * in one with 75px flush — in left-, right- and centre-aligned cells alike.
+ * We counted them against the box less its left padding only and set them by
+ * the cell's alignment, so a number's `#` stood against the right edge.
  */
 function hashFill(line: Line, widthPt: number): Line {
-  const first = line.tokens.find((t): t is TextToken => t.kind === 'text');
+  const first =
+    line.tokens.find(
+      (t): t is TextToken => t.kind === 'text' && t.gap !== true && t.fill === undefined,
+    ) ?? line.tokens.find((t): t is TextToken => t.kind === 'text');
   if (!first) return line;
   const one = first.font.measure.textWidthPt('#', first.fontSizePt);
-  const count = one > 0 ? Math.max(1, Math.floor(widthPt / one)) : 1;
+  const count = one > 0 ? Math.max(1, Math.floor(widthPt / one + 1e-6)) : 1;
   const text = '#'.repeat(count);
+  const drawn = first.font.measure.textWidthPt(text, first.fontSizePt);
+  const spare = Math.max(0, widthPt - drawn);
   const token: TextToken = {
-    ...first,
+    kind: 'text',
     text,
-    widthPt: first.font.measure.textWidthPt(text, first.fontSizePt),
+    isSpace: false,
+    ...(first.href !== undefined ? { href: first.href } : {}),
+    resolvedRun: first.resolvedRun,
+    font: first.font,
+    ...(first.synthetic ? { synthetic: first.synthetic } : {}),
+    fontSizePt: first.fontSizePt,
+    widthPt: drawn + spare / 2,
+    bidiLevel: first.bidiLevel,
   };
-  return { ...line, tokens: [token], contentWidthPt: token.widthPt };
+  const tokens: Array<Token> = spare > 0 ? [leadGap(first, spare / 2), token] : [token];
+  return { ...line, tokens, contentWidthPt: drawn + spare };
 }
 
 /**

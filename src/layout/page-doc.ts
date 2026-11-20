@@ -110,6 +110,20 @@ export interface TextToken {
    */
   readonly tab?: true;
   /**
+   * §18.8.31 — the token is a blank a spreadsheet number format leaves
+   * (Run.blankWidthOf): it draws its text, a space, but stands as wide as
+   * `widthPt` says, the width of the character it keeps room for. A line keeps
+   * it at either end and never stretches it.
+   */
+  readonly gap?: true;
+  /**
+   * §18.8.31 `*x` — the token fills what its spreadsheet cell has left with
+   * this character (Run.fillChar). It is empty and takes no room until the cell
+   * lays the line out against its own width (fillCellLine); then it holds as
+   * many whole characters as fit, and the room they leave over.
+   */
+  readonly fill?: string;
+  /**
    * The token falls inside a comment range (`commentRangeRefs`): the emitter
    * fills a soft highlight behind it (E-COMMENTS CM2c).
    */

@@ -1576,9 +1576,12 @@ function emitPageContent(
     // sets the text matrix once and lets the font's own advances carry the
     // cursor, which loses that distance entirely — a numbered list printed
     // "1.First item". Position such a line token by token instead; the space
-    // after a list marker (§17.9.29) is a distance of its own the same way.
+    // after a list marker (§17.9.29) is a distance of its own the same way, and
+    // so are a number format's blanks and fill in a spreadsheet cell (§18.8.31).
     const hasTab = line.tokens.some(
-      (t) => t.kind === 'text' && (t.tab === true || t.listMarkerSpace === true),
+      (t) =>
+        t.kind === 'text' &&
+        (t.tab === true || t.listMarkerSpace === true || t.gap === true || t.fill !== undefined),
     );
 
     // Encode a token's text, reversing code points for RTL (odd-level) runs

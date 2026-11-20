@@ -106,6 +106,8 @@ export function settableInOneMatrix(line: Line): boolean {
         t.kind === 'text' &&
         t.tab !== true &&
         t.listMarkerSpace !== true &&
+        t.gap !== true &&
+        t.fill === undefined &&
         t.bidiLevel % 2 === 0 &&
         t.risePt === undefined &&
         t.synthetic?.italic !== true &&

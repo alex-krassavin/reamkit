@@ -57,11 +57,12 @@ import type { CellConditionalFormatter, CfOverride } from '@/excel/conditional-f
 import type { SheetHyperlink, SheetSlicer } from '@/core/ir/sheet';
 import type { Loss } from '@/core/ir/loss';
 import type { DrawingBox } from '@/excel/column-bands';
+import type { FormattedValue, NumberFormatPart } from '@/core/number-format';
 import { FEATURES } from '@/core/ir/features';
 import { eighthPtToPt, halfPtToPt, pt, twipsToPt } from '@/core/ir';
 import { firstStrongDirection } from '@/core/bidi';
 import { langOfCharset } from '@/core/fonts/scripts';
-import { applyTextFormat } from '@/core/number-format';
+import { applyTextFormat, formatNumberParts, formatTextParts } from '@/core/number-format';
 import {
   applyNumberFormat,
   generalToWidth,
@@ -1634,7 +1635,20 @@ function gridBody(
       }
 
       const ws = cellMatrix[r]?.[c];
-      let text = ws ? resolveCellText(ws, sharedStrings, styles, date1904) : '';
+      // The value in the pieces its format lays it out in — where it leaves a
+      // blank a character wide and where it fills the cell (formatNumberParts).
+      // A number under a format of its own is formatted once, as its pieces;
+      // General is narrowed to its column below and leaves no blanks.
+      const fmtId = ws ? (styles.cellXfs[ws.styleIndex ?? 0]?.numFmtId ?? 0) : 0;
+      let shown: FormattedValue | undefined =
+        ws?.type === 'n' && ws.rawValue.length > 0 && fmtId !== 0
+          ? formatNumberParts(ws.rawValue, fmtId, styles.numFmts, date1904)
+          : undefined;
+      let text = shown
+        ? shown.text
+        : ws
+          ? resolveCellText(ws, sharedStrings, styles, date1904)
+          : '';
       // Whether a General number is too wide for every way General may write it.
       let generalOverflow = false;
       // General is not a fixed format: a spreadsheet shows as many decimals as
@@ -1691,11 +1705,17 @@ function gridBody(
       // …and a text cell then SHOWS its string through the format's text
       // section — `_(@_)` pads it, `"["@"]"` brackets it, `;;;` hides it. The
       // conditional-format rules keep `cfText`: they test the value, not its display.
-      if (ws && (ws.type === 's' || ws.type === 'str' || ws.type === 'inlineStr')) {
-        const numFmtId = styles.cellXfs[ws.styleIndex ?? 0]?.numFmtId ?? 0;
-        text = applyTextFormat(text, numFmtId, styles.numFmts);
+      if (
+        ws &&
+        (ws.type === 's' || ws.type === 'str' || ws.type === 'inlineStr') &&
+        fmtId !== 0 &&
+        fmtId !== 49
+      ) {
+        shown = formatTextParts(text, fmtId, styles.numFmts);
+        text = shown.text;
       }
       if (text.length > textBudget) {
+        shown = undefined;
         text = text.slice(0, Math.max(0, textBudget));
         if (!textBudgetReported) {
           textBudgetReported = true;
@@ -1781,17 +1801,21 @@ function gridBody(
           // cell looks. Every dxf in new_cond_format_test.xlsx is a number
           // format and nothing else, so every one of its rules was a no-op.
           if (over.numberFormat !== undefined && ws.type === 'n' && ws.rawValue.length > 0) {
-            text = applyNumberFormat(
+            shown = formatNumberParts(
               ws.rawValue,
               CF_NUMBER_FORMAT_ID,
               new Map([[CF_NUMBER_FORMAT_ID, over.numberFormat]]),
               date1904,
             );
+            text = shown.text;
           }
           // §18.3.1.28 "Show Bar Only": the bar IS the cell's rendering, and
           // the number would sit on top of its own gauge. simple-monthly-budget
           // printed 2336 across the bar the reference draws bare.
-          if (over.hideValue) text = '';
+          if (over.hideValue) {
+            text = '';
+            shown = undefined;
+          }
           if (over.icon) icon = over.icon;
           // §18.8.9 — a rule's edges win over the cell's own, edge by edge; a
           // border-only dxf is a whole rule that does nothing else.
@@ -1822,9 +1846,18 @@ function gridBody(
       // is CLIPPED where an occupied cell blocks it — Calc renders only the part
       // that fits, dropping the rest. We mirror that for string cells (a wrapText,
       // rotated or shrinkToFit cell is exempt) so the rendered text matches Calc's.
+      // A cell its format FILLS (`@*-`) is as wide as its box by definition and
+      // runs nowhere: Excel's PDF shows `#` where its text is too long for it.
+      // (A shared string set in rich runs is drawn from its runs, not its
+      // format's pieces, and so has no fill.)
+      const fill =
+        ws?.type === 's' && (print.sharedStringRuns?.[Number(ws.rawValue)]?.length ?? 0) > 0
+          ? undefined
+          : fillOf(shown);
       if (
         print.spill !== false &&
         text.length > 0 &&
+        !fill &&
         !merge &&
         !wrapText &&
         !rotated &&
@@ -2018,18 +2051,33 @@ function gridBody(
         // narrowest form will not fit it is hashed as well: Excel's own PDF
         // fills a column four characters wide with `#` for 10000000000 and for
         // 1E+21, which we clipped to 10000 and to 1E+2 — a hundred. Text stays
-        // text, because a clipped word is still recognisably that word.
+        // text, because a clipped word is still recognisably that word…
+        // …unless its format fills the cell: Excel's PDF shows `@*-` over a
+        // text longer than its column as a row of `#`, as it does a number.
+        // The width is the text's as laid out, each blank as wide as the
+        // character it stands for, not the space it reads as.
         ...(!wrapText &&
         !rotated &&
         !shrinkToFit &&
         !merge &&
-        ws?.type === 'n' &&
         text.length > 0 &&
-        (generalOverflow ||
-          ((xf?.numFmtId ?? 0) !== 0 &&
-            tooWideToShow(text, charTwips(xf, styles, textTwipsUnit), columnWidths[c]!)))
+        ((ws?.type === 'n' &&
+          (generalOverflow ||
+            ((xf?.numFmtId ?? 0) !== 0 &&
+              tooWideToShow(
+                laidOutText(shown, text),
+                charTwips(xf, styles, textTwipsUnit),
+                columnWidths[c]!,
+              )))) ||
+          (fill !== undefined &&
+            tooWideToShow(
+              laidOutText(shown, text),
+              charTwips(xf, styles, textTwipsUnit),
+              columnWidths[c]!,
+            )))
           ? { hashOnOverflow: true }
           : {}),
+        ...(shown?.hashes === true ? { showHashes: true } : {}),
         // §18.8.1 `<alignment vertical>` — a spreadsheet cell sits at the BOTTOM
         // of its box by default, which any row taller than its text shows. We
         // drew every cell against the top: on a sheet of 28.35pt rows the text
@@ -2044,12 +2092,15 @@ function gridBody(
       // centred cell takes none: Excel offers no indent for one.
       const indentLevels = xf?.alignment?.indent ?? 0;
       const rtlText = textDirection(xf, text) === 'rtl';
-      const baseParaProps = cellParaProps(alignment, rtlText);
+      // A filled cell runs from edge to edge whatever its alignment, which
+      // instead says where the room the fill cannot use goes (fillAlignment).
+      const lineAlignment = fill ? fillAlignment(xf) : alignment;
+      const baseParaProps = cellParaProps(lineAlignment, rtlText);
       const indentPt = twipsToPt(indentLevels * indentTwips);
       // …crossed over with the alignment in a right-to-left paragraph.
-      const indentAtRight = (alignment === 'right') !== rtlText;
+      const indentAtRight = (lineAlignment === 'right') !== rtlText;
       const paragraphProps =
-        indentLevels > 0 && alignment !== 'center'
+        indentLevels > 0 && lineAlignment !== 'center'
           ? {
               ...baseParaProps,
               ...(indentAtRight ? { indentRight: indentPt } : { indentLeft: indentPt }),
@@ -2062,6 +2113,9 @@ function gridBody(
         ws && ws.type === 's' && print.sharedStringRuns
           ? print.sharedStringRuns[Number(ws.rawValue)]
           : undefined;
+      // A value whose format leaves blanks or fills the cell is laid out in
+      // its pieces, one run each (formatNumberParts).
+      const pieces = richRuns && richRuns.length > 0 ? undefined : laidOutParts(shown);
       const cellRuns: Array<Run> =
         richRuns && richRuns.length > 0
           ? richRuns.map((rr) => ({
@@ -2069,9 +2123,15 @@ function gridBody(
               properties: richRunProps(runProps, rr),
               ...(href ? { href } : {}),
             }))
-          : text.length > 0
-            ? [{ text, properties: runProps, ...(href ? { href } : {}) }]
-            : [];
+          : pieces
+            ? pieces.map((part) => ({
+                ...partRun(part),
+                properties: runProps,
+                ...(href ? { href } : {}),
+              }))
+            : text.length > 0
+              ? [{ text, properties: runProps, ...(href ? { href } : {}) }]
+              : [];
       // A rotated cell stacks its glyphs vertically (one centred paragraph per
       // character); every other cell is a single paragraph of its runs.
       // An EMPTY cell contributes no content at all — not an empty paragraph.
@@ -2103,6 +2163,7 @@ function gridBody(
       if (
         print.spill !== false &&
         text.length > 0 &&
+        !fill &&
         !merge &&
         !wrapText &&
         !rotated &&
@@ -3384,13 +3445,71 @@ function splitCellLines(runs: ReadonlyArray<Run>, wrapText: boolean): Array<Arra
     for (let i = 0; i < parts.length; i++) {
       if (i > 0) lines.push([]);
       const text = parts[i]!;
-      if (text.length > 0) lines[lines.length - 1]!.push({ ...run, text });
+      if (text.length > 0 || run.fillChar !== undefined) {
+        lines[lines.length - 1]!.push({ ...run, text });
+      }
     }
   }
   // Interior and trailing blanks are kept — "a\n\nb" is three lines in Excel
   // and the middle one is empty. Only a cell that is nothing BUT breaks
   // collapses to no content at all, the same as an empty cell.
   return lines.some((l) => l.length > 0) ? lines : [];
+}
+
+/**
+ * The parts of a value that has to be laid out in pieces — one whose format
+ * leaves a blank somewhere or fills the cell — or undefined for a value that
+ * is its text and nothing more.
+ */
+function laidOutParts(
+  shown: FormattedValue | undefined,
+): ReadonlyArray<NumberFormatPart> | undefined {
+  if (shown === undefined || !shown.parts.some((p) => p.kind !== 'text')) return undefined;
+  return shown.parts;
+}
+
+/** The `*x` a value's format fills its cell with, if it has one. */
+function fillOf(shown: FormattedValue | undefined): string | undefined {
+  const part = shown?.parts.find((p) => p.kind === 'fill');
+  return part?.kind === 'fill' ? part.char : undefined;
+}
+
+/**
+ * The text a value takes the room of, for estimating its width: each blank as
+ * the character whose width it keeps — a `?` is a digit wide, not a space —
+ * and the fill as nothing, since it takes only the room that is left.
+ */
+function laidOutText(shown: FormattedValue | undefined, text: string): string {
+  if (shown === undefined) return text;
+  let out = '';
+  for (const p of shown.parts)
+    out += p.kind === 'text' ? p.text : p.kind === 'blank' ? p.widthOf : '';
+  return out;
+}
+
+/** A part of a formatted value as the run that carries it (Run.blankWidthOf, Run.fillChar). */
+function partRun(part: NumberFormatPart): Pick<Run, 'text' | 'blankWidthOf' | 'fillChar'> {
+  if (part.kind === 'blank') return { text: part.text, blankWidthOf: part.widthOf };
+  if (part.kind === 'fill') return { text: '', fillChar: part.char };
+  return { text: part.text };
+}
+
+/**
+ * Where a filled cell's line puts the room its fill cannot use — less than one
+ * fill character, since the fill repeats only whole ones. The text after the
+ * `*` keeps to the right edge whatever the alignment says; the text before it
+ * and the fill go to the left in a General or left-aligned cell, the room left
+ * over between them and the rest; to the right in a right-aligned one, the
+ * room left over in front; and halve it in a centred one. Excel's own PDF of
+ * `*W0` at 5 (2026-11-20), nine W in a cell with room for 9⅓: General and left
+ * read "WWWWWWWWW  5", centre " WWWWWWWWW 5", right "  WWWWWWWWW5" — where a
+ * General NUMBER is otherwise set against the right.
+ */
+function fillAlignment(xf: XlsxCellXf | undefined): Alignment {
+  const h = xf?.alignment?.horizontal;
+  if (h === 'right') return 'right';
+  if (h === 'center' || h === 'centerContinuous') return 'center';
+  return 'left';
 }
 
 /** §18.8.1 `<alignment vertical>`, defaulting to Excel's bottom. */

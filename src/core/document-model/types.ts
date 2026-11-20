@@ -601,6 +601,20 @@ export interface Run {
    * stretches it in a justified line.
    */
   readonly listMarkerSpace?: true;
+  /**
+   * §18.8.31 — the run is a blank a spreadsheet number format leaves: what `?`
+   * keeps for a digit it has no use for, what `_x` keeps for x, a space the
+   * format writes. It is as wide as this text in the run's font, nothing is
+   * drawn in it, and a line keeps it at either end, where a space is dropped.
+   * `text` is what a reader of plain text takes it for, a space.
+   */
+  readonly blankWidthOf?: string;
+  /**
+   * §18.8.31 `*x` — the run is x repeated across whatever room its spreadsheet
+   * cell has left, which only a medium that knows the cell's width can do.
+   * `text` is empty, so every other medium writes nothing for it.
+   */
+  readonly fillChar?: string;
   /** When set, the run renders this image inline in the line; `text` is ignored. */
   readonly inlineImage?: InlineImage;
   /** When set, the run is an inline OfficeMath object; `text` is ignored. */
@@ -1106,6 +1120,13 @@ export interface CellProperties {
    * recognisably that word.
    */
   readonly hashOnOverflow?: boolean;
+  /**
+   * The cell shows a row of `#` across its box, whatever its text says: a
+   * number no section of a conditional format admits (§18.8.31), which Excel
+   * shows that way however wide the column. The text stays the number, for a
+   * medium that has no box.
+   */
+  readonly showHashes?: boolean;
   /**
    * Where the cell's content sits in a box taller than itself. A spreadsheet
    * cell defaults to `'bottom'` — §18.8.1, and both Excel and LibreOffice do it
