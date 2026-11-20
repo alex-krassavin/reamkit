@@ -215,8 +215,9 @@ describe('applyNumberFormat — codes real producers write', () => {
     expect(applyNumberFormat('2.55', 165, fmt)).toBe('2 5/9');
     expect(applyNumberFormat('0.3889', 166, fmt)).toBe('2/5');
     expect(applyNumberFormat('3.3', 167, fmt)).toBe('3 5/16');
-    // A whole number keeps its integer and drops the fraction entirely.
-    expect(applyNumberFormat('4', 164, fmt)).toBe('4');
+    // A whole number keeps its integer and leaves the fraction's places blank,
+    // separator included: Excel reads 4 here as "4      " (2026-11-20).
+    expect(applyNumberFormat('4', 164, fmt)).toBe('4      ');
   });
 
   it('knows the built-in currency and fraction ids (§18.8.30)', () => {
@@ -228,8 +229,10 @@ describe('applyNumberFormat — codes real producers write', () => {
     expect(applyNumberFormat('1234.5', 7, noCustom)).toBe('$1,234.50 ');
     expect(applyNumberFormat('-1234.5', 8, noCustom)).toBe('($1,234.50)');
     expect(numberFormatColorHex('-1234.5', 8, noCustom)).toBe('FF0000');
-    expect(applyNumberFormat('0.5', 12, noCustom)).toBe('1/2');
-    expect(applyNumberFormat('2.25', 13, noCustom)).toBe('2 1/4');
+    // The `#` of a zero integer is blank, its separator is not; `??` pads the
+    // numerator in front and the denominator behind.
+    expect(applyNumberFormat('0.5', 12, noCustom)).toBe(' 1/2');
+    expect(applyNumberFormat('2.25', 13, noCustom)).toBe('2  1/4 ');
     expect(applyNumberFormat('12345', 48, noCustom)).toBe('12.3E+3');
   });
 
@@ -271,7 +274,8 @@ describe('applyNumberFormat — codes real producers write', () => {
     ]);
     expect(applyNumberFormat('1.2', 300, fmt)).toBe('1  1/5');
     expect(applyNumberFormat('-1.2', 300, fmt)).toBe('-1  1/5');
-    expect(applyNumberFormat('0.75', 300, fmt)).toBe('3/4');
+    // A zero integer under `#` is blank, but the literal after it still prints.
+    expect(applyNumberFormat('0.75', 300, fmt)).toBe('  3/4');
     // The plain spellings are unchanged, improper form included.
     expect(applyNumberFormat('1.2', 301, fmt)).toBe('1 1/5');
     expect(applyNumberFormat('1.2', 302, fmt)).toBe('6/5');
@@ -516,6 +520,317 @@ describe('applyNumberFormat — a format code built to stall it', () => {
     const { out, ms } = timed(`${'['.repeat(100_000)}0`, '1234.5');
     expect(out).toBe(`${'['.repeat(100_000)}1235`);
     expect(ms).toBeLessThan(1000);
+  });
+});
+
+describe('applyNumberFormat — the text around the digits, as Excel lays it out (#132)', () => {
+  // Each expectation is Excel's own `string value` of the same cell in a probe
+  // workbook (Excel for Mac, 2026-11-20), with that Mac's space grouping and
+  // decimal comma written back as `,` and `.`.
+  const show = (code: string, value: number): string =>
+    applyNumberFormat(String(value), 164, new Map([[164, code]]));
+  const cases = (rows: ReadonlyArray<readonly [string, number, string]>): void => {
+    for (const [code, value, want] of rows) {
+      expect([code, value, show(code, value)]).toEqual([code, value, want]);
+    }
+  };
+
+  it('formats the five cells the issue reports as Excel does', () => {
+    cases([
+      ['$#,##0', -5, '-$5'],
+      ['000-00-0000', 123456789, '123-45-6789'],
+      ['(###) ###-####', 5551234567, '(555) 123-4567'],
+      ['#.##', 1, '1.'],
+      ['0.###', 2, '2.'],
+    ]);
+  });
+
+  it('puts the minus sign in front of every literal', () => {
+    cases([
+      ['$0', -5, '-$5'],
+      ['"$"0', -5, '-$5'],
+      ['\\$0', -5, '-$5'],
+      ['[$$-409]#,##0', -5, '-$5'],
+      ['[$€-407] 0', -5, '-€ 5'],
+      ['0 [$€-407]', -5, '-5 €'],
+      ['$#,##0', -1234567, '-$1,234,567'],
+      ['"Total: "#,##0', -1234, '-Total: 1,234'],
+      ['(0)', -5, '-(5)'],
+      ['"-"0', -5, '--5'],
+      ['-0', -5, '--5'],
+      ['_(0_)', -5, '- 5 '],
+      ['???', -5, '-  5'],
+      ['000', -5, '-005'],
+      ['"x"', -5, '-x'],
+      ['"$"0%', -0.05, '-$5%'],
+    ]);
+  });
+
+  it('prints a negative section exactly as written, sign or none', () => {
+    cases([
+      ['0;0', -5, '5'],
+      ['0;-0', -5, '-5'],
+      ['0;(0)', -5, '(5)'],
+      ['$0;$0', -5, '$5'],
+      ['$0;-$0', -5, '-$5'],
+      ['$0;$-0', -5, '$-5'],
+      ['"$"0;"$"-0', -5, '$-5'],
+      ['"$"0;-"$"0', -5, '-$5'],
+      ['$-0', -5, '-$-5'],
+      ['0;;', -5, ''],
+      ['0;"neg"', -5, 'neg'],
+      ['"x"0;"y"0', -5, 'y5'],
+      ['"x";"y"', -5, 'y'],
+      ['0;0;"zero"', 0, 'zero'],
+      ['0;-0;"z"0', 0, 'z0'],
+    ]);
+  });
+
+  it('keeps the text between digit placeholders, filling them from the right', () => {
+    cases([
+      ['000-00-0000', 12345, '000-01-2345'],
+      ['000-00-0000', 1234567890, '1234-56-7890'],
+      ['000-00-0000', -123456789, '-123-45-6789'],
+      ['00000-0000', 123456789, '12345-6789'],
+      ['(###) ###-####', 1234567, '() 123-4567'],
+      ['(###) ###-####', 0, '() -'],
+      ['(###) ###-####', 15551234567, '(1555) 123-4567'],
+      ['(###) ###-####', -5551234567, '-(555) 123-4567'],
+      ['0"-"0', 12, '1-2'],
+      ['0"-"0', 5, '0-5'],
+      ['0"-"0', 123, '12-3'],
+      ['0"-"0', 99.6, '10-0'],
+      ['0" abc "0', 1234, '123 abc 4'],
+      ['"pre"0"mid"0"post"', 456, 'pre45mid6post'],
+      ['0 0', 123, '12 3'],
+      ['0"."00', 1234, '12.34'],
+      ['0"-"00', 123456, '1234-56'],
+      ['0"-"0.0', 9.96, '1-0.0'],
+      ['#-#', 1, '-1'],
+      ['#-#', 12, '1-2'],
+      ['#-#', 0, '-'],
+      ['##-##', 5, '-5'],
+      ['##-##', 12345, '123-45'],
+      ['00-00', 5, '00-05'],
+      ['??-??', 5, '  - 5'],
+      ['??-??', 123, ' 1-23'],
+      ['?"-"?', 5, ' -5'],
+      ['0.0"x"0', 1.23, '1.2x3'],
+      ['0.0 0', 1.234, '1.2 3'],
+      ['0.0-0', 1.25, '1.2-5'],
+      ['0.#-#', 1.5, '1.5-'],
+      ['0.#-#', 1, '1.-'],
+    ]);
+  });
+
+  it('reads an escaped character as text', () => {
+    cases([
+      ['0\\-0', 12, '1-2'],
+      ['\\(0\\)', 5, '(5)'],
+      ['\\(0\\)', -5, '-(5)'],
+      ['0\\ \\k\\g', 5, '5 kg'],
+      ['\\#0', 5, '#5'],
+      ['0\\0', 5, '50'],
+      ['0.0\\0', 1.5, '1.50'],
+      ['0\\.00', 1234, '12.34'],
+      ['_(0_)', 5, ' 5 '],
+      ['0_)', 5, '5 '],
+    ]);
+  });
+
+  it('always writes the decimal point, digits after it or not', () => {
+    cases([
+      ['#.##', 0, '.'],
+      ['#.##', 1.5, '1.5'],
+      ['#.##', -1, '-1.'],
+      ['#.##', 10, '10.'],
+      ['0.###', 0, '0.'],
+      ['0.###', -2, '-2.'],
+      ['0.#', 1, '1.'],
+      ['0.0#', 1, '1.0'],
+      ['#,##0.##', 1234, '1,234.'],
+      ['#.##;(#.##)', -1, '(1.)'],
+      ['#.#"x"', 1, '1.x'],
+      ['#.##%', 0.01, '1.%'],
+      ['.##', 0.5, '.5'],
+      ['.##', 1, '1.'],
+      ['.00', 12.5, '12.50'],
+      ['0.', 5, '5.'],
+      ['#.', 0, '.'],
+    ]);
+  });
+
+  it('scales for an unquoted percent sign only, once for each', () => {
+    cases([
+      ['0"%"', 0.5, '1%'],
+      ['0\\%', 0.5, '1%'],
+      ['0" %"', 0.5, '1 %'],
+      ['0 %', 0.5, '50 %'],
+      ['%0', 0.5, '%50'],
+      ['0%%', 0.5, '5000%%'],
+      ['#%', 0, '%'],
+      ['0%" up"', 0.5, '50% up'],
+      ['0.0%', 0.1234, '12.3%'],
+    ]);
+  });
+
+  it('groups the whole integer, whatever text stands between its digits', () => {
+    cases([
+      ['#,##0"-"000', 1234567, '1,234,-567'],
+      ['0,0"-"0', 1234567, '1,234,56-7'],
+      ['#,##0"-"0', 1234567, '1,234,56-7'],
+      ['#,#', 1234567, '1,234,567'],
+      ['#,##0 "x"', 1234567, '1,234,567 x'],
+      ['0,000', 5, '0,005'],
+      ['#,###', 5, '5'],
+      ['#,###', 0, ''],
+      ['#,##0', 0, '0'],
+      ['?,???', 1234, '1,234'],
+      ['?,???', 12345, '12,345'],
+      // Excel's Mac groups with a space, so it cannot say whether a separator
+      // beside a `?` blank is a space or a comma; it is there, one wide.
+      ['?,???', 5, '    5'],
+      ['??,???', 5, '     5'],
+      ['?,??0', 5, '    5'],
+      ['?,##0', 5, '  5'],
+      ['0,???', 5, '0,  5'],
+      // A comma after a placeholder that more of the integer follows, but not
+      // a placeholder itself, neither groups nor scales.
+      ['0,"-"0', 1234567, '123456-7'],
+    ]);
+  });
+
+  it('scales by a comma after the last placeholder of its part, and prints any other', () => {
+    cases([
+      ['0,', 1234, '1'],
+      ['0,', 1500, '2'],
+      ['0.0,', 1234, '1.2'],
+      ['#,##0,,', 1234567890, '1,235'],
+      ['#,##0,', 1234567, '1,235'],
+      ['#,##0.0,', 1234567, '1,234.6'],
+      ['0,"K"', 12345, '12K'],
+      ['0, "K"', 12345, '12 K'],
+      ['"x"0,', 12345, 'x12'],
+      ['0.0,,"M"', 12345678, '12.3M'],
+      ['0,.0', 12345, '12.3'],
+      ['0,_)', 12345, '12 '],
+      ['0,"x",', 12345678, '12346x,'],
+      ['0 ,', 12345, '12345 ,'],
+      ['0"x",', 12345, '12345x,'],
+      ['0.0,0', 1234.5, '1234.50'],
+    ]);
+  });
+
+  it('shows no sign for a value that rounds to zero', () => {
+    cases([
+      ['0', -0.4, '0'],
+      ['0.0', -0.04, '0.0'],
+      ['0.00', -0.001, '0.00'],
+      ['#,##0', -0.4, '0'],
+      ['0,', -400, '0'],
+      ['0%', -0.004, '0%'],
+      ['0.0%', -0.0004, '0.0%'],
+      ['"$"0', -0.4, '$0'],
+      ['"$"#,##0.00', -0.001, '$0.00'],
+      ['#,##0.00 "x"', -0.004, '0.00 x'],
+      ['(0)', -0.4, '(0)'],
+      ['#', -0.4, ''],
+      ['#.#', -0.04, '.'],
+      // The section is the negative one all the same, and its minus is text.
+      ['0;-0', -0.4, '-0'],
+      ['0;-0;"z"', -0.4, '-0'],
+      ['0;"n"0;"z"', -0.4, 'n0'],
+      ['0.0_);(0.0)', -0.04, '(0.0)'],
+      ['#,##0_);(#,##0)', -0.4, '(0)'],
+    ]);
+  });
+
+  it('pads with a space under ?, a zero under 0 and nothing under #, place by place', () => {
+    cases([
+      ['???', 5, '  5'],
+      ['?.???', 1.5, '1.5  '],
+      ['0.0?', 1.5, '1.5 '],
+      ['#?', 5, '5'],
+      ['???.??', -1.5, '-  1.5 '],
+      ['?0', 0, ' 0'],
+      ['#0', 0, '0'],
+      ['0#', 0, '0'],
+      ['0#', 5, '05'],
+      ['00000', 1234, '01234'],
+    ]);
+  });
+
+  it('keeps every place of a fraction, blanks and all', () => {
+    cases([
+      ['# ?/?', 1.5, '1 1/2'],
+      ['# ?/?', -1.5, '-1 1/2'],
+      ['# ?/?', 0, '0    '],
+      ['# ?/?', 0.25, ' 1/4'],
+      ['# ?/?', -0.25, '- 1/4'],
+      ['# ?/?', 3, '3    '],
+      ['# ?/?', 0.01, '0    '],
+      ['# ?/?', -0.01, '-0    '],
+      ['# ?/?', 2.99, '3    '],
+      ['# ?/?', 0.999, '1    '],
+      ['?/?', 1.5, '3/2'],
+      ['?/?', 0, '0/1'],
+      ['?/?', -0.5, '-1/2'],
+      ['?/?', -0.01, '0/1'],
+      ['# ??/??', 3.14159, '3  1/7 '],
+      ['# ??/??', 0.5, '  1/2 '],
+      ['# ??/?', 1.75, '1  3/4'],
+      ['?? ?/?', 1.5, ' 1 1/2'],
+      ['# 00/00', 1.5, '1 01/02'],
+      ['#  ?/?', 1.5, '1  1/2'],
+      ['#" "?/?', 1.5, '1 1/2'],
+      ['# ?/8', 1.3, '1 2/8'],
+      ['# ?/10', 0.25, ' 3/10'],
+      ['"$"# ?/?', -1.5, '-$1 1/2'],
+      ['"x"# ?/?', 3, 'x3    '],
+      ['# ?/? "in"', 2.5, '2 1/2 in'],
+      ['?/? "x"', 0.5, '1/2 x'],
+      ['# ?/?;(# ?/?)', -1.5, '(1 1/2)'],
+      ['0 ?/?', 0.5, '0 1/2'],
+      ['0 ?/?', 0, '0    '],
+    ]);
+  });
+
+  it('lays out a scientific mantissa by its placeholders and keeps its text', () => {
+    cases([
+      ['0.00E+00', 12345, '1.23E+04'],
+      ['0.00E+00', -12345, '-1.23E+04'],
+      ['0.00E+00', -0.001, '-1.00E-03'],
+      ['"x"0.0E+0', 123, 'x1.2E+2'],
+      ['0.0E+0" m"', 1234, '1.2E+3 m'],
+      ['$0.0E+0', -123, '-$1.2E+2'],
+      ['00.0E+00', 12345, '01.2E+04'],
+      ['#0.0E+0', 12345, '1.2E+4'],
+      ['0E+0', 1234, '1E+3'],
+      ['0.0E-0', 1234, '1.2E3'],
+      ['0.0E-0', 0.001, '1.0E-3'],
+      ['0.0E+0', 0, '0.0E+0'],
+      ['0.0E+0', -0.00001, '-1.0E-5'],
+      ['0.0E+000', 5, '5.0E+000'],
+      ['#.##E+00', 100, '1.E+02'],
+      ['0.0#E+0', 1, '1.0E+0'],
+      ['##0.###E+0', 1234, '1.234E+3'],
+      ['0.0E+00;(0.0E+00)', -1234, '(1.2E+03)'],
+    ]);
+  });
+
+  it('writes General with the text around it', () => {
+    cases([
+      ['General" kg"', 5, '5 kg'],
+      ['"$"General', -5, '-$5'],
+      ['General;(General)', -5, '(5)'],
+      ['0;General', -5, '5'],
+      ['"a"General"b"', 1.5, 'a1.5b'],
+      ['"x"General', 0.5, 'x0.5'],
+      ['[Red]General" kg"', 5, '5 kg'],
+      // A text section given a number shows it as General, without its text.
+      ['"a"@"b"', 5, '5'],
+      ['"a"@', -5, '-5'],
+    ]);
   });
 });
 
