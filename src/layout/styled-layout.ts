@@ -830,6 +830,12 @@ interface CellLayout {
    * paragraph's `w:after`). Absent for a cell whose paragraphs are all flush.
    */
   readonly lineGaps?: ReadonlyMap<number, number>;
+  /**
+   * §17.3.1.33 — the space after the cell's LAST paragraph, which no line
+   * claims as its gap: counted in {@link contentHeightPt}, and carried by
+   * whichever piece of a broken row that paragraph ends in.
+   */
+  readonly afterPt?: number;
   // Nested tables (a w:tbl inside this cell) rendered below the lines.
   /**
    * Tables nested inside this cell (§17.4.38), each with the number of the
@@ -884,6 +890,16 @@ interface RowLayout {
    * fit on the page moves to the next rather than breaking across the two.
    */
   readonly cantSplit?: boolean;
+  /**
+   * §17.4.81 `w:trHeight w:hRule="exact"` — the row is pinned to its height,
+   * and a pinned row never breaks across pages (see {@link rowMovesWhole}).
+   */
+  readonly exactHeight?: boolean;
+  /**
+   * §17.4.81 `w:hRule="atLeast"` — the least the row may be, which also holds
+   * for the part of it a page break carries over (see {@link rowMovesWhole}).
+   */
+  readonly minHeightPt?: number;
   /**
    * §17.4.38 — the room the row gives its top border, and (the table's last
    * row) its bottom one, where the document is set as Word sets it (see
@@ -8630,11 +8646,15 @@ function layoutTableRow(
       rowIdx,
       rowCount,
       ...(row.properties.cantSplit ? { cantSplit: true } : {}),
+      exactHeight: true,
       ...borderBands,
     };
-  } else if (row.properties.height && row.properties.heightRule === 'atLeast') {
-    heightPt = Math.max(heightPt, row.properties.height);
   }
+  const minHeightPt =
+    row.properties.height && row.properties.heightRule === 'atLeast'
+      ? row.properties.height
+      : undefined;
+  if (minHeightPt !== undefined) heightPt = Math.max(heightPt, minHeightPt);
   return {
     heightPt,
     cells,
@@ -8642,6 +8662,7 @@ function layoutTableRow(
     rowIdx,
     rowCount,
     ...(row.properties.cantSplit ? { cantSplit: true } : {}),
+    ...(minHeightPt !== undefined ? { minHeightPt } : {}),
     ...borderBands,
   };
 }
@@ -8797,6 +8818,7 @@ function layoutTableCell(
   let contentHeightPt = 0;
   let clipped = false;
   let pendingGapPt = 0;
+  let afterPt = 0;
   const collapse = collapsesSpacing(options);
   const openParagraph = (spacingBeforePt: number): void => {
     // Word's, the larger of the two (see SpacingStack).
@@ -8947,6 +8969,7 @@ function layoutTableCell(
     // …and the space after the LAST paragraph, which nothing follows to claim
     // it: the cell is that much taller, even though no line stands there.
     contentHeightPt += pendingGapPt;
+    afterPt = pendingGapPt;
   }
   const colEnd = colStart + colSpan - 1;
   const borders = resolveCellBorders(
@@ -9002,6 +9025,7 @@ function layoutTableCell(
     ...(cell.properties.noteFlag ? { noteFlag: cell.properties.noteFlag } : {}),
     lines,
     ...(lineGaps.size > 0 ? { lineGaps } : {}),
+    ...(afterPt > 0 ? { afterPt } : {}),
     ...(nestedTables.length > 0 ? { nestedTables } : {}),
     ...(cellShapes.length > 0 ? { shapes: cellShapes } : {}),
     ...(cellFloats.length > 0 ? { floats: cellFloats } : {}),
@@ -10985,12 +11009,17 @@ function paginateSections(
         const room = asm.cursorY - asm.bottomLimit();
         const page = asm.ctx.pageContentHeight;
         const chunks =
-          !row.cantSplit && row.heightPt > room && asm.colHasContent() && room > 0
+          !rowMovesWhole(row, room) && row.heightPt > room && asm.colHasContent() && room > 0
             ? splitRowIntoChunks(row, room, page)
             : row.heightPt > page
-              ? // Taller than any page: chunked whatever the row says, because
-                // the alternative is losing everything past the first page.
-                splitRowIntoChunks(row, page)
+              ? row.exactHeight
+                ? // A pinned row taller than the page: Word gives it a page of
+                  // its own and carries nothing of it over — an 800pt row on a
+                  // 728.5pt page, and the next row at the top of the next one.
+                  [clipRowToHeight(row, page)]
+                : // Taller than any page: chunked whatever the row says, because
+                  // the alternative is losing everything past the first page.
+                  splitRowIntoChunks(row, page)
               : [row];
 
         // How far down the row the chunk in hand starts, for the drawings.
@@ -11670,13 +11699,27 @@ function splitRowIntoChunks(
         // height the page has to give it too. Counted nowhere, a chunk measured
         // 518pt where its own lines needed 713 and ran off the bottom of the
         // page (table-row-data-displayed-twice.docx).
-        const lh = computeLineHeight(next.line, next.line.resolved) + next.gapPt;
+        // …except at the top of a page the row is carried onto, where the gap
+        // goes, as it does above a paragraph a page break carries over: Word
+        // sets the third line of a three-paragraph row broken after its
+        // second at the top margin, 57.75pt down, where every row starts.
+        const gapPt = !isFirst && taken.length === 0 ? 0 : next.gapPt;
+        const lh = computeLineHeight(next.line, next.line.resolved) + gapPt;
         // Always take at least one line per chunk to guarantee forward progress
         // even when a single line is taller than capacity.
         if (taken.length > 0 && takenHeight + lh > capacityForLines) break;
-        taken.push(next);
+        taken.push({ line: next.line, gapPt });
         takenHeight += lh;
         q.remaining.shift();
+      }
+      // §17.3.1.33 — the space after the cell's last paragraph goes where that
+      // paragraph ends. Measured from its lines alone, the piece came out short
+      // by it and the row below started that much higher: Word keeps it, 22.95pt
+      // from the third line of a broken row to the next row's first, which is
+      // the line, its 8pt after and the 0.5pt rule. What the page has no room
+      // for it loses, as it does under a paragraph at the foot of a page.
+      if (taken.length > 0 && q.remaining.length === 0 && tpl.afterPt) {
+        takenHeight += Math.min(tpl.afterPt, Math.max(0, capacityForLines - takenHeight));
       }
       const cellHeight = padTop + takenHeight;
       const gaps = new Map<number, number>();
@@ -11717,6 +11760,14 @@ function splitRowIntoChunks(
         };
         if (total > chunkHeight) chunkHeight = total;
       }
+      // §17.4.81 — the part of a row that a page break carries over is still a
+      // row of at least its minimum height. A 34pt-minimum row of three lines,
+      // broken after two, ends 34.8pt below the top margin in Word where its
+      // third line alone (22.95pt) would end. (LibreOffice gives that part its
+      // lines' 23pt; Word is followed.)
+      if (!isFirst && row.minHeightPt !== undefined) {
+        chunkHeight = Math.max(chunkHeight, Math.min(row.minHeightPt, restCapacity));
+      }
     }
 
     // Borders: keep top only on first chunk, bottom only on last; left/right always.
@@ -11743,7 +11794,75 @@ function splitRowIntoChunks(
     isFirst = false;
   }
 
-  return out.length > 0 ? out : [row];
+  // One piece is no break at all: every cell's lines went into it, so the row
+  // moves to the next page whole — at its own height. Handed on as that one
+  // piece instead, it was as tall as its lines and nothing else: the first row
+  // of every page a long table ran onto (and each one squeezed in at the foot
+  // of a page) lost its height rule, its cells' bottom margins and its last
+  // paragraph's space after — 15.24pt for a 34pt exact row (issue #139).
+  return out.length > 1 ? out : [row];
+}
+
+/**
+ * Whether a row that does not fit in the room left on the page has to move to
+ * the next one whole rather than break across the two (§17.4.6, §17.4.81).
+ *
+ * Measured in Word for Mac on rows of a long table, every one of them allowed
+ * to break across pages (no `w:cantSplit`):
+ * - an `exact` row never breaks: a 34pt row with 14.5pt of room moves to the
+ *   next page and keeps its 34pt there, and so does one whose text is taller
+ *   than the row;
+ * - an `atLeast` row breaks only where the room left holds its minimum: a
+ *   100pt-minimum row of six lines moves whole with 52pt left, two lines'
+ *   worth, while a 34pt-minimum row of three breaks with 48.6pt left.
+ *
+ * @param row  The row laid out.
+ * @param room The room left on the page, in points.
+ * @returns True when the row may not be broken here.
+ */
+function rowMovesWhole(row: RowLayout, room: number): boolean {
+  if (row.cantSplit || row.exactHeight) return true;
+  return row.minHeightPt !== undefined && room < row.minHeightPt;
+}
+
+/**
+ * A pinned row cut down to a height, for one taller than the page it has to
+ * stand on: it keeps its first page and loses the rest, as Word prints it.
+ *
+ * The cut is the page's edge, not the row's: every line that starts above it
+ * stays, and the cell's box clips the one it runs through. Its lines are
+ * placed with the gaps between their paragraphs, so those count here: by its
+ * lines alone, a cell of forty paragraphs of a 14.5pt line and 8pt after
+ * comes to 580pt of the 900 it takes, and would pass for fitting a 728.5pt
+ * page it runs off the foot of.
+ *
+ * @param row      The row laid out.
+ * @param heightPt The height to cut it to.
+ * @returns The row, that tall, with its cells cut to it.
+ */
+function clipRowToHeight(row: RowLayout, heightPt: number): RowLayout {
+  const cut = (cell: CellLayout): CellLayout => {
+    const room = heightPt - cell.padTopPt;
+    let used = 0;
+    let kept = 0;
+    for (const line of cell.lines) {
+      used += cell.lineGaps?.get(kept) ?? 0;
+      if (kept > 0 && used >= room) break;
+      used += computeLineHeight(line, line.resolved);
+      kept++;
+    }
+    // (Its own contentHeightPt cannot decide this: a pinned cell's is its
+    // kept lines' heights, without the gaps — see clipCellToHeight.)
+    if (kept === cell.lines.length && used <= room) return cell;
+    return {
+      ...cell,
+      lines: cell.lines.slice(0, kept),
+      contentHeightPt: room,
+      totalHeightPt: heightPt,
+      clipped: true,
+    };
+  };
+  return { ...row, heightPt, cells: row.cells.map(cut) };
 }
 
 // How far a row's fill runs past its own box, to close the seam against the row
