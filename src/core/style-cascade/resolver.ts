@@ -170,7 +170,14 @@ function computeParagraphProperties(
     const chain = resolveStyleChain(styleId, sheet);
     acc = mergePar(acc, chain.pPr);
   }
-  return mergePar(acc, paragraphDirect);
+  const resolved = mergePar(acc, paragraphDirect);
+  // A built-in heading style fixes the level of every paragraph written in it
+  // (see `Style.builtInOutlineLevel`): Word reads a Heading 2 paragraph whose
+  // own `w:outlineLvl` says body text as level 2 all the same.
+  const fixed = styleId !== undefined ? sheet.styles.get(styleId)?.builtInOutlineLevel : undefined;
+  return fixed !== undefined && resolved.outlineLevel !== fixed
+    ? { ...resolved, outlineLevel: fixed }
+    : resolved;
 }
 
 /** The id of the `w:default="1"` paragraph style, cached per sheet. */

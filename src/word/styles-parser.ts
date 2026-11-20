@@ -90,20 +90,50 @@ export function parseStyles(stylesXml: Uint8Array, themeFonts?: ThemeFonts): Sty
 
     const basedOnVal = getVal(el['w:basedOn']);
     const isDefault = getAttr(el, 'default') === '1';
+    const styleName = getVal(el['w:name']);
+    const builtIn = type === 'paragraph' ? builtInHeadingLevel(styleName) : undefined;
+    const paragraphProperties = parseParagraphProperties(el['w:pPr'], 0, themeFonts);
 
     const style: Style = {
       id,
       type,
       ...(basedOnVal ? { basedOn: basedOnVal } : {}),
       isDefault,
+      ...(styleName !== undefined ? { name: styleName } : {}),
+      ...(builtIn !== undefined ? { builtInOutlineLevel: builtIn } : {}),
       runProperties: parseRunProperties(el['w:rPr'], themeFonts),
-      paragraphProperties: parseParagraphProperties(el['w:pPr'], 0, themeFonts),
+      // The built-in heading's level is the style's own, so the styles based
+      // on it inherit it as they inherit everything else.
+      paragraphProperties:
+        builtIn !== undefined
+          ? { ...paragraphProperties, outlineLevel: builtIn }
+          : paragraphProperties,
       ...(type === 'table' ? parseTableStyleParts(el, themeFonts) : {}),
     };
     styles.set(id, style);
   }
 
   return { defaultRunProperties, defaultParagraphProperties, styles };
+}
+
+/**
+ * The outline level (0–8) Word's built-in heading style of this primary name
+ * stands at, or `undefined` for any other style.
+ *
+ * Word knows its built-in styles by NAME — §17.7.4.9 `w:name`, written in
+ * English ("heading 1") in every locale, while the id is free (a Russian Word
+ * writes `w:styleId="1"`). Measured in Word 16 for Mac on a probe
+ * (`outline level of paragraph format`, 2026-11-20): "heading 4" with no
+ * `w:outlineLvl` of its own is level 4; "heading 5" under the id `X5` is level
+ * 5; a style named "Fancy" under the id `Heading6` is body text.
+ *
+ * @param name The style's `w:name`, if it has one.
+ * @returns The 0-based outline level, or `undefined` when the name is no
+ *          built-in heading's.
+ */
+function builtInHeadingLevel(name: string | undefined): number | undefined {
+  const m = name !== undefined ? /^heading ([1-9])$/i.exec(name.trim()) : null;
+  return m ? Number(m[1]) - 1 : undefined;
 }
 
 // ---------------------------------------------------------------------------

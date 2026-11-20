@@ -64,3 +64,40 @@ describe('parseStyles', () => {
     expect(sheet.styles.get('Emphasis')!.runProperties).toEqual({ italic: true });
   });
 });
+
+describe("parseStyles — Word's built-in headings, known by name (§17.7.4.9)", () => {
+  // Word 16 for Mac, `outline level of paragraph format` over a probe
+  // (2026-11-20): the NAME decides, never the id.
+  const sheet = parse(
+    '<w:style w:type="paragraph" w:styleId="Heading4"><w:name w:val="heading 4"/></w:style>' +
+      '<w:style w:type="paragraph" w:styleId="X5"><w:name w:val="heading 5"/></w:style>' +
+      '<w:style w:type="paragraph" w:styleId="Heading6"><w:name w:val="Fancy"/></w:style>' +
+      '<w:style w:type="paragraph" w:styleId="1"><w:name w:val="heading 1"/>' +
+      '<w:pPr><w:outlineLvl w:val="3"/></w:pPr></w:style>' +
+      '<w:style w:type="character" w:styleId="Heading1Char"><w:name w:val="heading 1"/></w:style>',
+  );
+
+  it('gives a "heading N" style level N-1 when it states none', () => {
+    expect(sheet.styles.get('Heading4')!.builtInOutlineLevel).toBe(3);
+    expect(sheet.styles.get('Heading4')!.paragraphProperties.outlineLevel).toBe(3);
+  });
+
+  it('reads the name under any id', () => {
+    expect(sheet.styles.get('X5')!.name).toBe('heading 5');
+    expect(sheet.styles.get('X5')!.paragraphProperties.outlineLevel).toBe(4);
+    expect(sheet.styles.get('1')!.builtInOutlineLevel).toBe(0);
+  });
+
+  it("fixes the level over the style's own w:outlineLvl", () => {
+    expect(sheet.styles.get('1')!.paragraphProperties.outlineLevel).toBe(0);
+  });
+
+  it('leaves a heading-like id under another name alone', () => {
+    expect(sheet.styles.get('Heading6')!.builtInOutlineLevel).toBeUndefined();
+    expect(sheet.styles.get('Heading6')!.paragraphProperties.outlineLevel).toBeUndefined();
+  });
+
+  it('applies to paragraph styles only', () => {
+    expect(sheet.styles.get('Heading1Char')!.builtInOutlineLevel).toBeUndefined();
+  });
+});

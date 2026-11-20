@@ -810,6 +810,21 @@ export interface Style {
   readonly type: StyleType;
   readonly basedOn?: string;
   readonly isDefault: boolean;
+  /**
+   * §17.7.4.9 `w:name` — the style's primary name. Word knows its built-in
+   * styles by this name, never by the id: a style named "heading 5" under the
+   * id `X5` is its Heading 5, and one named "Fancy" under the id `Heading6` is
+   * body text.
+   */
+  readonly name?: string;
+  /**
+   * The outline level (0–8) a built-in heading style ("heading 1" … "heading
+   * 9") FIXES. A paragraph written in such a style takes this level whatever
+   * its own `w:outlineLvl` says (Word reads a Heading 2 paragraph with a direct
+   * body-text level 9 as level 2), and whatever the style's own `w:outlineLvl`
+   * says (a "heading 4" that states none is level 4 all the same).
+   */
+  readonly builtInOutlineLevel?: number;
   readonly runProperties: RunProperties;
   readonly paragraphProperties: ParagraphProperties;
   /** Table styles only (§17.7.6): the base layer and conditional overrides. */

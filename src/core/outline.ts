@@ -5,9 +5,11 @@
 // PDF's H1–H6 in ISO 32000-1 §14.8.4), so 0–5 map straight across and 6–8
 // clamp onto the sixth.
 //
-// A heading style need not carry an outline level at all: Word's own
-// "Heading 2" leaves it to the style, so the style id is the fallback, and
-// "Title"/"Subtitle" — which no outline level ever covers — read as level 1.
+// A heading style need not carry an outline level at all. Word's own
+// "heading N" styles are known by their NAME and the styles parser gives them
+// their level (`Style.builtInOutlineLevel`); a document built without a style
+// sheet — a FlowDoc made in code — has only the id, so the id is the fallback,
+// and "Title"/"Subtitle" — which no outline level ever covers — read as level 1.
 
 import type { ResolvedParagraphProperties } from '@/core/style-cascade';
 
@@ -26,6 +28,9 @@ export function headingLevelOf(resolved: ResolvedParagraphProperties): number | 
   if (lvl !== undefined && lvl >= 0 && lvl <= 8) {
     return Math.min(lvl + 1, MAX_HEADING_LEVEL);
   }
+  // §17.3.1.20 — level 9 is "body text", stated: a paragraph that says it is
+  // no heading is not one, whatever its style id looks like.
+  if (lvl === 9) return undefined;
   return headingLevelFromStyleId(resolved.styleId);
 }
 
