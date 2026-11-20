@@ -86,6 +86,7 @@ import type {
   LaidOutPage,
   Line,
   MetafileDrawing,
+  OutlineSeed,
   PageItem,
   PageWindow,
   ResolvedMathItem,
@@ -103,7 +104,7 @@ import type { MetaPicture } from '@/core/metafile/picture';
 import type { Sheet } from '@/layout/turned-section';
 import { pageItemBounds } from '@/layout/page-doc';
 import { ResourceStore, halfPtToPt, pt } from '@/core/ir';
-import { headingLevelOf } from '@/core/outline';
+import { headingLevelOf, outlineLevelOf, outlineTitleOf } from '@/core/outline';
 import { hasCombiningMark, isCombiningMark } from '@/core/font/mark-shaper';
 import {
   createFontMeasure,
@@ -440,6 +441,14 @@ export interface StyledRenderOptions {
    * `pdfA` level-a profiles.
    */
   readonly pdfUA?: boolean;
+  /**
+   * The PDF's document outline — the bookmarks panel a viewer shows beside the
+   * pages (ISO 32000-1 §12.3.3) — built from the document's headings, the way
+   * Word and LibreOffice export one. On by default: a document with headings
+   * gets an outline, one without gets none. `false` writes none; an object
+   * tunes it (see {@link PdfOutlineOptions}).
+   */
+  readonly outline?: boolean | PdfOutlineOptions;
   /**
    * Document natural language (BCP 47, e.g. `"en-US"`, `"ru-RU"`) for the
    * tagged-PDF catalog `/Lang` (§14.9.2). Defaults to `"en-US"`. The docx
@@ -949,6 +958,40 @@ interface TableBlock {
 }
 
 /**
+ * How the PDF's document outline is built (ISO 32000-1 §12.3.3); see
+ * {@link StyledRenderOptions.outline}.
+ */
+export interface PdfOutlineOptions {
+  /**
+   * The deepest heading level the outline takes, 1–9. Default 9: every outline
+   * level a paragraph can carry (§17.3.1.20 `w:outlineLvl` 0–8), as
+   * LibreOffice's export takes. `3` keeps Heading 1–3, as a table of contents
+   * usually does.
+   */
+  readonly maxLevel?: number;
+  /**
+   * Open the viewer's bookmarks panel with the document (ISO 32000-1 §7.7.2,
+   * catalog `/PageMode /UseOutlines`). Default `false`: the viewer decides,
+   * and the panel is a click away.
+   */
+  readonly openPanel?: boolean;
+}
+
+/**
+ * One item of the PDF's document outline: what it says, how deep it sits, and
+ * where it jumps — the page (0-based) and the y-up point at the top of its
+ * paragraph's first line, at the left edge of the column it stands in.
+ */
+export interface OutlineMark extends OutlineSeed {
+  /** The page it jumps to, 0-based. */
+  readonly pageIdx: number;
+  /** The x the destination puts at the window's left edge, in points. */
+  readonly xLeftPt: number;
+  /** The y-up point the destination puts at the window's top edge, in points. */
+  readonly yTopPt: number;
+}
+
+/**
  * §17.13.6.2 — a bookmark's GoTo destination: the page (0-based) and the y-up
  * top of the anchoring paragraph's first line.
  */
@@ -975,6 +1018,11 @@ export interface PdfLayoutAux {
   readonly pdfaProfile: PdfAProfile | undefined;
   readonly tagged: boolean;
   readonly bookmarks: ReadonlyMap<string, BookmarkPosition>;
+  /**
+   * The document outline's items in document order (ISO 32000-1 §12.3.3), one
+   * per heading the body opens. Absent when `outline: false` asked for none.
+   */
+  readonly outline?: ReadonlyArray<OutlineMark>;
   /**
    * CM2b — comment marker anchor (`comment-${n}`) → the note the emitter attaches
    * as a `/Text` annotation. Present only when `commentAnnotations` was requested.
@@ -1695,6 +1743,10 @@ export function layoutStyledDocument(
   }
 
   const bookmarks = new Map<string, BookmarkPosition>();
+  // The outline's items, by what opens each — a body block's index, a cell
+  // line's seed — so that one laid again (a column balanced, a paragraph moved
+  // on) keeps one item, at the place it was laid last.
+  const outlineMarks = options.outline !== false ? new Map<unknown, OutlineMark>() : undefined;
   // CM2b — native /Text annotations for comments (opt-in). The emitter attaches
   // them at the marker, gated to interactive (non-PDF/A, non-tagged) output.
   const commentNotes =
@@ -1717,6 +1769,7 @@ export function layoutStyledDocument(
     backgroundImageOf(options, imageResources),
     collapsesSpacing(options),
     options.compatibilityMode,
+    outlineMarks,
   );
   if (options.losses) {
     const undrawn = undrawnLoss(pages);
@@ -1734,6 +1787,7 @@ export function layoutStyledDocument(
       pdfaProfile,
       tagged,
       bookmarks,
+      ...(outlineMarks ? { outline: [...outlineMarks.values()] } : {}),
       ...(commentNotes ? { commentNotes } : {}),
     },
   };
@@ -4637,6 +4691,12 @@ interface CellAnchorCtx {
     heightPt: number,
   ) => void;
   readonly pageHeight: number;
+  /**
+   * Place the outline item a cell's line opens (`Line.outline`) on this page,
+   * at the cell's left edge and the line's top. Absent where a heading opens
+   * no item: a header row repeated on the next page, a nested table.
+   */
+  readonly outline?: (seed: OutlineSeed, xLeftPt: number, yTopPt: number) => void;
 }
 
 /** The page a table is being drawn onto, as a cell's floats need to see it. */
@@ -4649,6 +4709,13 @@ function cellAnchorCtx(asm: PageAssembler): CellAnchorCtx {
       asm.excludeFloat(f, x, topYUp, widthPt, heightPt);
     },
     pageHeight: asm.ctx.pageHeight,
+    ...(asm.outlineMarks
+      ? {
+          outline: (seed: OutlineSeed, xLeftPt: number, yTopPt: number) => {
+            asm.markOutline(seed, seed, xLeftPt, yTopPt);
+          },
+        }
+      : {}),
   };
 }
 
@@ -9058,8 +9125,13 @@ function layoutTableCell(
         const drop = above ? contextualDrop(above, block) : KEEP_BOTH;
         if (drop.after) pendingGapPt = 0;
         if (!markOnly) openParagraph(drop.before ? 0 : block.spacingBeforePt);
-        for (const line of keep) {
-          lines.push(line);
+        // A heading in a cell opens an outline item as one in the body does:
+        // Word gives it its level (a Heading 1 in a cell reads as level 1) and
+        // LibreOffice bookmarks it. Its first line carries the item to the
+        // page it is printed on.
+        const seed = keep.length > 0 ? outlineSeedOf(block.resolved, el.paragraph) : undefined;
+        for (const [i, line] of keep.entries()) {
+          lines.push(i === 0 && seed ? { ...line, outline: seed } : line);
           if (!markOnly) contentHeightPt += computeLineHeight(line, block.resolved);
         }
         // The space AFTER is the gap before whatever follows — `openParagraph`
@@ -9314,6 +9386,19 @@ function paragraphStructType(resolved: ResolvedParagraphProperties): StructType 
   return lvl !== undefined ? (`H${String(lvl)}` as StructType) : 'P';
 }
 
+// The document-outline item a paragraph opens (ISO 32000-1 §12.3.3): a heading
+// with something to say. A heading with no words opens none — LibreOffice drops
+// an empty one too, and an item without a title is a blank line in the panel.
+function outlineSeedOf(
+  resolved: ResolvedParagraphProperties,
+  paragraph: Paragraph,
+): OutlineSeed | undefined {
+  const level = outlineLevelOf(resolved);
+  if (level === undefined) return undefined;
+  const title = outlineTitleOf(paragraph.runs);
+  return title !== '' ? { title, level } : undefined;
+}
+
 // The dominant natural language of a paragraph's text tokens (weighted by
 // character count), or undefined when no run carries a w:lang. Drives the
 // tagged-PDF per-element /Lang.
@@ -9429,6 +9514,25 @@ class PageAssembler {
   }
 
   readonly pages: Array<LaidOutPage> = [];
+
+  /**
+   * The document outline's items as they are placed, by what opens each (see
+   * {@link markOutline}); `undefined` when the document asked for none.
+   */
+  outlineMarks: Map<unknown, OutlineMark> | undefined;
+
+  /**
+   * Place an outline item on the page being assembled. One laid again under
+   * the same key keeps its place in the order and takes the new position.
+   *
+   * @param key     What opens the item: a body block's index, a cell line's seed.
+   * @param seed    The item's title and level.
+   * @param xLeftPt The x its destination puts at the window's left edge.
+   * @param yTopPt  The y-up point its destination puts at the window's top.
+   */
+  markOutline(key: unknown, seed: OutlineSeed, xLeftPt: number, yTopPt: number): void {
+    this.outlineMarks?.set(key, { ...seed, pageIdx: this.pages.length, xLeftPt, yTopPt });
+  }
 
   ctx: SectionRenderCtx;
   secIdx = 0;
@@ -10571,9 +10675,13 @@ function paginateSections(
   typesetByWord = false,
   // [MS-DOCX] compatibilityMode — the Word whose page tops the spacing follows.
   compatibilityMode?: number,
+  // Out-param: the document outline's items, by what opens each (see
+  // PdfLayoutAux.outline).
+  outlineMarks?: Map<unknown, OutlineMark>,
 ): Array<LaidOutPage> {
   if (sectionCtxs.length === 0) return [];
   const asm = new PageAssembler(sectionCtxs, builder, notes, bookmarkPositions, backgroundImage);
+  asm.outlineMarks = outlineMarks;
   asm.collapseSpacing = typesetByWord;
   asm.keepsBeforeAtOwnBreak = (compatibilityMode ?? 0) < 15;
 
@@ -10857,6 +10965,15 @@ function paginateSections(
         }
         if (firstLineOfBlock) {
           firstLineOfBlock = false;
+          // ISO 32000-1 §12.3.3 — a heading opens an outline item, jumping to
+          // the top of its first line. The column's left edge rather than the
+          // text's: a viewer that honours /XYZ's left puts it at the window's
+          // edge, and an RTL heading set at the right would otherwise start
+          // off the window to its left.
+          if (outlineMarks && pb.source) {
+            const seed = outlineSeedOf(pb.resolved, pb.source);
+            if (seed) asm.markOutline(blockIdx, seed, asm.colLeft(), asm.cursorY);
+          }
           if (pb.bookmarks && asm.bookmarkPositions) {
             for (const bookmarkName of pb.bookmarks) {
               if (!asm.bookmarkPositions.has(bookmarkName)) {
@@ -11784,6 +11901,7 @@ function emitRowChunk(
       drawNestedBefore(lineIdx);
       textY -= cell.lineGaps?.get(lineIdx) ?? 0;
       if (line.firstLine || paragraphTop === undefined) paragraphTop = textY;
+      if (line.outline) anchored?.outline?.(line.outline, cellX, textY);
       const h = computeLineHeight(line, line.resolved);
       textY -= h;
       // §17.3.1.31 — a paragraph shaded inside a cell is shaded there too, over

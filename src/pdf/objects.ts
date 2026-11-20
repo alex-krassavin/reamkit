@@ -103,6 +103,25 @@ export const deflatedStream = (entries: Record<string, PdfValue>, data: Uint8Arr
   new PdfStream(dict({ ...entries, Filter: name('FlateDecode') }), zlibSync(data));
 
 /**
+ * A PDF text string (ISO 32000-1 §7.9.2.2) — the type of an outline item's
+ * `/Title`, an annotation's `/Contents`, a document-information entry: a
+ * literal string when every character is printable ASCII, the range in which
+ * PDFDocEncoding (Annex D.3, Table D.2) and the serializer's literal agree
+ * byte for byte; UTF-16BE with its byte-order mark otherwise, which "can
+ * encode all Unicode characters" — Kazakh, CJK, Arabic and the supplementary
+ * planes alike.
+ *
+ * A literal string is NOT a UTF-8 one: the serializer writes a JavaScript
+ * string's code units as UTF-8 bytes, which a reader then decodes as
+ * PDFDocEncoding, so "Қазақ" would reach the panel as "ÒšÐ°…".
+ *
+ * @param s The text.
+ * @returns The string as a text string, in its most compact correct form.
+ */
+export const textString = (s: string): string | PdfHexString =>
+  /^[\x20-\x7e]*$/.test(s) ? s : unicodeString(s);
+
+/**
  * Build a PDF Unicode string (UTF-16BE with BOM) suitable for `/Info` or
  * document-level text metadata. Accepts arbitrary Unicode input.
  *

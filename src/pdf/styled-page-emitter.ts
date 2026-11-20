@@ -26,6 +26,7 @@ import type {
 } from '@/layout/page-doc';
 import type {
   LaidOutPdfDocument,
+  OutlineMark,
   PdfAProfile,
   SectionRenderCtx,
   StyledRenderOptions,
@@ -53,7 +54,7 @@ import { embedTtfFont } from '@/pdf/cid-font';
 import { embedAssociatedFile } from '@/pdf/embedded-file';
 import { buildSrgbIccProfile } from '@/pdf/icc-profile';
 import { addImage } from '@/pdf/image-xobject';
-import { dict, name, ref, stream, unicodeString } from '@/pdf/objects';
+import { dict, name, ref, stream, textString, unicodeString } from '@/pdf/objects';
 import { addSignaturePlaceholder } from '@/pdf/signature';
 import { buildXmpPacket } from '@/pdf/xmp';
 import { runBackgroundHex } from '@/core/style-cascade';
@@ -81,7 +82,7 @@ function washItems(
 // options — never the layout options (oop-design §4.1: the seam must not leak).
 type EmitOptions = Pick<
   StyledRenderOptions,
-  'attachments' | 'info' | 'language' | 'pdfUA' | 'signaturePlaceholder'
+  'attachments' | 'info' | 'language' | 'outline' | 'pdfUA' | 'signaturePlaceholder'
 >;
 
 /**
@@ -524,9 +525,9 @@ function assembleStyledPdf(
     namesTreeEntries['EmbeddedFiles'] = ref(embeddedFilesRef.id);
   }
 
-  // §12.3.2.4 string destinations: /Names /Dests maps each referenced
-  // bookmark name to an explicit [page /XYZ] destination (sorted → byte
-  // determinism). Unresolvable anchors (no such bookmark) simply have no
+  // ISO 32000-1 §12.3.2.3 string destinations: /Names /Dests maps each
+  // referenced bookmark name to an explicit [page /FitH] destination (sorted →
+  // byte determinism). Unresolvable anchors (no such bookmark) simply have no
   // entry — viewers treat the GoTo as a no-op.
   const bookmarkDests = laid.pdf.bookmarks;
   const destNames = [...referencedAnchors]
@@ -547,6 +548,19 @@ function assembleStyledPdf(
   }
   if (Object.keys(namesTreeEntries).length > 0) {
     catalogEntries['Names'] = dict(namesTreeEntries);
+  }
+  // ISO 32000-1 §12.3.3 — the document outline, from the headings the layout
+  // met (absent when the caller asked for none).
+  const outlineSettings = typeof options.outline === 'object' ? options.outline : {};
+  const outlinesRef =
+    options.outline !== false && laid.pdf.outline
+      ? buildOutline(doc, laid.pdf.outline, pageRefs, outlineSettings.maxLevel)
+      : undefined;
+  if (outlinesRef) {
+    catalogEntries['Outlines'] = ref(outlinesRef.id);
+    // §7.7.2 Table 28 — show the panel with the document only when asked:
+    // the default, UseNone, leaves it to the viewer (and to the reader).
+    if (outlineSettings.openPanel === true) catalogEntries['PageMode'] = name('UseOutlines');
   }
   // Digital signature placeholder (§12.8): an invisible /Sig widget on page 1,
   // an /AcroForm in the catalog, and a signature dict with placeholder
@@ -572,6 +586,97 @@ function assembleStyledPdf(
       ...(pdfaProfile ? { version: pdfaProfile.version, id: true } : {}),
     },
   };
+}
+
+/** One outline item while the tree is built: its mark, its dictionary, its children. */
+interface OutlineNode {
+  readonly mark: OutlineMark;
+  readonly dict: PdfDict;
+  readonly ref: PdfRef;
+  readonly kids: Array<OutlineNode>;
+}
+
+/** §17.3.1.20 — nine outline levels, the most a heading can carry. */
+const MAX_OUTLINE_LEVEL = 9;
+
+/**
+ * Emit the document outline (ISO 32000-1 §12.3.3): the outline dictionary
+ * (Table 152) over one item dictionary (Table 153) per mark, nested the way
+ * LibreOffice nests its export — an item hangs under the nearest item before
+ * it of a SHALLOWER level, so a Heading 3 straight after a Heading 1 is that
+ * heading's child, and a Heading 2 before any Heading 1 stands at the top.
+ *
+ * Every item is open, as LibreOffice writes them: an item's `/Count` is the
+ * number of its descendants, all visible, and the outline's own `/Count` the
+ * number of items. A leaf has no `/Count` — Table 153 asks for one only of an
+ * item with descendants.
+ *
+ * Each destination is `[page /XYZ left top 0]` (Table 151): the heading's
+ * first line at the top of the window, the column's left edge at its left,
+ * and the zoom — 0, "the same meaning as a null value" — left as the reader
+ * has it. LibreOffice writes the same form; the `/FitH` of the document's own
+ * links would change the reader's zoom at every click in the panel.
+ *
+ * @param doc      The document the objects are added to.
+ * @param marks    The outline's items in document order.
+ * @param pageRefs The page objects, by 0-based page index.
+ * @param maxLevel The deepest level kept, 1–9 (default 9).
+ * @returns The outline dictionary's reference, or `undefined` when no item is left.
+ */
+function buildOutline(
+  doc: PdfDocument,
+  marks: ReadonlyArray<OutlineMark>,
+  pageRefs: ReadonlyArray<PdfRef>,
+  maxLevel: number = MAX_OUTLINE_LEVEL,
+): PdfRef | undefined {
+  const deepest = Number.isFinite(maxLevel)
+    ? Math.max(1, Math.min(MAX_OUTLINE_LEVEL, Math.floor(maxLevel)))
+    : MAX_OUTLINE_LEVEL;
+  const kept = marks.filter((m) => m.level <= deepest && pageRefs[m.pageIdx] !== undefined);
+  if (kept.length === 0) return undefined;
+  const rootDict = dict({ Type: name('Outlines') });
+  const rootRef = doc.add(rootDict);
+  const top: Array<OutlineNode> = [];
+  const open: Array<OutlineNode> = [];
+  const round = (v: number): number => Math.round(v * 100) / 100;
+  for (const mark of kept) {
+    while (open.length > 0 && open[open.length - 1]!.mark.level >= mark.level) open.pop();
+    const parent = open[open.length - 1];
+    const itemDict = dict({
+      Title: textString(mark.title),
+      Parent: ref(parent ? parent.ref.id : rootRef.id),
+      Dest: [
+        ref(pageRefs[mark.pageIdx]!.id),
+        name('XYZ'),
+        round(mark.xLeftPt),
+        round(mark.yTopPt),
+        0,
+      ],
+    });
+    const node: OutlineNode = { mark, dict: itemDict, ref: doc.add(itemDict), kids: [] };
+    (parent ? parent.kids : top).push(node);
+    open.push(node);
+  }
+  // Chain one level's items and hang them off their owner; the number of items
+  // this makes visible comes back for the owner's /Count.
+  const hang = (owner: PdfDict, kids: ReadonlyArray<OutlineNode>): number => {
+    owner.set('First', ref(kids[0]!.ref.id));
+    owner.set('Last', ref(kids[kids.length - 1]!.ref.id));
+    let visible = 0;
+    kids.forEach((kid, i) => {
+      if (i > 0) kid.dict.set('Prev', ref(kids[i - 1]!.ref.id));
+      if (i < kids.length - 1) kid.dict.set('Next', ref(kids[i + 1]!.ref.id));
+      visible++;
+      if (kid.kids.length > 0) {
+        const below = hang(kid.dict, kid.kids);
+        kid.dict.set('Count', below);
+        visible += below;
+      }
+    });
+    return visible;
+  };
+  rootDict.set('Count', hang(rootDict, top));
+  return rootRef;
 }
 
 const DEFAULT_PRODUCER = 'Ream';

@@ -263,6 +263,25 @@ export interface Line {
    * adds nothing.
    */
   readonly metricTextHeightPt?: number;
+  /**
+   * The document-outline item this line opens: the first line of a heading in
+   * a table cell. Carried on the line because a cell's lines move as they are
+   * — a row split across pages hands them to the chunk that prints them — and
+   * the item has to be placed where that is.
+   */
+  readonly outline?: OutlineSeed;
+}
+
+/**
+ * What a heading puts in a document's navigation outline — a PDF's bookmarks
+ * (ISO 32000-1 §12.3.3) — before it is placed: the text the item shows and
+ * the level it sits at.
+ */
+export interface OutlineSeed {
+  /** The text the item shows, on one line. */
+  readonly title: string;
+  /** Its level, 1–9: a deeper item hangs under the nearest shallower one before it. */
+  readonly level: number;
 }
 
 /** An image bound into a {@link LaidOutDocument}: its resource name plus the decoded/validated bytes. */
