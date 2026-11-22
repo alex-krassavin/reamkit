@@ -89,7 +89,13 @@ describe('parseRunProperties', () => {
   it('§17.3.2.6 — `auto` is the automatic colour, and overrides the style', () => {
     // Not "inherit": a run that names it takes black back from a style that
     // lends it something else.
+    // And it stays the AUTOMATIC colour, which Word sets white over a dark
+    // background, where a stated 000000 stays black (issue #137).
     expect(parseRunProperties(parseRpr('<w:rPr><w:color w:val="auto"/></w:rPr>'))).toEqual({
+      colorHex: '000000',
+      colorAuto: true,
+    });
+    expect(parseRunProperties(parseRpr('<w:rPr><w:color w:val="000000"/></w:rPr>'))).toEqual({
       colorHex: '000000',
     });
   });

@@ -9,6 +9,8 @@ import { collectPageVectors } from './vector';
 import { extractPageText } from './text';
 import { reconstructByLayout } from './layout';
 import { reconstructTaggedPdf } from './tagged';
+import { readPdfOutline, withSourceOutline } from './outline';
+import type { SourceOutlineItem } from './outline';
 import type { PdfVector } from './vector';
 import type { StreamFilters } from './document';
 import type { DocumentReader, ReadResult } from '@/core/ir/adapters';
@@ -184,7 +186,26 @@ function readAs(
   }
   // Per-image losses from EP6 (undecodable colour spaces, dropped alpha, …).
   losses.push(...reconstruction.losses);
-  return { doc: reconstruction.doc, losses };
+  // ISO 32000-1 §12.3.3 — the file's own bookmarks, hung on the pages they
+  // jump to, for a PDF written from this one to carry them again. An outline
+  // that cannot be read costs the bookmarks, never the document.
+  let outline: Array<SourceOutlineItem> = [];
+  try {
+    outline = readPdfOutline(file);
+  } catch {
+    losses.push({
+      severity: 'dropped',
+      feature: FEATURES.text,
+      detail: 'the document outline (bookmarks) could not be read',
+    });
+  }
+  const doc = withSourceOutline(
+    reconstruction.doc,
+    outline,
+    reconstruction.pageStarts ?? [],
+    reading === 'positional',
+  );
+  return { doc, losses };
 }
 
 /**

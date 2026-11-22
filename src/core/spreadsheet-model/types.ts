@@ -430,6 +430,13 @@ export interface XlsxFont {
    * theme part writes Calibri this way and is set in Office 2023's Aptos Narrow.
    */
   readonly scheme?: 'major' | 'minor';
+  /**
+   * §18.4.1 `<charset>` — the Windows character set the font is for: 128
+   * Shift-JIS, 129 Hangul, 134 GB 2312, 136 Big5. A workbook states no
+   * language anywhere else, and this is what says which drawing of an
+   * ideograph its cells are in (see `langOfCharset`).
+   */
+  readonly charset?: number;
 }
 
 /** §18.8.20 `<fill>` — one fill record: pattern type plus foreground/background colours. */
@@ -947,6 +954,8 @@ export interface SheetRichRun {
   readonly vertAlign?: 'superscript' | 'subscript';
   /** §18.4.5 `<rFont>` — the run's typeface, where the producer names one. */
   readonly fontName?: string;
+  /** §18.4.1 `<charset>` — the character set the run's font is for (see {@link XlsxFont.charset}). */
+  readonly charset?: number;
 }
 
 /**

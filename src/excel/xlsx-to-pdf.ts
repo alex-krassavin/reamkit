@@ -123,6 +123,8 @@ function prepareXlsxStyledRender(
   const { doc: flow } = readXlsx(xlsx, {
     ...(options.now !== undefined ? { now: options.now } : {}),
     digitWidthPt,
+    // A PDF's outline names each sheet, as LibreOffice's export does.
+    ...(options.outline !== false ? { outlineEntries: true } : {}),
   });
 
   const {

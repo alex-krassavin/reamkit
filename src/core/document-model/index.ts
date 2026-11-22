@@ -68,6 +68,7 @@ export type {
   PictureBullet,
   PictureOutline,
   NumberingReference,
+  OutlineEntry,
   PageMargins,
   PageSize,
   Paragraph,

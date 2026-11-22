@@ -398,6 +398,8 @@ export class Ream {
         '0',
         DEFAULT_WORKBOOK_FONT_PT,
       ),
+      // A PDF's outline names each sheet, as LibreOffice's export does.
+      ...(to === 'pdf' && options.outline !== false ? { outlineEntries: true } : {}),
     };
 
     const {

@@ -54,6 +54,7 @@ export interface DocParaFormat {
   readonly keepNext?: boolean; // sprmPFKeepFollow
   readonly keepLines?: boolean; // sprmPFKeep
   readonly pageBreakBefore?: boolean; // sprmPFPageBreakBefore
+  readonly outlineLevel?: number; // sprmPOutLvl — 0–8 the zero-based level, 9 body text
   readonly cellEdgesTwips?: ReadonlyArray<number>; // sprmTDefTable cell boundaries
   // Per-cell TC80 descriptors (DOC-11): borders (each a Brc80) + vertical merge.
   readonly cellTc?: ReadonlyArray<{
@@ -599,6 +600,10 @@ function buildPapxInFkp(grpprl: Uint8Array, istd: number): Uint8Array {
 // One style of the fixture's style sheet.
 export interface DocStyleDef {
   readonly istd: number;
+  // StdfBase.sti — which built-in style this is (1–9: "heading 1" … "heading
+  // 9"); absent ⇒ Normal's 0 at istd 0, and a user-defined style's 0x0FFE at
+  // any other istd, so a fixture style is no built-in heading unless it says so.
+  readonly sti?: number;
   readonly kind: 'paragraph' | 'character';
   readonly base?: number; // istdBase; absent ⇒ based on none
   readonly para?: Omit<DocParaFormat, 'length'>;
@@ -608,7 +613,7 @@ export interface DocStyleDef {
 // §2.9.271 STSH — a u16 cbStshi and an 18-byte Stshi (cstd, cbSTDBaseInFile 10,
 // zeros, then ftcAsci, ftcFE and ftcOther), 20 bytes with an ftcBi after them,
 // then a u16 cbStd and the STD for each istd up to the last one defined (0 for
-// none). An STD: a 10-byte Stdf (sti, stk | istdBase << 4,
+// none). An STD: a 10-byte Stdf (sti, then stk | istdBase << 4,
 // cupx | istdNext << 4, bchUpe, grfstd), the name as an Xstz, then its UPXs —
 // a paragraph style's PAPX (istd + grpprl) and CHPX, a character style's CHPX —
 // each a u16 cbUpx and the bytes, padded to an even length.
@@ -648,7 +653,7 @@ function buildStsh(
       : [buildChpxGrpprl({ length: 0, ...st.chars })];
     const name = `S${istd}`;
     const std: Array<number> = [
-      ...u16(istd & 0x0fff),
+      ...u16((st.sti ?? (istd === 0 ? 0 : 0x0ffe)) & 0x0fff),
       ...u16((para ? 1 : 2) | ((st.base ?? 0x0fff) << 4)),
       ...u16(upxs.length | (istd << 4)),
       ...u16(0),
@@ -737,6 +742,7 @@ function buildPapxGrpprl(run: DocParaFormat): Uint8Array {
   if (run.keepNext !== undefined) sprm(0x2406, run.keepNext ? 1 : 0); // sprmPFKeepFollow
   if (run.keepLines !== undefined) sprm(0x2405, run.keepLines ? 1 : 0); // sprmPFKeep
   if (run.pageBreakBefore !== undefined) sprm(0x2407, run.pageBreakBefore ? 1 : 0); // sprmPFPageBreakBefore
+  if (run.outlineLevel !== undefined) sprm(0x2640, run.outlineLevel & 0xff); // sprmPOutLvl
   // sprmTDefTable (a long-operand sprm) goes before the table flags so the reader
   // must skip its 2-byte-length operand correctly to still reach sprmPFTtp.
   if (run.cellEdgesTwips) {

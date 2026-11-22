@@ -39,6 +39,11 @@ import { EMPTY_STYLE_SHEET, resolveBodyStyles } from '@/core/style-cascade';
 export interface Reconstruction {
   readonly doc: FlowDoc;
   readonly losses: ReadonlyArray<Loss>;
+  /**
+   * Where in `doc.body` each source page's elements begin, by 0-based page:
+   * what a source outline's bookmarks are hung on (see `./outline`).
+   */
+  readonly pageStarts?: ReadonlyArray<number>;
 }
 
 /**

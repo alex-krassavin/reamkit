@@ -88,6 +88,13 @@ export interface RunProperties {
   readonly smallCaps?: boolean;
   readonly fontSizePt?: Pt;
   readonly colorHex?: string;
+  /**
+   * §17.3.2.6 — the colour is the AUTOMATIC one (`w:color w:val="auto"`, with
+   * `colorHex` 000000; on a resolved run, also a run no layer gave a colour).
+   * Word draws it black, or white over a dark background (see
+   * `resolveAutoTextColors`); a stated 000000 stays black whatever is behind.
+   */
+  readonly colorAuto?: boolean;
   readonly fontFamily?: FontFamilyMap;
   readonly verticalAlign?: VerticalAlign;
   /**
@@ -101,10 +108,25 @@ export interface RunProperties {
    */
   readonly lang?: string;
   /**
+   * The language the run's EAST ASIAN text is written in, as a language tag
+   * (`"zh-CN"`, `"ja-JP"`): §17.3.2.20 `w:lang @w:eastAsia`, DrawingML's
+   * §21.1.2.3.9 `a:rPr @lang` (or `@altLang`) where it names one, a
+   * spreadsheet font's §18.4.1 `charset`. Unified Han is one character in
+   * Chinese, Japanese and Korean and a different drawing in each; this says
+   * which one the run is in.
+   */
+  readonly eastAsianLang?: string;
+  /**
    * §17.3.2.32 `w:rPr/w:shd` — the background painted behind the run's own
    * glyphs, already blended from the pattern, its colour and the fill.
    */
   readonly shadingColorHex?: string;
+  /**
+   * §17.3.2.15 `w:highlight` — the marker pen's colour behind the run. Where
+   * the run is shaded as well the highlight is what shows; but an automatic
+   * colour is judged by the shading alone (see `resolveAutoTextColors`).
+   */
+  readonly highlightColorHex?: string;
   /**
    * §17.3.2.35 `w:rPr/w:spacing` — extra space between the run's characters
    * (negative tightens). Word states it in twentieths of a point.
@@ -579,6 +601,20 @@ export interface Run {
    * stretches it in a justified line.
    */
   readonly listMarkerSpace?: true;
+  /**
+   * §18.8.31 — the run is a blank a spreadsheet number format leaves: what `?`
+   * keeps for a digit it has no use for, what `_x` keeps for x, a space the
+   * format writes. It is as wide as this text in the run's font, nothing is
+   * drawn in it, and a line keeps it at either end, where a space is dropped.
+   * `text` is what a reader of plain text takes it for, a space.
+   */
+  readonly blankWidthOf?: string;
+  /**
+   * §18.8.31 `*x` — the run is x repeated across whatever room its spreadsheet
+   * cell has left, which only a medium that knows the cell's width can do.
+   * `text` is empty, so every other medium writes nothing for it.
+   */
+  readonly fillChar?: string;
   /** When set, the run renders this image inline in the line; `text` is ignored. */
   readonly inlineImage?: InlineImage;
   /** When set, the run is an inline OfficeMath object; `text` is ignored. */
@@ -606,6 +642,51 @@ export interface Paragraph {
    * is the paragraph's first line.
    */
   readonly bookmarks?: ReadonlyArray<string>;
+  /**
+   * The entries this paragraph opens in the document's navigation outline — a
+   * PDF's bookmarks (ISO 32000-1 §12.3.3) — when the document STATES its
+   * outline rather than leaving it to its headings: the page that starts a
+   * worksheet, under the sheet's name; the page that starts a slide, under its
+   * title; the place a source PDF's own bookmark jumps to. A document that
+   * states any entry has those entries for its outline, and its headings open
+   * none — a PDF's own bookmarks and the headings read out of its pages would
+   * otherwise each list the chapters once.
+   */
+  readonly outlineEntries?: ReadonlyArray<OutlineEntry>;
+}
+
+/**
+ * An entry in a document's navigation outline that a paragraph stands for
+ * (see {@link Paragraph.outlineEntries}).
+ */
+export interface OutlineEntry {
+  /** The text the entry shows. */
+  readonly title: string;
+  /** Its level, 1–9: a deeper entry hangs under the nearest shallower one before it. */
+  readonly level: number;
+  /** Whether the entry stands open, its children shown. Absent ⇒ open. */
+  readonly open?: boolean;
+  /**
+   * The height on its page the entry jumps to, y-up in points, where the
+   * source names one and the page stands as the source drew it (a PDF read as
+   * a page). Absent ⇒ the top of the paragraph's first line.
+   */
+  readonly topPt?: number;
+  /**
+   * The entry's place in the outline the source states, where that order is
+   * not the order of the pages: a PDF's bookmarks are listed as its author
+   * listed them, wherever on the pages each one jumps. Absent ⇒ where the
+   * paragraph stands.
+   */
+  readonly order?: number;
+  /**
+   * The URI the entry opens instead of a place in the document: a source
+   * PDF's bookmark whose action is a URI action (ISO 32000-1 §12.6.4.7). Such
+   * an entry jumps to no page — the paragraph it rides gives it only its place
+   * among the others (with `order`), and `topPt` means nothing for it. Only a
+   * PDF's outline can hold one; the other writers leave it out.
+   */
+  readonly uri?: string;
 }
 
 /**
@@ -797,6 +878,21 @@ export interface Style {
   readonly type: StyleType;
   readonly basedOn?: string;
   readonly isDefault: boolean;
+  /**
+   * §17.7.4.9 `w:name` — the style's primary name. Word knows its built-in
+   * styles by this name, never by the id: a style named "heading 5" under the
+   * id `X5` is its Heading 5, and one named "Fancy" under the id `Heading6` is
+   * body text.
+   */
+  readonly name?: string;
+  /**
+   * The outline level (0–8) a built-in heading style ("heading 1" … "heading
+   * 9") FIXES. A paragraph written in such a style takes this level whatever
+   * its own `w:outlineLvl` says (Word reads a Heading 2 paragraph with a direct
+   * body-text level 9 as level 2), and whatever the style's own `w:outlineLvl`
+   * says (a "heading 4" that states none is level 4 all the same).
+   */
+  readonly builtInOutlineLevel?: number;
   readonly runProperties: RunProperties;
   readonly paragraphProperties: ParagraphProperties;
   /** Table styles only (§17.7.6): the base layer and conditional overrides. */
@@ -847,7 +943,7 @@ export interface Border {
   readonly spacePt?: Pt;
 }
 
-/** §17.4.39 `w:tcBorders` — the per-edge borders of a cell (or table). */
+/** §17.4.67 `w:tcBorders` — the per-edge borders of a cell (or, §17.4.39 `w:tblBorders`, a table). */
 export interface CellBorders {
   readonly top?: Border;
   readonly right?: Border;
@@ -1032,6 +1128,13 @@ export interface CellProperties {
    * recognisably that word.
    */
   readonly hashOnOverflow?: boolean;
+  /**
+   * The cell shows a row of `#` across its box, whatever its text says: a
+   * number no section of a conditional format admits (§18.8.31), which Excel
+   * shows that way however wide the column. The text stays the number, for a
+   * medium that has no box.
+   */
+  readonly showHashes?: boolean;
   /**
    * Where the cell's content sits in a box taller than itself. A spreadsheet
    * cell defaults to `'bottom'` — §18.8.1, and both Excel and LibreOffice do it

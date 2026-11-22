@@ -12,6 +12,7 @@ import type { PoNode } from '@/core/po-helpers';
 
 import { resolveColorNode } from '@/core/drawingml/colors';
 import { resolveThemeFont } from '@/core/drawingml/theme-parser';
+import { hanFaceOfLang } from '@/core/fonts/scripts';
 import { pt } from '@/core/ir';
 import { poAttr, poChildren, poIntAttr, poIs } from '@/core/po-helpers';
 
@@ -128,6 +129,7 @@ export function rPrToRunProps(
     return v === undefined ? undefined : isTrue(v);
   };
   const [b, i] = [flag('b'), flag('i')];
+  const eastAsianLang = drawingEastAsianLang(poAttr(rPr, 'lang'), poAttr(rPr, 'altLang'));
   return {
     ...(b !== undefined ? { bold: b } : {}),
     ...(i !== undefined ? { italic: i } : {}),
@@ -143,8 +145,27 @@ export function rPrToRunProps(
     // from the document's defaults: tdf143476_lockedCanvas_position.docx set
     // the "ЮНЫЕ" of its Monotype Corsiva WordArt in Calibri.
     ...(typeface ? { fontFamily: { ascii: typeface, hAnsi: typeface } } : {}),
+    ...(eastAsianLang !== undefined ? { eastAsianLang } : {}),
     ...capsOf(poAttr(rPr, 'cap')),
   };
+}
+
+// §21.1.2.3.9 `@lang` is the language of the run, and `@altLang` the other one
+// PowerPoint keeps beside it. In a Chinese deck the two trade places: the
+// Chinese runs of bug64693.pptx say `lang="zh-CN" altLang="en-US"`, the Latin
+// "demo" of copy-slide-demo.pptx `lang="en-US" altLang="zh-CN"`. So the run's
+// East Asian language is whichever of the two is East Asian, `@lang` first,
+// and `@lang` itself when neither is: a run that states a Latin language
+// still overrides an East Asian one it inherits. That is not always the
+// truth — with_japanese.pptx writes its one Japanese sentence as `en-US` and
+// nothing else — and such a run is left to the document (see `scriptsInFlow`).
+function drawingEastAsianLang(
+  lang: string | undefined,
+  altLang: string | undefined,
+): string | undefined {
+  if (lang !== undefined && hanFaceOfLang(lang) !== undefined) return lang;
+  if (altLang !== undefined && hanFaceOfLang(altLang) !== undefined) return altLang;
+  return lang;
 }
 
 // §21.1.2.2.7 `@cap` — the text is DISPLAYED in capitals, whatever it stores.

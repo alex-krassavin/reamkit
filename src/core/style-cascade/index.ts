@@ -5,6 +5,7 @@ export {
   resolveHeadersFootersStyles,
   resolveParagraphProperties,
   resolveRunProperties,
+  runBackgroundHex,
 } from '@/core/style-cascade/resolver';
 export type {
   ResolvedRunProperties,
@@ -12,3 +13,8 @@ export type {
 } from '@/core/style-cascade/types';
 export { DEFAULT_RESOLVED_RUN, DEFAULT_RESOLVED_PARAGRAPH } from '@/core/style-cascade/types';
 export { resolveTableStyles } from '@/core/style-cascade/table';
+export {
+  isDarkBehindAutoText,
+  resolveAutoTextColors,
+  resolveAutoTextColorsOfEach,
+} from '@/core/style-cascade/auto-text-color';

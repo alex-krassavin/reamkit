@@ -149,6 +149,8 @@ export function richRun(text: string, rPr: unknown): SheetRichRun {
   if (vert === 'superscript' || vert === 'subscript') out.vertAlign = vert;
   const face = attrStr(p['rFont'], 'val');
   if (face) out.fontName = face;
+  const charset = attrNum(p['charset'], 'val');
+  if (charset !== undefined && Number.isInteger(charset)) out.charset = charset;
   return out;
 }
 

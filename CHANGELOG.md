@@ -3,6 +3,192 @@
 All notable changes to **Ream** (`reamkit`) are documented here. The project
 follows [Semantic Versioning](https://semver.org/).
 
+## 1.36.0
+
+A release about the bookmarks panel. A PDF Ream writes now opens with an
+outline: a Word document's headings, a workbook's sheets, a deck's slides,
+or a source PDF's own bookmarks. The text a PDF's links, notes and bookmarks
+carry now reaches the reader as written, in any script. With it come Excel's
+number formats laid out as Excel lays them out, and Word's tables painted and
+carried across pages as Word does it. There are also fixes contributed by
+HongyiHank (@HongyiHank): a slide's letter spacing (#129), and the root cause
+behind #131.
+
+Each rule was measured on probe documents of our own: in Word, Excel and
+PowerPoint for Mac, in LibreOffice, and in the PDF readers of macOS and MuPDF.
+
+### Added
+
+- **A PDF has a document outline** (#138). The bookmarks panel (ISO 32000-1
+  §12.3.3) lists what the document is made of. Each entry jumps to the top of
+  its first line and keeps the reader's zoom. The entries are:
+  - **A Word document's headings**, `.docx` and `.doc`, at every outline level
+    from 1 to 9. A built-in Heading style is known by Word's name for it,
+    whatever id the document gives it, and it keeps its level, as in Word. A
+    paragraph's own `w:outlineLvl` gives the other levels. Entries nest as
+    LibreOffice nests them, all open. Headings in table cells count. Headings
+    in headers, footers, text boxes and notes don't, nor do empty headings,
+    Title or Subtitle.
+  - **A workbook's sheets**: one entry per printed sheet, named after the
+    sheet, at its first page.
+  - **A deck's slides**: one entry per slide, the words of its title, else
+    "Slide N".
+  - **A source PDF's own bookmarks**, read and written again with their
+    titles, nesting and open or closed state. A bookmark that opens a web
+    address keeps its place and its address.
+
+  Titles are PDF text strings, so Kazakh, Chinese, Arabic or Hebrew read in
+  the panel as written. A list number stays in the title; a soft hyphen is
+  dropped. The outline is on by default:
+
+  - `outline: false` writes none.
+  - `outline: { maxLevel: 3 }` keeps levels 1–3.
+  - `outline: { openPanel: true }` asks the reader to open the panel with the
+    document. Without it, the reader decides.
+
+  `PdfOutlineOptions` is exported from the package root.
+
+- **A tagged PDF's bookmark points at its heading.** In tagged output
+  (`tagged`, PDF/UA, PDF/A level a), every entry a heading opens names that
+  heading's structure element (`/SE`). Assistive technology can go from the
+  bookmark to the heading itself, not only to a place on the page. Sheets,
+  slides and a source PDF's bookmarks have no element of their own and name
+  none.
+
+### Fixed
+
+- **A link's, a note's and a signature's text reads as written.** These
+  strings were written as UTF-8 bytes inside a PDF literal string, which a
+  reader decodes as PDFDocEncoding:
+  - a link's description;
+  - a sticky note's text and author;
+  - the signer's name, reason, location and contact.
+
+  macOS Preview showed "Қазақ тілі 中文" as mojibake. They are now PDF text
+  strings. ASCII text is written byte for byte as before.
+
+- **A link to a non-ASCII address opens that address.** `/URI` must be 7-bit
+  ASCII (§12.6.4.7), and a non-ASCII href went out as raw UTF-8. Preview
+  followed "/wiki/Қазақ_тілі" to a wrong page and dropped a link to
+  "пример.рф" altogether. The path, query and fragment are now percent-encoded
+  UTF-8 and the host is its IDNA name: the URI a browser follows from the same
+  href. HTML and DOCX keep the address as written.
+
+- **A right-to-left link keeps its word order.** A link's description was
+  gathered in the order its line is drawn, so on an Arabic or Hebrew line its
+  words came out backwards. Two links on one line were also listed, and
+  visited by Tab, in reverse. Both now follow the order the text was written.
+
+- **PDF → PDF keeps a bookmark that opens a web address.** Such a bookmark
+  (§12.6.4.7) used to turn into a jump to the next bookmark's page, or vanish
+  when it came after the last of them. `freeculture.pdf` lost 4 of its 58. It
+  now keeps its place, its level and its children:
+  - A relative address resolves against the document's `/URI /Base`.
+  - A non-ASCII address goes out as ASCII, like a link's.
+  - An address outside the link allowlist (http, https, mailto) keeps the
+    bookmark, which then does nothing.
+
+- **Excel's number formats lay out as Excel lays them out** (#132). This was
+  measured on 365 cells of our own probe workbooks, each read back as Excel
+  for Mac displays it:
+  - **A minus sign leads the whole cell.** `$#,##0` showed -5 as `$-5`; it now
+    shows `-$5`. A value that rounds to zero shows no sign.
+  - **Text between digit placeholders stays in place.** `000-00-0000` and
+    `(###) ###-####` give `123-45-6789` and `(555) 123-4567`.
+  - **The decimal point is always written.** `#.##` shows 1 as `1.`.
+  - **A fill fills its cell.** `"$"* #,##0` puts `$` against the left edge and
+    the number against the right, in PDF, SVG and HTML.
+  - **Blanks keep their width.** `?` leaves a digit's room and `_)` a
+    parenthesis's, so decimal points and fractions line up down a column.
+  - **A value no section admits fills the cell with `#`.** So does text too
+    wide beside a fill, as in Excel.
+  - **A section for negatives only writes no minus sign.**
+  - **A text cell shows its format's text section.** `"["@"]"` brackets it,
+    `_(@_)` pads it, and `;;;` hides it.
+  - **Smaller fixes in the same grammar:**
+    - a quoted `%`;
+    - scaling commas;
+    - `?` in fractions;
+    - `00/00`;
+    - scientific mantissas;
+    - `General` with text around it;
+    - brackets inside quotes.
+
+- **A table's own borders override its style one side at a time** (#135). A
+  table that turned off its frame and verticals over Table Grid also lost the
+  style's rules between its rows. Word and LibreOffice draw those rules, and
+  now so does Ream.
+
+- **A table in a text box keeps its shading and its rules** (#136). They were
+  painted with the page's own tables, before every shape, so the box's fill
+  covered them. The same held for a shaded paragraph in a text box.
+  - A shaded paragraph in a table cell is shaded; it was not drawn at all.
+  - Shading patterns such as `pct25` are blended over the fill. `nil` paints
+    nothing.
+  - A run shaded white is painted white.
+  - In HTML, paragraph shading, run shading and highlights are drawn.
+  - DOCX → DOCX writes a highlight back as a highlight.
+
+- **Automatic text colour turns white over a dark background** (#137), as in
+  Word. The background is the first of these that is set:
+  1. the run's shading;
+  2. the paragraph's shading;
+  3. the cell's shading;
+  4. the text box's fill.
+
+  The switch is at Rec. 601 luma below 59.77 of 255, measured in Word. A
+  highlight doesn't count.
+
+- **A table row of fixed height keeps it on the next page** (#139). The first
+  row of every continued page came out as tall as its text alone: 15 pt for a
+  34 pt row. As in Word:
+  - **Exact rows.** An exact row is never broken across pages. One taller
+    than a page gets a page of its own.
+  - **At-least rows.** An "at least" row breaks only where the room left
+    holds its minimum, and the part carried over keeps that minimum.
+  - **Rows with no height rule.** A row broken across pages starts its
+    carried-over part at the top of the new page.
+  - **Borders.** A row's border takes room on top of its height rule.
+
+- **A Chinese or Japanese paragraph no longer starts with a one-character
+  line** (#131). HongyiHank reported this with the root cause. A paragraph
+  where every possible line breaking holds a line with nothing to stretch was
+  laid out from its end, leaving the remainder on the first line
+  (`这` / `是一个非常长的中…`). Such paragraphs are runs of CJK text, or a long
+  word alone in a narrow cell. They now break first-fit, as PowerPoint and
+  Word set them. This reaches PPTX, DOCX and XLSX alike.
+
+- **Chinese and Japanese in one document each get their own face.** A run's
+  ideographs are drawn in the face of the run's language: Noto Sans SC for
+  `zh`, JP for `ja`, KR for `ko`. One kana anywhere used to send every
+  ideograph to Noto Sans JP, which lacks simplified forms such as 这 and 们.
+  A deck with a Chinese slide drew it with blanks. The language is read from
+  `w:lang`, from `a:rPr @lang`/`@altLang`, and from a spreadsheet font's
+  `charset`.
+
+- **A slide's letter spacing and unwrapped boxes** (#129, by HongyiHank). A
+  run's `spc` tracking was never read, and a box marked `wrap="none"` wrapped
+  anyway. Both now reach the page.
+
+### Changed
+
+- **A PDF with headings, sheets or slides carries an outline.** This is new
+  output by default; `outline: false` writes the PDF without it, as before.
+
+- **A heading in a table cell is a heading in a tagged PDF.** It is now its own
+  H1–H6 element under the cell's TD or TH, and the cell's other paragraphs
+  are a P each. Before, it was text inside the cell's single P. Cells without
+  a heading are unchanged.
+
+### Internals
+
+- fast-xml-parser, Ream's XML parser, is at 5.12.0 (from 5.7.3), and the
+  documentation site's Astro is at 7.4.12.
+- The byte gate's workbook hashes change because a workbook's PDF now carries
+  its sheets in the outline.
+- The Han tests run on Noto Sans SC and JP cut down with hb-subset (OFL-1.1,
+  see the fixtures' NOTICE.md).
+
 ## 1.35.1
 
 A patch about lists and tabs, set where Word sets them. Every case was

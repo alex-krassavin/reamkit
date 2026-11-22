@@ -69,9 +69,36 @@ import { headingLevelOf } from '@/core/outline';
 import { resolveFamilyStyle } from '@/core/fonts/remote-fonts';
 import {
   EMPTY_STYLE_SHEET,
+  resolveAutoTextColors,
+  resolveAutoTextColorsOfEach,
   resolveParagraphProperties,
   resolveRunProperties,
+  runBackgroundHex,
 } from '@/core/style-cascade';
+
+/**
+ * §17.3.2.6 — a Word document's automatic text colour as Word chooses it,
+ * white over a dark background (see `resolveAutoTextColors`): a browser draws
+ * text with no colour of its own black on whatever the cell, the box or the
+ * paragraph paints, and issue #137's header cell came out black on 25397D.
+ * Other sources state their colours, and are left as they are.
+ *
+ * @param flow The document.
+ * @returns The document with those colours stated.
+ */
+function withAutoTextColors(flow: FlowDoc): FlowDoc {
+  if (flow.typesetBy !== 'word') return flow;
+  return {
+    ...flow,
+    body: resolveAutoTextColors(flow.body, EMPTY_STYLE_SHEET),
+    ...(flow.footnotes
+      ? { footnotes: resolveAutoTextColorsOfEach(flow.footnotes, EMPTY_STYLE_SHEET) }
+      : {}),
+    ...(flow.endnotes
+      ? { endnotes: resolveAutoTextColorsOfEach(flow.endnotes, EMPTY_STYLE_SHEET) }
+      : {}),
+  };
+}
 
 /**
  * Render a {@link FlowDoc} to a self-contained HTML document (ir-design §7).
@@ -84,10 +111,11 @@ import {
  * out of scope (reported as losses): inline math and headers/footers (no fixed
  * pages to band them onto). Page-break hints map to CSS `break-before`.
  *
- * @param flow The format-neutral interlayer document tree.
+ * @param source The format-neutral interlayer document tree.
  * @returns The encoded HTML bytes plus the recorded {@link Loss} list.
  */
-export function writeHtml(flow: FlowDoc): WriteResult {
+export function writeHtml(source: FlowDoc): WriteResult {
+  const flow = withAutoTextColors(source);
   const losses: Array<Loss> = [];
   const out: Array<string> = [];
   const notes = collectNoteNumbers(flow);
@@ -107,7 +135,10 @@ export function writeHtml(flow: FlowDoc): WriteResult {
   out.push('<meta charset="utf-8"/>');
   out.push('<meta name="viewport" content="width=device-width, initial-scale=1"/>');
   out.push(`<title>${escapeText(title)}</title>`);
-  out.push(`<style>${BASE_CSS}</style>`);
+  // The rules a number format's blanks and fills need (CELL_PIECES_CSS), only
+  // where a cell has them: every other page stays as it was.
+  const pieces = usesCellPieces(flow.body);
+  out.push(`<style>${BASE_CSS}${pieces ? CELL_PIECES_CSS : ''}</style>`);
   out.push('</head>');
   out.push('<body>');
   // A document-shaped column: the first section's content width, like the
@@ -187,6 +218,66 @@ const BASE_CSS = [
   '.comment-replies{margin-left:18pt}',
   '.comments .resolved>.comment-meta::after{content:" \\2713";color:#3a7d3a}',
 ].join('');
+
+/**
+ * §18.8.31 — what a spreadsheet number format lays out besides text, for the
+ * screen (Run.blankWidthOf, Run.fillChar, CellProperties.showHashes).
+ *
+ * A blank is as wide as the character it keeps room for: that character is
+ * drawn, hidden, as the blank's `::before`, and the space the blank reads as
+ * is its text — a grid does not render a text of white space alone, so the
+ * width is the character's and the page's text still says what the cell says.
+ * A plain space would be a third of a digit wide, and none at the end of a line.
+ *
+ * A fill takes the room its cell's line leaves (the line is a flex box) and
+ * repeats its character there: written out more often than any cell needs and
+ * broken at every character into lines, of which its height shows only the
+ * first, so only WHOLE characters show, as in Excel, set by the cell's
+ * alignment in what is left of the room. Excel sets the text before the `*`
+ * with them; here it stays at the left edge, a difference of less than one
+ * character. The `#` of a value no section admits are a fill of their own,
+ * across the cell and centred, as Excel sets them.
+ */
+const CELL_PIECES_CSS = [
+  '.nf-blank{display:inline-grid}',
+  '.nf-blank::before{content:attr(data-w);visibility:hidden}',
+  '.nf-line{display:flex;align-items:baseline}',
+  '.nf-fill{flex:1 1 0;min-width:0;line-height:1.2;height:1.2em;overflow:hidden;white-space:normal;word-break:break-all}',
+  '.nf-fill::before,.nf-hashes::before{content:attr(data-fill)}',
+  '.nf-hashes{display:block;line-height:1.2;height:1.2em;overflow:hidden;white-space:normal;word-break:break-all;text-align:center}',
+].join('');
+
+/**
+ * How many times a fill's character is written out: enough to cross any cell
+ * a sheet is likely to hold, at the narrowest character a fill repeats.
+ */
+const FILL_REPEAT = 200;
+
+/** Whether any cell of the document shows a number format's blanks, fill or `#`. */
+function usesCellPieces(body: ReadonlyArray<BodyElement>): boolean {
+  for (const el of body) {
+    if (el.kind !== 'table') continue;
+    for (const row of el.table.rows) {
+      for (const cell of row.cells) {
+        if (cell.properties.showHashes === true) return true;
+        for (const inner of cell.content) {
+          if (inner.kind === 'paragraph') {
+            if (
+              inner.paragraph.runs.some(
+                (r) => r.blankWidthOf !== undefined || r.fillChar !== undefined,
+              )
+            ) {
+              return true;
+            }
+          } else if (inner.kind === 'table' && usesCellPieces([inner])) {
+            return true;
+          }
+        }
+      }
+    }
+  }
+  return false;
+}
 
 interface EmitCtx {
   readonly resources: ResourceStore;
@@ -705,7 +796,10 @@ function emitParagraph(out: Array<string>, p: Paragraph, ctx: EmitCtx): void {
     .slice(1)
     .map((b) => `<span id="bm-${encodeURIComponent(b)}"></span>`)
     .join('');
-  const open = `<${tag}${dir}${idAttr}${style ? ` style="${style}"` : ''}>${extraAnchors}`;
+  // A line a number format fills is a flex box: the fill grows into what the
+  // text leaves of the cell (CELL_PIECES_CSS).
+  const filled = p.runs.some((r) => r.fillChar !== undefined) ? ' class="nf-line"' : '';
+  const open = `<${tag}${dir}${idAttr}${filled}${style ? ` style="${style}"` : ''}>${extraAnchors}`;
 
   const parts: Array<string> = [];
   for (const run of p.runs) parts.push(runHtml(run, p, ctx));
@@ -744,6 +838,9 @@ function paragraphCss(r: ResolvedParagraphProperties): string {
     else css.push(`line-height:${fmt(r.spacingLine)}pt`);
   }
   if (r.pageBreakBefore) css.push('break-before:page');
+  // §17.3.1.31 — the band behind the paragraph, which the page draws and this
+  // did not; text whose colour is automatic is judged against it.
+  if (r.shading) css.push(`background-color:#${r.shading.colorHex}`);
   return css.join(';');
 }
 
@@ -785,6 +882,18 @@ function runHtml(run: Run, p: Paragraph, ctx: EmitCtx): string {
     const src = dataUri(img.resource, ctx.resources);
     if (!src) return '';
     return `<img src="${src}" style="width:${fmt(img.width)}pt;height:${fmt(img.height)}pt" alt=""/>`;
+  }
+  // §18.8.31 — a number format's fill and blanks (CELL_PIECES_CSS), in the
+  // run's own font: that is what their width is measured in.
+  if (run.fillChar !== undefined || run.blankWidthOf !== undefined) {
+    const css = runCss(resolveRunProperties(run.properties, p.properties, EMPTY_STYLE_SHEET));
+    const styleAttr = css ? ` style="${escapeAttr(css)}"` : '';
+    if (run.fillChar !== undefined) {
+      // A fill of spaces draws nothing: the room is all it takes.
+      const fill = /\s/.test(run.fillChar) ? '' : run.fillChar.repeat(FILL_REPEAT);
+      return `<span class="nf-fill"${styleAttr}${fill ? ` data-fill="${escapeAttr(fill)}"` : ''}></span>`;
+    }
+    return `<span class="nf-blank"${styleAttr} data-w="${escapeAttr(run.blankWidthOf!)}">${textHtml(run.text)}</span>`;
   }
   if (run.text.length === 0) return '';
 
@@ -836,6 +945,10 @@ function runCss(r: ResolvedRunProperties): string {
     if (style) css.push(`text-decoration-style:${style}`);
   }
   if (r.colorHex !== '000000') css.push(`color:#${r.colorHex}`);
+  // §17.3.2.32 / §17.3.2.15 — the run's own background, its shading or its
+  // highlight, which the page draws and this did not.
+  const behind = runBackgroundHex(r);
+  if (behind !== undefined) css.push(`background-color:#${behind}`);
   return css.join(';');
 }
 
@@ -1209,8 +1322,27 @@ function emitCell(
   if (cell.properties.icon) out.push(cellIconSvg(cell.properties.icon));
   // Sparkline (E-SHEET SC2): a mini inline-SVG chart in the cell.
   if (cell.properties.sparkline) out.push(cellSparklineSvg(cell.properties.sparkline));
-  for (const child of cell.content) emitBlock(out, child, ctx);
+  if (cell.properties.showHashes === true) out.push(cellHashes(cell));
+  else for (const child of cell.content) emitBlock(out, child, ctx);
   out.push(`</${tag}>`);
+}
+
+/**
+ * A cell that shows `#` whatever it holds (CellProperties.showHashes): a row of
+ * them across it, centred, in the font of its value (CELL_PIECES_CSS).
+ */
+function cellHashes(cell: TableCell): string {
+  const first = cell.content.find((el) => el.kind === 'paragraph');
+  const para = first?.kind === 'paragraph' ? first.paragraph : undefined;
+  const run = para?.runs[0];
+  const css =
+    para && run
+      ? runCss(resolveRunProperties(run.properties, para.properties, EMPTY_STYLE_SHEET))
+      : '';
+  return (
+    `<p><span class="nf-hashes"${css ? ` style="${escapeAttr(css)}"` : ''}` +
+    ` data-fill="${'#'.repeat(FILL_REPEAT)}"></span></p>`
+  );
 }
 
 // The corner flag of a cell carrying a note: a small triangle, red for a note

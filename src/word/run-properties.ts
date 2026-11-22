@@ -55,9 +55,11 @@ const LIGATURES = new Set<Ligatures>([
   'all',
 ]);
 
-// §17.18.40 ST_HighlightColor — the marker pen's seventeen colours. `none` is
-// the absence of one, so it maps to nothing rather than to a colour.
-const HIGHLIGHT_COLORS: ReadonlyMap<string, string> = new Map([
+/**
+ * §17.18.40 ST_HighlightColor — the marker pen's colours by name. `none` is
+ * the absence of one, so it maps to nothing rather than to a colour.
+ */
+export const HIGHLIGHT_COLORS: ReadonlyMap<string, string> = new Map([
   ['black', '000000'],
   ['blue', '0000FF'],
   ['cyan', '00FFFF'],
@@ -152,6 +154,9 @@ export function parseRunProperties(rPr: unknown, themeFonts?: ThemeFonts): RunPr
       // style in blue and every run back to auto, and we printed the whole
       // form blue where the reference prints it black.
       out.colorHex = '000000';
+      // …and it is not black: Word turns it white over a dark background
+      // (`resolveAutoTextColors`), where a stated 000000 stays black.
+      out.colorAuto = true;
     }
   }
 
@@ -201,20 +206,25 @@ export function parseRunProperties(rPr: unknown, themeFonts?: ThemeFonts): RunPr
   // usually a PATTERN over a fill (`pct15` of black on white is Word's "light
   // shading"), so the two are blended rather than the fill taken alone:
   // fdo65400.docx shades two words that way and we painted neither.
+  //
+  // White is a background too. Skipped as if it were none, a run shaded white
+  // in a dark-blue cell kept the cell's blue behind it, where Word paints it
+  // white (and sets its automatic text black on it; issue #137's probe).
   if ('w:shd' in el) {
     const shd = el['w:shd'];
     const hex = shadingFillHex(getVal(shd), getAttr(shd, 'color'), getAttr(shd, 'fill'));
-    if (hex !== undefined && hex !== 'FFFFFF') out.shadingColorHex = hex;
+    if (hex !== undefined) out.shadingColorHex = hex;
   }
 
   // §17.3.2.15 `w:highlight` — the marker pen: one of seventeen named colours
-  // painted behind the run. It goes in the same slot as the run's shading —
-  // both are a filled box under the glyphs, and where a run states both, the
-  // highlight is the one that shows. fdo76591.docx sets its "IMPORTANT NOTICE"
-  // in white on a black highlight, and unread it was white on white.
+  // painted behind the run, over its shading where it has both. fdo76591.docx
+  // sets its "IMPORTANT NOTICE" in white on a black highlight, and unread it
+  // was white on white. Kept apart from the shading, because Word judges an
+  // automatic colour by the shading alone: a run highlighted yellow and shaded
+  // white in a dark-blue cell is set black, and one only highlighted, white.
   if ('w:highlight' in el) {
     const hex = HIGHLIGHT_COLORS.get(getVal(el['w:highlight']) ?? '');
-    if (hex !== undefined) out.shadingColorHex = hex;
+    if (hex !== undefined) out.highlightColorHex = hex;
   }
 
   // ECMA-376 §17.3.2.20 — w:lang @w:val (the Latin language, e.g. "en-US").
@@ -223,6 +233,11 @@ export function parseRunProperties(rPr: unknown, themeFonts?: ThemeFonts): RunPr
   if ('w:lang' in el) {
     const v = getAttr(el['w:lang'], 'val');
     if (v) out.lang = v;
+    // …and @w:eastAsia, the language of the run's East Asian text: Word keeps
+    // one per slot, and the Latin one says nothing about which drawing of an
+    // ideograph the run is in.
+    const eastAsia = getAttr(el['w:lang'], 'eastAsia');
+    if (eastAsia) out.eastAsianLang = eastAsia;
   }
 
   return out;

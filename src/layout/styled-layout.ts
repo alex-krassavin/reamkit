@@ -86,6 +86,7 @@ import type {
   LaidOutPage,
   Line,
   MetafileDrawing,
+  OutlineSeed,
   PageItem,
   PageWindow,
   ResolvedMathItem,
@@ -103,7 +104,7 @@ import type { MetaPicture } from '@/core/metafile/picture';
 import type { Sheet } from '@/layout/turned-section';
 import { pageItemBounds } from '@/layout/page-doc';
 import { ResourceStore, halfPtToPt, pt } from '@/core/ir';
-import { headingLevelOf } from '@/core/outline';
+import { headingLevelOf, outlineLevelOf, outlineTitleOf } from '@/core/outline';
 import { hasCombiningMark, isCombiningMark } from '@/core/font/mark-shaper';
 import {
   createFontMeasure,
@@ -114,7 +115,7 @@ import {
 } from '@/core/font';
 import { hasIndic, syllableStarts } from '@/core/font/indic-shaper';
 import { companionOf, companionScale, resolveFamilyStyle } from '@/core/fonts';
-import { fontSlotOf, scriptForCodepoint } from '@/core/fonts/scripts';
+import { fontSlotOf, hanFaceOfLang, scriptForCodepoint } from '@/core/fonts/scripts';
 import { prepareImage } from '@/core/images';
 import { isEmf, readEmf } from '@/core/metafile/emf';
 import { isWmf, readWmf } from '@/core/metafile/wmf';
@@ -130,6 +131,8 @@ import { applyNumbering, applyNumberingToHeadersFooters, formatCounter } from '@
 import {
   DEFAULT_RESOLVED_PARAGRAPH,
   DEFAULT_RESOLVED_RUN,
+  resolveAutoTextColors,
+  resolveAutoTextColorsOfEach,
   resolveParagraphProperties,
   resolveRunProperties,
 } from '@/core/style-cascade';
@@ -438,6 +441,14 @@ export interface StyledRenderOptions {
    * `pdfA` level-a profiles.
    */
   readonly pdfUA?: boolean;
+  /**
+   * The PDF's document outline — the bookmarks panel a viewer shows beside the
+   * pages (ISO 32000-1 §12.3.3) — built from the document's headings, the way
+   * Word and LibreOffice export one. On by default: a document with headings
+   * gets an outline, one without gets none. `false` writes none; an object
+   * tunes it (see {@link PdfOutlineOptions}).
+   */
+  readonly outline?: boolean | PdfOutlineOptions;
   /**
    * Document natural language (BCP 47, e.g. `"en-US"`, `"ru-RU"`) for the
    * tagged-PDF catalog `/Lang` (§14.9.2). Defaults to `"en-US"`. The docx
@@ -830,6 +841,12 @@ interface CellLayout {
    * paragraph's `w:after`). Absent for a cell whose paragraphs are all flush.
    */
   readonly lineGaps?: ReadonlyMap<number, number>;
+  /**
+   * §17.3.1.33 — the space after the cell's LAST paragraph, which no line
+   * claims as its gap: counted in {@link contentHeightPt}, and carried by
+   * whichever piece of a broken row that paragraph ends in.
+   */
+  readonly afterPt?: number;
   // Nested tables (a w:tbl inside this cell) rendered below the lines.
   /**
    * Tables nested inside this cell (§17.4.38), each with the number of the
@@ -885,6 +902,16 @@ interface RowLayout {
    */
   readonly cantSplit?: boolean;
   /**
+   * §17.4.81 `w:trHeight w:hRule="exact"` — the row is pinned to its height,
+   * and a pinned row never breaks across pages (see {@link rowMovesWhole}).
+   */
+  readonly exactHeight?: boolean;
+  /**
+   * §17.4.81 `w:hRule="atLeast"` — the least the row may be, which also holds
+   * for the part of it a page break carries over (see {@link rowMovesWhole}).
+   */
+  readonly minHeightPt?: number;
+  /**
    * §17.4.38 — the room the row gives its top border, and (the table's last
    * row) its bottom one, where the document is set as Word sets it (see
    * {@link withBorderBands}). The borders are drawn down the middle of it.
@@ -931,6 +958,48 @@ interface TableBlock {
 }
 
 /**
+ * How the PDF's document outline is built (ISO 32000-1 §12.3.3); see
+ * {@link StyledRenderOptions.outline}.
+ */
+export interface PdfOutlineOptions {
+  /**
+   * The deepest heading level the outline takes, 1–9. Default 9: every outline
+   * level a paragraph can carry (§17.3.1.20 `w:outlineLvl` 0–8), as
+   * LibreOffice's export takes. `3` keeps Heading 1–3, as a table of contents
+   * usually does.
+   */
+  readonly maxLevel?: number;
+  /**
+   * Open the viewer's bookmarks panel with the document (ISO 32000-1 §7.7.2,
+   * catalog `/PageMode /UseOutlines`). Default `false`: the viewer decides,
+   * and the panel is a click away.
+   */
+  readonly openPanel?: boolean;
+}
+
+/**
+ * One item of the PDF's document outline: what it says, how deep it sits, and
+ * where it jumps — the page (0-based) and the y-up point at the top of its
+ * paragraph's first line, at the left edge of the column it stands in.
+ */
+export interface OutlineMark extends OutlineSeed {
+  /** The page it jumps to, 0-based. */
+  readonly pageIdx: number;
+  /** The x the destination puts at the window's left edge, in points. */
+  readonly xLeftPt: number;
+  /** The y-up point the destination puts at the window's top edge, in points. */
+  readonly yTopPt: number;
+  /**
+   * The tagged-PDF structure node that holds the heading's words — the element
+   * the item's `/SE` names (ISO 32000-1 §12.3.3 Table 153). Absent in untagged
+   * output, and for an item the document states (a sheet, a slide, a source
+   * PDF's bookmark): the paragraph that carries one is an anchor, not the
+   * element the item is about.
+   */
+  readonly structId?: number;
+}
+
+/**
  * §17.13.6.2 — a bookmark's GoTo destination: the page (0-based) and the y-up
  * top of the anchoring paragraph's first line.
  */
@@ -957,6 +1026,11 @@ export interface PdfLayoutAux {
   readonly pdfaProfile: PdfAProfile | undefined;
   readonly tagged: boolean;
   readonly bookmarks: ReadonlyMap<string, BookmarkPosition>;
+  /**
+   * The document outline's items in document order (ISO 32000-1 §12.3.3), one
+   * per heading the body opens. Absent when `outline: false` asked for none.
+   */
+  readonly outline?: ReadonlyArray<OutlineMark>;
   /**
    * CM2b — comment marker anchor (`comment-${n}`) → the note the emitter attaches
    * as a `/Text` annotation. Present only when `commentAnnotations` was requested.
@@ -1416,20 +1490,50 @@ interface NotePlan {
 }
 
 /**
+ * §17.3.2.6 — a Word document's automatic text colour, chosen as Word chooses
+ * it (white over a dark background; see `resolveAutoTextColors`) in the body,
+ * the header and footer bands and the notes. Drawn black whatever was behind
+ * it, issue #137's header cell — words naming no colour on 25397D — could not
+ * be read. Other sources state their colours, and are left as they are.
+ *
+ * @param body    The document body.
+ * @param options The render options, carrying the bands and the notes.
+ * @returns The body and options to lay out.
+ */
+function withAutoTextColors(
+  body: ReadonlyArray<BodyElement>,
+  options: StyledRenderOptions,
+): { body: ReadonlyArray<BodyElement>; options: StyledRenderOptions } {
+  if (options.typesetBy !== 'word') return { body, options };
+  const each = (bodies: ReadonlyMap<string, ReadonlyArray<BodyElement>>) =>
+    resolveAutoTextColorsOfEach(bodies, options.styles);
+  return {
+    body: resolveAutoTextColors(body, options.styles),
+    options: {
+      ...options,
+      ...(options.headersFooters ? { headersFooters: each(options.headersFooters) } : {}),
+      ...(options.footnotes ? { footnotes: each(options.footnotes) } : {}),
+      ...(options.endnotes ? { endnotes: each(options.endnotes) } : {}),
+    },
+  };
+}
+
+/**
  * Layout phase (the FlowDoc→PageDoc transform of ir-design §7): body →
  * positioned pages (PageItems), font/image resources, logical structure. Drives
  * the whole pass — numbering and note numbering, per-section geometry, per-block
  * layout, the footnote/endnote/comment tails, then pagination — and returns the
  * {@link LaidOutPdfDocument} (the PageDoc plus its PDF companion).
  *
- * @param body    The document body the section model partitions.
- * @param options The resolved fonts, styles, section model, and PDF-output toggles.
+ * @param documentBody    The document body the section model partitions.
+ * @param documentOptions The resolved fonts, styles, section model, and PDF-output toggles.
  * @returns The positioned pages plus the PDF-only {@link PdfLayoutAux} companion.
  */
 export function layoutStyledDocument(
-  body: ReadonlyArray<BodyElement>,
-  options: StyledRenderOptions,
+  documentBody: ReadonlyArray<BodyElement>,
+  documentOptions: StyledRenderOptions,
 ): LaidOutPdfDocument {
+  const { body, options } = withAutoTextColors(documentBody, documentOptions);
   const sectionList = resolveSectionList(body, options);
 
   const noteAssigned = assignNoteNumbers(
@@ -1647,6 +1751,10 @@ export function layoutStyledDocument(
   }
 
   const bookmarks = new Map<string, BookmarkPosition>();
+  // The outline's items, by what opens each — a body block's index, a cell
+  // line's seed — so that one laid again (a column balanced, a paragraph moved
+  // on) keeps one item, at the place it was laid last.
+  const outlineMarks = options.outline !== false ? new Map<unknown, OutlineMark>() : undefined;
   // CM2b — native /Text annotations for comments (opt-in). The emitter attaches
   // them at the marker, gated to interactive (non-PDF/A, non-tagged) output.
   const commentNotes =
@@ -1669,7 +1777,20 @@ export function layoutStyledDocument(
     backgroundImageOf(options, imageResources),
     collapsesSpacing(options),
     options.compatibilityMode,
+    outlineMarks,
   );
+  // A document that states its outline (Paragraph.outlineEntries) takes those
+  // entries alone: a PDF's own bookmarks and the headings read off its pages
+  // would otherwise list every chapter twice.
+  // Stated in an order of its own, an outline keeps it (OutlineEntry.order).
+  const marks = outlineMarks ? [...outlineMarks.values()] : undefined;
+  const stated = marks?.filter((m) => m.stated === true) ?? [];
+  const outline =
+    stated.length === 0
+      ? marks
+      : stated.every((m) => m.order !== undefined)
+        ? [...stated].sort((a, b) => a.order! - b.order!)
+        : stated;
   if (options.losses) {
     const undrawn = undrawnLoss(pages);
     if (undrawn) options.losses.push(undrawn);
@@ -1686,6 +1807,7 @@ export function layoutStyledDocument(
       pdfaProfile,
       tagged,
       bookmarks,
+      ...(outline ? { outline } : {}),
       ...(commentNotes ? { commentNotes } : {}),
     },
   };
@@ -4372,9 +4494,40 @@ function emitShapeText(
   } else {
     textY = shapeTop - sh.insetTopPt;
   }
+  // Where the paragraph the current line belongs to began (y-up), for the band
+  // its `w:shd` paints behind it.
+  let paragraphTop: number | undefined;
   sh.textLines.forEach((line, i) => {
+    const lineTop = textY;
     textY -= computeLineHeight(line, line.resolved);
     const lineOffset = alignmentOffset(line.resolved.alignment, line.contentWidthPt, innerWidth);
+    if (line.firstLine || paragraphTop === undefined) paragraphTop = lineTop;
+    // §17.3.1.31 — the band behind the paragraph, as the page draws it, from
+    // its first line's top to its last line's foot between its indents. A text
+    // box drew none: issue #136's probe shades a paragraph white inside a dark
+    // box, and Word paints the white band where we left the box's blue. A box
+    // that turns would need the band turned with it, which a fill cannot be.
+    if (line.isLastInParagraph || i === sh.textLines.length - 1) {
+      // A table, chart or drawing stands on a line of its own with no
+      // paragraph's properties behind it.
+      const block =
+        sh.textTables?.has(i) === true ||
+        sh.textCharts?.has(i) === true ||
+        sh.textShapes?.has(i) === true;
+      const band =
+        turnDeg === 0 && !block
+          ? paragraphShadingItem(
+              line.resolved,
+              x + sh.insetLeftPt + line.resolved.indentLeft,
+              x + sh.insetLeftPt + innerWidth - line.resolved.indentRight,
+              paragraphTop,
+              textY,
+              pageHeight,
+            )
+          : undefined;
+      if (band) sink.push(band);
+      paragraphTop = undefined;
+    }
     const nested = sh.textCharts?.get(i);
     if (nested) {
       sink.push(
@@ -4392,9 +4545,10 @@ function emitShapeText(
       // The line reserved the table's height, so its rows run from the line's
       // TOP down, the way the band and the page draw a table.
       let rowY = textY + table.heightPt;
+      const drawn: Array<PageItem> = [];
       for (const row of table.rows) {
         emitRowChunk(
-          sink,
+          drawn,
           row,
           x + sh.insetLeftPt + lineOffset + table.xOffsetPt,
           rowY,
@@ -4403,6 +4557,12 @@ function emitShapeText(
         );
         rowY -= row.heightPt;
       }
+      // The table paints inside the box's picture, in the order it is pushed
+      // (see emitShapeItems), so it is pushed in the order the page's passes
+      // would paint it: every fill, then images, then every rule, then shapes.
+      // Row by row instead, the next row's shading lands on the rule under
+      // the row above it.
+      sink.push(...inPassOrder(drawn));
       return;
     }
     // §17.3.1.12 — the paragraph's indent, which the page, the band and a table
@@ -4551,6 +4711,18 @@ interface CellAnchorCtx {
     heightPt: number,
   ) => void;
   readonly pageHeight: number;
+  /**
+   * Place the outline item a cell's line opens (`Line.outline`) on this page,
+   * at the cell's left edge and the line's top, with the structure node that
+   * line is tagged with. Absent where a heading opens no item: a header row
+   * repeated on the next page, a nested table.
+   */
+  readonly outline?: (
+    seed: OutlineSeed,
+    xLeftPt: number,
+    yTopPt: number,
+    structId: number | undefined,
+  ) => void;
 }
 
 /** The page a table is being drawn onto, as a cell's floats need to see it. */
@@ -4563,6 +4735,18 @@ function cellAnchorCtx(asm: PageAssembler): CellAnchorCtx {
       asm.excludeFloat(f, x, topYUp, widthPt, heightPt);
     },
     pageHeight: asm.ctx.pageHeight,
+    ...(asm.outlineMarks
+      ? {
+          outline: (
+            seed: OutlineSeed,
+            xLeftPt: number,
+            yTopPt: number,
+            structId: number | undefined,
+          ) => {
+            asm.markOutline(seed, seed, xLeftPt, yTopPt, structId);
+          },
+        }
+      : {}),
   };
 }
 
@@ -4643,6 +4827,44 @@ function emitDrawing(
 }
 
 function emitShapeItems(
+  sh: ShapeBlockLaidOut,
+  x: number,
+  bottomYUp: number,
+  sink: Array<PageItem>,
+  pageHeight: number,
+  figId: number | undefined,
+): void {
+  const items: Array<PageItem> = [];
+  emitShapeParts(sh, x, bottomYUp, items, pageHeight, figId);
+  // §17.3.1 — a text box holding a table, or a shaded paragraph, draws cell
+  // shading and rules of its OWN, and they lie on the box's fill. Left to the
+  // page's passes they were painted with the page's tables — every fill and
+  // rule before every shape — and the box's white fill then covered them:
+  // issue #136's dark-blue header cell came out white, and its table lost its
+  // grid. Word draws the box, then what its text draws, then the text. So the
+  // box and everything it draws but its words paint as one PICTURE, in the
+  // order they were pushed; the words stay in the text pass, over all of it.
+  if (!items.some((c) => c.type === 'fill' || c.type === 'border')) {
+    sink.push(...items);
+    return;
+  }
+  const pictureId = nextPictureId++;
+  for (const c of items) sink.push(c.type === 'line' ? c : { ...c, pictureId });
+}
+
+/**
+ * Everything a shape draws — its shadow, fill, outline, the members of a group
+ * and its text — in paint order, into `sink`. {@link emitShapeItems} decides
+ * how the page is to paint them.
+ *
+ * @param sh         The laid-out shape.
+ * @param x          Left edge of its box.
+ * @param bottomYUp  Bottom edge of its box, in the y-up page frame.
+ * @param sink       Where the items go.
+ * @param pageHeight The page's height, for the flip to the page frame.
+ * @param figId      Tagged-PDF structure node the shape belongs to.
+ */
+function emitShapeParts(
   sh: ShapeBlockLaidOut,
   x: number,
   bottomYUp: number,
@@ -5086,6 +5308,61 @@ function drawBlocksSequentially(
 }
 
 /**
+ * §17.3.1.31 `w:shd` — the band behind a paragraph occupying `topY`…`bottomY`
+ * (both in the y-up page frame) between `x0` and `x1`.
+ *
+ * @param resolved   The paragraph's resolved properties.
+ * @param x0         Left edge of the band.
+ * @param x1         Right edge of the band.
+ * @param topY       Top of the paragraph's first line (y-up).
+ * @param bottomY    Foot of its last line (y-up).
+ * @param pageHeight The page's height, for the flip to the page frame.
+ * @returns The fill, or `undefined` when the paragraph is not shaded.
+ */
+function paragraphShadingItem(
+  resolved: ResolvedParagraphProperties,
+  x0: number,
+  x1: number,
+  topY: number,
+  bottomY: number,
+  pageHeight: number,
+): FillItem | undefined {
+  if (!resolved.shading) return undefined;
+  return {
+    type: 'fill',
+    x: pt(x0),
+    y: pt(pageHeight - topY),
+    width: pt(Math.max(0, x1 - x0)),
+    height: pt(Math.max(0, topY - bottomY)),
+    fillColorHex: resolved.shading.colorHex,
+  };
+}
+
+/** The page's paint passes, in order: what {@link inPassOrder} sorts by. */
+const PASS_RANK: Readonly<Record<PageItem['type'], number>> = {
+  fill: 0,
+  image: 1,
+  border: 2,
+  shape: 3,
+  line: 4,
+};
+
+/**
+ * Items in the order the page's passes paint them — fills, images, rules,
+ * shapes, text — each kind kept in the order it came in. For items that will
+ * paint in the order they are listed (a picture), as a table's own would.
+ *
+ * @param items The items, in the order they were made.
+ * @returns A new array, stably sorted by pass.
+ */
+function inPassOrder(items: ReadonlyArray<PageItem>): Array<PageItem> {
+  return items
+    .map((item, at) => ({ item, at }))
+    .sort((a, b) => PASS_RANK[a.item.type] - PASS_RANK[b.item.type] || a.at - b.at)
+    .map(({ item }) => item);
+}
+
+/**
  * §17.3.1.31 `w:shd` and §17.3.1.24 `w:pBdr` — the band behind a paragraph and
  * the rules around it, for a paragraph occupying `topY`…`bottomY` (both in the
  * y-up page frame) between `x0` and `x1`.
@@ -5102,16 +5379,8 @@ function paragraphDecoration(
 ): Array<PageItem> {
   const out: Array<PageItem> = [];
   const width = Math.max(0, x1 - x0);
-  if (resolved.shading) {
-    out.push({
-      type: 'fill',
-      x: pt(x0),
-      y: pt(pageHeight - topY),
-      width: pt(width),
-      height: pt(Math.max(0, topY - bottomY)),
-      fillColorHex: resolved.shading.colorHex,
-    });
-  }
+  const band = paragraphShadingItem(resolved, x0, x1, topY, bottomY, pageHeight);
+  if (band) out.push(band);
   const borders = resolved.borders;
   if (!borders) return out;
   for (const side of ['top', 'bottom', 'left', 'right'] as const) {
@@ -5209,6 +5478,9 @@ function runFontKeyAndParsed(
  * @param cp      The code point with no glyph in the run's own face.
  * @param bold    Whether the run is bold…
  * @param italic  …and whether it is italic.
+ * @param own     The family the run's own face substitutes, for its companion.
+ * @param eastAsianLang The language of the run's East Asian text, which picks
+ *                the face of its unified Han.
  * @returns The face to draw it with, or `undefined` when nobody has it.
  */
 function fallbackFaceKey(
@@ -5217,6 +5489,7 @@ function fallbackFaceKey(
   bold: boolean,
   italic: boolean,
   own?: string,
+  eastAsianLang?: string,
 ): { fontKey: string; parsed: ParsedTtf; widthScale?: number } | undefined {
   const byFamily = options.registriesByFamily;
   if (!byFamily || byFamily.size === 0) return undefined;
@@ -5232,9 +5505,13 @@ function fallbackFaceKey(
       return { fontKey: `${companion.family}:${variant}`, parsed, widthScale };
     }
   }
-  // Which face draws unified Han is a property of the DOCUMENT, and the answer
-  // is already in the map: the converter fetched the one its text called for.
-  const hanFace = byFamily.has('jp') ? 'jp' : byFamily.has('kr') ? 'kr' : 'sc';
+  // Which face draws unified Han is the run's LANGUAGE where it names one, and
+  // the document's where it does not — and that answer is already in the map:
+  // the converter fetched JP exactly when it is JP, else KR when it is KR (see
+  // `scriptsInFlow`). A face the language asks for and the map lacks is no
+  // dead end: the loop below goes on to every other face on hand.
+  const hanFace =
+    hanFaceOfLang(eastAsianLang) ?? (byFamily.has('jp') ? 'jp' : byFamily.has('kr') ? 'kr' : 'sc');
   const script = scriptForCodepoint(cp, hanFace);
   const order: Array<SubstituteKey> = script ? [script] : [];
   for (const key of byFamily.keys()) if (key !== script) order.push(key);
@@ -5471,7 +5748,14 @@ function fallbackFace(
   resolved: ResolvedRunProperties,
   own?: string,
 ): KeyedFace | undefined {
-  const found = fallbackFaceKey(options, cp, resolved.bold, resolved.italic, own);
+  const found = fallbackFaceKey(
+    options,
+    cp,
+    resolved.bold,
+    resolved.italic,
+    own,
+    resolved.eastAsianLang,
+  );
   if (!found) return undefined;
   const { widthScale, ...face } = found;
   const variant = face.fontKey.split(':')[1];
@@ -5805,12 +6089,21 @@ function collectFontResources(
             // of the subset, the page encodes a glyph the embedded font no
             // longer has: bug69812.xlsx is one such cell, and its page came out
             // blank where both references print a number.
-            if (cell.properties.hashOnOverflow === true) {
+            if (cell.properties.hashOnOverflow === true || cell.properties.showHashes === true) {
               for (const inner of cell.content) {
                 if (inner.kind !== 'paragraph') continue;
                 for (const run of inner.paragraph.runs) {
                   addRun({ text: '#', properties: run.properties }, inner.paragraph);
                 }
+              }
+            }
+            // …and so is the character a number format fills its cell with
+            // (Run.fillChar): the run that stands for it holds no text at all.
+            for (const inner of cell.content) {
+              if (inner.kind !== 'paragraph') continue;
+              for (const run of inner.paragraph.runs) {
+                if (run.fillChar === undefined) continue;
+                addRun({ text: run.fillChar, properties: run.properties }, inner.paragraph);
               }
             }
             visit(cell.content);
@@ -6828,6 +7121,10 @@ function tokenizePlansLtr(plans: ReadonlyArray<RunPlan>): Array<Token> {
       tokens.push(markerSpaceToken(plan, 0));
       continue;
     }
+    if (plan.run.blankWidthOf !== undefined || plan.run.fillChar !== undefined) {
+      tokens.push(formatPieceToken(plan, 0));
+      continue;
+    }
     const highlight = (plan.run.commentRangeRefs?.length ?? 0) > 0;
     // The code point of the run's text the next token starts at, for its share
     // of the per-character colours (counted only where there are some).
@@ -6916,6 +7213,48 @@ function markerSpaceToken(plan: RunPlan, bidiLevel: number): TextToken {
     fontSizePt: plan.fontSizePt,
     widthPt: MARKER_SPACE_EM * plan.fontSizePt,
     bidiLevel,
+  };
+}
+
+/**
+ * A blank or the fill of a spreadsheet number format (Run.blankWidthOf,
+ * Run.fillChar) as the single token it is. Neither is whitespace to the line:
+ * a blank holds its room at the end of a right-aligned cell, where a space is
+ * dropped, and is never stretched. The blank draws the space it reads as, so
+ * the page's text says what the cell says, and is measured as the character it
+ * keeps room for, in the face that would draw that character. The fill starts
+ * out empty, to be filled against its cell's width (fillCellLine).
+ */
+function formatPieceToken(plan: RunPlan, bidiLevel: number): TextToken {
+  const sized = plan.run.fillChar ?? plan.run.blankWidthOf ?? ' ';
+  const face = splitByFace(plan, sized)[0]?.face ?? { font: plan.font };
+  const base = {
+    kind: 'text' as const,
+    isSpace: false,
+    ...(plan.run.href !== undefined ? { href: plan.run.href } : {}),
+    ...(plan.run.anchor !== undefined ? { anchor: plan.run.anchor } : {}),
+    resolvedRun: plan.resolvedRun,
+    fontSizePt: plan.fontSizePt,
+    ...(plan.risePt !== undefined ? { risePt: plan.risePt } : {}),
+    bidiLevel,
+  };
+  if (plan.run.fillChar !== undefined) {
+    return {
+      ...base,
+      text: '',
+      fill: plan.run.fillChar,
+      font: face.font,
+      ...(face.synthetic ? { synthetic: face.synthetic } : {}),
+      widthPt: 0,
+    };
+  }
+  return {
+    ...base,
+    text: plan.run.text,
+    gap: true,
+    font: plan.font,
+    ...(plan.synthetic ? { synthetic: plan.synthetic } : {}),
+    widthPt: measureRunText(plan, sized, face),
   };
 }
 
@@ -7027,6 +7366,11 @@ function tokenizePlansBidi(
     }
     if (plan.run.listMarkerSpace === true) {
       tokens.push(markerSpaceToken(plan, realLevels[realIdx] ?? 0));
+      realIdx += [...plan.run.text].length;
+      continue;
+    }
+    if (plan.run.blankWidthOf !== undefined || plan.run.fillChar !== undefined) {
+      tokens.push(formatPieceToken(plan, realLevels[realIdx] ?? 0));
       realIdx += [...plan.run.text].length;
       continue;
     }
@@ -7777,9 +8121,33 @@ function wrap(
   const entries = paragraphItemStream(measured, hyphenator, Math.max(0, ...widths), justified);
   const items = entries.map((e) => e.item);
   // E-PARITY FP3: a renderer-compat profile breaks lines greedily (first-fit,
-  // like Word/LibreOffice); the default 'ream' keeps Knuth-Plass total-fit.
+  // like Word/LibreOffice); the default 'ream' keeps Knuth-Plass total-fit —
+  // where total-fit can rate the paragraph at all.
+  //
+  // It rates a line by how far its glue must stretch, and a line with no glue
+  // is infinitely loose: every line of a run of Chinese or Japanese, whose
+  // break opportunities are penalties between glyph boxes, and a long word
+  // alone in a narrow cell. When EVERY way to break the paragraph holds such a
+  // line, every answer scores ∞, and which one comes back is the DP's tie-break:
+  // it keeps the oldest node, which fills the lines from the paragraph's END
+  // and leaves the remainder on its FIRST line. Issue #131: a 33-character
+  // Chinese sentence at 18pt in an eight-character text box came out 1/8/8/8/8,
+  // where PowerPoint sets 8/8/8/8/1; Japanese, a long Chinese paragraph and
+  // words in a narrow cell fell the same way. TeX's number for that line —
+  // badness 10 000 instead of ∞ — does not break the tie (still 1/8/8/8/8: all
+  // such lines cost the same), and capping a line's badness lets a lone word
+  // beat a loose pair in a paragraph total-fit CAN rate ([15, 15, 40] on 50pt
+  // went from two lines to three). Nor does rating the line by the room it
+  // leaves (TeX's \emergencystretch pass): that balances the paragraph's ragged
+  // edge, and moved a kana down a line where PowerPoint fills the line to the
+  // measure. So an unrated answer is not used: such a paragraph breaks
+  // first-fit, as PowerPoint and Word set it and the 'word' profile already
+  // does. A paragraph total-fit can rate keeps every break it had.
+  const total = profile === 'ream' ? breakLines(items, widths) : undefined;
   const breaks =
-    profile === 'ream' ? breakLines(items, widths).breaks : greedyBreakLines(items, widths);
+    total !== undefined && !total.ratios.includes(Infinity)
+      ? total.breaks
+      : greedyBreakLines(items, widths);
 
   const buildLines = (at: ReadonlyArray<number>): Array<Line> => {
     const out: Array<Line> = [];
@@ -8618,7 +8986,12 @@ function layoutTableRow(
     if (c.totalHeightPt > heightPt) heightPt = c.totalHeightPt;
   }
   if (row.properties.height && row.properties.heightRule === 'exact') {
-    heightPt = row.properties.height;
+    // §17.4.81 — the rule above a pinned row is inside its height, the
+    // table's bottom edge under its last row is not. Word, under 3pt rules:
+    // 34pt rows 33.98pt apart; the paragraph after the table 34.05pt below
+    // the last row's text, which stands 3.2pt below the row's top — a 37.25pt
+    // last row.
+    heightPt = row.properties.height + (bandSpread ? bandSpread.bottomPt : 0);
     // A row pinned to a height keeps it, and what does not fit is CUT — Excel
     // and Word both clip a cell to its row rather than run it over the row
     // below. Drawing the overflow instead put tdf118668.xlsx's second lines on
@@ -8630,11 +9003,23 @@ function layoutTableRow(
       rowIdx,
       rowCount,
       ...(row.properties.cantSplit ? { cantSplit: true } : {}),
+      exactHeight: true,
       ...borderBands,
     };
-  } else if (row.properties.height && row.properties.heightRule === 'atLeast') {
-    heightPt = Math.max(heightPt, row.properties.height);
   }
+  // §17.4.81 — a minimum is the row's own, and the room its borders take
+  // (withBorderBands) comes on top of it, as it does on top of a row's text.
+  // Word, rows of one 13.4pt line under a 34pt minimum: 37.00pt apart under
+  // 3pt rules, in compatibility modes 15, 14 and none alike, whether the rule
+  // is the table's, the cell's own top or only the bottom of the cell above
+  // it (LibreOffice gives that last one 34: tdf127814.docx's rows); 34.5pt
+  // under 0.5pt rules. The last row has the table's bottom edge on top as
+  // well: the paragraph after stands 36.4pt below its text, a 39.6pt row.
+  const minHeightPt =
+    row.properties.height && row.properties.heightRule === 'atLeast'
+      ? row.properties.height + (bandSpread ? bandSpread.topPt + bandSpread.bottomPt : 0)
+      : undefined;
+  if (minHeightPt !== undefined) heightPt = Math.max(heightPt, minHeightPt);
   return {
     heightPt,
     cells,
@@ -8642,6 +9027,7 @@ function layoutTableRow(
     rowIdx,
     rowCount,
     ...(row.properties.cantSplit ? { cantSplit: true } : {}),
+    ...(minHeightPt !== undefined ? { minHeightPt } : {}),
     ...borderBands,
   };
 }
@@ -8797,6 +9183,7 @@ function layoutTableCell(
   let contentHeightPt = 0;
   let clipped = false;
   let pendingGapPt = 0;
+  let afterPt = 0;
   const collapse = collapsesSpacing(options);
   const openParagraph = (spacingBeforePt: number): void => {
     // Word's, the larger of the two (see SpacingStack).
@@ -8842,10 +9229,17 @@ function layoutTableCell(
         // instead, tdf167019's dates lost their last digit and printed
         // "25/10/201".
         const cutAt = widthPt - padLeftPt;
-        if (noWrap && (block.lines[0]?.contentWidthPt ?? 0) > cutAt) clipped = true;
-        const keep = noWrap
-          ? oneLineInBox(block.lines, cutAt, cell.properties.hashOnOverflow === true)
-          : block.lines;
+        // §18.8.31 `*x` — a line its number format fills runs from edge to edge
+        // of the room it is set in, which only now is known.
+        const room = innerWidth - block.resolved.indentLeft - block.resolved.indentRight;
+        const filled = block.lines.map((line) => fillCellLine(line, room));
+        if (noWrap && (filled[0]?.contentWidthPt ?? 0) > cutAt) clipped = true;
+        const keep =
+          cell.properties.showHashes === true
+            ? filled.slice(0, 1).map((line) => hashFill(line, innerWidth))
+            : noWrap
+              ? oneLineInBox(filled, cutAt, innerWidth, cell.properties.hashOnOverflow === true)
+              : filled;
         // §17.4.20 — a cell that hides its end-of-cell mark contributes no
         // height for an EMPTY paragraph: the mark is all such a line holds.
         const markOnly =
@@ -8857,8 +9251,13 @@ function layoutTableCell(
         const drop = above ? contextualDrop(above, block) : KEEP_BOTH;
         if (drop.after) pendingGapPt = 0;
         if (!markOnly) openParagraph(drop.before ? 0 : block.spacingBeforePt);
-        for (const line of keep) {
-          lines.push(line);
+        // A heading in a cell opens an outline item as one in the body does:
+        // Word gives it its level (a Heading 1 in a cell reads as level 1) and
+        // LibreOffice bookmarks it. Its first line carries the item to the
+        // page it is printed on.
+        const seed = keep.length > 0 ? outlineSeedsOf(block.resolved, el.paragraph)[0] : undefined;
+        for (const [i, line] of keep.entries()) {
+          lines.push(i === 0 && seed ? { ...line, outline: seed } : line);
           if (!markOnly) contentHeightPt += computeLineHeight(line, block.resolved);
         }
         // The space AFTER is the gap before whatever follows — `openParagraph`
@@ -8947,6 +9346,7 @@ function layoutTableCell(
     // …and the space after the LAST paragraph, which nothing follows to claim
     // it: the cell is that much taller, even though no line stands there.
     contentHeightPt += pendingGapPt;
+    afterPt = pendingGapPt;
   }
   const colEnd = colStart + colSpan - 1;
   const borders = resolveCellBorders(
@@ -9002,6 +9402,7 @@ function layoutTableCell(
     ...(cell.properties.noteFlag ? { noteFlag: cell.properties.noteFlag } : {}),
     lines,
     ...(lineGaps.size > 0 ? { lineGaps } : {}),
+    ...(afterPt > 0 ? { afterPt } : {}),
     ...(nestedTables.length > 0 ? { nestedTables } : {}),
     ...(cellShapes.length > 0 ? { shapes: cellShapes } : {}),
     ...(cellFloats.length > 0 ? { floats: cellFloats } : {}),
@@ -9109,6 +9510,72 @@ function resolveCellBorders(
 function paragraphStructType(resolved: ResolvedParagraphProperties): StructType {
   const lvl = headingLevelOf(resolved);
   return lvl !== undefined ? (`H${String(lvl)}` as StructType) : 'P';
+}
+
+/**
+ * The structure of a table cell that holds a heading: one element per
+ * paragraph under the cell's TH/TD, the heading's an Hn like one in the body.
+ * Any other cell keeps its words in one P. A heading inside that P would be
+ * body text to assistive technology, with no element of its own for its
+ * outline item's `/SE` to name. H1–H6 are block-level elements (ISO 32000-1
+ * §14.8.4.3.1 Table 334) and a cell is what groups them (§14.8.4.3.4
+ * Table 337), so the paragraphs around the heading take a P each, in the
+ * order they are read.
+ *
+ * @param builder  The structure tree being built.
+ * @param cellNode The cell's TH/TD.
+ * @param lines    The cell's lines, all of them, before the row is cut into pages.
+ * @returns The element of each line, and the one the cell's other content
+ *   (a nested table, a shape) belongs to; `undefined` for a cell with no heading.
+ */
+function cellParagraphNodes(
+  builder: StructTreeBuilder,
+  cellNode: StructNode,
+  lines: ReadonlyArray<Line>,
+): { byLine: Map<Line, number>; rest: number } | undefined {
+  const opens = (line: Line, i: number): boolean => i === 0 || line.firstLine;
+  if (!lines.some((line, i) => opens(line, i) && paragraphStructType(line.resolved) !== 'P')) {
+    return undefined;
+  }
+  const byLine = new Map<Line, number>();
+  let current = 0;
+  let rest: number | undefined;
+  for (const [i, line] of lines.entries()) {
+    if (opens(line, i)) {
+      const type = paragraphStructType(line.resolved);
+      current = builder.create(type, cellNode).id;
+      if (type === 'P') rest ??= current;
+    }
+    byLine.set(line, current);
+  }
+  return { byLine, rest: rest ?? byLine.get(lines[0]!)! };
+}
+
+// The document-outline items a paragraph opens (ISO 32000-1 §12.3.3): the
+// entries it states (a sheet's, a slide's, a source PDF's bookmarks), or else
+// the one a heading with something to say opens. A heading with no words opens
+// none — LibreOffice drops an empty one too, and an item without a title is a
+// blank line in the panel.
+function outlineSeedsOf(
+  resolved: ResolvedParagraphProperties,
+  paragraph: Paragraph,
+): ReadonlyArray<OutlineSeed> {
+  const stated = (paragraph.outlineEntries ?? []).filter((e) => e.title.trim() !== '');
+  if (stated.length > 0) {
+    return stated.map((e) => ({
+      title: e.title.trim(),
+      level: Math.min(Math.max(1, Math.floor(e.level)), 9),
+      stated: true,
+      ...(e.open === false ? { open: false } : {}),
+      ...(e.topPt !== undefined ? { topPt: e.topPt } : {}),
+      ...(e.order !== undefined ? { order: e.order } : {}),
+      ...(e.uri !== undefined ? { uri: e.uri } : {}),
+    }));
+  }
+  const level = outlineLevelOf(resolved);
+  if (level === undefined) return [];
+  const title = outlineTitleOf(paragraph.runs);
+  return title !== '' ? [{ title, level }] : [];
 }
 
 // The dominant natural language of a paragraph's text tokens (weighted by
@@ -9226,6 +9693,38 @@ class PageAssembler {
   }
 
   readonly pages: Array<LaidOutPage> = [];
+
+  /**
+   * The document outline's items as they are placed, by what opens each (see
+   * {@link markOutline}); `undefined` when the document asked for none.
+   */
+  outlineMarks: Map<unknown, OutlineMark> | undefined;
+
+  /**
+   * Place an outline item on the page being assembled. One laid again under
+   * the same key keeps its place in the order and takes the new position.
+   *
+   * @param key     What opens the item: a body block's index, a cell line's seed.
+   * @param seed    The item's title and level.
+   * @param xLeftPt The x its destination puts at the window's left edge.
+   * @param yTopPt  The y-up point its destination puts at the window's top.
+   * @param structId The structure node holding the heading's words, when tagging.
+   */
+  markOutline(
+    key: unknown,
+    seed: OutlineSeed,
+    xLeftPt: number,
+    yTopPt: number,
+    structId?: number,
+  ): void {
+    this.outlineMarks?.set(key, {
+      ...seed,
+      pageIdx: this.pages.length,
+      xLeftPt,
+      yTopPt,
+      ...(structId !== undefined ? { structId } : {}),
+    });
+  }
 
   ctx: SectionRenderCtx;
   secIdx = 0;
@@ -10368,9 +10867,13 @@ function paginateSections(
   typesetByWord = false,
   // [MS-DOCX] compatibilityMode — the Word whose page tops the spacing follows.
   compatibilityMode?: number,
+  // Out-param: the document outline's items, by what opens each (see
+  // PdfLayoutAux.outline).
+  outlineMarks?: Map<unknown, OutlineMark>,
 ): Array<LaidOutPage> {
   if (sectionCtxs.length === 0) return [];
   const asm = new PageAssembler(sectionCtxs, builder, notes, bookmarkPositions, backgroundImage);
+  asm.outlineMarks = outlineMarks;
   asm.collapseSpacing = typesetByWord;
   asm.keepsBeforeAtOwnBreak = (compatibilityMode ?? 0) < 15;
 
@@ -10654,6 +11157,18 @@ function paginateSections(
         }
         if (firstLineOfBlock) {
           firstLineOfBlock = false;
+          // ISO 32000-1 §12.3.3 — a heading opens an outline item, jumping to
+          // the top of its first line. The column's left edge rather than the
+          // text's: a viewer that honours /XYZ's left puts it at the window's
+          // edge, and an RTL heading set at the right would otherwise start
+          // off the window to its left.
+          if (outlineMarks && pb.source) {
+            for (const [k, seed] of outlineSeedsOf(pb.resolved, pb.source).entries()) {
+              const key = k === 0 ? blockIdx : `${String(blockIdx)}/${String(k)}`;
+              const own = seed.stated === true ? undefined : structId;
+              asm.markOutline(key, seed, asm.colLeft(), seed.topPt ?? asm.cursorY, own);
+            }
+          }
           if (pb.bookmarks && asm.bookmarkPositions) {
             for (const bookmarkName of pb.bookmarks) {
               if (!asm.bookmarkPositions.has(bookmarkName)) {
@@ -10950,8 +11465,10 @@ function paginateSections(
 
       // Tagged PDF: Table → one TR per row → one TD per logical cell (skipping
       // vMerge continuation cells, which are covered by the origin's span) → P
-      // holding the cell's content. The same TD/P node is reused across row
-      // chunks (page splits), so its MCRs accumulate like a split paragraph.
+      // holding the cell's content — or, in a cell holding a heading, one
+      // element per paragraph (see cellParagraphNodes). The same TD/P node is
+      // reused across row chunks (page splits), so its MCRs accumulate like a
+      // split paragraph.
       const tableNode = builder ? builder.create('Table', builder.root) : undefined;
       const tableX = asm.colLeft() + block.xOffsetPt;
       // §20.5 — the drawings over a spreadsheet grid go down the pages with
@@ -10961,6 +11478,7 @@ function paginateSections(
         const row = block.rows[ri]!;
         const isLeadingHeader = ri < headerRows.length;
         let cellStructIds: Array<number | undefined> | undefined;
+        let lineStructIds: Map<Line, number> | undefined;
         if (builder && tableNode) {
           const b = builder;
           const tr = b.create('TR', tableNode);
@@ -10974,7 +11492,11 @@ function paginateSections(
             if (cell.colSpan > 1) cellNode.colSpan = cell.colSpan;
             const rowSpan = tableCellRowSpan(block.rows, ri, cell.colStart);
             if (rowSpan > 1) cellNode.rowSpan = rowSpan;
-            return b.create('P', cellNode).id;
+            const own = cellParagraphNodes(b, cellNode, cell.lines);
+            if (!own) return b.create('P', cellNode).id;
+            lineStructIds ??= new Map();
+            for (const [line, id] of own.byLine) lineStructIds.set(line, id);
+            return own.rest;
           });
         }
         // §17.4.6 — a row that will not fit is BROKEN at the page's edge, not
@@ -10985,12 +11507,17 @@ function paginateSections(
         const room = asm.cursorY - asm.bottomLimit();
         const page = asm.ctx.pageContentHeight;
         const chunks =
-          !row.cantSplit && row.heightPt > room && asm.colHasContent() && room > 0
+          !rowMovesWhole(row, room) && row.heightPt > room && asm.colHasContent() && room > 0
             ? splitRowIntoChunks(row, room, page)
             : row.heightPt > page
-              ? // Taller than any page: chunked whatever the row says, because
-                // the alternative is losing everything past the first page.
-                splitRowIntoChunks(row, page)
+              ? row.exactHeight
+                ? // A pinned row taller than the page: Word gives it a page of
+                  // its own and carries nothing of it over — an 800pt row on a
+                  // 728.5pt page, and the next row at the top of the next one.
+                  [clipRowToHeight(row, page)]
+                : // Taller than any page: chunked whatever the row says, because
+                  // the alternative is losing everything past the first page.
+                  splitRowIntoChunks(row, page)
               : [row];
 
         // How far down the row the chunk in hand starts, for the drawings.
@@ -11061,6 +11588,7 @@ function paginateSections(
             cellStructIds,
             mergedHeights,
             cellAnchorCtx(asm),
+            lineStructIds,
           );
           sheetView?.lay(
             row.sheetTopPt !== undefined ? row.sheetTopPt + chunkOffsetPt : undefined,
@@ -11221,6 +11749,9 @@ function emitRowChunk(
   // is placed against. Absent for the paths that have no page to place one on
   // (a spreadsheet's cells, a nested row already inside one).
   anchored?: CellAnchorCtx,
+  // The element a line is tagged with where it is not its cell's: the lines of
+  // a cell holding a heading (see cellParagraphNodes).
+  lineStructIds?: ReadonlyMap<Line, number>,
 ): void {
   const rowTop = cursorY;
   const rowBottom = cursorY - row.heightPt;
@@ -11548,6 +12079,7 @@ function emitRowChunk(
       const cellBottomYUp = rowTop - boxHeightPt;
       let across = cell.padLeftPt;
       for (const line of cell.lines) {
+        const lineId = lineStructIds?.get(line) ?? structId;
         const h = computeLineHeight(line, line.resolved);
         const lineOffset = alignmentOffset(line.resolved.alignment, line.contentWidthPt, along);
         const off = lineBaselineOffset(line, line.resolved);
@@ -11563,18 +12095,39 @@ function emitRowChunk(
                 : rowTop - cell.padTopPt - lineOffset),
           ),
           rotationDeg: up ? 90 : -90,
-          ...(structId !== undefined ? { structId } : {}),
+          ...(lineId !== undefined ? { structId: lineId } : {}),
         });
         across += h;
       }
       drawNestedBefore(cell.lines.length);
       continue;
     }
+    // Where the paragraph the current line belongs to began (y-up).
+    let paragraphTop: number | undefined;
     for (const [lineIdx, line] of cell.lines.entries()) {
+      const lineId = lineStructIds?.get(line) ?? structId;
       drawNestedBefore(lineIdx);
       textY -= cell.lineGaps?.get(lineIdx) ?? 0;
+      if (line.firstLine || paragraphTop === undefined) paragraphTop = textY;
+      if (line.outline) anchored?.outline?.(line.outline, cellX, textY, lineId);
       const h = computeLineHeight(line, line.resolved);
       textY -= h;
+      // §17.3.1.31 — a paragraph shaded inside a cell is shaded there too, over
+      // the cell's own fill (pushed first, above). We drew the cell's alone:
+      // issue #137's probe shades a paragraph white in a dark-blue cell, and
+      // Word paints the white band — and its text black on it.
+      if (line.isLastInParagraph || lineIdx === cell.lines.length - 1) {
+        const band = paragraphShadingItem(
+          line.resolved,
+          cellX + cell.padLeftPt + line.resolved.indentLeft,
+          cellX + cell.widthPt - cell.padRightPt - line.resolved.indentRight,
+          paragraphTop,
+          textY,
+          pageHeight,
+        );
+        if (band) out.push(band);
+        paragraphTop = undefined;
+      }
       // A clipped cell's line may be wider than its box, and it is set the way
       // its alignment says all the same — centred over the box, or ending at
       // its right — for the box to cut it on the side Excel cuts it.
@@ -11607,7 +12160,7 @@ function emitRowChunk(
               },
             }
           : {}),
-        ...(structId !== undefined ? { structId } : {}),
+        ...(lineId !== undefined ? { structId: lineId } : {}),
       });
     }
     // Whatever is left goes after the last line, inset to the cell's content
@@ -11670,13 +12223,27 @@ function splitRowIntoChunks(
         // height the page has to give it too. Counted nowhere, a chunk measured
         // 518pt where its own lines needed 713 and ran off the bottom of the
         // page (table-row-data-displayed-twice.docx).
-        const lh = computeLineHeight(next.line, next.line.resolved) + next.gapPt;
+        // …except at the top of a page the row is carried onto, where the gap
+        // goes, as it does above a paragraph a page break carries over: Word
+        // sets the third line of a three-paragraph row broken after its
+        // second at the top margin, 57.75pt down, where every row starts.
+        const gapPt = !isFirst && taken.length === 0 ? 0 : next.gapPt;
+        const lh = computeLineHeight(next.line, next.line.resolved) + gapPt;
         // Always take at least one line per chunk to guarantee forward progress
         // even when a single line is taller than capacity.
         if (taken.length > 0 && takenHeight + lh > capacityForLines) break;
-        taken.push(next);
+        taken.push({ line: next.line, gapPt });
         takenHeight += lh;
         q.remaining.shift();
+      }
+      // §17.3.1.33 — the space after the cell's last paragraph goes where that
+      // paragraph ends. Measured from its lines alone, the piece came out short
+      // by it and the row below started that much higher: Word keeps it, 22.95pt
+      // from the third line of a broken row to the next row's first, which is
+      // the line, its 8pt after and the 0.5pt rule. What the page has no room
+      // for it loses, as it does under a paragraph at the foot of a page.
+      if (taken.length > 0 && q.remaining.length === 0 && tpl.afterPt) {
+        takenHeight += Math.min(tpl.afterPt, Math.max(0, capacityForLines - takenHeight));
       }
       const cellHeight = padTop + takenHeight;
       const gaps = new Map<number, number>();
@@ -11717,6 +12284,14 @@ function splitRowIntoChunks(
         };
         if (total > chunkHeight) chunkHeight = total;
       }
+      // §17.4.81 — the part of a row that a page break carries over is still a
+      // row of at least its minimum height. A 34pt-minimum row of three lines,
+      // broken after two, ends 34.8pt below the top margin in Word where its
+      // third line alone (22.95pt) would end. (LibreOffice gives that part its
+      // lines' 23pt; Word is followed.)
+      if (!isFirst && row.minHeightPt !== undefined) {
+        chunkHeight = Math.max(chunkHeight, Math.min(row.minHeightPt, restCapacity));
+      }
     }
 
     // Borders: keep top only on first chunk, bottom only on last; left/right always.
@@ -11743,7 +12318,75 @@ function splitRowIntoChunks(
     isFirst = false;
   }
 
-  return out.length > 0 ? out : [row];
+  // One piece is no break at all: every cell's lines went into it, so the row
+  // moves to the next page whole — at its own height. Handed on as that one
+  // piece instead, it was as tall as its lines and nothing else: the first row
+  // of every page a long table ran onto (and each one squeezed in at the foot
+  // of a page) lost its height rule, its cells' bottom margins and its last
+  // paragraph's space after — 15.24pt for a 34pt exact row (issue #139).
+  return out.length > 1 ? out : [row];
+}
+
+/**
+ * Whether a row that does not fit in the room left on the page has to move to
+ * the next one whole rather than break across the two (§17.4.6, §17.4.81).
+ *
+ * Measured in Word for Mac on rows of a long table, every one of them allowed
+ * to break across pages (no `w:cantSplit`):
+ * - an `exact` row never breaks: a 34pt row with 14.5pt of room moves to the
+ *   next page and keeps its 34pt there, and so does one whose text is taller
+ *   than the row;
+ * - an `atLeast` row breaks only where the room left holds its minimum: a
+ *   100pt-minimum row of six lines moves whole with 52pt left, two lines'
+ *   worth, while a 34pt-minimum row of three breaks with 48.6pt left.
+ *
+ * @param row  The row laid out.
+ * @param room The room left on the page, in points.
+ * @returns True when the row may not be broken here.
+ */
+function rowMovesWhole(row: RowLayout, room: number): boolean {
+  if (row.cantSplit || row.exactHeight) return true;
+  return row.minHeightPt !== undefined && room < row.minHeightPt;
+}
+
+/**
+ * A pinned row cut down to a height, for one taller than the page it has to
+ * stand on: it keeps its first page and loses the rest, as Word prints it.
+ *
+ * The cut is the page's edge, not the row's: every line that starts above it
+ * stays, and the cell's box clips the one it runs through. Its lines are
+ * placed with the gaps between their paragraphs, so those count here: by its
+ * lines alone, a cell of forty paragraphs of a 14.5pt line and 8pt after
+ * comes to 580pt of the 900 it takes, and would pass for fitting a 728.5pt
+ * page it runs off the foot of.
+ *
+ * @param row      The row laid out.
+ * @param heightPt The height to cut it to.
+ * @returns The row, that tall, with its cells cut to it.
+ */
+function clipRowToHeight(row: RowLayout, heightPt: number): RowLayout {
+  const cut = (cell: CellLayout): CellLayout => {
+    const room = heightPt - cell.padTopPt;
+    let used = 0;
+    let kept = 0;
+    for (const line of cell.lines) {
+      used += cell.lineGaps?.get(kept) ?? 0;
+      if (kept > 0 && used >= room) break;
+      used += computeLineHeight(line, line.resolved);
+      kept++;
+    }
+    // (Its own contentHeightPt cannot decide this: a pinned cell's is its
+    // kept lines' heights, without the gaps — see clipCellToHeight.)
+    if (kept === cell.lines.length && used <= room) return cell;
+    return {
+      ...cell,
+      lines: cell.lines.slice(0, kept),
+      contentHeightPt: room,
+      totalHeightPt: heightPt,
+      clipped: true,
+    };
+  };
+  return { ...row, heightPt, cells: row.cells.map(cut) };
 }
 
 // How far a row's fill runs past its own box, to close the seam against the row
@@ -11820,20 +12463,77 @@ const NO_WRAP_MEASURE_WIDTH = 1e6;
  *
  * @param lines          The cell paragraph's lines, laid out unbroken.
  * @param widthPt        How far the cell's box reaches.
+ * @param innerWidthPt   The room inside the cell's padding, which `#` fill.
  * @param hashOnOverflow Whether a number too wide for the box shows as `#`.
  * @returns The first line, or the `#` that stand for it.
  */
 function oneLineInBox(
   lines: ReadonlyArray<Line>,
   widthPt: number,
+  innerWidthPt: number,
   hashOnOverflow = false,
 ): Array<Line> {
   const line = lines[0];
   if (!line) return [];
   // A number under its own format is never shown truncated — see
   // CellProperties.hashOnOverflow.
-  if (hashOnOverflow && line.contentWidthPt > widthPt) return [hashFill(line, widthPt)];
+  if (hashOnOverflow && line.contentWidthPt > widthPt) return [hashFill(line, innerWidthPt)];
   return [line];
+}
+
+/**
+ * §18.8.31 `*x` — a spreadsheet cell's line with its fill (TextToken.fill)
+ * spread across what `roomPt` leaves of it, or the line as it is when it has
+ * no fill, or no room for one.
+ *
+ * Excel's own PDF (2026-11-20) repeats only WHOLE characters, as many as the
+ * room takes, and keeps the text after the `*` against the right edge whatever
+ * the cell's alignment says — `"$"* #,##0` writes $ at the left and 1,234 at
+ * the right of a left-, right- or centre-aligned cell alike. What alignment
+ * decides is where the room the fill cannot use goes (the line's alignment is
+ * set for that by the print model's fillAlignment): left, between the fill
+ * and the text after it; right, before everything; centre, half of each. So the
+ * line is made exactly as wide as the room, the leading share a gap of its own
+ * and the rest inside the fill token, after its characters.
+ *
+ * @param line   The laid-out line.
+ * @param roomPt The width the line is set in.
+ */
+function fillCellLine(line: Line, roomPt: number): Line {
+  const at = line.tokens.findIndex((t) => t.kind === 'text' && t.fill !== undefined);
+  if (at < 0) return line;
+  const tok = line.tokens[at] as TextToken;
+  const free = roomPt - line.contentWidthPt;
+  const unit =
+    tok.font.measure.textWidthPt(tok.fill!, tok.fontSizePt) *
+    (tok.synthetic?.widthScale ?? 1) *
+    (tok.resolvedRun.widthScale ?? 1);
+  if (!(free > 0) || !(unit > 0)) return line;
+  // A hair under a whole character is a whole character: the room is a sum
+  // of measured widths and need not come out exact.
+  const count = Math.floor(free / unit + 1e-6);
+  const spare = Math.max(0, free - count * unit);
+  const alignment = line.resolved.alignment;
+  const lead = alignment === 'right' ? spare : alignment === 'center' ? spare / 2 : 0;
+  const tokens: Array<Token> = [...line.tokens];
+  tokens[at] = { ...tok, text: tok.fill!.repeat(count), widthPt: count * unit + spare - lead };
+  if (lead > 0) tokens.unshift(leadGap(tok, lead));
+  return { ...line, tokens, contentWidthPt: roomPt };
+}
+
+/** An empty gap of `widthPt` at the head of a line, in the style of `like`. */
+function leadGap(like: TextToken, widthPt: number): TextToken {
+  return {
+    kind: 'text',
+    text: '',
+    isSpace: false,
+    gap: true,
+    resolvedRun: like.resolvedRun,
+    font: like.font,
+    fontSizePt: like.fontSizePt,
+    widthPt,
+    bidiLevel: like.bidiLevel,
+  };
 }
 
 /**
@@ -11852,22 +12552,43 @@ function overrunOffset(
 }
 
 /**
- * The line as a row of `#` filling `widthPt` — what Excel and LibreOffice put in
- * a cell whose number does not fit. At least one, so the cell is never blank:
- * a column too narrow even for a single `#` still has to say something.
+ * The line as a row of `#` across `widthPt`, the room inside the cell's
+ * padding — what Excel and LibreOffice put in a cell whose number does not fit.
+ * At least one, so the cell is never blank: a column too narrow even for a
+ * single `#` still has to say something.
+ *
+ * As many as fit that room, centred in it whatever the cell's alignment: Excel's
+ * own PDF (2026-11-20) sets 18 `#` of 5px in a cell with 91px inside its
+ * padding 1px in from the left, in one with 94px 2px in from each side, and 15
+ * in one with 75px flush — in left-, right- and centre-aligned cells alike.
+ * We counted them against the box less its left padding only and set them by
+ * the cell's alignment, so a number's `#` stood against the right edge.
  */
 function hashFill(line: Line, widthPt: number): Line {
-  const first = line.tokens.find((t): t is TextToken => t.kind === 'text');
+  const first =
+    line.tokens.find(
+      (t): t is TextToken => t.kind === 'text' && t.gap !== true && t.fill === undefined,
+    ) ?? line.tokens.find((t): t is TextToken => t.kind === 'text');
   if (!first) return line;
   const one = first.font.measure.textWidthPt('#', first.fontSizePt);
-  const count = one > 0 ? Math.max(1, Math.floor(widthPt / one)) : 1;
+  const count = one > 0 ? Math.max(1, Math.floor(widthPt / one + 1e-6)) : 1;
   const text = '#'.repeat(count);
+  const drawn = first.font.measure.textWidthPt(text, first.fontSizePt);
+  const spare = Math.max(0, widthPt - drawn);
   const token: TextToken = {
-    ...first,
+    kind: 'text',
     text,
-    widthPt: first.font.measure.textWidthPt(text, first.fontSizePt),
+    isSpace: false,
+    ...(first.href !== undefined ? { href: first.href } : {}),
+    resolvedRun: first.resolvedRun,
+    font: first.font,
+    ...(first.synthetic ? { synthetic: first.synthetic } : {}),
+    fontSizePt: first.fontSizePt,
+    widthPt: drawn + spare / 2,
+    bidiLevel: first.bidiLevel,
   };
-  return { ...line, tokens: [token], contentWidthPt: token.widthPt };
+  const tokens: Array<Token> = spare > 0 ? [leadGap(first, spare / 2), token] : [token];
+  return { ...line, tokens, contentWidthPt: drawn + spare };
 }
 
 /**

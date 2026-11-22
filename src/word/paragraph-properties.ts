@@ -15,6 +15,7 @@ import type { ThemeFonts } from '@/core/drawingml/theme-parser';
 import { eighthPtToPt, pt, twipsToPt } from '@/core/ir';
 
 import { parseRunProperties } from '@/word/run-properties';
+import { shadingFillHex } from '@/word/shading';
 import {
   asArray,
   asElement,
@@ -197,14 +198,13 @@ export function parseParagraphProperties(
     if (borders) out.borders = borders;
   }
 
-  // §17.3.1.31 — the paragraph's own background. A direct `@w:fill` hex is
-  // honoured, the way a cell's `w:shd` already is; `auto` and pattern-only
-  // shading leave it unfilled.
+  // §17.3.1.31 — the paragraph's own background: like a run's (§17.3.2.32), a
+  // PATTERN in `w:color` over `w:fill`, painted as the two blended, and nothing
+  // at all for `nil`.
   if ('w:shd' in el) {
-    const fill = getAttr(el['w:shd'], 'fill');
-    if (fill && fill !== 'auto' && /^[0-9A-Fa-f]{6}$/u.test(fill)) {
-      out.shading = { colorHex: fill.toUpperCase() };
-    }
+    const shd = el['w:shd'];
+    const hex = shadingFillHex(getVal(shd), getAttr(shd, 'color'), getAttr(shd, 'fill'));
+    if (hex !== undefined) out.shading = { colorHex: hex };
   }
 
   // §17.3.1.41 `w:textDirection` — the paragraph reads bottom-to-top (`btLr`)

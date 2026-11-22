@@ -350,6 +350,8 @@ export function reconstructByLayout(
     own.length > 0 ? own : shared && fitsGutters(gutterRuns[i]!, shared) ? shared : own,
   );
   const body: Array<BodyElement> = [];
+  // Where each source page's elements begin in the body (Reconstruction.pageStarts).
+  const pageStarts: Array<number> = [];
   // §17.6 — where the pages differ in size the document is several sections,
   // each ending at the body index its last page's blocks end at.
   const sectionEnds: Array<{
@@ -1028,6 +1030,7 @@ export function reconstructByLayout(
     // …and so does a page with nothing on it to read. A blank sheet is still a
     // sheet: doc_actions.pdf is three of them, and came back as one.
     // Where this page's break stands in the body, where it has one.
+    pageStarts[i] = body.length;
     const breakAt = i > 0 && !opensSection ? body.length : undefined;
     if (i > 0 && !opensSection) {
       body.push({
@@ -1391,6 +1394,9 @@ export function reconstructByLayout(
       },
     });
     for (const e of sectionEnds) if (e.at > brk.at) e.at++;
+    pageStarts.forEach((at, k) => {
+      if (at > brk.at) pageStarts[k] = at + 1;
+    });
   }
   const sections =
     sectionEnds.length > 1
@@ -1502,6 +1508,7 @@ export function reconstructByLayout(
       kernedFaces(spacing),
     ),
     losses: dedupeLosses(losses),
+    pageStarts,
   };
 }
 

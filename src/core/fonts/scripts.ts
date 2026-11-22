@@ -9,14 +9,14 @@
 // document holds such a character (see `fetchScriptFont`), so the question
 // this answers is: which ones.
 
-import type { BodyElement, ShapeBlock } from '@/core/document-model';
+import type { BodyElement, Run, ShapeBlock } from '@/core/document-model';
 import type { FlowDoc } from '@/core/ir/flow';
 import type { FamilyKey, ScriptKey } from '@/core/fonts/remote-fonts';
 import { companionOf } from '@/core/fonts/remote-fonts';
 
 // The blocks each face covers. Ordered: the first range that contains the code
 // point wins, and HAN is deliberately last because which of the three CJK faces
-// draws it is a property of the DOCUMENT, not of the character (see below).
+// draws it is a property of the run's LANGUAGE, not of the character (see below).
 const RANGES: ReadonlyArray<readonly [number, number, ScriptKey | 'han']> = [
   [0x0590, 0x05ff, 'hebrew'],
   [0x0600, 0x06ff, 'arabic'],
@@ -61,13 +61,63 @@ const RANGES: ReadonlyArray<readonly [number, number, ScriptKey | 'han']> = [
   [0xff00, 0xffef, 'han'], // halfwidth + fullwidth forms
 ];
 
+/** The three faces unified Han is drawn in: Japanese, Korean, Chinese. */
+export type HanFace = Extract<ScriptKey, 'jp' | 'kr' | 'sc'>;
+
+/**
+ * The face unified Han is drawn in for text in a language: Noto Sans JP for
+ * Japanese, KR for Korean, SC for Chinese.
+ *
+ * Traditional Chinese (`zh-TW`, `zh-HK`) is drawn in SC as well, for want of
+ * a Traditional face among the ones fetched. Noto Sans SC draws 這 個 們, in
+ * the mainland's forms, and the simplified 这 应 们 beside them, which neither
+ * Noto Sans JP nor KR has at all (`hb-shape` gives glyph 0 for each).
+ *
+ * @param lang A language tag (`"zh-CN"`, `"ja-JP"`, `"ko"`), any case.
+ * @returns The face, or `undefined` when the language is none of the three.
+ */
+export function hanFaceOfLang(lang: string | undefined): HanFace | undefined {
+  const primary = lang?.trim().toLowerCase().split(/[-_]/)[0];
+  if (primary === 'ja') return 'jp';
+  if (primary === 'ko') return 'kr';
+  if (primary === 'zh') return 'sc';
+  return undefined;
+}
+
+/**
+ * The East Asian language a font's Windows character set is for — §18.4.1
+ * `charset`, the one place a spreadsheet says which language its text is in.
+ * Of poi-xlsx and lo-xlsx, the workbooks that hold Kana write 128 on their
+ * fonts (50299.xlsx, 51519.xlsx) and the Chinese ones 134 (49273.xlsx,
+ * tdf130104_indent.xlsx).
+ *
+ * @param charset The character set: 128 Shift-JIS, 129 Hangul, 130 Johab,
+ *                134 GB 2312, 136 Big5.
+ * @returns The language, or `undefined` for a character set of no East Asian one.
+ */
+export function langOfCharset(charset: number | undefined): string | undefined {
+  switch (charset) {
+    case 128:
+      return 'ja-JP';
+    case 129:
+    case 130:
+      return 'ko-KR';
+    case 134:
+      return 'zh-CN';
+    case 136:
+      return 'zh-TW';
+    default:
+      return undefined;
+  }
+}
+
 /**
  * The writing system a character needs a face for, or `undefined` when a Latin
  * family covers it.
  *
  * @param cp       The code point.
- * @param hanFace  Which face draws unified Han in this document (see
- *                 {@link scriptsInFlow}); defaults to Simplified.
+ * @param hanFace  Which face draws unified Han here — the run's language's, else
+ *                 the document's (see {@link scriptsInFlow}); defaults to Simplified.
  */
 export function scriptForCodepoint(cp: number, hanFace: ScriptKey = 'sc'): ScriptKey | undefined {
   for (const [lo, hi, key] of RANGES) {
@@ -124,31 +174,36 @@ export function fontSlotOf(cp: number, rtl = false): FontSlot {
  * The writing systems a document holds text in, beside the Latin one.
  *
  * Unified Han is written the same in Japanese, Korean and Chinese and drawn
- * differently in each, and the character does not say which — the document
- * does: Kana beside it means Japanese, Hangul means Korean. So the whole text
- * is read once, and the answer applies to every Han character in it.
+ * differently in each, and the character does not say which. The run's
+ * language does, where it names one of the three ({@link hanFaceOfLang}); a
+ * deck with one Chinese slide and one Japanese needs both faces, and drawn in
+ * Noto Sans JP alone its simplified 这 应 该 came out blank — that face has no
+ * glyph for them. A run whose language names none of the three is left to the
+ * document: Kana anywhere in it means Japanese, Hangul means Korean.
  *
  * @param flow The parsed document.
- * @returns The scripts to fetch a face for, and the one Han is drawn with.
+ * @returns The scripts to fetch a face for, and the face Han is drawn in where
+ *          the run's language does not say.
  */
 export function scriptsInFlow(flow: FlowDoc): {
   scripts: Set<ScriptKey>;
-  hanFace: ScriptKey;
+  hanFace: HanFace;
 } {
   const scripts = new Set<ScriptKey>();
-  // Whether the document holds unified Han at all — kept in a set rather than a
-  // flag so the answer survives the closure the walk runs in.
-  const marks = new Set<'han'>();
-  const read = (text: string): void => {
+  // The face each run that holds unified Han asks for by its language, and
+  // `undefined` for a run whose language names none.
+  const asked = new Set<HanFace | undefined>();
+  const read = (text: string, run: Run): void => {
+    let han = false;
     for (const ch of text) {
       const cp = ch.codePointAt(0) ?? 0;
       if (cp < 0x0590) continue;
       // 'sc' here means "unified Han", the placeholder the default resolves
-      // to — which face draws it is decided once, below.
+      // to — which face draws it is decided per run, below.
       const key = scriptForCodepoint(cp, 'sc');
       if (key === undefined) continue;
       if (key === 'sc') {
-        marks.add('han');
+        han = true;
         continue;
       }
       // One symbol calls for both symbol faces. Neither covers the other's
@@ -163,14 +218,26 @@ export function scriptsInFlow(flow: FlowDoc): {
       }
       scripts.add(key);
     }
+    // The body carries the cascade's final properties (FlowDoc stage 6), so
+    // a language a style or the document's defaults state is on the run.
+    if (han) asked.add(hanFaceOfLang(run.properties.eastAsianLang));
   };
 
   forEachTextInFlow(flow, read);
 
   // Kana wins over Hangul: a Japanese document quotes Korean far less often
-  // than the other way round, and either face draws the Han it shares.
-  const hanFace: ScriptKey = scripts.has('jp') ? 'jp' : scripts.has('kr') ? 'kr' : 'sc';
-  if (marks.has('han')) scripts.add(hanFace);
+  // than the other way round, and either face draws the Han it shares. A run
+  // in Japanese counts as Kana does, and one in Korean as Hangul: JP is then
+  // fetched exactly when the answer is JP, and KR when it is KR, so the
+  // layout — which is handed the faces, not this answer — reads it back from
+  // which of them it was given (see `fallbackFaceKey`).
+  const hanFace: HanFace =
+    scripts.has('jp') || asked.has('jp')
+      ? 'jp'
+      : scripts.has('kr') || asked.has('kr')
+        ? 'kr'
+        : 'sc';
+  for (const face of asked) scripts.add(face ?? hanFace);
   return { scripts, hanFace };
 }
 
@@ -180,9 +247,9 @@ export function scriptsInFlow(flow: FlowDoc): {
  * of the drawings over a spreadsheet grid.
  *
  * @param flow The parsed document.
- * @param read Called with each run's text.
+ * @param read Called with each run's text, and the run itself.
  */
-export function forEachTextInFlow(flow: FlowDoc, read: (text: string) => void): void {
+export function forEachTextInFlow(flow: FlowDoc, read: (text: string, run: Run) => void): void {
   const shapeText = (shape: ShapeBlock): void => {
     if (shape.text) visit(shape.text.content);
     for (const child of shape.children ?? []) shapeText(child.shape);
@@ -190,7 +257,7 @@ export function forEachTextInFlow(flow: FlowDoc, read: (text: string) => void): 
   const visit = (elements: ReadonlyArray<BodyElement>): void => {
     for (const el of elements) {
       if (el.kind === 'paragraph') {
-        for (const run of el.paragraph.runs) read(run.text);
+        for (const run of el.paragraph.runs) read(run.text, run);
       } else if (el.kind === 'table') {
         for (const row of el.table.rows) for (const cell of row.cells) visit(cell.content);
         // …and the drawings over a spreadsheet grid (TableOverlay).

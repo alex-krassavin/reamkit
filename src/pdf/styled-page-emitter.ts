@@ -11,6 +11,7 @@ import type { ResourceId } from '@/core/ir';
 import type { EmbeddedFont } from '@/pdf/cid-font';
 import type { PdfDict, PdfRef, PdfValue } from '@/pdf/objects';
 import type {
+  BorderItem,
   FontResource,
   ImageItem,
   ImageResource,
@@ -25,6 +26,7 @@ import type {
 } from '@/layout/page-doc';
 import type {
   LaidOutPdfDocument,
+  OutlineMark,
   PdfAProfile,
   SectionRenderCtx,
   StyledRenderOptions,
@@ -47,14 +49,15 @@ import { emitClipPath, emitVectorShape, shadowBlurLayers } from '@/pdf/vector-gr
 import { buildGradientAlphaMask, buildGradientPattern, shapeBbox } from '@/pdf/shading';
 import { reverseByCodePoint } from '@/core/bidi';
 import { warpGlyphMatrix, warpGlyphRun } from '@/core/drawingml/text-warp';
-import { sanitizeHref } from '@/core/links';
+import { iriToUri, sanitizeHref } from '@/core/links';
 import { embedTtfFont } from '@/pdf/cid-font';
 import { embedAssociatedFile } from '@/pdf/embedded-file';
 import { buildSrgbIccProfile } from '@/pdf/icc-profile';
 import { addImage } from '@/pdf/image-xobject';
-import { dict, name, ref, stream, unicodeString } from '@/pdf/objects';
+import { dict, name, ref, stream, textString, unicodeString } from '@/pdf/objects';
 import { addSignaturePlaceholder } from '@/pdf/signature';
 import { buildXmpPacket } from '@/pdf/xmp';
+import { runBackgroundHex } from '@/core/style-cascade';
 
 const encoder = new TextEncoder();
 
@@ -79,7 +82,7 @@ function washItems(
 // options — never the layout options (oop-design §4.1: the seam must not leak).
 type EmitOptions = Pick<
   StyledRenderOptions,
-  'attachments' | 'info' | 'language' | 'pdfUA' | 'signaturePlaceholder'
+  'attachments' | 'info' | 'language' | 'outline' | 'pdfUA' | 'signaturePlaceholder'
 >;
 
 /**
@@ -384,13 +387,19 @@ function assembleStyledPdf(
           F: 4,
           // §12.6.4: URI action for external targets; a GoTo with a string
           // destination (resolved via /Names /Dests) for internal ones.
+          // §12.6.4.7 wants the URI in 7-bit ASCII: a viewer reads the string's
+          // bytes as single characters, so raw UTF-8 sent PDFKit to
+          // "/wiki/%C3%92%C2%9A…" for "/wiki/Қазақ" — map the IRI first.
           A:
             l.href !== undefined
-              ? dict({ S: name('URI'), URI: l.href })
+              ? dict({ S: name('URI'), URI: iriToUri(l.href) })
               : dict({ S: name('GoTo'), D: l.anchor ?? '' }),
           // ISO 14289-1 §7.18.5 — alternate description: the link's visible
-          // text, falling back to its target.
-          Contents: l.text !== '' ? l.text : (l.href ?? l.anchor ?? ''),
+          // text, falling back to its target. /Contents is a text string
+          // (ISO 32000-1 Table 164): written as a bare JS string it went out as
+          // UTF-8 bytes, and macOS PDFKit read "Қазақ тілі 中文" back as
+          // "ÒıÐ°Ð·Ð°Òł Ñ‡ÑŒÐ»ÑŒ ä¸ æŒ⁄" (PDFDocEncoding, as §7.9.2.2 says to).
+          Contents: textString(l.text !== '' ? l.text : (l.href ?? l.anchor ?? '')),
         };
         if (l.anchor !== undefined) referencedAnchors.add(l.anchor);
         if (structBuilder && l.structId !== undefined) {
@@ -407,6 +416,9 @@ function assembleStyledPdf(
         // CM2b — a native /Text sticky note at the comment marker, carrying the
         // comment's author and text for an interactive pop-up (ISO 32000-1
         // §12.5.6.4). Gated to non-PDF/A, non-tagged output via `commentNotes`.
+        // The body (/Contents) and the author (/T, Table 170) are text strings
+        // like the link's, so a Cyrillic reviewer's name reaches the pop-up as
+        // written, not as PDFKit's "ÓŸÐ»Ð¸Ñ‘ Ð¡ÓŽÑ•Ñ†ÐµÐ½Ð¾Ð²Ð°" for "Әлия Сәрсенова".
         const note = l.anchor !== undefined ? commentNotes?.get(l.anchor) : undefined;
         if (note) {
           const textAnnot = doc.add(
@@ -416,8 +428,8 @@ function assembleStyledPdf(
               Name: name('Comment'),
               Rect: [l.rect[0], l.rect[1], l.rect[2], l.rect[3]],
               F: 28, // Print + NoZoom + NoRotate — a fixed-size note icon
-              Contents: note.contents,
-              ...(note.author !== undefined ? { T: note.author } : {}),
+              Contents: textString(note.contents),
+              ...(note.author !== undefined ? { T: textString(note.author) } : {}),
             }),
           );
           annots.push(ref(textAnnot.id));
@@ -522,9 +534,9 @@ function assembleStyledPdf(
     namesTreeEntries['EmbeddedFiles'] = ref(embeddedFilesRef.id);
   }
 
-  // §12.3.2.4 string destinations: /Names /Dests maps each referenced
-  // bookmark name to an explicit [page /XYZ] destination (sorted → byte
-  // determinism). Unresolvable anchors (no such bookmark) simply have no
+  // ISO 32000-1 §12.3.2.3 string destinations: /Names /Dests maps each
+  // referenced bookmark name to an explicit [page /FitH] destination (sorted →
+  // byte determinism). Unresolvable anchors (no such bookmark) simply have no
   // entry — viewers treat the GoTo as a no-op.
   const bookmarkDests = laid.pdf.bookmarks;
   const destNames = [...referencedAnchors]
@@ -545,6 +557,23 @@ function assembleStyledPdf(
   }
   if (Object.keys(namesTreeEntries).length > 0) {
     catalogEntries['Names'] = dict(namesTreeEntries);
+  }
+  // ISO 32000-1 §12.3.3 — the document outline, from the headings the layout
+  // met (absent when the caller asked for none).
+  const outlineSettings = typeof options.outline === 'object' ? options.outline : {};
+  // Tagged, an item names the element of its heading too (Table 153 /SE): the
+  // tree above is written, so each element has its reference by now.
+  const structRefOf =
+    tagged && structBuilder ? (id: number) => structBuilder.elementRef(id) : undefined;
+  const outlinesRef =
+    options.outline !== false && laid.pdf.outline
+      ? buildOutline(doc, laid.pdf.outline, pageRefs, outlineSettings.maxLevel, structRefOf)
+      : undefined;
+  if (outlinesRef) {
+    catalogEntries['Outlines'] = ref(outlinesRef.id);
+    // §7.7.2 Table 28 — show the panel with the document only when asked:
+    // the default, UseNone, leaves it to the viewer (and to the reader).
+    if (outlineSettings.openPanel === true) catalogEntries['PageMode'] = name('UseOutlines');
   }
   // Digital signature placeholder (§12.8): an invisible /Sig widget on page 1,
   // an /AcroForm in the catalog, and a signature dict with placeholder
@@ -569,6 +598,145 @@ function assembleStyledPdf(
     buildOptions: {
       ...(pdfaProfile ? { version: pdfaProfile.version, id: true } : {}),
     },
+  };
+}
+
+/** One outline item while the tree is built: its mark, its dictionary, its children. */
+interface OutlineNode {
+  readonly mark: OutlineMark;
+  readonly dict: PdfDict;
+  readonly ref: PdfRef;
+  readonly kids: Array<OutlineNode>;
+}
+
+/** §17.3.1.20 — nine outline levels, the most a heading can carry. */
+const MAX_OUTLINE_LEVEL = 9;
+
+/**
+ * Emit the document outline (ISO 32000-1 §12.3.3): the outline dictionary
+ * (Table 152) over one item dictionary (Table 153) per mark, nested the way
+ * LibreOffice nests its export — an item hangs under the nearest item before
+ * it of a SHALLOWER level, so a Heading 3 straight after a Heading 1 is that
+ * heading's child, and a Heading 2 before any Heading 1 stands at the top.
+ *
+ * Every item is open, as LibreOffice writes them, unless the document says
+ * otherwise (a source PDF's bookmark that stood closed): an open item's
+ * `/Count` is the number of descendants it shows, a closed one's the number it
+ * would show, negative; the outline's own `/Count` is the number of items in
+ * view. A leaf has no `/Count` — Table 153 asks for one only of an item with
+ * descendants.
+ *
+ * An item that opens a URI (a source PDF's bookmark, `OutlineMark.uri`) gets
+ * a URI action instead of a destination — see {@link outlineTarget}.
+ *
+ * Each destination is `[page /XYZ left top 0]` (Table 151): the heading's
+ * first line at the top of the window, the column's left edge at its left,
+ * and the zoom — 0, "the same meaning as a null value" — left as the reader
+ * has it. LibreOffice writes the same form; the `/FitH` of the document's own
+ * links would change the reader's zoom at every click in the panel.
+ *
+ * @param doc      The document the objects are added to.
+ * @param marks    The outline's items in document order.
+ * @param pageRefs The page objects, by 0-based page index.
+ * In tagged output an item also names its heading's structure element, `/SE`
+ * (PDF 1.3, Table 153): what an assistive technology reads at the item, where
+ * `/Dest` is only the place it shows. An item whose mark has no element — the
+ * document states it, or the output is not tagged — has none.
+ *
+ * @param doc      The document the objects are added to.
+ * @param marks    The outline's items in document order.
+ * @param pageRefs The page objects, by 0-based page index.
+ * @param maxLevel The deepest level kept, 1–9 (default 9).
+ * @param structRefOf The written element of a structure node, when tagging.
+ * @returns The outline dictionary's reference, or `undefined` when no item is left.
+ */
+function buildOutline(
+  doc: PdfDocument,
+  marks: ReadonlyArray<OutlineMark>,
+  pageRefs: ReadonlyArray<PdfRef>,
+  maxLevel: number = MAX_OUTLINE_LEVEL,
+  structRefOf?: (structId: number) => PdfRef | undefined,
+): PdfRef | undefined {
+  const deepest = Number.isFinite(maxLevel)
+    ? Math.max(1, Math.min(MAX_OUTLINE_LEVEL, Math.floor(maxLevel)))
+    : MAX_OUTLINE_LEVEL;
+  const kept = marks.filter(
+    (m) => m.level <= deepest && (m.uri !== undefined || pageRefs[m.pageIdx] !== undefined),
+  );
+  if (kept.length === 0) return undefined;
+  const rootDict = dict({ Type: name('Outlines') });
+  const rootRef = doc.add(rootDict);
+  const top: Array<OutlineNode> = [];
+  const open: Array<OutlineNode> = [];
+  for (const mark of kept) {
+    while (open.length > 0 && open[open.length - 1]!.mark.level >= mark.level) open.pop();
+    const parent = open[open.length - 1];
+    const itemDict = dict({
+      Title: textString(mark.title),
+      Parent: ref(parent ? parent.ref.id : rootRef.id),
+      ...outlineTarget(mark, pageRefs),
+    });
+    const se = mark.structId !== undefined ? structRefOf?.(mark.structId) : undefined;
+    if (se) itemDict.set('SE', ref(se.id));
+    const node: OutlineNode = { mark, dict: itemDict, ref: doc.add(itemDict), kids: [] };
+    (parent ? parent.kids : top).push(node);
+    open.push(node);
+  }
+  // Chain one level's items and hang them off their owner; the number of items
+  // this makes visible comes back for the owner's /Count.
+  const hang = (owner: PdfDict, kids: ReadonlyArray<OutlineNode>): number => {
+    owner.set('First', ref(kids[0]!.ref.id));
+    owner.set('Last', ref(kids[kids.length - 1]!.ref.id));
+    let visible = 0;
+    kids.forEach((kid, i) => {
+      if (i > 0) kid.dict.set('Prev', ref(kids[i - 1]!.ref.id));
+      if (i < kids.length - 1) kid.dict.set('Next', ref(kids[i + 1]!.ref.id));
+      visible++;
+      if (kid.kids.length > 0) {
+        const below = hang(kid.dict, kid.kids);
+        const open = kid.mark.open !== false;
+        kid.dict.set('Count', open ? below : -below);
+        if (open) visible += below;
+      }
+    });
+    return visible;
+  };
+  rootDict.set('Count', hang(rootDict, top));
+  return rootRef;
+}
+
+/**
+ * Where an outline item takes the reader (ISO 32000-1 §12.3.3 Table 153, which
+ * allows `/Dest` or `/A`, never both): the destination of its mark's place, or,
+ * for a mark that opens a URI, a URI action (§12.6.4.7). The URI is mapped to
+ * the 7-bit ASCII Table 206 asks for and passes the scheme allowlist a link's
+ * does; one the allowlist refuses leaves the item where it stands, doing
+ * nothing — Table 153 asks for neither entry. PDF/A permits the action, as it
+ * does on the document's links: ISO 19005-1 §6.6.1 and ISO 19005-2/-3 §6.5.1
+ * forbid Launch, JavaScript and the like, and veraPDF's profiles test for the
+ * set left, URI among it.
+ *
+ * @param mark     The item's mark.
+ * @param pageRefs The page objects, by 0-based page index.
+ * @returns The item dictionary's `/Dest` or `/A` entry; none for a refused URI.
+ */
+function outlineTarget(
+  mark: OutlineMark,
+  pageRefs: ReadonlyArray<PdfRef>,
+): Record<string, PdfValue> {
+  if (mark.uri !== undefined) {
+    const safe = sanitizeHref(mark.uri);
+    return safe !== undefined ? { A: dict({ S: name('URI'), URI: iriToUri(safe) }) } : {};
+  }
+  const round = (v: number): number => Math.round(v * 100) / 100;
+  return {
+    Dest: [
+      ref(pageRefs[mark.pageIdx]!.id),
+      name('XYZ'),
+      round(mark.xLeftPt),
+      round(mark.yTopPt),
+      0,
+    ],
   };
 }
 
@@ -826,6 +994,56 @@ interface LinkRegion {
 function dashPatternFor(style: BorderStyle | undefined): string {
   const pattern = style !== undefined ? BORDER_DASHES.get(style) : undefined;
   return pattern ? `[${pattern.map(formatNumber).join(' ')}]` : '';
+}
+
+/**
+ * The width a border's pen strokes at: a `double` is two rules, each a third of
+ * the declared width with the middle third the gap between them.
+ *
+ * @param b The border.
+ * @returns The line width, in points.
+ */
+function borderStrokeWidth(b: BorderItem): number {
+  return b.borderStyle === 'double' ? Math.max(0.25, b.borderSizePt / 3) : b.borderSizePt;
+}
+
+/**
+ * The path a border strokes — its edge, or for a `double` the two rules that
+ * straddle it — as `m`/`l` operators in the y-up page frame.
+ *
+ * @param b The border.
+ * @param H The page's height.
+ * @returns The path operators, without the `S` that strokes them.
+ */
+function borderPathOps(b: BorderItem, H: number): Array<string> {
+  const width = b.borderSizePt;
+  const x = b.x;
+  const y = H - b.y - b.height; // box bottom edge in PDF's y-up frame
+  const w = b.width;
+  const h = b.height;
+  // The edge as a segment plus the direction to offset it in: a `double` rule
+  // is TWO lines straddling the edge, and every other style is the one line
+  // down the middle of it.
+  const [x1, y1, x2, y2, nx, ny]: readonly [number, number, number, number, number, number] =
+    b.side === 'top'
+      ? [x, y + h, x + w, y + h, 0, 1]
+      : b.side === 'bottom'
+        ? [x, y, x + w, y, 0, 1]
+        : b.side === 'left'
+          ? [x, y, x, y + h, 1, 0]
+          : [x + w, y, x + w, y + h, 1, 0];
+  // §18.18.3 `double` is a pair of rules with a gap between them, not a
+  // heavier single one — 59264.xlsx labels its sampler cell DOUBLE and both
+  // references draw two lines where we drew one. Each line takes a third of
+  // the declared width and the gap the middle third, which is how Excel and
+  // Calc split it.
+  const offsets = b.borderStyle === 'double' ? [-width / 3, width / 3] : [0];
+  const out: Array<string> = [];
+  for (const d of offsets) {
+    out.push(`${formatNumber(x1 + nx * d)} ${formatNumber(y1 + ny * d)} m`);
+    out.push(`${formatNumber(x2 + nx * d)} ${formatNumber(y2 + ny * d)} l`);
+  }
+  return out;
 }
 
 /**
@@ -1361,9 +1579,21 @@ function emitPageContent(
     const linkDescent = Math.max(lineFs * 0.2, line.mathDescentPt ?? 0);
     let linkHref: string | undefined;
     let linkAnchor: string | undefined;
-    let linkText = '';
+    // The link's text, token by token with each token's place in the line as
+    // written. A right-to-left line is walked in the order it is DRAWN, and
+    // its text joined on that walk read the words backwards: a bidi
+    // paragraph's link "العنوان الرئيسي" came back from macOS PDFKit as
+    // "الرئيسي العنوان". The rectangle is the stretch drawn; the text, what
+    // was written, in the order it was written.
+    let linkText: Array<{ readonly at: number; readonly text: string }> = [];
     let linkX0 = 0;
     let linkX1 = 0;
+    // The line's links, each with the logical place of its first token. The
+    // same walk meets them drawn left to right, and in tagged output the
+    // annotations' Link elements follow that order — which is the reading
+    // order a screen reader lists links in and, under /Tabs /S, the order Tab
+    // visits them: on a right-to-left line, the link written second first.
+    const lineLinks: Array<{ readonly at: number; readonly region: LinkRegion }> = [];
     const flushLink = () => {
       if (linkHref === undefined && linkAnchor === undefined) return;
       // External targets pass the scheme allowlist; an anchor is a bookmark
@@ -1376,20 +1606,45 @@ function emitPageContent(
             ? { anchor: linkAnchor }
             : undefined;
       if (target) {
-        links.push({
-          ...target,
-          text: linkText.trim(),
-          rect: [linkX0, baselineY - linkDescent, linkX1, baselineY + linkAscent],
-          ...(cmd.structId !== undefined ? { structId: cmd.structId } : {}),
+        linkText.sort((a, b) => a.at - b.at);
+        lineLinks.push({
+          at: linkText[0]?.at ?? 0,
+          region: {
+            ...target,
+            text: linkText
+              .map((piece) => piece.text)
+              .join('')
+              .trim(),
+            rect: [linkX0, baselineY - linkDescent, linkX1, baselineY + linkAscent],
+            ...(cmd.structId !== undefined ? { structId: cmd.structId } : {}),
+          },
         });
       }
       linkHref = undefined;
       linkAnchor = undefined;
-      linkText = '';
+      linkText = [];
     };
+    /** Closes the line's last link and hands its links on in written order. */
+    const endLinks = () => {
+      flushLink();
+      lineLinks.sort((a, b) => a.at - b.at);
+      for (const l of lineLinks) links.push(l.region);
+    };
+    /**
+     * Extends the link being drawn by one token, or closes it and opens the
+     * next when the token's target differs.
+     *
+     * @param href   The token's external target, if any.
+     * @param anchor The token's bookmark target, if any.
+     * @param at     The token's index in `line.tokens` — its logical place.
+     * @param text   The token's text.
+     * @param x0     Where the token starts on the page.
+     * @param x1     Where it ends.
+     */
     const trackLink = (
       href: string | undefined,
       anchor: string | undefined,
+      at: number,
       text: string,
       x0: number,
       x1: number,
@@ -1404,7 +1659,7 @@ function emitPageContent(
       }
       if (href !== undefined || anchor !== undefined) {
         linkX1 = x1;
-        linkText += text;
+        linkText.push({ at, text });
       }
     };
     const extraPerSpace = computeJustifyExtra(line);
@@ -1416,9 +1671,12 @@ function emitPageContent(
     // sets the text matrix once and lets the font's own advances carry the
     // cursor, which loses that distance entirely — a numbered list printed
     // "1.First item". Position such a line token by token instead; the space
-    // after a list marker (§17.9.29) is a distance of its own the same way.
+    // after a list marker (§17.9.29) is a distance of its own the same way, and
+    // so are a number format's blanks and fill in a spreadsheet cell (§18.8.31).
     const hasTab = line.tokens.some(
-      (t) => t.kind === 'text' && (t.tab === true || t.listMarkerSpace === true),
+      (t) =>
+        t.kind === 'text' &&
+        (t.tab === true || t.listMarkerSpace === true || t.gap === true || t.fill !== undefined),
     );
 
     // Encode a token's text, reversing code points for RTL (odd-level) runs
@@ -1472,7 +1730,7 @@ function emitPageContent(
     // §17.3.2.32 — a run's own background, painted behind its glyphs before
     // anything else on the line. Same shape as the highlight below, but each
     // run carries its own colour; runs that share one are painted together.
-    if (line.tokens.some((t) => t.kind === 'text' && t.resolvedRun.shadingColorHex)) {
+    if (line.tokens.some((t) => t.kind === 'text' && runBackgroundHex(t.resolvedRun))) {
       if (inBT) {
         out.push('ET');
         inBT = false;
@@ -1484,7 +1742,7 @@ function emitPageContent(
       let painted = '';
       for (const tok of line.tokens) {
         const w = tok.widthPt + (tok.kind === 'text' && tok.isSpace ? extraPerSpace : 0);
-        const hex = tok.kind === 'text' ? tok.resolvedRun.shadingColorHex : undefined;
+        const hex = tok.kind === 'text' ? runBackgroundHex(tok.resolvedRun) : undefined;
         if (hex !== undefined) {
           if (hex !== painted) {
             if (painted !== '') out.push('f');
@@ -1762,9 +2020,9 @@ function emitPageContent(
         const tokenX0 = x;
         x += tok.widthPt;
         if (tok.isSpace) x += extraPerSpace;
-        trackLink(tok.href, tok.anchor, tok.text, tokenX0, x);
+        trackLink(tok.href, tok.anchor, order[oi]!, tok.text, tokenX0, x);
       }
-      flushLink();
+      endLinks();
     } else {
       if (!inBT) {
         out.push('BT');
@@ -1780,10 +2038,10 @@ function emitPageContent(
         if (at.open[i]) out.push(at.open[i] ?? '');
         out.push(showTextOf(tok, tok.text));
         if (at.close[i]) out.push('EMC');
-        trackLink(tok.href, tok.anchor, tok.text, x, x + tok.widthPt);
+        trackLink(tok.href, tok.anchor, i, tok.text, x, x + tok.widthPt);
         x += tok.widthPt;
       }
-      flushLink();
+      endLinks();
     }
   };
 
@@ -1886,7 +2144,24 @@ function emitPageContent(
       );
       return;
     }
-    if (item.type !== 'line') return;
+    if (item.type === 'border') {
+      // A rule inside a picture — a text box's own table — strokes where the
+      // picture puts it, in a state of its own: the cap and dash the border
+      // pass sets for its whole batch are not in force here. Dropped, the
+      // table in issue #136's text box lost its grid.
+      const dash = dashPatternFor(item.borderStyle);
+      const [r, g, b] = hexToRgb01(item.borderColorHex);
+      out.push(
+        'q',
+        dash === '' ? '2 J' : `${dash} 0 d 0 J`,
+        `${formatNumber(borderStrokeWidth(item))} w`,
+        `${formatNumber(r)} ${formatNumber(g)} ${formatNumber(b)} RG`,
+        ...borderPathOps(item, H),
+        'S',
+        'Q',
+      );
+      return;
+    }
     // Set with the SAME emitter the page's own text uses: a line is a line
     // wherever it paints. Written here as "the first token at a point" — which
     // is all a metafile's label ever is — a master's caption lost every word
@@ -1979,7 +2254,6 @@ function emitPageContent(
     let lastStroke = '';
     let lastDash = '';
     for (const b of borders) {
-      const width = b.borderSizePt;
       const color = b.borderColorHex;
       // §18.18.3 names line PATTERNS, not just weights, and ISO 32000-1 §8.4.3.6
       // is where they belong. 57423.xlsx rules a whole band `dashed` and we drew
@@ -1992,7 +2266,7 @@ function emitPageContent(
         lastDash = dash;
       }
       // Each rule of a `double` takes a third of the declared width.
-      const strokeW = b.borderStyle === 'double' ? Math.max(0.25, width / 3) : width;
+      const strokeW = borderStrokeWidth(b);
       if (strokeW !== lastWidth) {
         out.push(`${formatNumber(strokeW)} w`);
         lastWidth = strokeW;
@@ -2002,31 +2276,7 @@ function emitPageContent(
         out.push(`${formatNumber(r)} ${formatNumber(g)} ${formatNumber(bl)} RG`);
         lastStroke = color;
       }
-      const x = b.x;
-      const y = H - b.y - b.height; // box bottom edge in PDF's y-up frame
-      const w = b.width;
-      const h = b.height;
-      // The edge as a segment plus the direction to offset it in: a `double`
-      // rule is TWO lines straddling the edge, and every other style is the one
-      // line down the middle of it.
-      const [x1, y1, x2, y2, nx, ny]: readonly [number, number, number, number, number, number] =
-        b.side === 'top'
-          ? [x, y + h, x + w, y + h, 0, 1]
-          : b.side === 'bottom'
-            ? [x, y, x + w, y, 0, 1]
-            : b.side === 'left'
-              ? [x, y, x, y + h, 1, 0]
-              : [x + w, y, x + w, y + h, 1, 0];
-      // §18.18.3 `double` is a pair of rules with a gap between them, not a
-      // heavier single one — 59264.xlsx labels its sampler cell DOUBLE and both
-      // references draw two lines where we drew one. Each line takes a third of
-      // the declared width and the gap the middle third, which is how Excel and
-      // Calc split it.
-      const offsets = b.borderStyle === 'double' ? [-width / 3, width / 3] : [0];
-      for (const d of offsets) {
-        out.push(`${formatNumber(x1 + nx * d)} ${formatNumber(y1 + ny * d)} m`);
-        out.push(`${formatNumber(x2 + nx * d)} ${formatNumber(y2 + ny * d)} l`);
-      }
+      out.push(...borderPathOps(b, H));
       out.push('S');
     }
     out.push('Q');
@@ -2082,10 +2332,12 @@ function emitPageContent(
   }
 
   // §19.3.1 — and a page that states its own order paints in it, kind by kind
-  // ignored. A slide's shape tree IS that order.
-  for (const run of plan.ordered) {
-    for (const item of run) emitInOrder(item);
-  }
+  // ignored. A slide's shape tree IS that order. Tagged, each item is marked as
+  // the shape pass marks its own (a figure's part, or an artifact): a floating
+  // text box paints here with its table's shading and rules, and left
+  // unmarked they were content outside any marked sequence (ISO 32000-1
+  // §14.8.2.2), which PDF/UA does not allow.
+  for (const run of plan.ordered) emitTaggedRuns(out, run, tagging, emitInOrder);
 
   emitLinesPass();
 

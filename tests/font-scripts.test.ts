@@ -8,12 +8,23 @@ import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
 
+import { buildDocxFromBody } from './fixtures/build-docx';
+import { buildPptx } from './fixtures/build-pptx';
 import { buildXlsx } from './fixtures/build-xlsx';
 import type { FetchLike } from '@/core/fonts';
+import type { FlowDoc } from '@/core/ir/flow';
 import { Ream } from '@/core/converter/ream';
 import { clearFontCache } from '@/core/fonts';
-import { scriptForCodepoint, scriptsInFlow } from '@/core/fonts/scripts';
+import {
+  forEachTextInFlow,
+  hanFaceOfLang,
+  langOfCharset,
+  scriptForCodepoint,
+  scriptsInFlow,
+} from '@/core/fonts/scripts';
 import { buildTrueType } from '@/core/font/ttf-build';
+import { PdfFile } from '@/pdf-reader/document';
+import { extractPageText } from '@/pdf-reader/text';
 
 const cp = (s: string): number => s.codePointAt(0)!;
 
@@ -172,5 +183,169 @@ describe('a face for a script the substitutes lack', () => {
     const asked: Array<string> = [];
     await Ream.parse(sheet('hello')).convert('pdf', { fontFetch: serveRoboto(asked) });
     expect(asked.some((f) => f.startsWith('Noto'))).toBe(false);
+  });
+});
+
+// One text box holding one run, its `a:rPr` attributes as given.
+const textBox = (text: string, rPr: string): string =>
+  `<p:sp><p:spPr><a:xfrm><a:off x="914400" y="914400"/><a:ext cx="7315200" cy="1828800"/></a:xfrm>` +
+  `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>` +
+  `<p:txBody><a:bodyPr/><a:p><a:r><a:rPr${rPr}/><a:t>${text}</a:t></a:r></a:p></p:txBody></p:sp>`;
+
+/** The East Asian language of each run of a document, by its text. */
+function langsOf(flow: FlowDoc): Map<string, string | undefined> {
+  const out = new Map<string, string | undefined>();
+  forEachTextInFlow(flow, (text, run) => out.set(text, run.properties.eastAsianLang));
+  return out;
+}
+
+const scriptsOf = (bytes: Uint8Array): Array<string> =>
+  [...scriptsInFlow(Ream.parse(bytes).flow).scripts].sort();
+
+describe('the face unified Han is drawn in, by the language of its run', () => {
+  // A deck with a Chinese slide and a Japanese one: one kana anywhere sent
+  // every ideograph to Noto Sans JP, and that face has no 这 应 该 at all —
+  // the Chinese slide came out blank where its simplified characters stood.
+  const MIXED = buildPptx([
+    textBox('这是中文字', ' lang="zh-CN" altLang="en-US"'),
+    textBox('あれは漢字', ' lang="ja-JP" altLang="en-US"'),
+  ]);
+
+  it('reads the face off a language tag', () => {
+    expect(hanFaceOfLang('zh-CN')).toBe('sc');
+    expect(hanFaceOfLang('zh-SG')).toBe('sc');
+    // No Traditional face is fetched: SC draws 這 個 們, JP has no 这.
+    expect(hanFaceOfLang('zh-TW')).toBe('sc');
+    expect(hanFaceOfLang('ja-JP')).toBe('jp');
+    expect(hanFaceOfLang('ko_KR')).toBe('kr');
+    expect(hanFaceOfLang('KO')).toBe('kr');
+    expect(hanFaceOfLang('en-US')).toBeUndefined();
+    expect(hanFaceOfLang(undefined)).toBeUndefined();
+  });
+
+  it('fetches a face for each language a run of Han is in', () => {
+    const { scripts, hanFace } = scriptsInFlow(Ream.parse(MIXED).flow);
+    expect([...scripts].sort()).toEqual(['jp', 'sc']);
+    // The face for a run that says nothing: Kana is in the document.
+    expect(hanFace).toBe('jp');
+  });
+
+  it('leaves a run whose language is not East Asian to the document', () => {
+    // A run IN Japanese counts as Kana does, so the Latin-tagged one goes to
+    // JP with it and nothing more is fetched.
+    const japanese = buildPptx([
+      textBox('漢字', ' lang="ja-JP"'),
+      textBox('中文', ' lang="en-US"'),
+    ]);
+    expect(scriptsOf(japanese)).toEqual(['jp']);
+    expect(scriptsInFlow(Ream.parse(japanese).flow).hanFace).toBe('jp');
+    // …and with nothing Japanese or Korean anywhere, Han is Chinese, as before.
+    expect(scriptsOf(buildPptx([textBox('中文', ' lang="en-US"')]))).toEqual(['sc']);
+    expect(scriptsOf(buildPptx([textBox('中文', '')]))).toEqual(['sc']);
+  });
+
+  it('takes the East Asian one of a slide run’s two languages', () => {
+    const deck = buildPptx([
+      textBox('甲', ' lang="en-US" altLang="ja-JP"'),
+      textBox('乙', ' lang="zh-CN" altLang="en-US"'),
+      textBox('丙', ' lang="en-US"'),
+    ]);
+    const langs = langsOf(Ream.parse(deck).flow);
+    expect(langs.get('甲')).toBe('ja-JP');
+    expect(langs.get('乙')).toBe('zh-CN');
+    expect(langs.get('丙')).toBe('en-US');
+  });
+
+  it('reads w:lang @w:eastAsia, inherited from the document defaults or the run’s own', () => {
+    const docx = buildDocxFromBody(
+      '<w:p><w:r><w:t>中文</w:t></w:r></w:p>' +
+        '<w:p><w:r><w:rPr><w:lang w:eastAsia="ja-JP"/></w:rPr><w:t>漢字</w:t></w:r></w:p>',
+      {
+        stylesXml:
+          '<w:docDefaults><w:rPrDefault><w:rPr>' +
+          '<w:lang w:val="en-US" w:eastAsia="zh-CN" w:bidi="ar-SA"/>' +
+          '</w:rPr></w:rPrDefault></w:docDefaults>',
+      },
+    );
+    const flow = Ream.parse(docx).flow;
+    const langs = langsOf(flow);
+    expect(langs.get('中文')).toBe('zh-CN');
+    expect(langs.get('漢字')).toBe('ja-JP');
+    expect([...scriptsInFlow(flow).scripts].sort()).toEqual(['jp', 'sc']);
+  });
+
+  it('reads a spreadsheet font’s character set as the language of its cells', () => {
+    const font = (charset: number): string =>
+      `<font><sz val="11"/><name val="Calibri"/><charset val="${charset}"/></font>`;
+    const xlsx = buildXlsx({
+      rows: [[{ value: '中文', styleIndex: 0 }], [{ value: '漢字', styleIndex: 1 }]],
+      stylesXml:
+        `<fonts count="2">${font(134)}${font(128)}</fonts>` +
+        '<fills count="1"><fill><patternFill patternType="none"/></fill></fills>' +
+        '<borders count="1"><border/></borders>' +
+        '<cellStyleXfs count="1"><xf/></cellStyleXfs>' +
+        '<cellXfs count="2"><xf fontId="0"/><xf fontId="1"/></cellXfs>',
+    });
+    const flow = Ream.parse(xlsx).flow;
+    const langs = langsOf(flow);
+    expect(langs.get('中文')).toBe('zh-CN');
+    expect(langs.get('漢字')).toBe('ja-JP');
+    expect([...scriptsInFlow(flow).scripts].sort()).toEqual(['jp', 'sc']);
+    expect([128, 129, 130, 134, 136, 0, 204].map(langOfCharset)).toEqual([
+      'ja-JP',
+      'ko-KR',
+      'ko-KR',
+      'zh-CN',
+      'zh-TW',
+      undefined,
+      undefined,
+    ]);
+  });
+
+  it('draws each run in its own language’s face', async () => {
+    // Noto Sans SC and JP cut down to the ten characters below; JP's lacks 这,
+    // as the face itself does. Everything else is served Roboto.
+    const font = (name: string): Uint8Array =>
+      new Uint8Array(readFileSync(`tests/fixtures/fonts/${name}.ttf`));
+    const faces: ReadonlyArray<[string, Uint8Array]> = [
+      ['NotoSansSC', font('NotoSansSC-subset')],
+      ['NotoSansJP', font('NotoSansJP-subset')],
+    ];
+    const roboto = font('Roboto-Regular');
+    const asked: Array<string> = [];
+    const served: FetchLike = (url) => {
+      asked.push(url.split('/').pop() ?? url);
+      const bytes = faces.find(([name]) => url.includes(name))?.[1] ?? roboto;
+      return Promise.resolve({
+        ok: true,
+        arrayBuffer: () => Promise.resolve(bytes.slice().buffer),
+      });
+    };
+    clearFontCache();
+    const { bytes, losses } = await Ream.parse(MIXED).convertWithReport('pdf', {
+      fontFetch: served,
+    });
+    clearFontCache();
+    expect(asked.filter((f) => f.startsWith('NotoSans')).sort()).toEqual([
+      'NotoSansJP_400Regular.ttf',
+      'NotoSansSC_400Regular.ttf',
+    ]);
+    expect(losses.filter((l) => l.feature === 'text')).toEqual([]);
+    const file = PdfFile.parse(bytes);
+    // Each Kana or Han character of a slide, and the face (its /BaseFont, as
+    // the reader gives it) it is drawn in.
+    const drawn = file
+      .pages()
+      .map((page) =>
+        extractPageText(file, page).flatMap((run) =>
+          [...run.text]
+            .filter((ch) => /[぀-ヿ一-鿿]/u.test(ch))
+            .map((ch) => [ch, run.fontName ?? '?'] as const),
+        ),
+      );
+    // The Chinese slide whole in SC — 是 中 文 字 too, which JP draws as well.
+    expect(drawn[0]).toEqual([...'这是中文字'].map((ch) => [ch, 'notosanssc-regular']));
+    // The Japanese slide whole in JP, its 漢 and 字 among it.
+    expect(drawn[1]).toEqual([...'あれは漢字'].map((ch) => [ch, 'notosansjp-regular']));
   });
 });

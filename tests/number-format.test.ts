@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { buildXlsx } from './fixtures/build-xlsx';
 import { Ream } from '@/core/converter/ream';
+import { applyTextFormat } from '@/core/number-format';
 import { applyNumberFormat, generalToWidth, numberFormatColorHex } from '@/excel';
 
 const noCustom = new Map<number, string>();
@@ -215,8 +216,9 @@ describe('applyNumberFormat — codes real producers write', () => {
     expect(applyNumberFormat('2.55', 165, fmt)).toBe('2 5/9');
     expect(applyNumberFormat('0.3889', 166, fmt)).toBe('2/5');
     expect(applyNumberFormat('3.3', 167, fmt)).toBe('3 5/16');
-    // A whole number keeps its integer and drops the fraction entirely.
-    expect(applyNumberFormat('4', 164, fmt)).toBe('4');
+    // A whole number keeps its integer and leaves the fraction's places blank,
+    // separator included: Excel reads 4 here as "4      " (2026-11-20).
+    expect(applyNumberFormat('4', 164, fmt)).toBe('4      ');
   });
 
   it('knows the built-in currency and fraction ids (§18.8.30)', () => {
@@ -228,8 +230,10 @@ describe('applyNumberFormat — codes real producers write', () => {
     expect(applyNumberFormat('1234.5', 7, noCustom)).toBe('$1,234.50 ');
     expect(applyNumberFormat('-1234.5', 8, noCustom)).toBe('($1,234.50)');
     expect(numberFormatColorHex('-1234.5', 8, noCustom)).toBe('FF0000');
-    expect(applyNumberFormat('0.5', 12, noCustom)).toBe('1/2');
-    expect(applyNumberFormat('2.25', 13, noCustom)).toBe('2 1/4');
+    // The `#` of a zero integer is blank, its separator is not; `??` pads the
+    // numerator in front and the denominator behind.
+    expect(applyNumberFormat('0.5', 12, noCustom)).toBe(' 1/2');
+    expect(applyNumberFormat('2.25', 13, noCustom)).toBe('2  1/4 ');
     expect(applyNumberFormat('12345', 48, noCustom)).toBe('12.3E+3');
   });
 
@@ -271,7 +275,8 @@ describe('applyNumberFormat — codes real producers write', () => {
     ]);
     expect(applyNumberFormat('1.2', 300, fmt)).toBe('1  1/5');
     expect(applyNumberFormat('-1.2', 300, fmt)).toBe('-1  1/5');
-    expect(applyNumberFormat('0.75', 300, fmt)).toBe('3/4');
+    // A zero integer under `#` is blank, but the literal after it still prints.
+    expect(applyNumberFormat('0.75', 300, fmt)).toBe('  3/4');
     // The plain spellings are unchanged, improper form included.
     expect(applyNumberFormat('1.2', 301, fmt)).toBe('1 1/5');
     expect(applyNumberFormat('1.2', 302, fmt)).toBe('6/5');
@@ -466,6 +471,92 @@ describe('a section may state a CONDITION, and then it is not the sign that pick
     expect(fmt('#,##0;[Red]-#,##0', '-1234')).toBe('-1,234');
     expect(fmt('0.0;(0.0);"zero"', '0')).toBe('zero');
   });
+
+  // Each expectation below is Excel's own `string value` of the same cell in a
+  // probe workbook (Excel for Mac, 2026-11-20).
+  const cases = (rows: ReadonlyArray<readonly [string, number, string]>): void => {
+    for (const [code, value, want] of rows) {
+      expect([code, value, fmt(code, String(value))]).toEqual([code, value, want]);
+    }
+  };
+
+  it('writes no minus sign in a section that admits only negative numbers', () => {
+    cases([
+      ['[<0]0', -5, '5'],
+      ['[<0]"neg "0;"pos "0', -5, 'neg 5'],
+      ['[<0]"neg "0;"pos "0', 5, 'pos 5'],
+      ['[<-1]"n"0;"p"0', -5, 'n5'],
+      ['[<=-1]"n"0;"p"0', -5, 'n5'],
+      ['[=-5]"n"0;"p"0', -5, 'n5'],
+      ['[>0]"p"0;[<0]"n"0', -5, 'n5'],
+      ['[>0]"p"0;[<0]"n"0;"z"0', -5, 'n5'],
+      ['[<0]"n"0;[>0]"p"0', -5, 'n5'],
+      ['[>100]"a"0;[<-100]"b"0;"c"0', -500, 'b500'],
+      ['[<0]"("0.0")";0.0', -0.04, '(0.0)'],
+      // …and keeps it where positive numbers or zero would pass too.
+      ['[<=0]"n"0;"p"0', -5, '-n5'],
+      ['[<1]"n"0;"p"0', -5, '-n5'],
+      ['[<>0]"n"0;"p"0', -5, '-n5'],
+      ['[<5]"n"0;"p"0', -5, '-n5'],
+      ['[<10]"$"0', -5, '-$5'],
+      ['[<>-5]"a"0;"b"0', -3, '-a3'],
+      ['[>-10]"p"0;"n"0', -5, '-p5'],
+      ['[>0]"a"0;[>-10]"b"0;"c"0', -5, '-b5'],
+      ['[<=0]"a"0;"b"0;"c"0', -5, '-a5'],
+    ]);
+  });
+
+  it('signs the else of two sections by the limit of the first', () => {
+    cases([
+      ['[>=0]"p"0;"n"0', -5, 'n5'],
+      ['[>0]"p"0;"n"0', -5, 'n5'],
+      ['[>-10]"p"0;"n"0', -20, 'n20'],
+      ['[>=-1]"a"0;"b"0', -5, 'b5'],
+      ['[<-10]"b"0;"c"0', -5, 'c5'],
+      ['[<-1]"a"0;"b"0', -0.5, 'b1'],
+      ['[<>-5]"a"0;"b"0', -5, 'b5'],
+      ['[<-1]"n"0;"c"0.0', -0.5, 'c0.5'],
+      ['[>5]"p"0;"n"0', -5, '-n5'],
+      ['[>0.5]"a"0;"b"0', -5, '-b5'],
+      ['[>=1]"a"0;"b"0', -5, '-b5'],
+      ['[>=100]"big"0;"$"0', -5, '-$5'],
+      ['[=0]"z"0;"o"0', -5, '-o5'],
+      ['[=-5]"a"0;"b"0', -6, '-b6'],
+      // The else of three always keeps it.
+      ['[>100]"a"0;[<-100]"b"0;"c"0', -5, '-c5'],
+      ['[>0]"a"0;[<-10]"b"0;"c"0', -5, '-c5'],
+      ['[>=0]0;[<-10]"b"0;"c"0', -5, '-c5'],
+    ]);
+  });
+
+  it('gives an unconditioned section the place its sign would have', () => {
+    cases([
+      // Of three: the first is [>0], the second [<0], only the third the else.
+      ['[>100]"a"0;"b"0;"c"0', -5, 'b5'],
+      ['[>100]"a"0;"b"0;"c"0', 5, 'c5'],
+      ['[>100]"a"0;"b"0;"c"0', 0, 'c0'],
+      ['[<0]"a"0;"b"0;"c"0', 5, 'c5'],
+      ['[>5]"a"0;"b"0;"c"0', 3, 'c3'],
+      ['[<-10]"b"0;"c"0;"z"0', -5, 'c5'],
+      ['[<-10]"b"0;"c"0;"z"0', 5, 'z5'],
+      ['"a"0;[<-10]"b"0;"c"0', 5, 'a5'],
+      ['"a"0;[<-10]"b"0;"c"0', 0, 'c0'],
+      ['"a"0;[<-10]"b"0;"c"0', -5, '-c5'],
+      // Of two, the first is [>0] and the second the else.
+      ['"a"0;[<-10]"b"0', 5, 'a5'],
+      ['"a"0;[<-10]"b"0', -50, 'b50'],
+      ['[<0]"a"0;"b"0', 5, 'b5'],
+    ]);
+  });
+
+  it('shows a value one condition does not admit as General, unsigned', () => {
+    cases([
+      ['[>0]"a"0', -5, '5'],
+      ['[>0]"a"0', -5.5, '5.5'],
+      ['[<0]"a"0', 5, '5'],
+      ['[<0]"a"0.00', 5.5, '5.5'],
+    ]);
+  });
 });
 
 describe('applyNumberFormat — a format code built to stall it', () => {
@@ -516,6 +607,317 @@ describe('applyNumberFormat — a format code built to stall it', () => {
     const { out, ms } = timed(`${'['.repeat(100_000)}0`, '1234.5');
     expect(out).toBe(`${'['.repeat(100_000)}1235`);
     expect(ms).toBeLessThan(1000);
+  });
+});
+
+describe('applyNumberFormat — the text around the digits, as Excel lays it out (#132)', () => {
+  // Each expectation is Excel's own `string value` of the same cell in a probe
+  // workbook (Excel for Mac, 2026-11-20), with that Mac's space grouping and
+  // decimal comma written back as `,` and `.`.
+  const show = (code: string, value: number): string =>
+    applyNumberFormat(String(value), 164, new Map([[164, code]]));
+  const cases = (rows: ReadonlyArray<readonly [string, number, string]>): void => {
+    for (const [code, value, want] of rows) {
+      expect([code, value, show(code, value)]).toEqual([code, value, want]);
+    }
+  };
+
+  it('formats the five cells the issue reports as Excel does', () => {
+    cases([
+      ['$#,##0', -5, '-$5'],
+      ['000-00-0000', 123456789, '123-45-6789'],
+      ['(###) ###-####', 5551234567, '(555) 123-4567'],
+      ['#.##', 1, '1.'],
+      ['0.###', 2, '2.'],
+    ]);
+  });
+
+  it('puts the minus sign in front of every literal', () => {
+    cases([
+      ['$0', -5, '-$5'],
+      ['"$"0', -5, '-$5'],
+      ['\\$0', -5, '-$5'],
+      ['[$$-409]#,##0', -5, '-$5'],
+      ['[$€-407] 0', -5, '-€ 5'],
+      ['0 [$€-407]', -5, '-5 €'],
+      ['$#,##0', -1234567, '-$1,234,567'],
+      ['"Total: "#,##0', -1234, '-Total: 1,234'],
+      ['(0)', -5, '-(5)'],
+      ['"-"0', -5, '--5'],
+      ['-0', -5, '--5'],
+      ['_(0_)', -5, '- 5 '],
+      ['???', -5, '-  5'],
+      ['000', -5, '-005'],
+      ['"x"', -5, '-x'],
+      ['"$"0%', -0.05, '-$5%'],
+    ]);
+  });
+
+  it('prints a negative section exactly as written, sign or none', () => {
+    cases([
+      ['0;0', -5, '5'],
+      ['0;-0', -5, '-5'],
+      ['0;(0)', -5, '(5)'],
+      ['$0;$0', -5, '$5'],
+      ['$0;-$0', -5, '-$5'],
+      ['$0;$-0', -5, '$-5'],
+      ['"$"0;"$"-0', -5, '$-5'],
+      ['"$"0;-"$"0', -5, '-$5'],
+      ['$-0', -5, '-$-5'],
+      ['0;;', -5, ''],
+      ['0;"neg"', -5, 'neg'],
+      ['"x"0;"y"0', -5, 'y5'],
+      ['"x";"y"', -5, 'y'],
+      ['0;0;"zero"', 0, 'zero'],
+      ['0;-0;"z"0', 0, 'z0'],
+    ]);
+  });
+
+  it('keeps the text between digit placeholders, filling them from the right', () => {
+    cases([
+      ['000-00-0000', 12345, '000-01-2345'],
+      ['000-00-0000', 1234567890, '1234-56-7890'],
+      ['000-00-0000', -123456789, '-123-45-6789'],
+      ['00000-0000', 123456789, '12345-6789'],
+      ['(###) ###-####', 1234567, '() 123-4567'],
+      ['(###) ###-####', 0, '() -'],
+      ['(###) ###-####', 15551234567, '(1555) 123-4567'],
+      ['(###) ###-####', -5551234567, '-(555) 123-4567'],
+      ['0"-"0', 12, '1-2'],
+      ['0"-"0', 5, '0-5'],
+      ['0"-"0', 123, '12-3'],
+      ['0"-"0', 99.6, '10-0'],
+      ['0" abc "0', 1234, '123 abc 4'],
+      ['"pre"0"mid"0"post"', 456, 'pre45mid6post'],
+      ['0 0', 123, '12 3'],
+      ['0"."00', 1234, '12.34'],
+      ['0"-"00', 123456, '1234-56'],
+      ['0"-"0.0', 9.96, '1-0.0'],
+      ['#-#', 1, '-1'],
+      ['#-#', 12, '1-2'],
+      ['#-#', 0, '-'],
+      ['##-##', 5, '-5'],
+      ['##-##', 12345, '123-45'],
+      ['00-00', 5, '00-05'],
+      ['??-??', 5, '  - 5'],
+      ['??-??', 123, ' 1-23'],
+      ['?"-"?', 5, ' -5'],
+      ['0.0"x"0', 1.23, '1.2x3'],
+      ['0.0 0', 1.234, '1.2 3'],
+      ['0.0-0', 1.25, '1.2-5'],
+      ['0.#-#', 1.5, '1.5-'],
+      ['0.#-#', 1, '1.-'],
+    ]);
+  });
+
+  it('reads an escaped character as text', () => {
+    cases([
+      ['0\\-0', 12, '1-2'],
+      ['\\(0\\)', 5, '(5)'],
+      ['\\(0\\)', -5, '-(5)'],
+      ['0\\ \\k\\g', 5, '5 kg'],
+      ['\\#0', 5, '#5'],
+      ['0\\0', 5, '50'],
+      ['0.0\\0', 1.5, '1.50'],
+      ['0\\.00', 1234, '12.34'],
+      ['_(0_)', 5, ' 5 '],
+      ['0_)', 5, '5 '],
+    ]);
+  });
+
+  it('always writes the decimal point, digits after it or not', () => {
+    cases([
+      ['#.##', 0, '.'],
+      ['#.##', 1.5, '1.5'],
+      ['#.##', -1, '-1.'],
+      ['#.##', 10, '10.'],
+      ['0.###', 0, '0.'],
+      ['0.###', -2, '-2.'],
+      ['0.#', 1, '1.'],
+      ['0.0#', 1, '1.0'],
+      ['#,##0.##', 1234, '1,234.'],
+      ['#.##;(#.##)', -1, '(1.)'],
+      ['#.#"x"', 1, '1.x'],
+      ['#.##%', 0.01, '1.%'],
+      ['.##', 0.5, '.5'],
+      ['.##', 1, '1.'],
+      ['.00', 12.5, '12.50'],
+      ['0.', 5, '5.'],
+      ['#.', 0, '.'],
+    ]);
+  });
+
+  it('scales for an unquoted percent sign only, once for each', () => {
+    cases([
+      ['0"%"', 0.5, '1%'],
+      ['0\\%', 0.5, '1%'],
+      ['0" %"', 0.5, '1 %'],
+      ['0 %', 0.5, '50 %'],
+      ['%0', 0.5, '%50'],
+      ['0%%', 0.5, '5000%%'],
+      ['#%', 0, '%'],
+      ['0%" up"', 0.5, '50% up'],
+      ['0.0%', 0.1234, '12.3%'],
+    ]);
+  });
+
+  it('groups the whole integer, whatever text stands between its digits', () => {
+    cases([
+      ['#,##0"-"000', 1234567, '1,234,-567'],
+      ['0,0"-"0', 1234567, '1,234,56-7'],
+      ['#,##0"-"0', 1234567, '1,234,56-7'],
+      ['#,#', 1234567, '1,234,567'],
+      ['#,##0 "x"', 1234567, '1,234,567 x'],
+      ['0,000', 5, '0,005'],
+      ['#,###', 5, '5'],
+      ['#,###', 0, ''],
+      ['#,##0', 0, '0'],
+      ['?,???', 1234, '1,234'],
+      ['?,???', 12345, '12,345'],
+      // Excel's Mac groups with a space, so it cannot say whether a separator
+      // beside a `?` blank is a space or a comma; it is there, one wide.
+      ['?,???', 5, '    5'],
+      ['??,???', 5, '     5'],
+      ['?,??0', 5, '    5'],
+      ['?,##0', 5, '  5'],
+      ['0,???', 5, '0,  5'],
+      // A comma after a placeholder that more of the integer follows, but not
+      // a placeholder itself, neither groups nor scales.
+      ['0,"-"0', 1234567, '123456-7'],
+    ]);
+  });
+
+  it('scales by a comma after the last placeholder of its part, and prints any other', () => {
+    cases([
+      ['0,', 1234, '1'],
+      ['0,', 1500, '2'],
+      ['0.0,', 1234, '1.2'],
+      ['#,##0,,', 1234567890, '1,235'],
+      ['#,##0,', 1234567, '1,235'],
+      ['#,##0.0,', 1234567, '1,234.6'],
+      ['0,"K"', 12345, '12K'],
+      ['0, "K"', 12345, '12 K'],
+      ['"x"0,', 12345, 'x12'],
+      ['0.0,,"M"', 12345678, '12.3M'],
+      ['0,.0', 12345, '12.3'],
+      ['0,_)', 12345, '12 '],
+      ['0,"x",', 12345678, '12346x,'],
+      ['0 ,', 12345, '12345 ,'],
+      ['0"x",', 12345, '12345x,'],
+      ['0.0,0', 1234.5, '1234.50'],
+    ]);
+  });
+
+  it('shows no sign for a value that rounds to zero', () => {
+    cases([
+      ['0', -0.4, '0'],
+      ['0.0', -0.04, '0.0'],
+      ['0.00', -0.001, '0.00'],
+      ['#,##0', -0.4, '0'],
+      ['0,', -400, '0'],
+      ['0%', -0.004, '0%'],
+      ['0.0%', -0.0004, '0.0%'],
+      ['"$"0', -0.4, '$0'],
+      ['"$"#,##0.00', -0.001, '$0.00'],
+      ['#,##0.00 "x"', -0.004, '0.00 x'],
+      ['(0)', -0.4, '(0)'],
+      ['#', -0.4, ''],
+      ['#.#', -0.04, '.'],
+      // The section is the negative one all the same, and its minus is text.
+      ['0;-0', -0.4, '-0'],
+      ['0;-0;"z"', -0.4, '-0'],
+      ['0;"n"0;"z"', -0.4, 'n0'],
+      ['0.0_);(0.0)', -0.04, '(0.0)'],
+      ['#,##0_);(#,##0)', -0.4, '(0)'],
+    ]);
+  });
+
+  it('pads with a space under ?, a zero under 0 and nothing under #, place by place', () => {
+    cases([
+      ['???', 5, '  5'],
+      ['?.???', 1.5, '1.5  '],
+      ['0.0?', 1.5, '1.5 '],
+      ['#?', 5, '5'],
+      ['???.??', -1.5, '-  1.5 '],
+      ['?0', 0, ' 0'],
+      ['#0', 0, '0'],
+      ['0#', 0, '0'],
+      ['0#', 5, '05'],
+      ['00000', 1234, '01234'],
+    ]);
+  });
+
+  it('keeps every place of a fraction, blanks and all', () => {
+    cases([
+      ['# ?/?', 1.5, '1 1/2'],
+      ['# ?/?', -1.5, '-1 1/2'],
+      ['# ?/?', 0, '0    '],
+      ['# ?/?', 0.25, ' 1/4'],
+      ['# ?/?', -0.25, '- 1/4'],
+      ['# ?/?', 3, '3    '],
+      ['# ?/?', 0.01, '0    '],
+      ['# ?/?', -0.01, '-0    '],
+      ['# ?/?', 2.99, '3    '],
+      ['# ?/?', 0.999, '1    '],
+      ['?/?', 1.5, '3/2'],
+      ['?/?', 0, '0/1'],
+      ['?/?', -0.5, '-1/2'],
+      ['?/?', -0.01, '0/1'],
+      ['# ??/??', 3.14159, '3  1/7 '],
+      ['# ??/??', 0.5, '  1/2 '],
+      ['# ??/?', 1.75, '1  3/4'],
+      ['?? ?/?', 1.5, ' 1 1/2'],
+      ['# 00/00', 1.5, '1 01/02'],
+      ['#  ?/?', 1.5, '1  1/2'],
+      ['#" "?/?', 1.5, '1 1/2'],
+      ['# ?/8', 1.3, '1 2/8'],
+      ['# ?/10', 0.25, ' 3/10'],
+      ['"$"# ?/?', -1.5, '-$1 1/2'],
+      ['"x"# ?/?', 3, 'x3    '],
+      ['# ?/? "in"', 2.5, '2 1/2 in'],
+      ['?/? "x"', 0.5, '1/2 x'],
+      ['# ?/?;(# ?/?)', -1.5, '(1 1/2)'],
+      ['0 ?/?', 0.5, '0 1/2'],
+      ['0 ?/?', 0, '0    '],
+    ]);
+  });
+
+  it('lays out a scientific mantissa by its placeholders and keeps its text', () => {
+    cases([
+      ['0.00E+00', 12345, '1.23E+04'],
+      ['0.00E+00', -12345, '-1.23E+04'],
+      ['0.00E+00', -0.001, '-1.00E-03'],
+      ['"x"0.0E+0', 123, 'x1.2E+2'],
+      ['0.0E+0" m"', 1234, '1.2E+3 m'],
+      ['$0.0E+0', -123, '-$1.2E+2'],
+      ['00.0E+00', 12345, '01.2E+04'],
+      ['#0.0E+0', 12345, '1.2E+4'],
+      ['0E+0', 1234, '1E+3'],
+      ['0.0E-0', 1234, '1.2E3'],
+      ['0.0E-0', 0.001, '1.0E-3'],
+      ['0.0E+0', 0, '0.0E+0'],
+      ['0.0E+0', -0.00001, '-1.0E-5'],
+      ['0.0E+000', 5, '5.0E+000'],
+      ['#.##E+00', 100, '1.E+02'],
+      ['0.0#E+0', 1, '1.0E+0'],
+      ['##0.###E+0', 1234, '1.234E+3'],
+      ['0.0E+00;(0.0E+00)', -1234, '(1.2E+03)'],
+    ]);
+  });
+
+  it('writes General with the text around it', () => {
+    cases([
+      ['General" kg"', 5, '5 kg'],
+      ['"$"General', -5, '-$5'],
+      ['General;(General)', -5, '(5)'],
+      ['0;General', -5, '5'],
+      ['"a"General"b"', 1.5, 'a1.5b'],
+      ['"x"General', 0.5, 'x0.5'],
+      ['[Red]General" kg"', 5, '5 kg'],
+      // A text section given a number shows it as General, without its text.
+      ['"a"@"b"', 5, '5'],
+      ['"a"@', -5, '-5'],
+    ]);
   });
 });
 
@@ -583,5 +985,88 @@ describe('applyNumberFormat — the digits Excel shows', () => {
     const xlsx = buildXlsx({ rows: [[{ value: 1.5, styleIndex: 1 }]], stylesXml: styles });
     const html = new TextDecoder().decode(await Ream.parse(xlsx).convert('html'));
     expect(html).toContain(`1.5${'0'.repeat(100)}`);
+  });
+});
+
+describe('a text cell shows its string through the text section', () => {
+  // Each expectation is Excel's own `string value` of the same cell in a probe
+  // workbook (Excel for Mac, 2026-11-20).
+  const cases = (rows: ReadonlyArray<readonly [string, string, string]>): void => {
+    for (const [code, value, want] of rows) {
+      const got = applyTextFormat(value, 164, new Map([[164, code]]));
+      expect([code, value, got]).toEqual([code, value, want]);
+    }
+  };
+
+  it('writes the fourth section, or a lone section holding @, around the text', () => {
+    cases([
+      ['0;-0;0;"["@"]"', 'abc', '[abc]'],
+      ['#,##0;-#,##0;"-";"t:"@', 'abc', 't:abc'],
+      ['0;-0;0;"x"', 'abc', 'x'],
+      ['0;0;0;@@', 'abc', 'abcabc'],
+      [';;;', 'abc', ''],
+      ['0;-0;0;', 'abc', ''],
+      ['@" kg"', 'abc', 'abc kg'],
+      ['"<"@">"', 'abc', '<abc>'],
+      ['"a"@', 'abc', 'aabc'],
+      ['@"x"@', 'abc', 'abcxabc'],
+      ['_(@_)', 'abc', ' abc '],
+      ['_-@_-', 'abc', ' abc '],
+      ['\\(@\\)', 'abc', '(abc)'],
+      ['\\@@', 'abc', '@abc'],
+    ]);
+  });
+
+  it('leaves the text as it is under a format with no text section', () => {
+    cases([
+      ['0.00', 'abc', 'abc'],
+      ['0;0;0', 'abc', 'abc'],
+      ['0;-0', 'abc', 'abc'],
+      // A string of digits is still text: no number format reads it.
+      ['0.00', '123', '123'],
+    ]);
+    expect(applyTextFormat('abc', 0, noCustom)).toBe('abc');
+    expect(applyTextFormat('abc', 49, noCustom)).toBe('abc');
+    expect(applyTextFormat('abc', 4, noCustom)).toBe('abc');
+  });
+
+  it('reads a bracket inside quotes or after a backslash as text, not a code', () => {
+    const show = (code: string, value: number): string =>
+      applyNumberFormat(String(value), 164, new Map([[164, code]]));
+    expect(show('0" [kg]"', 5)).toBe('5 [kg]');
+    expect(show('\\[0\\]', 5)).toBe('[5]');
+    expect(show('"["0"]"', -5)).toBe('-[5]');
+    expect(show('[Red]"[x]"0', 5)).toBe('[x]5');
+    expect(applyNumberFormat('abc', 164, new Map([[164, '0;-0;0;"["@"]"']]))).toBe('[abc]');
+  });
+
+  it('converts the issue’s workbook as Excel shows it, text cells included', async () => {
+    const codes = ['$#,##0', '000-00-0000', '(###) ###-####', '#.##', '0.###', '0;-0;0;"["@"]"'];
+    const attr = (s: string): string => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+    const styles =
+      `<numFmts count="${codes.length}">` +
+      codes.map((c, i) => `<numFmt numFmtId="${164 + i}" formatCode="${attr(c)}"/>`).join('') +
+      '</numFmts>' +
+      '<fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts>' +
+      '<fills count="2"><fill><patternFill patternType="none"/></fill>' +
+      '<fill><patternFill patternType="gray125"/></fill></fills>' +
+      '<borders count="1"><border/></borders>' +
+      '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>' +
+      `<cellXfs count="${codes.length + 1}"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>` +
+      codes
+        .map(
+          (_, i) =>
+            `<xf numFmtId="${164 + i}" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>`,
+        )
+        .join('') +
+      '</cellXfs>';
+    const values = [-5, 123456789, 5551234567, 1, 2, 'abc'];
+    const xlsx = buildXlsx({
+      rows: values.map((value, i) => [{ value, styleIndex: i + 1 }]),
+      stylesXml: styles,
+    });
+    const html = new TextDecoder().decode(await Ream.parse(xlsx).convert('html'));
+    const cells = [...html.matchAll(/<span[^>]*>(.*?)<\/span>/g)].map((m) => m[1]);
+    expect(cells).toEqual(['-$5', '123-45-6789', '(555) 123-4567', '1.', '2.', '[abc]']);
   });
 });

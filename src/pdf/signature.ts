@@ -8,7 +8,7 @@ import type { PdfDict, PdfRef, PdfValue } from '@/pdf/objects';
 import type { PdfDocument } from '@/pdf/writer';
 import { buildPkcs7Detached } from '@/core/crypto';
 import * as der from '@/core/crypto/asn1';
-import { PdfHexString, PdfRawToken, dict, name, ref } from '@/pdf/objects';
+import { PdfHexString, PdfRawToken, dict, name, ref, textString } from '@/pdf/objects';
 
 // A fixed-width /ByteRange placeholder: four 10-digit slots → overwritten in
 // place with the real offsets (right-padded with spaces, same total length).
@@ -87,10 +87,15 @@ export function addSignaturePlaceholder(
     Contents: new PdfHexString(new Uint8Array(reserve)),
   };
   if (ph.signingTime) sigEntries['M'] = pdfDate(ph.signingTime);
-  if (ph.reason) sigEntries['Reason'] = ph.reason;
-  if (ph.location) sigEntries['Location'] = ph.location;
-  if (ph.name) sigEntries['Name'] = ph.name;
-  if (ph.contactInfo) sigEntries['ContactInfo'] = ph.contactInfo;
+  // ISO 32000-1 Table 252 — the signer's name, reason, place and contact are
+  // text strings: a bare JS string would go out as UTF-8 bytes, which a reader
+  // decodes as PDFDocEncoding (§7.9.2.2), and a Cyrillic or CJK signer would
+  // show in the signature panel as mojibake. They follow /Contents, so
+  // signPdf's forward scan still meets the hole first.
+  if (ph.reason) sigEntries['Reason'] = textString(ph.reason);
+  if (ph.location) sigEntries['Location'] = textString(ph.location);
+  if (ph.name) sigEntries['Name'] = textString(ph.name);
+  if (ph.contactInfo) sigEntries['ContactInfo'] = textString(ph.contactInfo);
   const sigRef = doc.add(dict(sigEntries));
 
   // A signature field merged with its widget annotation (§12.7.4.5). Invisible:
@@ -100,7 +105,8 @@ export function addSignaturePlaceholder(
       FT: name('Sig'),
       Type: name('Annot'),
       Subtype: name('Widget'),
-      T: ph.fieldName ?? 'Signature1',
+      // Table 220 — the partial field name is a text string as well.
+      T: textString(ph.fieldName ?? 'Signature1'),
       V: ref(sigRef.id),
       P: ref(pageRef.id),
       Rect: [0, 0, 0, 0],

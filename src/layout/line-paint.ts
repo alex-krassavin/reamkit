@@ -7,6 +7,7 @@
 import type { BorderStyle } from '@/core/document-model';
 import type { Line } from '@/layout/page-doc';
 import { reorderVisual } from '@/core/bidi';
+import { runBackgroundHex } from '@/core/style-cascade';
 import { GLUE_SHRINK_RATIO } from '@/layout/styled-layout';
 
 /** The slant of a faked italic — tan(12°), the angle a text italic leans at. */
@@ -105,11 +106,13 @@ export function settableInOneMatrix(line: Line): boolean {
         t.kind === 'text' &&
         t.tab !== true &&
         t.listMarkerSpace !== true &&
+        t.gap !== true &&
+        t.fill === undefined &&
         t.bidiLevel % 2 === 0 &&
         t.risePt === undefined &&
         t.synthetic?.italic !== true &&
         t.highlight !== true &&
-        t.resolvedRun.shadingColorHex === undefined &&
+        runBackgroundHex(t.resolvedRun) === undefined &&
         t.resolvedRun.underline === 'none' &&
         !t.resolvedRun.strike,
     )

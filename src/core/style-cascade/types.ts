@@ -37,6 +37,8 @@ export interface ResolvedRunProperties {
   readonly smallCaps: boolean;
   readonly fontSizePt: Pt;
   readonly colorHex: string;
+  /** §17.3.2.6 — `colorHex` is the automatic colour, which no layer of the cascade named. */
+  readonly colorAuto?: boolean;
   readonly fontFamily: FontFamilyMap;
   readonly verticalAlign: VerticalAlign;
   readonly rtl: boolean;
@@ -45,8 +47,15 @@ export interface ResolvedRunProperties {
    * specifies one; consumed by the tagged-PDF per-element `/Lang`, never layout.
    */
   readonly lang?: string;
+  /**
+   * The language the run's East Asian text is written in, where the source
+   * names one: which of the Han faces draws its ideographs.
+   */
+  readonly eastAsianLang?: string;
   /** §17.3.2.32 — the background painted behind the run's glyphs. */
   readonly shadingColorHex?: string;
+  /** §17.3.2.15 — the run's highlight, which shows over its shading. */
+  readonly highlightColorHex?: string;
   /** §17.3.2.35 — extra space between the run's characters, in points. */
   readonly letterSpacingPt?: Pt;
   /** §17.3.2.43 — the share of its own width each character is set at. */
@@ -151,6 +160,7 @@ export const DEFAULT_RESOLVED_RUN: ResolvedRunProperties = {
   smallCaps: false,
   fontSizePt: halfPtToPt(22),
   colorHex: '000000',
+  colorAuto: true,
   fontFamily: {},
   verticalAlign: 'baseline',
   rtl: false,

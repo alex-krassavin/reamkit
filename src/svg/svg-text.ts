@@ -34,6 +34,7 @@ import { svgPathData } from '@/core/vector';
 import { FAUX_ITALIC_SHEAR, computeJustifyExtra, lineVisualOrder } from '@/layout/line-paint';
 import { cffOutlineSource, openTypeCff } from '@/pdf-reader/cff-outline';
 import { outlineSource } from '@/pdf-reader/glyf-outline';
+import { runBackgroundHex } from '@/core/style-cascade';
 
 /** The colour of a comment range's highlight — the PDF emitter's. */
 const HIGHLIGHT_HEX = 'fff3a3';
@@ -172,7 +173,7 @@ function emitFlat(out: Array<string>, item: TextLineItem, ctx: SvgLineCtx): void
     const w = advance(tok);
     if (tok.kind === 'text') {
       const hex =
-        tok.resolvedRun.shadingColorHex ?? (tok.highlight === true ? HIGHLIGHT_HEX : undefined);
+        runBackgroundHex(tok.resolvedRun) ?? (tok.highlight === true ? HIGHLIGHT_HEX : undefined);
       if (hex !== undefined) {
         out.push(
           `<rect x="${fmt(x)}" y="${fmt(baseline - boxAscent)}" width="${fmt(w)}" ` +

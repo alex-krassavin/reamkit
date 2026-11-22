@@ -15,9 +15,9 @@
 //
 // Spec: [MS-DOC] §2.5 (FIB), §2.8.35 (PlcPcd), §2.9.38 (Clx), §2.9.73
 // (FcCompressed), §2.8.6 (PlcBteChpx), §2.8.5 (PlcBtePapx), §2.9.55 (ChpxFkp),
-// §2.9.23 (PapxFkp), §2.8.26 (PlcfSed), §2.9.286 (SttbfFfn), §2.6.1 (sprm). Every
-// offset is bounds-checked; a structurally odd file yields no text rather than
-// throwing.
+// §2.9.23 (PapxFkp), §2.8.26 (PlcfSed), §2.9.286 (SttbfFfn), §2.9.271 (STSH),
+// §2.9.260 (StdfBase), §2.6.1 (sprm), §2.6.2 (paragraph sprms). Every offset is
+// bounds-checked; a structurally odd file yields no text rather than throwing.
 
 import { openCfb } from '@/core/ole/cfb';
 
@@ -83,6 +83,8 @@ const SPRM_P_F_WIDOW_CONTROL = 0x2431; // widow and orphan control
 const SPRM_P_F_KEEP = 0x2405; // keep the paragraph's lines together
 const SPRM_P_F_KEEP_FOLLOW = 0x2406; // keep the paragraph with the next
 const SPRM_P_F_PAGE_BREAK_BEFORE = 0x2407; // the paragraph starts a new page
+const SPRM_P_OUT_LVL = 0x2640; // the paragraph's outline level (0–8, or 9 for body text)
+const BODY_TEXT_LEVEL = 9; // sprmPOutLvl's "body text", the highest value it may take
 const SPRM_T_DEF_TABLE = 0xd608; // table definition (cell boundaries + descriptors)
 const SPRM_T_DEF_TABLE_SHD = 0xd612; // per-cell shading array (Shd: cvFore/cvBack/ipat)
 const MAX_ROW_CELLS = 256; // a row's cell count is small; guard a crafted huge array
@@ -138,6 +140,10 @@ const MAX_TEXT = 1 << 24; // 16M-char guard against a crafted piece table
 const STK_PARAGRAPH = 1; // a paragraph style (Stdf.stk)
 const STK_CHARACTER = 2; // a character style
 const ISTD_NIL = 0x0fff; // no style: the istdBase of a style based on none
+// StdfBase.sti of Word's "heading 1" … "heading 9" (the "Index within Built-in
+// Styles" of ECMA-376 Part 1 §17.7.4.9, which [MS-DOC] §2.9.260 points to).
+const STI_HEADING_1 = 1;
+const STI_HEADING_9 = 9;
 const MAX_STYLE_DEPTH = 16; // a chain of bases longer than this is a loop
 
 /** Run (character) formatting decoded from a CHPX grpprl. */
@@ -251,6 +257,12 @@ export interface DocParaProps {
   readonly keepLines?: boolean;
   /** `sprmPFPageBreakBefore` — the paragraph starts a new page. */
   readonly pageBreakBefore?: boolean;
+  /**
+   * The zero-based outline level, 0–8, or 9 for body text: `sprmPOutLvl`
+   * ([MS-DOC] §2.6.2), the style's or the paragraph's own, or the level a
+   * built-in heading style fixes (see {@link DocStyles}).
+   */
+  readonly outlineLevel?: number;
   /**
    * The paragraph's custom tab stops in ascending position: its style's (and
    * that style's bases'), as the tab sprms of each style down the chain and of
@@ -425,6 +437,14 @@ interface DocStyles {
   readonly paragraph: (istd: number) => {
     readonly para: DocParaProps;
     readonly chars: DocCharProps;
+    /**
+     * The outline level (0–8) the style fixes when it is Word's built-in
+     * "heading N" — sti N, §2.9.260 StdfBase — for every paragraph set in it,
+     * whatever the paragraph's own `sprmPOutLvl` says (§2.6.2: it "MUST be
+     * ignored" in the styles at istd 1–9, which §2.9.271 STSH reserves for
+     * sti 1–9).
+     */
+    readonly fixedOutlineLevel?: number;
   };
   readonly character: (istd: number, base: DocCharProps) => DocCharProps;
 }
@@ -621,9 +641,11 @@ function readFonts(wd: Uint8Array, table: Uint8Array): Array<string> {
   return fonts;
 }
 
-// One style of the STSH, as far as the reader takes it: its kind, the style it
-// is based on and the grpprls it lays over that one's.
+// One style of the STSH, as far as the reader takes it: which built-in style it
+// is (0x0FFE for none), its kind, the style it is based on and the grpprls it
+// lays over that one's.
 interface Std {
+  readonly sti: number;
   readonly stk: number;
   readonly base: number;
   readonly papx?: Uint8Array;
@@ -633,11 +655,11 @@ interface Std {
 // §2.9.271 STSH — the style sheet in the table stream: a u16 cbStshi and the
 // Stshi (cstd, the count of styles, and cbSTDBaseInFile, the size of each
 // STD's Stdf), then one LPStd per istd: a u16 cbStd and the STD, none when 0.
-// An STD is its Stdf (stk and istdBase in its second u16, cupx in its third),
-// its name (an Xstz: u16 cch, the characters, a u16 terminator) and cupx
-// LPUpx: a u16 cbUpx, the UPX, a pad byte when cbUpx is odd. A paragraph
-// style's UPXs are its PAPX (the istd, then a grpprl) and its CHPX; a character
-// style's, its CHPX.
+// An STD is its Stdf (§2.9.260 StdfBase: sti in its first u16, stk and
+// istdBase in its second, cupx in its third), its name (an Xstz: u16 cch, the
+// characters, a u16 terminator) and cupx LPUpx: a u16 cbUpx, the UPX, a pad
+// byte when cbUpx is odd. A paragraph style's UPXs are its PAPX (the istd, then
+// a grpprl) and its CHPX; a character style's, its CHPX.
 //
 // Without it every paragraph read as if styled by nothing: the heading styles'
 // size and weight, and the Normal style's size, never reached a run, and a
@@ -684,31 +706,43 @@ function parseStyles(
     p += cbStd;
   }
 
-  const none: { para: DocParaProps; chars: DocCharProps } = { para: {}, chars: defaults };
-  const memo = new Map<number, { readonly para: DocParaProps; readonly chars: DocCharProps }>();
-  const paragraph = (istd: number, depth = 0): { para: DocParaProps; chars: DocCharProps } => {
+  type ParagraphStyle = ReturnType<DocStyles['paragraph']>;
+  const none: ParagraphStyle = { para: {}, chars: defaults };
+  const memo = new Map<number, ParagraphStyle>();
+  const paragraph = (istd: number, depth = 0): ParagraphStyle => {
     const hit = memo.get(istd);
     if (hit) return hit;
     const std = stds[istd];
-    let out: { para: DocParaProps; chars: DocCharProps };
+    let out: ParagraphStyle;
     if (depth >= MAX_STYLE_DEPTH) out = none;
     else if (std?.stk !== STK_PARAGRAPH)
       out = istd !== 0 ? paragraph(0, depth + 1) : none; // read as Normal
     else {
       const base =
         std.base !== ISTD_NIL && std.base !== istd ? paragraph(std.base, depth + 1) : none;
+      const para: DocParaProps = std.papx
+        ? {
+            ...base.para,
+            ...decodePapxGrpprl(std.papx),
+            // A style's tab sprms change its base's stops, not none.
+            ...tabsOver(std.papx, base.para.tabs),
+          }
+        : base.para;
+      // A built-in heading's level is its sti's, whatever its own sprmPOutLvl
+      // says, and as the style's own level the styles based on it inherit it.
+      // Word 16 for Mac, reading back a .doc it saved itself (`outline level
+      // of paragraph format`, 2026-11-20): "heading 4", saved with no
+      // sprmPOutLvl, is level 4, and a style based on it level 4 too;
+      // "heading 5", saved with sprmPOutLvl 1, is level 5, and a style based on
+      // it that states nothing is level 5 as well, not 2. A style based on
+      // "heading 1" that states body text (9) is body text.
+      const fixed = std.sti >= STI_HEADING_1 && std.sti <= STI_HEADING_9 ? std.sti - 1 : undefined;
       out = {
-        para: std.papx
-          ? {
-              ...base.para,
-              ...decodePapxGrpprl(std.papx),
-              // A style's tab sprms change its base's stops, not none.
-              ...tabsOver(std.papx, base.para.tabs),
-            }
-          : base.para,
+        para: fixed !== undefined ? { ...para, outlineLevel: fixed } : para,
         chars: std.chpx
           ? { ...base.chars, ...decodeChpxGrpprl(std.chpx, base.chars, fonts) }
           : base.chars,
+        ...(fixed !== undefined ? { fixedOutlineLevel: fixed } : {}),
       };
     }
     memo.set(istd, out);
@@ -726,11 +760,12 @@ function parseStyles(
 
 function parseStd(std: Uint8Array, cbStdBase: number): Std | undefined {
   if (std.length < 6) return undefined;
+  const sti = u16(std, 0) & 0x0fff;
   const stk = u16(std, 2) & 0x0f;
   const base = u16(std, 2) >> 4;
   const cupx = u16(std, 4) & 0x0f;
   let q = cbStdBase;
-  if (q + 2 > std.length) return { stk, base };
+  if (q + 2 > std.length) return { sti, stk, base };
   q += 2 + u16(std, q) * 2 + 2; // the name and its terminator
   const upx: Array<Uint8Array> = [];
   for (let k = 0; k < cupx && q + 2 <= std.length; k++) {
@@ -742,10 +777,10 @@ function parseStd(std: Uint8Array, cbStdBase: number): Std | undefined {
   }
   if (stk === STK_PARAGRAPH) {
     const papx = upx[0] && upx[0].length >= 2 ? upx[0].subarray(2) : undefined; // past its istd
-    return { stk, base, ...(papx ? { papx } : {}), ...(upx[1] ? { chpx: upx[1] } : {}) };
+    return { sti, stk, base, ...(papx ? { papx } : {}), ...(upx[1] ? { chpx: upx[1] } : {}) };
   }
-  if (stk === STK_CHARACTER) return { stk, base, ...(upx[0] ? { chpx: upx[0] } : {}) };
-  return { stk, base };
+  if (stk === STK_CHARACTER) return { sti, stk, base, ...(upx[0] ? { chpx: upx[0] } : {}) };
+  return { sti, stk, base };
 }
 
 // The character style a run's CHPX names (sprmCIstd), if it names one.
@@ -1173,6 +1208,7 @@ function decodePapxGrpprl(d: Uint8Array): DocParaProps {
   let keepNext: boolean | undefined;
   let keepLines: boolean | undefined;
   let pageBreakBefore: boolean | undefined;
+  let outlineLevel: number | undefined;
   for (const s of sprms(d)) {
     switch (s.sprm) {
       case SPRM_P_JC:
@@ -1210,6 +1246,11 @@ function decodePapxGrpprl(d: Uint8Array): DocParaProps {
         break;
       case SPRM_P_F_PAGE_BREAK_BEFORE:
         pageBreakBefore = d[s.op] !== 0;
+        break;
+      case SPRM_P_OUT_LVL:
+        // §2.6.2 — 0–8 the zero-based level, 9 body text; the operand "MUST
+        // be one of" those, so any other says nothing.
+        if (d[s.op]! <= BODY_TEXT_LEVEL) outlineLevel = d[s.op]!;
         break;
       case SPRM_T_DEF_TABLE: {
         // The operand is itcMac (u8), (itcMac+1) cell-boundary positions, then the
@@ -1268,6 +1309,7 @@ function decodePapxGrpprl(d: Uint8Array): DocParaProps {
     ...(keepNext !== undefined ? { keepNext } : {}),
     ...(keepLines !== undefined ? { keepLines } : {}),
     ...(pageBreakBefore !== undefined ? { pageBreakBefore } : {}),
+    ...(outlineLevel !== undefined ? { outlineLevel } : {}),
   };
 }
 
@@ -1505,6 +1547,11 @@ function buildParagraphs(
       ...style?.para,
       ...pap?.props,
       ...tabsOver(pap?.grpprl, style?.para.tabs),
+      // A paragraph in a built-in heading style stands at the style's level
+      // (§2.6.2: its sprmPOutLvl "MUST be ignored"). Word reads a Heading 2
+      // paragraph whose own level says body text as level 2, and saving it as
+      // .doc drops that level.
+      ...(style?.fixedOutlineLevel !== undefined ? { outlineLevel: style.fixedOutlineLevel } : {}),
     };
     paragraphs.push({
       runs: settled,

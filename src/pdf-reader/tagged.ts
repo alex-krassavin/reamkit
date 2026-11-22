@@ -543,6 +543,8 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
     foot?.band,
   );
   const body: Array<BodyElement> = [];
+  // Where each source page's elements begin in the body (Reconstruction.pageStarts).
+  const pageStarts: Array<number> = [];
   const top = measured?.margins?.top ?? 0;
   const bottom = measured?.margins?.bottom ?? 0;
   // Taken before the spacing below re-writes the paragraphs it spaces.
@@ -593,6 +595,7 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
     // A break stands before the paragraph that carries it, so a blank FIRST
     // sheet holds a carrier of its own for the second to break from. A page
     // that opens a section is broken by the section.
+    pageStarts[index] = body.length;
     if (opens && !sectionsFrom.includes(index)) body.push(pageBreak(true));
     else if (index === 0 && own.length === 0 && pages.length > 1) body.push(pageBreak(false));
     body.push(...own);
@@ -682,6 +685,7 @@ export function reconstructTaggedPdf(file: PdfFile): Reconstruction | undefined 
       kernedFaces(spacing),
     ),
     losses: imageLosses,
+    pageStarts,
   };
 }
 

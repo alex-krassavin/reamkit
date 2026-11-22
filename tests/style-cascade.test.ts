@@ -232,3 +232,39 @@ describe('resolveParagraphProperties', () => {
     expect(p.alignment).toBe('right');
   });
 });
+
+describe('resolveParagraphProperties — built-in heading levels', () => {
+  const heading2: Style = {
+    id: 'Heading2',
+    type: 'paragraph',
+    isDefault: false,
+    name: 'heading 2',
+    builtInOutlineLevel: 1,
+    runProperties: {},
+    paragraphProperties: { outlineLevel: 1 },
+  };
+  const custom: Style = {
+    id: 'MyHeading',
+    type: 'paragraph',
+    basedOn: 'Heading2',
+    isDefault: false,
+    name: 'My Heading',
+    runProperties: {},
+    paragraphProperties: {},
+  };
+  const styles = sheet([heading2, custom]);
+
+  it('ignores a direct w:outlineLvl on a paragraph in a built-in heading style', () => {
+    // Word 16 for Mac: a Heading 2 paragraph with a direct body-text level 9
+    // reads as level 2.
+    const r = resolveParagraphProperties({ styleId: 'Heading2', outlineLevel: 9 }, styles);
+    expect(r.outlineLevel).toBe(1);
+  });
+
+  it('lets a style based on a heading inherit its level, and a direct one override it', () => {
+    expect(resolveParagraphProperties({ styleId: 'MyHeading' }, styles).outlineLevel).toBe(1);
+    expect(
+      resolveParagraphProperties({ styleId: 'MyHeading', outlineLevel: 4 }, styles).outlineLevel,
+    ).toBe(4);
+  });
+});

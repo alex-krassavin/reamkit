@@ -28,7 +28,7 @@ export type { FamilyKey, FetchFontSetOptions, FetchLike } from '@/core/fonts';
 
 // --- Low-level layout/PDF engine (for advanced rendering pipelines) ---
 export { renderStyledPdf } from '@/pdf';
-export type { StyledRenderOptions, DocumentInfo } from '@/pdf';
+export type { StyledRenderOptions, DocumentInfo, PdfOutlineOptions } from '@/pdf';
 
 // --- Digital signatures (ISO 32000 §12.8) ---
 export { signPdf } from '@/pdf';

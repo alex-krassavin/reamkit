@@ -71,26 +71,233 @@ export function applyNumberFormat(
   customFormats: ReadonlyMap<number, string>,
   date1904: boolean = false,
 ): string {
-  if (rawValue.length === 0) return '';
-  if (numFmtId === 0) return defaultNumberRender(rawValue);
-  if (numFmtId === 49) return rawValue;
+  return formatNumberParts(rawValue, numFmtId, customFormats, date1904).text;
+}
+
+/**
+ * One piece of a value under its format, as a cell lays it out (§18.8.31):
+ *  - `text` is drawn as it is;
+ *  - `blank` is a space as wide as `widthOf` — what `?` leaves for a digit it
+ *    has no use for, what `_x` leaves for x, and a space the format itself
+ *    writes where a line would lose it (see {@link formatted}). `text` is the
+ *    character a reader of plain text takes it for;
+ *  - `fill` is `*x`: x repeated across whatever room the cell has left.
+ *
+ * Excel's own PDF (2026-11-20) is why a blank is not simply a space: `0.0?`
+ * puts 1.5 and 1.25 with their points one above the other, a digit's width
+ * from the edge, `_(0_)` holds 5 a parenthesis in from it, and `# ?/?` leaves
+ * 3 as far from the edge as " 0/0" is wide, slash and all. A space is a third
+ * of a digit, and a space at the end of a line takes no room at all.
+ */
+export type NumberFormatPart =
+  | { readonly kind: 'text'; readonly text: string }
+  | { readonly kind: 'blank'; readonly text: string; readonly widthOf: string }
+  | { readonly kind: 'fill'; readonly char: string };
+
+/** A value under its number format, in the pieces a cell lays it out in. */
+export interface FormattedValue {
+  /**
+   * The text as {@link applyNumberFormat} writes it: blanks as spaces and the
+   * fill left out — repeating it needs the cell's width.
+   */
+  readonly text: string;
+  /** The same text, in pieces. */
+  readonly parts: ReadonlyArray<NumberFormatPart>;
+  /**
+   * The format has conditions and none of its sections admits the value: Excel
+   * shows a row of `#` across the cell (see {@link applyFormatString}). `text`
+   * and `parts` still write the number, for a medium that has no cell.
+   */
+  readonly hashes?: true;
+}
+
+/**
+ * {@link applyNumberFormat}, in the pieces a cell lays the text out in: where
+ * the format leaves blanks of a character's width and where it fills the cell.
+ *
+ * @param rawValue      The cell's raw stored value (a serial for dates).
+ * @param numFmtId      The number-format id from the cell's `cellXf`.
+ * @param customFormats Custom format codes by id (from `<numFmts>`).
+ * @param date1904      The workbook date epoch (1904 vs the 1900 default).
+ * @returns The formatted value, as text and as parts.
+ */
+export function formatNumberParts(
+  rawValue: string,
+  numFmtId: number,
+  customFormats: ReadonlyMap<number, string>,
+  date1904: boolean = false,
+): FormattedValue {
+  if (rawValue.length === 0) return formatted([]);
+  if (numFmtId === 0) return formatted([defaultNumberRender(rawValue)]);
+  if (numFmtId === 49) return formatted([rawValue]);
 
   const builtinDate = BUILTIN_DATE_FORMATS.get(numFmtId);
-  if (builtinDate !== undefined) return formatExcelDate(rawValue, builtinDate, date1904);
+  if (builtinDate !== undefined)
+    return formatted([formatExcelDate(rawValue, builtinDate, date1904)]);
 
   const custom = customFormats.get(numFmtId);
   if (custom !== undefined && (isDateFormat(custom) || hasElapsedToken(custom)))
-    return formatExcelDate(rawValue, custom, date1904);
+    return formatted([formatExcelDate(rawValue, custom, date1904)]);
 
   const format = custom ?? BUILTIN.get(numFmtId);
-  if (!format) return defaultNumberRender(rawValue);
+  if (!format) return formatted([defaultNumberRender(rawValue)]);
   // Excel accepts the name in any case, and writers use every spelling of it:
   // bug-fixes.xlsx declares `<numFmt formatCode="GENERAL"/>`. Matched exactly,
   // the code falls through to the placeholder grammar, which finds no digit
   // placeholder in it and renders the whole word as a literal prefix — "GENERAL1".
-  if (format.trim().toLowerCase() === 'general') return defaultNumberRender(rawValue);
+  if (format.trim().toLowerCase() === 'general') return formatted([defaultNumberRender(rawValue)]);
 
   return applyFormatString(rawValue, format);
+}
+
+/**
+ * Render a TEXT cell's string through its number format (§18.8.31). Only the
+ * text section applies — the fourth, or a format's only section when it holds
+ * `@` — with `@` standing for the text and the literals around it written as
+ * they are: Excel shows "abc" under `0;-0;0;"["@"]"` as [abc], under `@" kg"`
+ * as "abc kg" and under `_(@_)` as " abc " (2026-11-20). Any other format,
+ * number or date, leaves the text as it is, as Excel does under `0.00`.
+ *
+ * @param text          The cell's string.
+ * @param numFmtId      The number-format id from the cell's `cellXf`.
+ * @param customFormats Custom format codes by id (from `<numFmts>`).
+ * @returns The displayed text.
+ */
+export function applyTextFormat(
+  text: string,
+  numFmtId: number,
+  customFormats: ReadonlyMap<number, string>,
+): string {
+  return formatTextParts(text, numFmtId, customFormats).text;
+}
+
+/**
+ * {@link applyTextFormat}, in the pieces a cell lays the text out in. The text
+ * itself is one piece, its spaces as they are; only what the format adds
+ * around it leaves blanks or fills the cell — `@*-` reads "abc---…".
+ *
+ * @param text          The cell's string.
+ * @param numFmtId      The number-format id from the cell's `cellXf`.
+ * @param customFormats Custom format codes by id (from `<numFmts>`).
+ * @returns The displayed text, as text and as parts.
+ */
+export function formatTextParts(
+  text: string,
+  numFmtId: number,
+  customFormats: ReadonlyMap<number, string>,
+): FormattedValue {
+  if (numFmtId === 0 || numFmtId === 49) return formatted([text]);
+  const format = customFormats.get(numFmtId) ?? BUILTIN.get(numFmtId);
+  if (format === undefined) return formatted([text]);
+  return formatted(formatText(text, splitSections(format)));
+}
+
+/**
+ * `text` under the text section of a format, or as it is when the format has
+ * none. A fourth section that is empty hides the text: `;;;` shows nothing.
+ * `@` may stand more than once (`@"x"@` reads abcxabc) and `\@` is an at sign.
+ */
+function formatText(text: string, sections: ReadonlyArray<string>): Array<Piece> {
+  const only = sections.length === 1 ? tokenizeSection(resolveBracketCodes(sections[0]!)) : [];
+  const tokens =
+    sections.length >= 4
+      ? tokenizeSection(resolveBracketCodes(sections[3]!))
+      : only.some((t) => t.kind === 'text')
+        ? only
+        : undefined;
+  if (tokens === undefined) return [text];
+  return tokens.flatMap((t) => (t.kind === 'text' ? [text] : tokenPieces(t)));
+}
+
+/**
+ * What a format writes, before it is joined into text: a string, a blank as
+ * wide as `blank` that reads as `text`, or the `*x` fill.
+ */
+type Piece = string | { readonly blank: string; readonly text: string } | { readonly fill: string };
+
+/** The blank `?` leaves for a digit it has no use for: a digit wide. */
+const DIGIT_BLANK: Piece = { blank: '0', text: ' ' };
+
+/** A blank as wide as `ch`, reading as a space — what `_x` writes. */
+const blankOf = (ch: string): Piece => ({ blank: ch, text: ' ' });
+
+/** Whether a piece is a blank. */
+const isBlank = (p: Piece): p is { readonly blank: string; readonly text: string } =>
+  typeof p !== 'string' && 'blank' in p;
+
+/**
+ * Text the format writes as it is, its whitespace as blanks of its own width:
+ * a space the format writes keeps its room even at the edge of the cell, where
+ * a laid-out line drops one. Excel's PDF holds 5 a space in from the right
+ * under `0" "`, three in under `0"   "`, and 1 234,50 one in under `#,##0.00\ `.
+ */
+function literalPieces(text: string): Array<Piece> {
+  if (!/\s/.test(text)) return text.length > 0 ? [text] : [];
+  const out: Array<Piece> = [];
+  let run = '';
+  for (const ch of text) {
+    if (/\s/.test(ch) && !isLineEnd(ch.charCodeAt(0))) {
+      if (run.length > 0) out.push(run);
+      run = '';
+      out.push({ blank: ch, text: ch });
+    } else {
+      run += ch;
+    }
+  }
+  if (run.length > 0) out.push(run);
+  return out;
+}
+
+/** Whether a piece is whitespace the format writes as text (literalPieces). */
+const isLiteralSpace = (p: Piece | undefined): boolean =>
+  p !== undefined && typeof p !== 'string' && 'blank' in p && p.blank === p.text;
+
+/**
+ * The pieces as a {@link FormattedValue}, neighbouring text joined.
+ *
+ * A space the format writes needs to be a blank only where a line would lose
+ * it: at either end of the value, against the fill, or beside another space,
+ * which a screen runs into one. Between two words it is laid out as it is, and
+ * stays part of the text around it.
+ */
+function formatted(input: ReadonlyArray<Piece>, hashes = false): FormattedValue {
+  // Most values are one run of text, and every cell of a sheet comes here.
+  if (input.length === 1 && typeof input[0] === 'string' && !hashes) {
+    const text = input[0];
+    return { text, parts: text.length > 0 ? [{ kind: 'text', text }] : [] };
+  }
+  const visible = input.filter((p) => p !== '');
+  const pieces = visible.map((p, i) =>
+    isLiteralSpace(p) &&
+    i > 0 &&
+    i < visible.length - 1 &&
+    ![visible[i - 1], visible[i + 1]].some(
+      (q) => isLiteralSpace(q) || (typeof q !== 'string' && q !== undefined && 'fill' in q),
+    )
+      ? (p as { readonly text: string }).text
+      : p,
+  );
+  const parts: Array<NumberFormatPart> = [];
+  let text = '';
+  // One fill to a cell: a fraction may carry a `*` before its digits and
+  // another after them, and the second is dropped as the section's is.
+  let filled = false;
+  for (const p of pieces) {
+    if (typeof p === 'string') {
+      if (p.length === 0) continue;
+      text += p;
+      const last = parts[parts.length - 1];
+      if (last?.kind === 'text') parts[parts.length - 1] = { kind: 'text', text: last.text + p };
+      else parts.push({ kind: 'text', text: p });
+    } else if ('blank' in p) {
+      text += p.text;
+      parts.push({ kind: 'blank', text: p.text, widthOf: p.blank });
+    } else if (!filled) {
+      filled = true;
+      parts.push({ kind: 'fill', char: p.fill });
+    }
+  }
+  return hashes ? { text, parts, hashes: true } : { text, parts };
 }
 
 /**
@@ -115,7 +322,7 @@ export function numberFormatColorHex(
   if (format === undefined || !format.includes('[')) return undefined;
   const sections = splitSections(format);
   const n = Number(rawValue);
-  const idx = Number.isFinite(n) ? sectionIndexFor(n, sections) : 3;
+  const idx = Number.isFinite(n) ? sectionFor(n, sections).index : 3;
   // A value that satisfies no condition is not formatted by any section, so it
   // takes no colour from one either.
   if (idx < 0) return undefined;
@@ -200,26 +407,70 @@ function conditionHolds(n: number, c: { op: string; rhs: number }): boolean {
   }
 }
 
+/** The section a number is shown in, and whether it is shown without its sign. */
+interface SectionChoice {
+  /** The section's index, or -1 when the value passes none of the conditions. */
+  readonly index: number;
+  /** Whether the section writes the magnitude only, as a negative section does. */
+  readonly unsigned: boolean;
+}
+
 /**
- * The section that applies to `n`, or -1 when the format is all conditions and
- * the value passes none of them — Excel then shows the number plainly, which is
- * what FormatChoiceTests.xlsx expects of `[<10]#" Wow"` at 11.
+ * The section that applies to `n`, and whether it prints the minus sign.
+ *
+ * Without conditions the sections are positive;negative;zero, and the negative
+ * one writes its own sign or none. With conditions, Excel's own `string value`
+ * of a probe (2026-11-20, 83 cells) shows:
+ *  - an unconditioned section takes the place a sign would have given it: in a
+ *    format of three, the first is `[>0]` and the second `[<0]`, and only the
+ *    third is "anything else" — `[>100]"a"0;"b"0;"c"0` reads 5 as c5 and -5
+ *    as b5; in a format of two, the first is `[>0]` and the second is the
+ *    else. We took every unconditioned section for the else: b5 at 5;
+ *  - a section whose own condition admits only negative numbers (`[<0]`,
+ *    `[<-1]`, `[<=-1]`, `[=-5]`, the implied `[<0]`) writes no minus sign:
+ *    `[<0]"neg "0` reads -5 as "neg 5", but `[<=0]`, `[<1]` and `[<>0]` keep
+ *    it, "-n5";
+ *  - the else of a two-section format writes none when the first's limit is
+ *    zero or below and it is not an equality — `[>0]`, `[>=0]`, `[>-10]`,
+ *    `[<-10]`, `[<>-5]` — and keeps it after `[>5]`, `[>0.5]` or any `[=…]`;
+ *    the else of three always keeps it.
+ * We printed the value's own sign under every condition.
  */
-function sectionIndexFor(n: number, sections: ReadonlyArray<string>): number {
+function sectionFor(n: number, sections: ReadonlyArray<string>): SectionChoice {
   // At most three sections take conditions; a fourth is the text section and is
   // never a number's.
   const numeric = Math.min(sections.length, 3);
   const conditions = sections.slice(0, numeric).map(conditionOf);
-  if (conditions.some((c) => c !== undefined)) {
-    for (let i = 0; i < numeric; i++) {
-      const c = conditions[i];
-      if (c === undefined || conditionHolds(n, c)) return i;
-    }
-    return -1;
+  if (!conditions.some((c) => c !== undefined)) {
+    if (n > 0) return { index: 0, unsigned: false };
+    if (n < 0) return { index: sections.length > 1 ? 1 : 0, unsigned: sections.length > 1 };
+    return { index: sections.length > 2 ? 2 : 0, unsigned: false };
   }
-  if (n > 0) return 0;
-  if (n < 0) return sections.length > 1 ? 1 : 0;
-  return sections.length > 2 ? 2 : 0;
+  for (let i = 0; i < numeric; i++) {
+    const c = conditions[i] ?? impliedCondition(i, numeric);
+    if (c === undefined) {
+      const first = conditions[0];
+      const unsigned = numeric === 2 && first !== undefined && first.op !== '=' && first.rhs <= 0;
+      return { index: i, unsigned };
+    }
+    if (conditionHolds(n, c)) return { index: i, unsigned: onlyNegatives(c) };
+  }
+  return { index: -1, unsigned: false };
+}
+
+/** The test an unconditioned section stands for in a format that has conditions. */
+function impliedCondition(
+  index: number,
+  sections: number,
+): { op: string; rhs: number } | undefined {
+  if (index === 0) return { op: '>', rhs: 0 };
+  if (index === 1 && sections === 3) return { op: '<', rhs: 0 };
+  return undefined;
+}
+
+/** Whether every number that passes the condition is negative. */
+function onlyNegatives(c: { op: string; rhs: number }): boolean {
+  return (c.op === '<' && c.rhs <= 0) || ((c.op === '<=' || c.op === '=') && c.rhs < 0);
 }
 
 /**
@@ -685,26 +936,30 @@ const decimalsIn = (fixed: string): number => {
   return dot < 0 ? 0 : fixed.length - dot - 1;
 };
 
-function applyFormatString(rawValue: string, format: string): string {
+/**
+ * A number under a custom format: the section its value selects, laid out.
+ *
+ * A value no condition admits: a format of one section shows it as General
+ * without its sign — Excel reads -5 under `[>0]"a"0` as 5 and 5.5 under
+ * `[<0]"a"0.00` as 5.5 (2026-11-20). A format of two or three fills the cell
+ * with `#` — -5 and 0 under `"a"0;[<-10]"b"0`, 150 under `[<=100]0;[>200]0` —
+ * which only the cell can do: the value says so (`hashes`) and still writes
+ * the number for a medium that has no cell.
+ */
+function applyFormatString(rawValue: string, format: string): FormattedValue {
   const n = Number(rawValue);
   const sections = splitSections(format);
 
-  if (!Number.isFinite(n)) {
-    const textSection = sections[3];
-    if (textSection !== undefined) {
-      return textSection.replace(/@/g, rawValue);
-    }
-    return rawValue;
-  }
+  if (!Number.isFinite(n)) return formatted(formatText(rawValue, sections));
 
-  const sectionIdx = sectionIndexFor(n, sections);
-  if (sectionIdx < 0) return defaultNumberRender(rawValue);
-  const section = sections[sectionIdx] ?? sections[0]!;
-  // The second section is the NEGATIVE one and prints its own sign (or none) —
-  // but only when the sections mean positive/negative/zero. Under conditions
-  // they mean whatever the tests say, and the sign is the value's own.
-  const negativeSection = sectionIdx === 1 && conditionOf(sections[0] ?? '') === undefined;
-  return applyNumericSection(n, section, negativeSection);
+  const choice = sectionFor(n, sections);
+  if (choice.index < 0) {
+    return Math.min(sections.length, 3) === 1
+      ? formatted([defaultNumberRender(String(Math.abs(n)))])
+      : formatted([defaultNumberRender(rawValue)], true);
+  }
+  const section = sections[choice.index] ?? sections[0]!;
+  return formatted(applyNumericSection(n, section, choice.unsigned));
 }
 
 // Split on top-level ';' — ignore ';' inside quoted strings and brackets.
@@ -737,12 +992,6 @@ function splitSections(format: string): Array<string> {
   }
   out.push(current);
   return out;
-}
-
-function countDigitPlaceholders(s: string): number {
-  let n = 0;
-  for (const c of s) if (c === '0' || c === '#' || c === '?') n++;
-  return n;
 }
 
 /**
@@ -805,28 +1054,41 @@ function toFixedDecimal(value: number, decimals: number): string {
   return value < 0 && /[1-9]/.test(placed) ? `-${placed}` : placed;
 }
 
-// §18.8.31 scientific notation: `0.00E+00`, `##0.0E+0` (engineering), `0.0e-0`.
-// The mantissa is normalised so its integer part holds `intDigits` significant
-// figures (1 for `0.00E+00`, 3 for `##0.0E+0` → exponent snaps to a multiple of
-// 3); the exponent is zero-padded to the placeholder count and carries a sign
-// (always for `E+`, only when negative for `E-`). The `E`/`e` case is preserved.
-function formatScientific(value: number, cleaned: string, negativeSection: boolean): string {
-  // `.` stops at a line end, so a format holding one has no match; saying so
-  // first spares the expression from reading its tail out to that line end
-  // after every `e+` in front of it.
-  const m = hasLineEnd(cleaned) ? null : /^(.*?)([eE])([+-])(.*)$/.exec(cleaned);
-  if (!m) return cleaned;
-  const mantissaFmt = m[1]!;
-  const eChar = m[2]!;
-  const expSignFmt = m[3]!;
-  const expFmt = m[4]!;
+/**
+ * §18.8.31 scientific notation: `0.00E+00`, `##0.0E+0` (engineering), `0.0e-0`.
+ * The mantissa is normalised so its integer part holds `intDigits` significant
+ * figures (1 for `0.00E+00`, 3 for `##0.0E+0` → exponent snaps to a multiple of
+ * 3); the exponent is zero-padded to the placeholder count and carries a sign
+ * (always for `E+`, only when negative for `E-`). The `E`/`e` case is preserved.
+ *
+ * The mantissa is laid out by the same placeholders as any number, and the
+ * text around it stays: Excel's own `string value` of a probe (2026-11-20)
+ * reads `00.0E+00` at 12345 as 01.2E+04, `"x"0.0E+0` at 123 as x1.2E+2,
+ * `0.0E+0" m"` at 1234 as 1.2E+3 m and `$0.0E+0` at -123 as -$1.2E+2 — where
+ * we wrote 1.2E+04, dropped the literals and put the minus after the `$`.
+ */
+function formatScientific(
+  value: number,
+  tokens: ReadonlyArray<NumberToken>,
+  at: number,
+  negativeSection: boolean,
+): Array<Piece> {
+  const mantissa = tokens.slice(0, at);
+  const marker = tokens[at] as ExponentToken;
+  const after = tokens.slice(at + 1);
+  let expPlaces = 0;
+  while (after[expPlaces]?.kind === 'digit') expPlaces++;
 
-  const dot = mantissaFmt.indexOf('.');
-  const intDigits = Math.max(
-    1,
-    countDigitPlaceholders(dot >= 0 ? mantissaFmt.slice(0, dot) : mantissaFmt),
-  );
-  const decimals = dot >= 0 ? countDigitPlaceholders(mantissaFmt.slice(dot + 1)) : 0;
+  const point = mantissa.findIndex((t) => t.kind === 'point');
+  const split = point < 0 ? mantissa.length : point;
+  let intPlaces = 0;
+  let decimals = 0;
+  mantissa.forEach((t, i) => {
+    if (t.kind !== 'digit') return;
+    if (i < split) intPlaces++;
+    else decimals++;
+  });
+  const intDigits = Math.max(1, intPlaces);
 
   // The mantissa is the decimal's own digits, rounded half away from zero like
   // any other number shown: Excel prints 1234.5 under `0.000E+00` as 1.235E+03
@@ -845,11 +1107,22 @@ function formatScientific(value: number, cleaned: string, negativeSection: boole
     }
   }
 
-  const expDigits = countDigitPlaceholders(expFmt) || 2;
-  const expStr = String(Math.abs(exp)).padStart(expDigits, '0');
-  const expSign = exp < 0 ? '-' : expSignFmt === '+' ? '+' : '';
+  const [mantInt, mantDec] = mantStr.split('.');
+  const body = layOut(
+    mantissa,
+    commaRoles(mantissa),
+    mantInt === '0' ? '' : mantInt!,
+    mantDec ?? '',
+  );
+  const expStr = String(Math.abs(exp)).padStart(expPlaces || 2, '0');
+  const expSign = exp < 0 ? '-' : marker.sign === '+' ? '+' : '';
   const signPrefix = value < 0 && !negativeSection ? '-' : '';
-  return `${signPrefix}${mantStr}${eChar}${expSign}${expStr}`;
+  return [
+    signPrefix,
+    ...body,
+    `${marker.e}${expSign}${expStr}`,
+    ...after.slice(expPlaces).flatMap(tokenPieces),
+  ];
 }
 
 /**
@@ -860,13 +1133,38 @@ function formatScientific(value: number, cleaned: string, negativeSection: boole
  * from `[$$-409]#,##0`. The symbol becomes a quoted literal so the placeholder
  * grammar treats it as text. Everything else in brackets (colours, locales,
  * conditions) is decoration here and goes.
+ *
+ * A bracket inside quotes or after a backslash is text, not a code: Excel
+ * reads 5 under `0" [kg]"` as "5 [kg]", under `\[0\]` as [5] and "abc" under
+ * `0;-0;0;"["@"]"` as [abc] (2026-11-20). Taken for codes, they went — the
+ * last of them with the `@` inside, leaving nothing at all.
  */
 function resolveBracketCodes(format: string): string {
-  return replaceBracketCodes(format, (body) => {
-    const currency = /^\$([^-]*)(?:-.*)?$/.exec(body);
-    const symbol = currency?.[1]?.replace(/"/g, '') ?? '';
-    return symbol.length > 0 ? `"${symbol}"` : '';
-  });
+  // No code opens after the last `]`, so a `[` past it is text, and is not
+  // searched for its end again and again.
+  const lastClose = format.lastIndexOf(']');
+  let out = '';
+  for (let i = 0; i < format.length; i++) {
+    const ch = format[i]!;
+    if (ch === '"') {
+      const close = format.indexOf('"', i + 1);
+      const end = close < 0 ? format.length - 1 : close;
+      out += format.slice(i, end + 1);
+      i = end;
+    } else if (ch === '\\' && i + 1 < format.length) {
+      out += format.slice(i, i + 2);
+      i++;
+    } else if (ch === '[' && i < lastClose) {
+      const close = format.indexOf(']', i);
+      const currency = /^\$([^-]*)(?:-.*)?$/.exec(format.slice(i + 1, close));
+      const symbol = currency?.[1]?.replace(/"/g, '') ?? '';
+      if (symbol.length > 0) out += `"${symbol}"`;
+      i = close;
+    } else {
+      out += ch;
+    }
+  }
+  return out;
 }
 
 const isPlaceholder = (c: string | undefined): boolean => c === '0' || c === '#' || c === '?';
@@ -956,10 +1254,10 @@ function formatFraction(
   value: number,
   cleaned: string,
   negativeSection: boolean,
-): string | undefined {
+): Array<Piece> | undefined {
   const m = fractionParts(cleaned);
   if (!m) return undefined;
-  const { head, den: denFmt, tail } = m;
+  const { head, num: numFmt, den: denFmt, tail } = m;
 
   // The integer part, if any, is the LAST placeholder run in the head — whatever
   // separates it from the fraction is a literal, and need not be a bare space:
@@ -969,14 +1267,19 @@ function formatFraction(
   // numerator — where every reader shows `1  1/5`.
   const intMatch = lastPlaceholderRun(head);
   const hasInteger = intMatch !== undefined;
-  const literalPrefix = unquoteLiteral(head.substring(0, intMatch ? intMatch.at : head.length));
-  const separator = intMatch ? unquoteLiteral(intMatch.after) : ' ';
+  const literalPrefix = unquotePieces(head.substring(0, intMatch ? intMatch.at : head.length));
+  const intFmt = intMatch ? head.slice(intMatch.at, head.length - intMatch.after.length) : '';
+  const separator = intMatch ? unquotePieces(intMatch.after) : [];
 
   const magnitude = Math.abs(value);
   const whole = hasInteger ? Math.floor(magnitude) : 0;
   const rest = magnitude - whole;
 
-  const fixedDen = /^\d+$/.test(denFmt) ? Number(denFmt) : undefined;
+  // A denominator spelled in digits is fixed (`?/16`) — but only from a digit
+  // that is not a placeholder: `00/00` is two placeholders a side, and Excel
+  // reads 1.5 under `# 00/00` as 1 01/02 (2026-11-20), where taking it for a
+  // denominator of 0 dropped the whole fraction.
+  const fixedDen = /^[1-9]\d*$/.test(denFmt) ? Number(denFmt) : undefined;
   const maxDen = fixedDen ?? Math.pow(10, denFmt.length) - 1;
   if (!Number.isFinite(maxDen) || maxDen < 1) return undefined;
 
@@ -988,22 +1291,80 @@ function formatFraction(
   } else {
     [num, den] = bestRational(rest, maxDen);
   }
-  const pieces: Array<string> = [];
-  if (hasInteger) {
-    // Rounding can carry the fraction to a whole unit; without an integer field
-    // to carry into (`?/?` is an improper fraction) it stays in the numerator.
-    let integer = whole;
-    if (den > 0 && num >= den) {
-      integer += Math.floor(num / den);
-      num %= den;
-    }
-    if (integer !== 0 || num === 0) pieces.push(String(integer));
+  // Rounding can carry the fraction to a whole unit; without an integer field
+  // to carry into (`?/?` is an improper fraction) it stays in the numerator.
+  let integer = whole;
+  if (hasInteger && den > 0 && num >= den) {
+    integer += Math.floor(num / den);
+    num %= den;
   }
-  if (num !== 0 || !hasInteger) pieces.push(`${num}/${den}`);
+  // Every placeholder keeps its width, as it does in any number: Excel's own
+  // `string value` of a probe (2026-11-20) reads `# ??/??` at 3.14159 as
+  // "3  1/7 " — the numerator right-aligned in its two places, the denominator
+  // left-aligned in its two — `# ?/?` at 0.25 as " 1/4", the integer blank but
+  // its separator kept, and at 3 or at 0 as "3    " and "0    ": a fraction
+  // that rounds away leaves blanks the width of what it would have printed,
+  // and the integer is shown even at zero. `# 00/00` pads with zeros, 1 01/02.
+  // We wrote 3 1/7, 1/4, 3 and 0, so a column of them no longer lined up.
+  // …and every such blank is as wide as what it stands for: Excel's PDF leaves
+  // 3 under `# ?/?` as far from the cell's edge as " 0/0" is wide, the slash's
+  // width among it, and holds the 7 of 3 1/7 under `# ??/??` a digit in.
+  const showFraction = !hasInteger || num !== 0;
+  const intText = hasInteger
+    ? padPlaceholders(intFmt, showFraction && integer === 0 ? '' : String(integer))
+    : [];
+  const gap = piecesText(separator).length > 0 ? separator : literalPieces(' ');
+  const fractionText: Array<Piece> = showFraction
+    ? [
+        ...(hasInteger ? gap : []),
+        ...padPlaceholders(numFmt, String(num)),
+        '/',
+        ...(fixedDen !== undefined ? [denFmt] : padDenominator(denFmt, String(den))),
+      ]
+    : [
+        ...[...piecesText(gap)].map((ch) => blankOf(ch)),
+        ...[...numFmt].map(() => DIGIT_BLANK),
+        blankOf('/'),
+        ...[...denFmt].map(() => DIGIT_BLANK),
+      ];
 
-  const sign = value < 0 && !negativeSection ? '-' : '';
-  const gap = separator.length > 0 ? separator : ' ';
-  return `${literalPrefix}${sign}${pieces.join(gap)}${unquoteLiteral(tail)}`;
+  // The minus leads the whole text, literals and all: -$1 1/2 for `"$"# ?/?`.
+  // With an integer field it is there even when the value rounds to nothing
+  // (`# ?/?` at -0.01 reads "-0    "); without one, only when a numerator is
+  // (`?/?` at -0.01 reads "0/1").
+  const sign = value < 0 && !negativeSection && (hasInteger || num !== 0) ? '-' : '';
+  return [sign, ...literalPrefix, ...intText, ...fractionText, ...unquotePieces(tail)];
+}
+
+/**
+ * Digits right-aligned in a run of placeholders: a place the digits leave over
+ * shows `0` under `0`, a blank under `?` and nothing under `#`; digits the run
+ * cannot hold go in front of it.
+ */
+function padPlaceholders(placeholders: string, digits: string): Array<Piece> {
+  const out: Array<Piece> = [];
+  for (let i = 0; i < placeholders.length - digits.length; i++) {
+    const ch = placeholders[i];
+    if (ch === '0') out.push('0');
+    else if (ch === '?') out.push(DIGIT_BLANK);
+  }
+  out.push(digits);
+  return out;
+}
+
+/**
+ * A fraction's denominator in its placeholders. Unlike every other digit run it
+ * is LEFT-aligned under `?` — Excel writes 1/7 under `??/??` as " 1/7 " — while
+ * `0` still pads in front of it, 1/2 under `00/00` reading 01/02 (2026-11-20).
+ */
+function padDenominator(placeholders: string, digits: string): Array<Piece> {
+  let zeros = '';
+  const blanks: Array<Piece> = [];
+  for (let i = digits.length; i < placeholders.length; i++) {
+    if (placeholders[i] === '0') zeros += '0';
+    else if (placeholders[i] === '?') blanks.push(DIGIT_BLANK);
+  }
+  return [zeros + digits, ...blanks];
 }
 
 /**
@@ -1030,7 +1391,11 @@ function bestRational(value: number, maxDen: number): [number, number] {
   return [n, d];
 }
 
-function applyNumericSection(value: number, format: string, negativeSection: boolean): string {
+function applyNumericSection(
+  value: number,
+  format: string,
+  negativeSection: boolean,
+): Array<Piece> {
   const cleaned = resolveBracketCodes(format);
   // …and General survives being bracketed. `[DBNum1][$-804]General` is General
   // with a locale and a numeral system on it; matched only against the whole
@@ -1039,199 +1404,355 @@ function applyNumericSection(value: number, format: string, negativeSection: boo
   // "General12323". The numeral system is a separate, much larger feature; the
   // bug is printing the word.
   if (cleaned.trim().toLowerCase() === 'general') {
-    return defaultNumberRender(String(negativeSection ? Math.abs(value) : value));
+    return [defaultNumberRender(String(negativeSection ? Math.abs(value) : value))];
   }
 
   const fraction = formatFraction(value, cleaned, negativeSection);
   if (fraction !== undefined) return fraction;
 
-  if (/[eE][+-]/.test(cleaned)) return formatScientific(value, cleaned, negativeSection);
+  const tokens = tokenizeSection(cleaned);
+  // A minus sign leads the whole text, in front of every literal the format
+  // writes — Excel's own `string value` of a probe (2026-11-20) reads `$#,##0`
+  // at -5 as -$5, `"Total: "#,##0` as -Total: 1,234, `(###) ###-####` as
+  // -(555) 123-4567 and `_(0_)` as "- 5 ". We wrote the literals first: $-5.
+  const signed = value < 0 && !negativeSection;
 
-  const isPercent = cleaned.includes('%');
+  // General with text around it is still General: `General" kg"` reads 5 kg,
+  // `"$"General` at -5 reads -$5. Matched only as the whole code, the keyword
+  // printed itself.
+  if (tokens.some((t) => t.kind === 'general')) {
+    const general = defaultNumberRender(String(Math.abs(value)));
+    return [
+      signed && value !== 0 ? '-' : '',
+      ...tokens.flatMap((t) => (t.kind === 'general' ? [general] : tokenPieces(t))),
+    ];
+  }
+  // A text section (`"a"@"b"`) given a number shows it as General, its
+  // literals and all dropped: Excel reads 5 there as 5 and -5 under `"a"@` as -5.
+  if (tokens.some((t) => t.kind === 'text')) {
+    return [`${signed ? '-' : ''}${defaultNumberRender(String(Math.abs(value)))}`];
+  }
+
+  const exponent = tokens.findIndex((t) => t.kind === 'exponent');
+  if (exponent >= 0) {
+    // A code with a line end in it is no code Excel writes, and we print it
+    // back as it stands, as we always have.
+    if (hasLineEnd(cleaned)) return [cleaned];
+    return formatScientific(value, tokens, exponent, negativeSection);
+  }
+
+  const roles = commaRoles(tokens);
+  // §18.8.31 — `%` multiplies by a hundred, once for each: Excel reads `0%%` at
+  // 0.5 as 5000%%. A QUOTED or escaped percent sign is text and scales nothing:
+  // `0"%"` and `0\%` read 1%, where we multiplied for any `%` in the code and
+  // printed 50%.
   let magnitude = Math.abs(value);
-  if (isPercent) magnitude *= 100;
-
-  const { intFormat, decFormat, literalPrefix, literalSuffix, scaleCommas } =
-    splitNumberFormat(cleaned);
+  for (const t of tokens) if (t.kind === 'percent') magnitude *= 100;
   // §18.8.31 — a comma against the last placeholder is not punctuation, it is a
   // scale: the value is shown in thousands (or millions, per comma).
-  if (scaleCommas > 0) magnitude /= 1000 ** scaleCommas;
-  // §18.8.31 — three digit placeholders: `0` shows its digit, an
-  // insignificant zero included; `#` shows only a significant one; `?` shows
-  // a SPACE for an insignificant zero, so a column of them lines up. Excel's
-  // Accounting format writes its zero as `_-* "-"??_-`, and with `?` read as
-  // a literal every zero in such a column printed "-??".
-  const decPlaceholders = [...decFormat].filter((c) => c === '0' || c === '#' || c === '?');
-  const decimals = decPlaceholders.length;
+  if (roles.scale > 0) magnitude /= 1000 ** roles.scale;
 
+  let decimals = 0;
+  const point = tokens.findIndex((t) => t.kind === 'point');
+  if (point >= 0)
+    for (let i = point + 1; i < tokens.length; i++) if (tokens[i]!.kind === 'digit') decimals++;
   const fixed = toFixedDecimal(magnitude, decimals);
   const [intRaw, decRaw] = fixed.split('.');
-  const useThousands = /,(?=\d)/.test(intFormat) || /[0#?],[0#?]/.test(intFormat);
-
   // §18.8.31: `#` is an *optional* digit, so an integer part of zero written
   // only with `#` renders as nothing at all — format `#` blanks a zero cell
   // (tdf171828 uses that to hide a whole column of them) and `#.##` shows ".5"
-  // rather than "0.5". Only a `0` forces it; a `?` puts a space in its place.
-  // …and the placeholders a short number leaves over pad it: with zeros under
-  // `0` — "000" shows 5 as "005" — with spaces under `?`, with nothing under
-  // `#`. The zeros are digits, grouped with the rest.
-  const intPlaceholders = [...intFormat].filter((c) => c === '0' || c === '#' || c === '?');
-  const significant = intRaw === '0' && !intFormat.includes('0') ? '' : intRaw!;
-  let zeros = '';
-  let spaces = '';
-  for (let i = 0; i < intPlaceholders.length - significant.length; i++) {
-    if (intPlaceholders[i] === '0') zeros += '0';
-    else if (intPlaceholders[i] === '?') spaces += ' ';
-  }
-  const intDigits = zeros + significant;
-  let numberPart = spaces + (useThousands ? groupThousands(intDigits) : intDigits);
-  if (decimals > 0) {
-    let dec = decRaw ?? ''.padEnd(decimals, '0');
-    if (dec.length < decimals) dec = dec.padEnd(decimals, '0');
-    // '0' forces its digit, '#' drops it when the whole tail from there on is
-    // zeros — so `#.##` renders 0.5 as ".5", 0.55 as ".55" and 0.05 as ".05" —
-    // and '?' turns such a zero into a space. The decision is per position and
-    // reads rightwards, which is why the tail is settled after the fact rather
-    // than as it is built.
-    let kept = dec.substring(0, decimals);
-    for (let i = kept.length - 1; i >= 0 && kept[i] === '0'; i--) {
-      if (decPlaceholders[i] === '#') kept = kept.substring(0, i);
-      else if (decPlaceholders[i] === '?')
-        kept = `${kept.substring(0, i)} ${kept.substring(i + 1)}`;
-      else break;
+  // rather than "0.5". The placeholders decide what a zero shows.
+  const whole = intRaw === '0' ? '' : intRaw!;
+  // …and a value that rounds to zero shows no sign: Excel reads -0.4 under `0`
+  // as 0, -0.04 under `0.0` as 0.0 and -0.004 under `0%` as 0%.
+  const minus = signed && /[1-9]/.test(fixed) ? '-' : '';
+  return [minus, ...layOut(tokens, roles, whole, decRaw ?? '')];
+}
+
+/** The `E+` / `e-` of a scientific code. */
+interface ExponentToken {
+  readonly kind: 'exponent';
+  readonly e: string;
+  readonly sign: string;
+}
+
+/** One element of a number format's section (§18.8.31). */
+type NumberToken =
+  | { readonly kind: 'digit'; readonly ch: string }
+  | { readonly kind: 'point' }
+  | { readonly kind: 'comma' }
+  | { readonly kind: 'percent' }
+  | ExponentToken
+  | { readonly kind: 'general' }
+  | { readonly kind: 'text' }
+  | { readonly kind: 'literal'; readonly text: string }
+  | { readonly kind: 'blank'; readonly ch: string }
+  | { readonly kind: 'fill'; readonly ch: string };
+
+/**
+ * A section cut into its placeholders and its text, in order: quoted text and
+ * `\x` are literal, `_x` is a blank the width of x, `*x` fills the cell with x.
+ * Only the first `.` is the decimal point, and only the first `*` fills: a
+ * second is dropped, as every `*` was before the fill was laid out.
+ */
+function tokenizeSection(code: string): Array<NumberToken> {
+  const tokens: Array<NumberToken> = [];
+  let point = false;
+  let fill = false;
+  for (let i = 0; i < code.length; i++) {
+    const ch = code[i]!;
+    const next = code[i + 1];
+    if (ch === '"') {
+      const close = code.indexOf('"', i + 1);
+      const end = close < 0 ? code.length : close;
+      tokens.push({ kind: 'literal', text: code.slice(i + 1, end) });
+      i = end;
+    } else if (ch === '\\' && next !== undefined) {
+      tokens.push({ kind: 'literal', text: next });
+      i++;
+    } else if (ch === '_' && next !== undefined) {
+      tokens.push({ kind: 'blank', ch: next });
+      i++;
+    } else if (ch === '*' && next !== undefined) {
+      if (!fill) tokens.push({ kind: 'fill', ch: next });
+      fill = true;
+      i++;
+    } else if (ch === '0' || ch === '#' || ch === '?') {
+      tokens.push({ kind: 'digit', ch });
+    } else if (ch === '.' && !point) {
+      point = true;
+      tokens.push({ kind: 'point' });
+    } else if (ch === ',') {
+      tokens.push({ kind: 'comma' });
+    } else if (ch === '%') {
+      tokens.push({ kind: 'percent' });
+    } else if ((ch === 'E' || ch === 'e') && (next === '+' || next === '-')) {
+      tokens.push({ kind: 'exponent', e: ch, sign: next });
+      i++;
+    } else if ((ch === 'G' || ch === 'g') && code.slice(i, i + 7).toLowerCase() === 'general') {
+      tokens.push({ kind: 'general' });
+      i += 6;
+    } else if (ch === '@') {
+      tokens.push({ kind: 'text' });
+    } else {
+      tokens.push({ kind: 'literal', text: ch });
     }
-    // Strip trailing # of empty content.
-    if (kept.length > 0) numberPart += '.' + kept;
-    else if (decFormat.includes('0')) numberPart += '.' + dec;
   }
+  return tokens;
+}
 
-  let signPrefix = '';
-  if (value < 0 && !negativeSection) signPrefix = '-';
+/** A token as what it writes when it is not a number's own. */
+function tokenPieces(t: NumberToken): Array<Piece> {
+  switch (t.kind) {
+    case 'literal':
+      return literalPieces(t.text);
+    case 'blank':
+      return [blankOf(t.ch)];
+    case 'fill':
+      return [{ fill: t.ch }];
+    case 'digit':
+      return [t.ch];
+    case 'point':
+      return ['.'];
+    case 'comma':
+      return [','];
+    case 'percent':
+      return ['%'];
+    case 'exponent':
+      return [t.e + t.sign];
+    default:
+      return [];
+  }
+}
 
-  return `${literalPrefix}${signPrefix}${numberPart}${isPercent ? '%' : ''}${literalSuffix}`;
+/** The pieces as plain text: blanks as what they read as, a fill as nothing. */
+function piecesText(pieces: ReadonlyArray<Piece>): string {
+  let out = '';
+  for (const p of pieces) out += typeof p === 'string' ? p : 'blank' in p ? p.text : '';
+  return out;
+}
+
+/** What each comma of a section does, and what they come to. */
+interface CommaRoles {
+  readonly roles: ReadonlyArray<'group' | 'scale' | 'drop' | 'literal' | undefined>;
+  /** Whether the integer digits are grouped in thousands. */
+  readonly group: boolean;
+  /** How many thousands the value is divided by. */
+  readonly scale: number;
 }
 
 /**
- * The digits with a comma before every third from the right of each run — what
- * `/\B(?=(\d{3})+(?!\d))/g` puts one at — in one pass. That expression read
- * ahead over the rest of the run from every position, and the run is as long
- * as the format has zeros, applied in every cell the format shows. A comma
- * goes where the rest of the run is a whole number of threes and the character
- * before is a word character, as `\B` asks: a digit inside the run, a letter
- * at its start.
+ * §18.8.31 gives a comma two meanings; Excel's own `string value` of a probe
+ * (2026-11-20) shows four:
+ *  - between two placeholders of the integer it GROUPS the whole integer in
+ *    thousands, wherever it stands: `#,#` reads 1234567 as 1,234,567;
+ *  - a run of them right after the last placeholder of its part SCALES by a
+ *    thousand each, before the point (`0,.0` reads 12345 as 12.3), after the
+ *    decimals (`0.0,` reads 1234 as 1.2) or before text (`0, "K"` reads 12 K);
+ *  - right after a placeholder that more of its part follow, it does nothing:
+ *    `0,"-"0` reads 1234567 as 123456-7 and `0.0,0` reads 1234.5 as 1234.50;
+ *  - anywhere else it is a comma: `0 ,` reads 12345 as "12345 ,".
  */
-function groupThousands(s: string): string {
-  const isWord = (i: number): boolean => i >= 0 && /\w/.test(s[i]!);
-  let out = '';
-  let from = 0;
-  for (let start = 0; start < s.length; ) {
-    if (!isAsciiDigit(s[start])) {
-      start++;
-      continue;
-    }
-    let end = start;
-    while (isAsciiDigit(s[end])) end++;
-    for (let at = start; at < end; at++) {
-      if ((end - at) % 3 === 0 && isWord(at - 1)) {
-        out += `${s.slice(from, at)},`;
-        from = at;
+function commaRoles(tokens: ReadonlyArray<NumberToken>): CommaRoles {
+  const point = tokens.findIndex((t) => t.kind === 'point');
+  const split = point < 0 ? tokens.length : point;
+  let lastIntDigit = -1;
+  let lastDecDigit = -1;
+  tokens.forEach((t, i) => {
+    if (t.kind !== 'digit') return;
+    if (i < split) lastIntDigit = i;
+    else lastDecDigit = i;
+  });
+  const roles: Array<'group' | 'scale' | 'drop' | 'literal' | undefined> = [];
+  let group = false;
+  let scale = 0;
+  for (let a = 0; a < tokens.length; a++) {
+    if (tokens[a]!.kind !== 'comma') continue;
+    let b = a;
+    while (tokens[b + 1]?.kind === 'comma') b++;
+    const inInteger = b < split;
+    let role: 'group' | 'scale' | 'drop' | 'literal';
+    if (tokens[a - 1]?.kind !== 'digit') role = 'literal';
+    else if (tokens[b + 1]?.kind === 'digit') role = inInteger ? 'group' : 'drop';
+    else if ((inInteger ? lastIntDigit : lastDecDigit) < a) role = 'scale';
+    else role = 'drop';
+    for (let i = a; i <= b; i++) roles[i] = role;
+    if (role === 'group') group = true;
+    if (role === 'scale') scale += b - a + 1;
+    a = b;
+  }
+  return { roles, group, scale };
+}
+
+/**
+ * Write a number into a section's tokens. The integer digits go right to left
+ * over the placeholders before the point, whatever text stands between them,
+ * and any the placeholders cannot hold go in front of the first; the decimals
+ * go left to right over those after it. A place the digits leave over shows
+ * `0` under `0`, a space under `?` and nothing under `#` (§18.8.31) — `?` is
+ * there so a column lines up: Excel's Accounting format writes its zero as
+ * `_-* "-"??_-`, and with `?` read as a literal every such zero printed "-??".
+ *
+ * Excel's own `string value` of a probe (2026-11-20) is the evidence:
+ * `000-00-0000` reads 123456789 as 123-45-6789 and 1234567890 as 1234-56-7890,
+ * `(###) ###-####` reads 1234567 as "() 123-4567", `0.0"x"0` reads 1.23 as
+ * 1.2x3. Only the outermost text survived before: (5551234567.
+ *
+ * Thousands are counted over the whole integer, so the separator after the
+ * fourth digit from the right lands in front of text that follows it:
+ * `#,##0"-"000` reads 1234567 as 1,234,-567. A separator beside a place left
+ * blank is blank too, a space beside a `?`: `?,???` reads 5 as "    5" — a
+ * blank as wide as the separator, as every blank is as wide as what it stands
+ * for (on the Mac it was measured on the separator is a space, so its width
+ * there says nothing either way).
+ *
+ * The decimal point is always written, even with nothing after it: `#.##`
+ * reads 1 as "1." and 0 as ".", `0.###` reads 2 as "2." — we dropped it.
+ *
+ * @param whole    The integer's significant digits, '' for a zero.
+ * @param decimals Exactly as many digits as there are decimal placeholders.
+ */
+function layOut(
+  tokens: ReadonlyArray<NumberToken>,
+  { roles, group }: CommaRoles,
+  whole: string,
+  decimals: string,
+): Array<Piece> {
+  const point = tokens.findIndex((t) => t.kind === 'point');
+  const split = point < 0 ? tokens.length : point;
+  const intSlots: Array<number> = [];
+  const decSlots: Array<number> = [];
+  tokens.forEach((t, i) => {
+    if (t.kind === 'digit') (i < split ? intSlots : decSlots).push(i);
+  });
+  const out: Array<Array<Piece>> = tokens.map((t, i) =>
+    t.kind === 'comma' ? (roles[i] === 'literal' ? [','] : []) : tokenPieces(t),
+  );
+  // What follows a place that shows `shown`, `pos` places from the right.
+  const separator = (pos: number, shown: Piece): Array<Piece> =>
+    !group || pos === 0 || pos % 3 !== 0
+      ? []
+      : isBlank(shown)
+        ? [blankOf(',')]
+        : shown === ''
+          ? []
+          : [','];
+
+  const places = intSlots.length;
+  for (let k = 0; k < places; k++) {
+    const pos = places - 1 - k;
+    const text: Array<Piece> = [];
+    if (k === 0) {
+      for (let j = 0; j < whole.length - places; j++) {
+        text.push(whole[j]!, ...separator(whole.length - 1 - j, whole[j]!));
       }
     }
-    start = end;
+    const ch = (tokens[intSlots[k]!] as { ch: string }).ch;
+    const shown: Piece =
+      pos < whole.length
+        ? whole[whole.length - 1 - pos]!
+        : ch === '0'
+          ? '0'
+          : ch === '?'
+            ? DIGIT_BLANK
+            : '';
+    out[intSlots[k]!] = [...text, shown, ...separator(pos, shown)];
   }
-  return out + s.slice(from);
+  // No placeholder before the point: the integer is still written, in front
+  // of it — `.00` reads 12.5 as 12.50.
+  if (places === 0 && point >= 0) out[point] = [`${whole}.`];
+
+  // '0' forces its digit, '#' drops it when the whole tail from there on is
+  // zeros — so `#.##` renders 0.5 as ".5", 0.55 as ".55" and 0.05 as ".05" —
+  // and '?' turns such a zero into a blank. The decision is per position and
+  // reads rightwards, which is why the tail is settled after the fact.
+  const shown: Array<Piece> = decSlots.map((_, i) => decimals[i] ?? '0');
+  for (let i = shown.length - 1; i >= 0 && shown[i] === '0'; i--) {
+    const ch = (tokens[decSlots[i]!] as { ch: string }).ch;
+    if (ch === '#') shown[i] = '';
+    else if (ch === '?') shown[i] = DIGIT_BLANK;
+    else break;
+  }
+  decSlots.forEach((slot, i) => (out[slot] = [shown[i]!]));
+  return out.flat();
 }
 
-interface SplitNumberFormat {
-  literalPrefix: string;
-  intFormat: string;
-  decFormat: string;
-  literalSuffix: string;
-  /**
-   * §18.8.31 — commas immediately to the right of the last digit placeholder.
-   * Each divides the value by a thousand and prints nothing: `#,##0,,` shows
-   * 25 396 277 490 as "25,396". Read as literals they printed themselves.
-   */
-  scaleCommas: number;
-}
-
-function splitNumberFormat(cleaned: string): SplitNumberFormat {
-  // Find the leftmost and rightmost stretches of digit placeholders.
-  // Anything outside that range is literal text.
-  let firstDigit = -1;
-  let lastDigit = -1;
-  for (let i = 0; i < cleaned.length; i++) {
-    const ch = cleaned[i]!;
-    if (ch === '0' || ch === '#' || ch === '?') {
-      if (firstDigit < 0) firstDigit = i;
-      lastDigit = i;
-    }
-  }
-  if (firstDigit < 0) {
-    // A section with no digit placeholder is ALL literal — and a literal still
-    // has to be decoded. Returning it raw printed the format code itself:
-    // Excel's Accounting format writes its zero as `_(* "-"_)`, and a balance
-    // row that should read "-" read `_(* "-"_)` instead (49156.xlsx).
-    return {
-      literalPrefix: unquoteLiteral(cleaned),
-      intFormat: '',
-      decFormat: '',
-      literalSuffix: '',
-      scaleCommas: 0,
-    };
-  }
-  const literalPrefix = unquoteLiteral(cleaned.substring(0, firstDigit));
-  // The scaling commas are the ones that TOUCH the last placeholder — a comma
-  // any further out is a literal, and a quoted one always is.
-  const rawSuffix = cleaned.substring(lastDigit + 1);
-  const scaleCommas = /^,+/.exec(rawSuffix)?.[0]?.length ?? 0;
-  const literalSuffix = unquoteLiteral(rawSuffix.substring(scaleCommas));
-  const digitRange = cleaned.substring(firstDigit, lastDigit + 1);
-  // The '%' inside digit range is handled by isPercent at the caller; strip
-  // it from the digit range so the dot parser doesn't get confused.
-  const dotIdx = digitRange.indexOf('.');
-  const intFormat = dotIdx >= 0 ? digitRange.substring(0, dotIdx) : digitRange;
-  const decFormat = dotIdx >= 0 ? digitRange.substring(dotIdx + 1) : '';
-  return { literalPrefix, intFormat, decFormat, literalSuffix, scaleCommas };
-}
-
-function unquoteLiteral(s: string): string {
-  // "...": preserve content; \x: keep x; _x: width placeholder, treat as space.
-  let out = '';
+/**
+ * A run of a fraction format's text, unquoted: `"…"` and `\x` as written,
+ * `_x` a blank as wide as x, `*x` the fill. A `%` there scales the value
+ * (applyNumericSection) and writes nothing.
+ */
+function unquotePieces(s: string): Array<Piece> {
+  const out: Array<Piece> = [];
   for (let i = 0; i < s.length; i++) {
     const ch = s[i]!;
     if (ch === '"') {
+      let text = '';
       i++;
       while (i < s.length && s[i] !== '"') {
-        out += s[i]!;
+        text += s[i]!;
         i++;
       }
+      out.push(...literalPieces(text));
       continue;
     }
     if (ch === '\\' && i + 1 < s.length) {
-      out += s[i + 1]!;
+      out.push(...literalPieces(s[i + 1]!));
       i++;
       continue;
     }
     if (ch === '_' && i + 1 < s.length) {
-      out += ' ';
+      out.push(blankOf(s[i + 1]!));
       i++;
       continue;
     }
     if (ch === '*' && i + 1 < s.length) {
-      // §18.8.31 `*x` repeats x until the cell is full — a width filler, not a
-      // literal. The accounting formats all carry `_-* ` and printed a literal
-      // asterisk in front of every value ("* 210,896"). Repeating it would need
-      // the laid-out cell width, which this layer does not have; the character
-      // is a space in every format Excel itself writes, so emit nothing.
+      out.push({ fill: s[i + 1]! });
       i++;
       continue;
     }
-    if (ch === '%') {
-      // handled by isPercent at caller
-      continue;
-    }
-    out += ch;
+    if (ch === '%') continue;
+    out.push(...literalPieces(ch));
   }
   return out;
 }

@@ -88,3 +88,22 @@ For `tests/indic-pdf.test.ts`, a syllable whose signs are coloured apart — क
 | File | sha256 (16) | What it is cut to |
 |---|---|---|
 | `NotoSansDevanagari-colour.ttf` | `283bee12256dccb3` | कृष्ण with the half form of ष्, the short i before its consonant, and the reph that joins it. |
+
+## Noto Sans SC and Noto Sans JP 2.004 — OFL-1.1
+
+(c) 2014-2021 Adobe (<http://www.adobe.com/>), with Reserved Font Name 'Source'
+— the faces are Noto Sans CJK, drawn by Adobe as Source Han Sans; neither cut
+below carries that name. The licence, with this copyright line, is reproduced
+in `Noto-OFL.txt`.
+
+Each is the `_400Regular.ttf` of its `@expo-google-fonts/noto-sans-*` package
+on jsDelivr — the face the library downloads for Chinese and for Japanese —
+cut with `hb-subset` 15.0.0 to the characters of `tests/font-scripts.test.ts`,
+这是中文字あれは漢 (`--unicodes=3042,306F,308C,4E2D,5B57,6587,662F,6F22,8FD9
+--layout-features='*'`). The Japanese face has no 这, as the whole face has
+none: the test turns on it.
+
+| File | sha256 (16) | Cut from (sha256, 16) |
+|---|---|---|
+| `NotoSansSC-subset.ttf` | `afe1f0baf3a25cc5` | `NotoSansSC_400Regular.ttf`, `d45f67f0a7c0ca3f` |
+| `NotoSansJP-subset.ttf` | `c6a85866ef382c90` | `NotoSansJP_400Regular.ttf`, `d930d5d52d15231c` |

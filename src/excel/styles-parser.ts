@@ -347,6 +347,8 @@ function parseFonts(root: Record<string, unknown>, colors: WorkbookColors): Arra
     if (nameVal) font.name = nameVal;
     const scheme = childValAttr(obj, 'scheme');
     if (scheme === 'minor' || scheme === 'major') font.scheme = scheme;
+    const charset = Number(childValAttr(obj, 'charset'));
+    if (Number.isInteger(charset)) font.charset = charset;
     out.push(font);
   }
   return out;

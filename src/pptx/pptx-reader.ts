@@ -45,7 +45,8 @@ import { OpcPackage } from '@/core/opc';
 import { loadPptxEmbeddedFonts } from '@/pptx/embedded-fonts';
 import { presetTableStyle } from '@/pptx/preset-table-styles';
 import { resolveAlternateContent } from '@/core/opc/alternate-content';
-import { poAttr, poChildren, poFindDescendant, poIntAttr, poIs } from '@/core/po-helpers';
+import { poAttr, poChildren, poFindDescendant, poIntAttr, poIs, poText } from '@/core/po-helpers';
+import { parsePh } from '@/pptx/sp-helpers';
 import { EMPTY_STYLE_SHEET, resolveBodyStyles } from '@/core/style-cascade';
 import { buildPlaceholderCascade, parseLevelStyles } from '@/pptx/placeholder-cascade';
 import { normalizeSpid, parseVmlImageRels } from '@/pptx/ole-preview';
@@ -92,6 +93,43 @@ function isSlideHidden(data: Uint8Array): boolean {
   const head = decoder.decode(data.subarray(0, 4096));
   const root = head.match(/<p:sld\b[^>]*>/);
   return root ? /\bshow\s*=\s*["']0["']/.test(root[0]) : false;
+}
+
+/**
+ * The words of a slide's title: the text of its title placeholder (§19.3.1.36
+ * `p:ph @type` `title` or `ctrTitle`), its paragraphs on one line; else the
+ * slide's own name (§19.3.1.16 `p:cSld @name`), which PowerPoint leaves unset
+ * unless someone names the slide.
+ *
+ * @param slideTree The slide part, parsed.
+ * @returns The title, or `undefined` when the slide has neither.
+ */
+function slideTitleOf(slideTree: ReadonlyArray<PoNode>): string | undefined {
+  const sld = slideTree.find((n) => poIs(n, 'p:sld'));
+  const cSld = poChildren(sld).find((c) => poIs(c, 'p:cSld'));
+  const spTree = poChildren(cSld).find((c) => poIs(c, 'p:spTree'));
+  const textOf = (node: PoNode): string =>
+    poChildren(node)
+      .map((c) => (poIs(c, 'a:t') ? poText(c) : poIs(c, 'a:br') ? ' ' : textOf(c)))
+      .join('');
+  const find = (nodes: ReadonlyArray<PoNode>): string | undefined => {
+    for (const n of nodes) {
+      if (poIs(n, 'p:grpSp')) {
+        const inGroup = find(poChildren(n));
+        if (inGroup !== undefined) return inGroup;
+        continue;
+      }
+      const type = poIs(n, 'p:sp') ? parsePh(n)?.type : undefined;
+      if (type !== 'title' && type !== 'ctrTitle') continue;
+      const txBody = poChildren(n).find((c) => poIs(c, 'p:txBody'));
+      const paragraphs = poChildren(txBody).filter((c) => poIs(c, 'a:p'));
+      const text = paragraphs.map(textOf).join(' ').replace(/\s+/gu, ' ').trim();
+      if (text !== '') return text;
+    }
+    return undefined;
+  };
+  const named = poAttr(cSld, 'name')?.trim();
+  return find(poChildren(spTree)) ?? (named ? named : undefined);
 }
 
 /**
@@ -183,16 +221,22 @@ export function readPptx(bytes: Uint8Array): ReadResult<FlowDoc> {
   const stylesByLayout = new Map<string, SlideStyles>();
   const body: Array<BodyElement> = [];
   for (let i = 0; i < slideCount; i++) {
+    const part = slideParts[i];
+    const slideTree = part ? parseXml(part.data) : undefined;
+    // The slide's entry in a PDF outline (ISO 32000-1 §12.3.3) rides its
+    // anchor: the words of its title, which is what a reader looks for in the
+    // panel. LibreOffice's export names the entries "Slide 1", "Slide 2"…
+    // after the slides' names, and falls back to that only here.
+    const title = (slideTree && slideTitleOf(slideTree)) ?? `Slide ${String(i + 1)}`;
     body.push({
       kind: 'paragraph',
       paragraph: {
         properties: i > 0 ? { pageBreakBefore: true } : {},
         runs: [{ text: '​', properties: {} }],
+        outlineEntries: [{ title, level: 1 }],
       },
     });
-    const part = slideParts[i];
-    if (part) {
-      const slideTree = parseXml(part.data);
+    if (part && slideTree) {
       const styles = slideStylesFor(
         pkg,
         part.path,

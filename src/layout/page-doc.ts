@@ -110,6 +110,20 @@ export interface TextToken {
    */
   readonly tab?: true;
   /**
+   * §18.8.31 — the token is a blank a spreadsheet number format leaves
+   * (Run.blankWidthOf): it draws its text, a space, but stands as wide as
+   * `widthPt` says, the width of the character it keeps room for. A line keeps
+   * it at either end and never stretches it.
+   */
+  readonly gap?: true;
+  /**
+   * §18.8.31 `*x` — the token fills what its spreadsheet cell has left with
+   * this character (Run.fillChar). It is empty and takes no room until the cell
+   * lays the line out against its own width (fillCellLine); then it holds as
+   * many whole characters as fit, and the room they leave over.
+   */
+  readonly fill?: string;
+  /**
    * The token falls inside a comment range (`commentRangeRefs`): the emitter
    * fills a soft highlight behind it (E-COMMENTS CM2c).
    */
@@ -263,6 +277,38 @@ export interface Line {
    * adds nothing.
    */
   readonly metricTextHeightPt?: number;
+  /**
+   * The document-outline item this line opens: the first line of a heading in
+   * a table cell. Carried on the line because a cell's lines move as they are
+   * — a row split across pages hands them to the chunk that prints them — and
+   * the item has to be placed where that is.
+   */
+  readonly outline?: OutlineSeed;
+}
+
+/**
+ * What a heading puts in a document's navigation outline — a PDF's bookmarks
+ * (ISO 32000-1 §12.3.3) — before it is placed: the text the item shows and
+ * the level it sits at.
+ */
+export interface OutlineSeed {
+  /** The text the item shows, on one line. */
+  readonly title: string;
+  /** Its level, 1–9: a deeper item hangs under the nearest shallower one before it. */
+  readonly level: number;
+  /** Whether the item stands open, its children shown. Absent ⇒ open. */
+  readonly open?: boolean;
+  /**
+   * The item is one the document states (`Paragraph.outlineEntries`), not one
+   * a heading opens. A document with any such item takes those alone.
+   */
+  readonly stated?: boolean;
+  /** The y-up height on its page the item jumps to, where the source named one. */
+  readonly topPt?: number;
+  /** Its place in the outline the source states (`OutlineEntry.order`). */
+  readonly order?: number;
+  /** The URI the item opens instead of jumping to its page (`OutlineEntry.uri`). */
+  readonly uri?: string;
 }
 
 /** An image bound into a {@link LaidOutDocument}: its resource name plus the decoded/validated bytes. */
@@ -579,11 +625,13 @@ export function paintPlan(commands: ReadonlyArray<PageItem>): PagePaintPlan {
     // pass they were painted before every picture on the page, and each of
     // activex_picture.pptx's thirteen buttons then covered its own caption with
     // its own face.
+    //
+    // A text box's own table is not the page's, either: its cell shading and
+    // its rules belong to the box and paint over its fill, so they travel in
+    // the box's picture (see `pictureId`) like everything else it draws.
     if (
       c.z !== undefined &&
-      c.type !== 'fill' &&
-      c.type !== 'border' &&
-      (c.type !== 'line' || c.pictureId !== undefined)
+      (c.pictureId !== undefined || (c.type !== 'fill' && c.type !== 'border' && c.type !== 'line'))
     ) {
       const key = c.pictureId !== undefined ? `p${c.pictureId}` : `i${orderOf.size}`;
       const run = ordered.get(key);

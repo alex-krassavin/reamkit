@@ -35,6 +35,7 @@ import {
   poToggle,
   poVal,
 } from '@/core/po-helpers';
+import { shadingFillHex } from '@/word/shading';
 
 type Mutable<T> = { -readonly [K in keyof T]: T[K] };
 
@@ -480,14 +481,15 @@ function parseCellProperties(tcPr: PoNode | undefined): {
   if (borders) out.borders = borders;
   const margins = parseCellMargins(poFirstChild(tcPr, 'w:tcMar'));
   if (margins) out.margins = margins;
-  // §17.4.33 — w:shd cell shading. We honour a direct @w:fill hex (the common
-  // case, e.g. a coloured header row); "auto" / theme fills are left unshaded.
+  // §17.4.33 — w:shd cell shading: a PATTERN in `w:color` over `w:fill`, as a
+  // run's and a paragraph's is, and what Word paints is the two blended. Read
+  // as the fill alone, `solid` 25397D over white came out white where Word
+  // paints the blue, `pct50` of black came out white for its grey, and `nil`
+  // (no shading at all) came out the fill it names (issue #137's probe).
   const shd = poFirstChild(tcPr, 'w:shd');
   if (shd) {
-    const fill = poAttr(shd, 'fill');
-    if (fill && fill !== 'auto' && /^[0-9A-Fa-f]{6}$/.test(fill)) {
-      out.shading = { colorHex: fill.toUpperCase() };
-    }
+    const hex = shadingFillHex(poVal(shd), poAttr(shd, 'color'), poAttr(shd, 'fill'));
+    if (hex !== undefined) out.shading = { colorHex: hex };
   }
   // §17.4.84 `w:vAlign` — where the cell's content sits in a row taller than
   // it. TestTableCellAlign.docx is two rows of exactly that and we drew all

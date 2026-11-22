@@ -680,6 +680,7 @@ function toParaProperties(p: DocParaProps): ParagraphProperties {
     ...(p.keepLines !== undefined ? { keepLines: p.keepLines } : {}),
     ...(p.pageBreakBefore !== undefined ? { pageBreakBefore: p.pageBreakBefore } : {}),
     ...(p.tabs ? { tabs: toTabStops(p.tabs) } : {}),
+    ...(p.outlineLevel !== undefined ? { outlineLevel: p.outlineLevel } : {}),
   };
 }
 
