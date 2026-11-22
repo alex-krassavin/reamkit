@@ -15,7 +15,8 @@ from the bytes. The legacy binary `.doc` / `.xls` / `.ppt` (the OLE2/CFB formats
 read through a shared container reader — see WordprocessingML / SpreadsheetML /
 PresentationML below. A **PowerPoint** deck becomes
 one page per slide at the deck size, its shapes read as positioned content: text
-boxes (run formatting, alignment, vertical anchor, bullets, indents), the text
+boxes (run formatting and letter spacing, alignment, vertical anchor, bullets,
+indents, and boxes that don't wrap), the text
 style the deck states once, layout/master placeholders and the decoration they
 carry, backgrounds (solid, gradient, picture or theme reference), pictures with
 their recolouring, shapes (geometry/fill/stroke/gradient), DrawingML tables with
@@ -285,8 +286,9 @@ comes back as its rows, its sums whole.
 
 **Markdown (`convert('md')`)** — GitHub-Flavored Markdown, a flow medium like
 HTML: no pagination, no layout, no fonts, zero I/O. It keeps what a document
-*says* and drops how it *looks*. Kept: headings (from `w:outlineLvl`, falling
-back to a `Heading N` / `Title` style id), bold, italic, strikethrough, ordered
+*says* and drops how it *looks*. Kept: headings (Word's built-in Heading styles
+known by their name, as Word knows them, and `w:outlineLvl`, falling back to a
+`Heading N` / `Title` style id), bold, italic, strikethrough, ordered
 and bullet lists with their real numbers and nesting, tables as GFM pipe tables
 with per-column alignment, hyperlinks (through the same scheme allowlist the
 HTML writer uses), pictures, footnotes and endnotes as GFM footnotes, review
@@ -325,7 +327,14 @@ yourself, or `{ images: 'drop' }` to omit them.
 - Text, runs and the full style cascade (`docDefaults` → styles → direct formatting).
 - Tables — auto / fixed layout, §17.4 border-conflict resolution, cell shading,
   vertical merge and grid span, nested tables, **table styles** (`w:tblStyle` with
-  conditional formats: banding, first/last row/column).
+  conditional formats: banding, first/last row/column). A table's own
+  `w:tblBorders` overrides its style one side at a time. A table in a text box
+  paints its shading and rules over the box's fill. A row of exact height keeps
+  it on every page and is never split. An "at least" row breaks only where its
+  minimum fits, and its border takes room on top of that height, as in Word.
+  Automatic text colour turns white over a dark background, as Word turns it:
+  the run's, the paragraph's or the cell's shading, or the text box's fill, at
+  Rec. 601 luma below 59.77 of 255.
 - Lists and numbering (`abstractNum`, level overrides), multi-level. A bullet
   set in a symbol face — Symbol, Wingdings — is the character the face draws;
   items that ask for contextual spacing (§17.3.1.9 `w:contextualSpacing`) stand
@@ -338,7 +347,10 @@ yourself, or `{ images: 'drop' }` to omit them.
   sheet** (§17.6.20 `w:textDirection` `tbRl` / `btLr` — the text turned a
   quarter, the header and footer left across the sheet, as Word sets them).
 - **Hyperlinks** — external (clickable PDF annotations + HTML `<a>`, scheme-allowlisted)
-  and internal: bookmarks become named destinations / `#`-anchors.
+  and internal: bookmarks become named destinations / `#`-anchors. A PDF link's
+  address is written as the 7-bit ASCII URI §12.6.4.7 asks for: an IDNA host and
+  percent-encoded UTF-8. Its description reads as written, in any script and in
+  right-to-left order.
 - **Fields** — `PAGE` / `NUMPAGES` render real page numbers in headers and
   footers, in the numerals the section names (§17.6.12 `w:pgNumType w:fmt` —
   front matter in roman, a body that starts again at 1).
@@ -447,7 +459,12 @@ yourself, or `{ images: 'drop' }` to omit them.
   colours Excel starts from. A number is shown as Excel shows it: General fits the
   column's room to at most 15 significant digits, rounded or in scientific notation,
   and fills the cell with `#` when no way of writing it fits; a format gets as many
-  places as it asks, the digits past a double's fifteen written as zeros. Text a
+  places as it asks, the digits past a double's fifteen written as zeros. A custom
+  format is laid out as Excel lays it out, read back cell by cell from Excel for Mac:
+  the minus sign stands before the whole cell, text between digit placeholders keeps
+  its place, and the decimal point is always written. A fill (`*x`) fills the cell,
+  and `?` and `_x` blanks hold the room of what they stand for. A text cell shows
+  through its format's text section, and a value no section admits is `#`. Text a
   column is too narrow for is cut by the cell's box, not shortened: the page holds
   the whole of it under a clip, as Excel's own PDF does, and shows its start, its
   middle or its end as the cell is aligned left, centred or right.
@@ -721,7 +738,9 @@ yourself, or `{ images: 'drop' }` to omit them.
 
 **Typography**
 - Type0 + CIDFontType2 embedding with subsetting.
-- Knuth–Plass line breaking, Liang hyphenation (en / ru).
+- Knuth–Plass line breaking, Liang hyphenation (en / ru). A paragraph whose every
+  breaking leaves a line with nothing to stretch breaks first-fit, as PowerPoint and
+  Word set it. That covers CJK text in a narrow box, or a long word alone in a cell.
 - OpenType ligatures and kerning (GSUB/GPOS), mark positioning.
 - BiDi (UAX #9), Arabic cursive joining.
 - **The scripts of India, shaped.** Devanagari, Bengali, Gurmukhi, Gujarati, Odia,
@@ -738,9 +757,10 @@ yourself, or `{ images: 'drop' }` to omit them.
   or the geometric symbol block reaches a Noto face for that script instead of a
   row of notdef boxes —
   chosen per CHARACTER, fetched only for the scripts a document actually holds, and
-  in one weight rather than four. Unified Han is the document's call: the same
-  character is drawn differently in Japanese, Korean and Chinese, so its neighbours
-  decide which face draws it. A character no face on hand can draw is reported
+  in one weight rather than four. The same Han character is drawn differently in
+  Japanese, Korean and Chinese, so each run's ideographs take the face of the run's
+  own language. The language comes from `w:lang`, a `.pptx` run's `lang`, or a
+  spreadsheet font's `charset`. Where a run names none, its neighbours decide. A character no face on hand can draw is reported
   as a `text` loss, so `strict: true` refuses it rather than printing a box.
 - **The Turkic letters of Cyrillic.** Kazakh, Tatar, Bashkir, Chuvash, Uzbek,
   Azerbaijani, Sakha, Altai and Khakas — ә ғ қ ң ө ұ ү һ і and the rest — are drawn
@@ -779,7 +799,20 @@ yourself, or `{ images: 'drop' }` to omit them.
   in a single file.
 - Tagged PDF — logical structure tree, headings, tables, lists (with `Lbl`
   markers), figures with alt text, links with alternate descriptions, footnote
-  `Note` elements, `/Lang`, pagination artifacts.
+  `Note` elements, `/Lang`, pagination artifacts. A heading in a table cell is
+  its own H1–H6 element under the cell.
+- **Document outline** (§12.3.3) — the bookmarks panel, on by default. It lists:
+  - a Word document's headings at every outline level from 1 to 9, `.docx` and
+    `.doc` alike, with Word's built-in Heading styles known by their name;
+  - a workbook's printed sheets;
+  - a deck's slides by their titles;
+  - a source PDF's own bookmarks, including those that open a web address.
+
+  Each entry jumps to the top of its first line and keeps the reader's zoom.
+  Titles are PDF text strings, so any script reads as written. In tagged output
+  each entry names its heading's structure element (`/SE`). `outline: false`
+  writes none; `{ maxLevel: 3 }` keeps levels 1–3; `{ openPanel: true }` opens
+  the reader's panel with the document.
 - **Encryption** — AES-256 (ISO 32000-2 R6) via WebCrypto, with permission flags.
 - Digital signatures — PKCS#7 detached, ECDSA; object streams; JPEG2000 images.
 
