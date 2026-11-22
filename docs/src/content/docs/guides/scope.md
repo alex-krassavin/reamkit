@@ -794,8 +794,10 @@ yourself, or `{ images: 'drop' }` to omit them.
   a legacy `.ppt` shape's
   **palette-relative colour** (literal, scheme- and system-relative colours resolve),
   a rare **arc / ellipse freeform segment** (it falls back to the path's preset
-  bounds) or a **texture drawn through WordArt's glyphs** (the word, its size, its
-  face and the preset curve it is bent through are all drawn); in a legacy `.xls`, a 2007 **Excel table's** banded style / autofilter
+  bounds) or **WordArt's effects** (the word, its size, its face and its fill
+  colour are drawn, centred in its box; the curve it is bent through, a texture
+  through its glyphs and a shadow are not — a `.pptx`'s WordArt is bent through
+  its curve); in a legacy `.xls`, a 2007 **Excel table's** banded style / autofilter
   (its shared-feature record is one even Apache POI leaves unparsed, so the cell
   values still render — only the table's banding is absent) and a colour-scale /
   data-bar / icon-set rule (a 2007 `CF12` record) whose colour is **theme-relative**
