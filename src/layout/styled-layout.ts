@@ -989,6 +989,14 @@ export interface OutlineMark extends OutlineSeed {
   readonly xLeftPt: number;
   /** The y-up point the destination puts at the window's top edge, in points. */
   readonly yTopPt: number;
+  /**
+   * The tagged-PDF structure node that holds the heading's words — the element
+   * the item's `/SE` names (ISO 32000-1 §12.3.3 Table 153). Absent in untagged
+   * output, and for an item the document states (a sheet, a slide, a source
+   * PDF's bookmark): the paragraph that carries one is an anchor, not the
+   * element the item is about.
+   */
+  readonly structId?: number;
 }
 
 /**
@@ -4705,10 +4713,16 @@ interface CellAnchorCtx {
   readonly pageHeight: number;
   /**
    * Place the outline item a cell's line opens (`Line.outline`) on this page,
-   * at the cell's left edge and the line's top. Absent where a heading opens
-   * no item: a header row repeated on the next page, a nested table.
+   * at the cell's left edge and the line's top, with the structure node that
+   * line is tagged with. Absent where a heading opens no item: a header row
+   * repeated on the next page, a nested table.
    */
-  readonly outline?: (seed: OutlineSeed, xLeftPt: number, yTopPt: number) => void;
+  readonly outline?: (
+    seed: OutlineSeed,
+    xLeftPt: number,
+    yTopPt: number,
+    structId: number | undefined,
+  ) => void;
 }
 
 /** The page a table is being drawn onto, as a cell's floats need to see it. */
@@ -4723,8 +4737,13 @@ function cellAnchorCtx(asm: PageAssembler): CellAnchorCtx {
     pageHeight: asm.ctx.pageHeight,
     ...(asm.outlineMarks
       ? {
-          outline: (seed: OutlineSeed, xLeftPt: number, yTopPt: number) => {
-            asm.markOutline(seed, seed, xLeftPt, yTopPt);
+          outline: (
+            seed: OutlineSeed,
+            xLeftPt: number,
+            yTopPt: number,
+            structId: number | undefined,
+          ) => {
+            asm.markOutline(seed, seed, xLeftPt, yTopPt, structId);
           },
         }
       : {}),
@@ -9493,6 +9512,45 @@ function paragraphStructType(resolved: ResolvedParagraphProperties): StructType 
   return lvl !== undefined ? (`H${String(lvl)}` as StructType) : 'P';
 }
 
+/**
+ * The structure of a table cell that holds a heading: one element per
+ * paragraph under the cell's TH/TD, the heading's an Hn like one in the body.
+ * Any other cell keeps its words in one P. A heading inside that P would be
+ * body text to assistive technology, with no element of its own for its
+ * outline item's `/SE` to name. H1–H6 are block-level elements (ISO 32000-1
+ * §14.8.4.3.1 Table 334) and a cell is what groups them (§14.8.4.3.4
+ * Table 337), so the paragraphs around the heading take a P each, in the
+ * order they are read.
+ *
+ * @param builder  The structure tree being built.
+ * @param cellNode The cell's TH/TD.
+ * @param lines    The cell's lines, all of them, before the row is cut into pages.
+ * @returns The element of each line, and the one the cell's other content
+ *   (a nested table, a shape) belongs to; `undefined` for a cell with no heading.
+ */
+function cellParagraphNodes(
+  builder: StructTreeBuilder,
+  cellNode: StructNode,
+  lines: ReadonlyArray<Line>,
+): { byLine: Map<Line, number>; rest: number } | undefined {
+  const opens = (line: Line, i: number): boolean => i === 0 || line.firstLine;
+  if (!lines.some((line, i) => opens(line, i) && paragraphStructType(line.resolved) !== 'P')) {
+    return undefined;
+  }
+  const byLine = new Map<Line, number>();
+  let current = 0;
+  let rest: number | undefined;
+  for (const [i, line] of lines.entries()) {
+    if (opens(line, i)) {
+      const type = paragraphStructType(line.resolved);
+      current = builder.create(type, cellNode).id;
+      if (type === 'P') rest ??= current;
+    }
+    byLine.set(line, current);
+  }
+  return { byLine, rest: rest ?? byLine.get(lines[0]!)! };
+}
+
 // The document-outline items a paragraph opens (ISO 32000-1 §12.3.3): the
 // entries it states (a sheet's, a slide's, a source PDF's bookmarks), or else
 // the one a heading with something to say opens. A heading with no words opens
@@ -9650,9 +9708,22 @@ class PageAssembler {
    * @param seed    The item's title and level.
    * @param xLeftPt The x its destination puts at the window's left edge.
    * @param yTopPt  The y-up point its destination puts at the window's top.
+   * @param structId The structure node holding the heading's words, when tagging.
    */
-  markOutline(key: unknown, seed: OutlineSeed, xLeftPt: number, yTopPt: number): void {
-    this.outlineMarks?.set(key, { ...seed, pageIdx: this.pages.length, xLeftPt, yTopPt });
+  markOutline(
+    key: unknown,
+    seed: OutlineSeed,
+    xLeftPt: number,
+    yTopPt: number,
+    structId?: number,
+  ): void {
+    this.outlineMarks?.set(key, {
+      ...seed,
+      pageIdx: this.pages.length,
+      xLeftPt,
+      yTopPt,
+      ...(structId !== undefined ? { structId } : {}),
+    });
   }
 
   ctx: SectionRenderCtx;
@@ -11094,7 +11165,8 @@ function paginateSections(
           if (outlineMarks && pb.source) {
             for (const [k, seed] of outlineSeedsOf(pb.resolved, pb.source).entries()) {
               const key = k === 0 ? blockIdx : `${String(blockIdx)}/${String(k)}`;
-              asm.markOutline(key, seed, asm.colLeft(), seed.topPt ?? asm.cursorY);
+              const own = seed.stated === true ? undefined : structId;
+              asm.markOutline(key, seed, asm.colLeft(), seed.topPt ?? asm.cursorY, own);
             }
           }
           if (pb.bookmarks && asm.bookmarkPositions) {
@@ -11393,8 +11465,10 @@ function paginateSections(
 
       // Tagged PDF: Table → one TR per row → one TD per logical cell (skipping
       // vMerge continuation cells, which are covered by the origin's span) → P
-      // holding the cell's content. The same TD/P node is reused across row
-      // chunks (page splits), so its MCRs accumulate like a split paragraph.
+      // holding the cell's content — or, in a cell holding a heading, one
+      // element per paragraph (see cellParagraphNodes). The same TD/P node is
+      // reused across row chunks (page splits), so its MCRs accumulate like a
+      // split paragraph.
       const tableNode = builder ? builder.create('Table', builder.root) : undefined;
       const tableX = asm.colLeft() + block.xOffsetPt;
       // §20.5 — the drawings over a spreadsheet grid go down the pages with
@@ -11404,6 +11478,7 @@ function paginateSections(
         const row = block.rows[ri]!;
         const isLeadingHeader = ri < headerRows.length;
         let cellStructIds: Array<number | undefined> | undefined;
+        let lineStructIds: Map<Line, number> | undefined;
         if (builder && tableNode) {
           const b = builder;
           const tr = b.create('TR', tableNode);
@@ -11417,7 +11492,11 @@ function paginateSections(
             if (cell.colSpan > 1) cellNode.colSpan = cell.colSpan;
             const rowSpan = tableCellRowSpan(block.rows, ri, cell.colStart);
             if (rowSpan > 1) cellNode.rowSpan = rowSpan;
-            return b.create('P', cellNode).id;
+            const own = cellParagraphNodes(b, cellNode, cell.lines);
+            if (!own) return b.create('P', cellNode).id;
+            lineStructIds ??= new Map();
+            for (const [line, id] of own.byLine) lineStructIds.set(line, id);
+            return own.rest;
           });
         }
         // §17.4.6 — a row that will not fit is BROKEN at the page's edge, not
@@ -11509,6 +11588,7 @@ function paginateSections(
             cellStructIds,
             mergedHeights,
             cellAnchorCtx(asm),
+            lineStructIds,
           );
           sheetView?.lay(
             row.sheetTopPt !== undefined ? row.sheetTopPt + chunkOffsetPt : undefined,
@@ -11669,6 +11749,9 @@ function emitRowChunk(
   // is placed against. Absent for the paths that have no page to place one on
   // (a spreadsheet's cells, a nested row already inside one).
   anchored?: CellAnchorCtx,
+  // The element a line is tagged with where it is not its cell's: the lines of
+  // a cell holding a heading (see cellParagraphNodes).
+  lineStructIds?: ReadonlyMap<Line, number>,
 ): void {
   const rowTop = cursorY;
   const rowBottom = cursorY - row.heightPt;
@@ -11996,6 +12079,7 @@ function emitRowChunk(
       const cellBottomYUp = rowTop - boxHeightPt;
       let across = cell.padLeftPt;
       for (const line of cell.lines) {
+        const lineId = lineStructIds?.get(line) ?? structId;
         const h = computeLineHeight(line, line.resolved);
         const lineOffset = alignmentOffset(line.resolved.alignment, line.contentWidthPt, along);
         const off = lineBaselineOffset(line, line.resolved);
@@ -12011,7 +12095,7 @@ function emitRowChunk(
                 : rowTop - cell.padTopPt - lineOffset),
           ),
           rotationDeg: up ? 90 : -90,
-          ...(structId !== undefined ? { structId } : {}),
+          ...(lineId !== undefined ? { structId: lineId } : {}),
         });
         across += h;
       }
@@ -12021,10 +12105,11 @@ function emitRowChunk(
     // Where the paragraph the current line belongs to began (y-up).
     let paragraphTop: number | undefined;
     for (const [lineIdx, line] of cell.lines.entries()) {
+      const lineId = lineStructIds?.get(line) ?? structId;
       drawNestedBefore(lineIdx);
       textY -= cell.lineGaps?.get(lineIdx) ?? 0;
       if (line.firstLine || paragraphTop === undefined) paragraphTop = textY;
-      if (line.outline) anchored?.outline?.(line.outline, cellX, textY);
+      if (line.outline) anchored?.outline?.(line.outline, cellX, textY, lineId);
       const h = computeLineHeight(line, line.resolved);
       textY -= h;
       // §17.3.1.31 — a paragraph shaded inside a cell is shaded there too, over
@@ -12075,7 +12160,7 @@ function emitRowChunk(
               },
             }
           : {}),
-        ...(structId !== undefined ? { structId } : {}),
+        ...(lineId !== undefined ? { structId: lineId } : {}),
       });
     }
     // Whatever is left goes after the last line, inset to the cell's content

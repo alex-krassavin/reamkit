@@ -561,9 +561,13 @@ function assembleStyledPdf(
   // ISO 32000-1 §12.3.3 — the document outline, from the headings the layout
   // met (absent when the caller asked for none).
   const outlineSettings = typeof options.outline === 'object' ? options.outline : {};
+  // Tagged, an item names the element of its heading too (Table 153 /SE): the
+  // tree above is written, so each element has its reference by now.
+  const structRefOf =
+    tagged && structBuilder ? (id: number) => structBuilder.elementRef(id) : undefined;
   const outlinesRef =
     options.outline !== false && laid.pdf.outline
-      ? buildOutline(doc, laid.pdf.outline, pageRefs, outlineSettings.maxLevel)
+      ? buildOutline(doc, laid.pdf.outline, pageRefs, outlineSettings.maxLevel, structRefOf)
       : undefined;
   if (outlinesRef) {
     catalogEntries['Outlines'] = ref(outlinesRef.id);
@@ -634,7 +638,16 @@ const MAX_OUTLINE_LEVEL = 9;
  * @param doc      The document the objects are added to.
  * @param marks    The outline's items in document order.
  * @param pageRefs The page objects, by 0-based page index.
+ * In tagged output an item also names its heading's structure element, `/SE`
+ * (PDF 1.3, Table 153): what an assistive technology reads at the item, where
+ * `/Dest` is only the place it shows. An item whose mark has no element — the
+ * document states it, or the output is not tagged — has none.
+ *
+ * @param doc      The document the objects are added to.
+ * @param marks    The outline's items in document order.
+ * @param pageRefs The page objects, by 0-based page index.
  * @param maxLevel The deepest level kept, 1–9 (default 9).
+ * @param structRefOf The written element of a structure node, when tagging.
  * @returns The outline dictionary's reference, or `undefined` when no item is left.
  */
 function buildOutline(
@@ -642,6 +655,7 @@ function buildOutline(
   marks: ReadonlyArray<OutlineMark>,
   pageRefs: ReadonlyArray<PdfRef>,
   maxLevel: number = MAX_OUTLINE_LEVEL,
+  structRefOf?: (structId: number) => PdfRef | undefined,
 ): PdfRef | undefined {
   const deepest = Number.isFinite(maxLevel)
     ? Math.max(1, Math.min(MAX_OUTLINE_LEVEL, Math.floor(maxLevel)))
@@ -662,6 +676,8 @@ function buildOutline(
       Parent: ref(parent ? parent.ref.id : rootRef.id),
       ...outlineTarget(mark, pageRefs),
     });
+    const se = mark.structId !== undefined ? structRefOf?.(mark.structId) : undefined;
+    if (se) itemDict.set('SE', ref(se.id));
     const node: OutlineNode = { mark, dict: itemDict, ref: doc.add(itemDict), kids: [] };
     (parent ? parent.kids : top).push(node);
     open.push(node);

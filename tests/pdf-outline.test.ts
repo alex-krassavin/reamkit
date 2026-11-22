@@ -12,11 +12,13 @@ import { buildPptx } from './fixtures/build-pptx';
 import { buildXlsx } from './fixtures/build-xlsx';
 import type { ReamConvertOptions } from '@/core/converter/ream';
 import type { PdfDict, PdfValue } from '@/pdf/objects';
+import type { StructNode } from '@/pdf-reader/struct-tree';
 import { Ream } from '@/core/converter/ream';
 import { PDF_NULL, PdfHexString, PdfName, PdfRef, dict, name, stream } from '@/pdf/objects';
 import { PdfFile } from '@/pdf-reader/document';
 import { pdfTextString } from '@/pdf-reader/encodings';
 import { readPdfOutline } from '@/pdf-reader/outline';
+import { readStructTree } from '@/pdf-reader/struct-tree';
 import { extractPageText } from '@/pdf-reader/text';
 import { PdfDocument } from '@/pdf/writer';
 
@@ -621,5 +623,128 @@ describe("a source PDF's bookmarks that open a URI, carried in their place", () 
         expect(said).not.toContain(absent);
       }
     }
+  });
+});
+
+describe("each outline item names its heading's structure element (ISO 32000-1 §12.3.3 /SE)", () => {
+  const cell = (inner: string): string =>
+    `<w:tc><w:tcPr><w:tcW w:w="4000" w:type="dxa"/></w:tcPr>${inner}</w:tc>`;
+  const xml =
+    para('Heading1', 'Introduction') +
+    body() +
+    para('Heading2', 'Background') +
+    para('Heading3', 'Details') +
+    body() +
+    '<w:tbl><w:tblPr><w:tblW w:w="8000" w:type="dxa"/></w:tblPr>' +
+    '<w:tblGrid><w:gridCol w:w="4000"/><w:gridCol w:w="4000"/></w:tblGrid>' +
+    `<w:tr>${cell(para(undefined, 'Above it') + para('Heading2', 'In a cell') + para(undefined, 'Under it'))}` +
+    `${cell(para(undefined, 'beside'))}</w:tr>` +
+    '</w:tbl>' +
+    para('Heading1', 'Second chapter', '<w:pageBreakBefore/>') +
+    body();
+
+  /** The /SE element of each item, by the item's title. */
+  const elements = (bytes: Uint8Array): Map<string, PdfDict | undefined> => {
+    const file = PdfFile.parse(bytes);
+    const out = new Map<string, PdfDict | undefined>();
+    const walk = (first: PdfValue | undefined): void => {
+      for (let r = first; r instanceof PdfRef; ) {
+        const node = file.resolve(r) as PdfDict;
+        const raw = node.get('Title')!;
+        const title = pdfTextString(
+          raw instanceof PdfHexString
+            ? raw.bytes
+            : Uint8Array.from(raw as string, (c) => c.charCodeAt(0) & 0xff),
+        );
+        const se = node.get('SE');
+        if (se !== undefined) expect(se).toBeInstanceOf(PdfRef); // "shall be an indirect reference"
+        out.set(title, se === undefined ? undefined : (file.resolve(se) as PdfDict));
+        walk(node.get('First'));
+        r = node.get('Next');
+      }
+    };
+    const root = file.get(file.catalog, 'Outlines');
+    if (root instanceof Map) walk(root.get('First'));
+    return out;
+  };
+
+  it('points every heading at its Hn element, which holds its words on the page it jumps to', async () => {
+    const bytes = await convert(xml, { tagged: true });
+    const file = PdfFile.parse(bytes);
+    const { items } = readOutline(bytes);
+    const pages = file.pages();
+    const se = elements(bytes);
+    const expected: Record<string, string> = {
+      Introduction: 'H1',
+      Background: 'H2',
+      Details: 'H3',
+      'In a cell': 'H2',
+      'Second chapter': 'H1',
+    };
+    expect(items.map((i) => i.title)).toEqual(Object.keys(expected));
+    for (const item of items) {
+      const el = se.get(item.title)!;
+      expect(el, item.title).toBeDefined();
+      expect(el.get('Type')).toEqual(new PdfName('StructElem'));
+      expect(el.get('S'), item.title).toEqual(new PdfName(expected[item.title]!));
+      // Its marked content: MCRs carrying their page, or MCIDs on the element's.
+      const kids = file.resolve(el.get('K')!);
+      const list: ReadonlyArray<PdfValue> = Array.isArray(kids) ? kids : [kids];
+      const refs = list.map((k): { page: PdfValue; mcid: number } => {
+        const kid = file.resolve(k);
+        if (typeof kid === 'number') return { page: el.get('Pg')!, mcid: kid };
+        const mcr = kid as PdfDict;
+        expect(mcr.get('Type')).toEqual(new PdfName('MCR'));
+        return { page: mcr.get('Pg')!, mcid: mcr.get('MCID') as number };
+      });
+      expect(refs.length).toBeGreaterThan(0);
+      const onPage = refs.filter((r) => file.resolve(r.page) === pages[item.page]!.dict);
+      expect(onPage.length, item.title).toBe(refs.length);
+      // The words under those MCIDs are the heading's own.
+      const mcids = new Set(onPage.map((r) => r.mcid));
+      const words = extractPageText(file, pages[item.page]!)
+        .filter((run) => run.mcid !== undefined && mcids.has(run.mcid))
+        .map((run) => run.text)
+        .join('');
+      expect(words.replace(/\s+/g, ' ').trim()).toBe(item.title);
+    }
+  });
+
+  it("gives a cell's heading an element of its own, the cell's other paragraphs a P each", async () => {
+    const bytes = await convert(xml, { tagged: true });
+    const file = PdfFile.parse(bytes);
+    const root = readStructTree(file)!;
+    const cells: Array<StructNode> = [];
+    const find = (n: StructNode): void => {
+      if (n.type === 'TD') cells.push(n);
+      n.children.forEach(find);
+    };
+    find(root);
+    // §14.8.4.3.4 Table 337 — the cell groups the paragraphs, in reading order.
+    expect(cells.map((c) => c.children.map((k) => k.type))).toEqual([['P', 'H2', 'P'], ['P']]);
+    // The outline item's /SE is that H2, the cell its parent.
+    const el = elements(bytes).get('In a cell')!;
+    const parent = file.resolve(el.get('P')!) as PdfDict;
+    expect(parent.get('S')).toEqual(new PdfName('TD'));
+  });
+
+  it('writes no /SE where the PDF is not tagged', async () => {
+    const plain = await convert(xml);
+    expect([...elements(plain).values()].every((e) => e === undefined)).toBe(true);
+    expect(PdfFile.parse(plain).catalog.has('StructTreeRoot')).toBe(false);
+  });
+
+  it('names no element for a sheet or a slide: the paragraph its item rides is an anchor', async () => {
+    const xlsx = buildXlsx({ sheets: [{ name: 'Data', rows: [['value']] }] });
+    const sheet = elements(await Ream.parse(xlsx).convert('pdf', { fonts: FONTS, tagged: true }));
+    expect([...sheet.entries()]).toEqual([['Data', undefined]]);
+    const pptx = buildPptx([
+      '<p:sp><p:nvSpPr><p:cNvPr id="2" name="Title"/><p:cNvSpPr/>' +
+        '<p:nvPr><p:ph type="title"/></p:nvPr></p:nvSpPr>' +
+        '<p:spPr><a:xfrm><a:off x="457200" y="274638"/><a:ext cx="8229600" cy="1143000"/></a:xfrm></p:spPr>' +
+        '<p:txBody><a:bodyPr/><a:p><a:r><a:rPr lang="en-US"/><a:t>Slide title</a:t></a:r></a:p></p:txBody></p:sp>',
+    ]);
+    const slide = elements(await Ream.parse(pptx).convert('pdf', { fonts: FONTS, tagged: true }));
+    expect([...slide.entries()]).toEqual([['Slide title', undefined]]);
   });
 });

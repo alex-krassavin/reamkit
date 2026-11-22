@@ -130,6 +130,24 @@ export class StructTreeBuilder {
   }
 
   /**
+   * The `/StructElem` a node was written as, for another object to name — an
+   * outline item's `/SE` (ISO 32000-1 §12.3.3 Table 153). Only a node that holds
+   * content, its own or a descendant's: an element with nothing in it shows the
+   * reader nothing to go to.
+   *
+   * @param id The node's id.
+   * @returns The element's reference; `undefined` before {@link emit}, for an
+   *   unknown id, or for a node with no content.
+   */
+  elementRef(id: number): PdfRef | undefined {
+    const n = this.nodes[id];
+    if (!n?.ref) return undefined;
+    const holds = (m: StructNode): boolean =>
+      m.mcrefs.length > 0 || m.objrs.length > 0 || m.children.some(holds);
+    return holds(n) ? n.ref : undefined;
+  }
+
+  /**
    * Record that marked content `mcid` on page `pageIndex` is the content of node
    * `nodeId`. Called from the emit phase as MCIDs are assigned.
    */
