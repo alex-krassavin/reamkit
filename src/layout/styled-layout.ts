@@ -9511,6 +9511,7 @@ function outlineSeedsOf(
       ...(e.open === false ? { open: false } : {}),
       ...(e.topPt !== undefined ? { topPt: e.topPt } : {}),
       ...(e.order !== undefined ? { order: e.order } : {}),
+      ...(e.uri !== undefined ? { uri: e.uri } : {}),
     }));
   }
   const level = outlineLevelOf(resolved);

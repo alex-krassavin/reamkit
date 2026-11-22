@@ -307,6 +307,8 @@ export interface OutlineSeed {
   readonly topPt?: number;
   /** Its place in the outline the source states (`OutlineEntry.order`). */
   readonly order?: number;
+  /** The URI the item opens instead of jumping to its page (`OutlineEntry.uri`). */
+  readonly uri?: string;
 }
 
 /** An image bound into a {@link LaidOutDocument}: its resource name plus the decoded/validated bytes. */

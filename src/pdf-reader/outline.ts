@@ -1,7 +1,8 @@
 // ISO 32000-1 §12.3.3 — the document outline a PDF carries: its bookmarks,
 // read so that a PDF converted to a PDF keeps them. Each item comes back with
 // what it says, how deep it sits, whether it stands open, and where it jumps:
-// the page, and the height on it when its destination names one.
+// the page, and the height on it when its destination names one — or the URI
+// it opens, for an item whose action is a URI action.
 
 import { displayOf } from './display';
 import { pdfTextString } from './encodings';
@@ -21,14 +22,20 @@ export interface SourceOutlineItem {
   readonly level: number;
   /** Table 153 `/Count` — positive for an item that stands open. */
   readonly open: boolean;
-  /** The page its destination names, 0-based. */
-  readonly pageIndex: number;
+  /** The page its destination names, 0-based; absent exactly when it opens a `uri`. */
+  readonly pageIndex?: number;
   /**
    * The height its destination puts at the top of the window, y-up in the
    * page as SHOWN (crop box and turn applied, see `./display`) — where the
    * destination names one: `/XYZ`'s, `/FitH`'s, `/FitBH`'s and `/FitR`'s top.
    */
   readonly topPt?: number;
+  /**
+   * The URI its URI action opens (§12.6.4.7), made absolute against the
+   * catalog's `/URI` `/Base` (Table 207) where it is relative. An item that
+   * opens one names no page.
+   */
+  readonly uri?: string;
 }
 
 /** A tree past this many items is read no further: a cycle the guard missed, or a bomb. */
@@ -38,9 +45,11 @@ const MAX_TREE_NODES = 10_000;
 
 /**
  * Read a PDF's document outline (ISO 32000-1 §12.3.3), depth first in the
- * order a viewer shows it. An item whose destination cannot be followed to a
- * page takes the place its first descendant jumps to (a chapter heading that
- * only groups its sections); one with neither is left out, its children kept.
+ * order a viewer shows it. An item whose action is a URI action (§12.6.4.7)
+ * keeps its URI and names no page. An item whose destination cannot be
+ * followed to a page takes the place its first descendant jumps to (a chapter
+ * heading that only groups its sections); one with neither is left out, its
+ * children kept.
  *
  * @param file The parsed PDF.
  * @returns The outline's items; empty when the file has none.
@@ -50,8 +59,7 @@ export function readPdfOutline(file: PdfFile): Array<SourceOutlineItem> {
   if (!(root instanceof Map)) return [];
   const pages = file.pages();
   const pageIndex = new Map<PdfDict, number>(pages.map((p, i) => [p.dict, i]));
-  type Pending = Omit<SourceOutlineItem, 'pageIndex'> & { pageIndex?: number };
-  const found: Array<Pending> = [];
+  const found: Array<SourceOutlineItem> = [];
   const seen = new Set<PdfDict>();
   const walk = (first: PdfValue | undefined, level: number): void => {
     let node = first === undefined ? undefined : file.resolve(first);
@@ -74,6 +82,10 @@ export function readPdfOutline(file: PdfFile): Array<SourceOutlineItem> {
   const out: Array<SourceOutlineItem> = [];
   for (const [i, item] of found.entries()) {
     if (item.title === '') continue;
+    if (item.uri !== undefined) {
+      out.push({ title: item.title, level: item.level, open: item.open, uri: item.uri });
+      continue;
+    }
     const target =
       item.pageIndex !== undefined
         ? item
@@ -118,19 +130,25 @@ function bytesOf(value: PdfValue): Uint8Array | undefined {
 }
 
 // Where an item jumps (§12.3.3 Table 153): its `/Dest`, or the destination of
-// a go-to action in its `/A` (§12.6.4.2), followed to an explicit array.
+// a go-to action in its `/A` (§12.6.4.2), followed to an explicit array — or,
+// for a URI action in its `/A` (§12.6.4.7), the URI it opens.
 function targetOf(
   file: PdfFile,
   item: PdfDict,
   pages: ReadonlyArray<PdfPage>,
   pageIndex: ReadonlyMap<PdfDict, number>,
-): { pageIndex: number; topPt?: number } | undefined {
+): { pageIndex: number; topPt?: number } | { uri: string } | undefined {
   let dest = file.get(item, 'Dest');
   if (!(dest instanceof Map || Array.isArray(dest) || isNamed(dest))) {
     const action = file.get(item, 'A');
     if (!(action instanceof Map)) return undefined;
     const kind = file.get(action, 'S');
-    if (!(kind instanceof PdfName) || kind.value !== 'GoTo') return undefined;
+    if (!(kind instanceof PdfName)) return undefined;
+    if (kind.value === 'URI') {
+      const uri = uriOf(file, file.get(action, 'URI'));
+      return uri === undefined ? undefined : { uri };
+    }
+    if (kind.value !== 'GoTo') return undefined;
     dest = file.get(action, 'D');
   }
   const explicit = explicitDestination(file, dest, 0);
@@ -152,6 +170,40 @@ function targetOf(
   if (top === undefined || page.rotate === 90 || page.rotate === 270) return { pageIndex: index };
   if (page.rotate === 180) return { pageIndex: index };
   return { pageIndex: index, topPt: displayOf(page).place(0, top).y };
+}
+
+// §12.6.4.7 Table 206 — the URI a URI action opens, an ASCII string. A writer
+// that put UTF-8 there anyway meant the characters those bytes spell (pdf.js
+// reads them so too); bytes that are no UTF-8 are taken one character each. A
+// relative reference resolves against the catalog's `/URI` `/Base` (Table 207),
+// as pdf.js resolves it; with no base it stays as written — "relative to the
+// location of the document itself", a place a converted copy does not share.
+function uriOf(file: PdfFile, value: PdfValue): string | undefined {
+  const text = uriText(value);
+  if (text === undefined) return undefined;
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(text)) return text;
+  const uriDict = file.get(file.catalog, 'URI');
+  const base = uriDict instanceof Map ? uriText(file.get(uriDict, 'Base')) : undefined;
+  if (base === undefined) return text;
+  try {
+    return new URL(text, base).href;
+  } catch {
+    return text; // a base that is no absolute URI resolves nothing
+  }
+}
+
+// A URI string's characters, trimmed; undefined for no string or an empty one.
+function uriText(value: PdfValue): string | undefined {
+  const bytes = bytesOf(value);
+  if (bytes === undefined) return undefined;
+  let text: string;
+  try {
+    text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    text = Array.from(bytes, (b) => String.fromCharCode(b)).join('');
+  }
+  text = text.trim();
+  return text === '' ? undefined : text;
 }
 
 // §12.3.2.3 — a destination named by a name object (looked up in the
@@ -241,7 +293,10 @@ function nameTreeValue(file: PdfFile, root: PdfDict, key: Uint8Array): PdfValue 
  * height put there for it. Where the page stands as the source drew it
  * (`placed`), or the item found no paragraph of its own words, it keeps the
  * height its destination named; otherwise it jumps to its paragraph, wherever
- * the re-set page puts that.
+ * the re-set page puts that. An item that opens a URI jumps to no page: it
+ * rides the first paragraph of the page the item before it jumps to (else the
+ * one after it), only to be laid with the rest — its `order` alone says where
+ * it stands, under which item and over which.
  *
  * @param doc        The document read out of the PDF.
  * @param items      The PDF's outline (see {@link readPdfOutline}).
@@ -260,13 +315,14 @@ export function withSourceOutline(
   const onParagraph = new Map<number, Array<OutlineEntry>>();
   const onCarrier = new Map<number, Array<OutlineEntry>>();
   for (const [order, item] of items.entries()) {
-    const page = Math.min(item.pageIndex, pageStarts.length - 1);
+    const page = Math.min(item.pageIndex ?? neighbourPage(items, order), pageStarts.length - 1);
     const from = pageStarts[page]!;
     const to = pageStarts[page + 1] ?? body.length;
     const paragraphs: Array<number> = [];
     for (let i = from; i < to; i++) if (body[i]?.kind === 'paragraph') paragraphs.push(i);
     const wanted = folded(item.title);
-    const own = paragraphs.find((i) => {
+    // An item that opens a URI says nothing of the words on its page.
+    const own = (item.uri !== undefined ? [] : paragraphs).find((i) => {
       const el = body[i]!;
       if (el.kind !== 'paragraph') return false;
       const said = folded(outlineTitleOf(el.paragraph.runs));
@@ -283,6 +339,7 @@ export function withSourceOutline(
       ...(item.open ? {} : { open: false }),
       ...(keepsHeight && item.topPt !== undefined ? { topPt: item.topPt } : {}),
       order,
+      ...(item.uri !== undefined ? { uri: item.uri } : {}),
     };
     const at = own ?? paragraphs[0];
     const into = at !== undefined ? onParagraph : onCarrier;
@@ -317,6 +374,19 @@ export function withSourceOutline(
     sections = sections.map((s) => (s.endIndex > at ? { ...s, endIndex: s.endIndex + 1 } : s));
   }
   return { ...doc, body, sections };
+}
+
+// The page of the nearest item before `at` that names one, else after it.
+function neighbourPage(items: ReadonlyArray<SourceOutlineItem>, at: number): number {
+  for (let i = at - 1; i >= 0; i--) {
+    const page = items[i]!.pageIndex;
+    if (page !== undefined) return page;
+  }
+  for (let i = at + 1; i < items.length; i++) {
+    const page = items[i]!.pageIndex;
+    if (page !== undefined) return page;
+  }
+  return 0;
 }
 
 // What two titles are compared by: case and spacing folded away.

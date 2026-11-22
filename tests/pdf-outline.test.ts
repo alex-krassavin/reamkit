@@ -4,6 +4,7 @@
 
 import { readFileSync } from 'node:fs';
 
+import { unzipSync } from 'fflate';
 import { describe, expect, it } from 'vitest';
 
 import { buildDocxFromBody } from './fixtures/build-docx';
@@ -51,8 +52,11 @@ interface Item {
   readonly title: string;
   readonly depth: number;
   readonly count: number | undefined;
+  /** The page its /Dest jumps to; -1 for an item with none. */
   readonly page: number;
   readonly dest: ReadonlyArray<PdfValue>;
+  /** The /URI of its URI action (§12.6.4.7), as written. */
+  readonly uri: string | undefined;
   readonly rawTitle: PdfValue;
 }
 
@@ -81,14 +85,19 @@ function readOutline(
         raw instanceof PdfHexString
           ? raw.bytes
           : Uint8Array.from(raw as string, (c) => c.charCodeAt(0) & 0xff);
-      const dest = file.get(node, 'Dest') as Array<PdfValue>;
+      // Table 153: /Dest or /A, never both.
+      expect(node.has('Dest') && node.has('A')).toBe(false);
+      const dest = node.has('Dest') ? (file.get(node, 'Dest') as Array<PdfValue>) : undefined;
+      const action = file.get(node, 'A');
+      if (action instanceof Map) expect((file.get(action, 'S') as PdfName).value).toBe('URI');
       const count = node.get('Count');
       items.push({
         title: pdfTextString(bytesOf),
         depth,
         count: typeof count === 'number' ? count : undefined,
-        page: pages.indexOf(file.resolve(dest[0]!) as PdfDict),
-        dest,
+        page: dest ? pages.indexOf(file.resolve(dest[0]!) as PdfDict) : -1,
+        dest: dest ?? [],
+        uri: action instanceof Map ? (file.get(action, 'URI') as string) : undefined,
         rawTitle: raw,
       });
       if (node.has('First')) walk(node.get('First'), depth + 1, ref);
@@ -462,5 +471,155 @@ describe("a source PDF's own outline, read and carried to the PDF written from i
     const again = await Ream.parse(first).convert('pdf', { fonts: FONTS });
     const shape = (b: Uint8Array) => readOutline(b).items.map((i) => [i.depth, i.title, i.page]);
     expect(shape(again)).toEqual(shape(first));
+  });
+});
+
+describe("a source PDF's bookmarks that open a URI, carried in their place", () => {
+  /**
+   * Two pages of Helvetica text and an outline whose URI actions (ISO 32000-1
+   * §12.6.4.7) stand among go-to items, the way freeculture.pdf's do: one with
+   * a go-to child of its own, one under a chapter whose /URI is raw UTF-8 (an
+   * IRI, not the ASCII Table 206 asks for), one relative to the catalog's
+   * /URI /Base (Table 207), a javascript: one, and two at the very end, after
+   * the last item that jumps to a page.
+   */
+  function sourcePdf(): Uint8Array {
+    const doc = new PdfDocument();
+    const font = doc.add(
+      dict({ Type: name('Font'), Subtype: name('Type1'), BaseFont: name('Helvetica') }),
+    );
+    const pagesMap = dict({ Type: name('Pages'), Kids: [], Count: 2 });
+    const pagesRef = doc.add(pagesMap);
+    const pageRefs = [
+      ['Chapter One', 'Linked section'],
+      ['Chapter Two', 'Body text'],
+    ].map(([first, second]) => {
+      const ops = `BT /F1 12 Tf 1 0 0 1 72 700 Tm (${first!}) Tj 1 0 0 1 72 600 Tm (${second!}) Tj ET`;
+      const page = doc.add(
+        dict({
+          Type: name('Page'),
+          Parent: pagesRef,
+          MediaBox: [0, 0, 612, 792],
+          Resources: dict({ Font: dict({ F1: font }) }),
+          Contents: doc.add(stream({}, new TextEncoder().encode(ops))),
+        }),
+      );
+      (pagesMap.get('Kids') as Array<PdfValue>).push(page);
+      return page;
+    });
+    const root = dict({ Type: name('Outlines') });
+    const rootRef = doc.add(root);
+    type Node = { d: PdfDict; r: PdfRef };
+    const item = (title: string, target: PdfValue | { uri: PdfValue }): Node => {
+      const d = dict({ Title: title, Parent: rootRef });
+      if (Array.isArray(target)) d.set('Dest', target);
+      else d.set('A', dict({ S: name('URI'), URI: (target as { uri: PdfValue }).uri }));
+      return { d, r: doc.add(d) };
+    };
+    const link = (parent: Node, kids: Array<Node>): void => {
+      parent.d.set('First', kids[0]!.r);
+      parent.d.set('Last', kids[kids.length - 1]!.r);
+      kids.forEach((k, i) => {
+        k.d.set('Parent', parent.r);
+        if (i > 0) k.d.set('Prev', kids[i - 1]!.r);
+        if (i < kids.length - 1) k.d.set('Next', kids[i + 1]!.r);
+      });
+    };
+    const ch1 = item('Chapter One', [pageRefs[0]!, name('XYZ'), 0, 700, 0]);
+    const site = item('Website', { uri: 'http://example.com/' });
+    const under = item('Linked section', [pageRefs[0]!, name('XYZ'), 0, 600, 0]);
+    const ch2 = item('Chapter Two', [pageRefs[1]!, name('XYZ'), 0, 700, 0]);
+    const iri = item('Kazakh wiki', {
+      uri: new PdfHexString(new TextEncoder().encode('https://пример.рф/вики?q=тілі#ә')),
+    });
+    const relative = item('Notes', { uri: 'notes/a b.html' });
+    const script = item('Script', { uri: 'javascript:app.alert(1)' });
+    const donate = item('Donate', { uri: 'https://example.com/donate' });
+    link({ d: root, r: rootRef }, [ch1, site, ch2, script, donate]);
+    link(site, [under]);
+    link(ch2, [iri, relative]);
+    site.d.set('Count', 1);
+    ch2.d.set('Count', -2); // closed
+    root.set('Count', 6);
+    const catalog = doc.add(
+      dict({
+        Type: name('Catalog'),
+        Pages: pagesRef,
+        Outlines: rootRef,
+        URI: dict({ Base: 'https://example.org/book/' }),
+      }),
+    );
+    return doc.build(catalog);
+  }
+
+  it('reads a URI action as the URI it opens, in its place, with no page', () => {
+    expect(readPdfOutline(PdfFile.parse(sourcePdf()))).toEqual([
+      { title: 'Chapter One', level: 1, open: false, pageIndex: 0, topPt: 700 },
+      { title: 'Website', level: 1, open: true, uri: 'http://example.com/' },
+      { title: 'Linked section', level: 2, open: false, pageIndex: 0, topPt: 600 },
+      { title: 'Chapter Two', level: 1, open: false, pageIndex: 1, topPt: 700 },
+      // Raw UTF-8 reads as the characters it spells, as pdf.js reads it.
+      { title: 'Kazakh wiki', level: 2, open: false, uri: 'https://пример.рф/вики?q=тілі#ә' },
+      // Table 207: relative to the catalog's /URI /Base.
+      { title: 'Notes', level: 2, open: false, uri: 'https://example.org/book/notes/a%20b.html' },
+      { title: 'Script', level: 1, open: false, uri: 'javascript:app.alert(1)' },
+      { title: 'Donate', level: 1, open: false, uri: 'https://example.com/donate' },
+    ]);
+  });
+
+  it('writes every item in its place and level, a URI action for each URI', async () => {
+    const out = await Ream.parse(sourcePdf()).convert('pdf', { fonts: FONTS });
+    const { items } = readOutline(out);
+    expect(items.map((i) => [i.depth, i.title, i.uri ?? i.page])).toEqual([
+      [0, 'Chapter One', 0],
+      [0, 'Website', 'http://example.com/'],
+      [1, 'Linked section', 0],
+      [0, 'Chapter Two', 1],
+      // §12.6.4.7 — 7-bit ASCII: IDNA host, UTF-8 octets percent-encoded.
+      [
+        1,
+        'Kazakh wiki',
+        'https://xn--e1afmkfd.xn--p1ai/%D0%B2%D0%B8%D0%BA%D0%B8?q=%D1%82%D1%96%D0%BB%D1%96#%D3%99',
+      ],
+      [1, 'Notes', 'https://example.org/book/notes/a%20b.html'],
+      // The link allowlist refuses the script: the item stays, doing nothing.
+      [0, 'Script', -1],
+      [0, 'Donate', 'https://example.com/donate'],
+    ]);
+    // The closed chapter still counts its two children negative.
+    expect(items.map((i) => i.count)).toEqual([
+      undefined,
+      1,
+      undefined,
+      -2,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+    ]);
+    for (const i of items) if (i.uri !== undefined) expect(i.uri).toMatch(/^[\x21-\x7e]+$/);
+  });
+
+  it('carries the URI items into PDF/A too — 19005 permits the URI action', async () => {
+    const out = await Ream.parse(sourcePdf()).convert('pdf', { fonts: FONTS, pdfA: 'PDF/A-2b' });
+    expect(
+      readOutline(out)
+        .items.filter((i) => i.uri !== undefined)
+        .map((i) => i.title),
+    ).toEqual(['Website', 'Kazakh wiki', 'Notes', 'Donate']);
+  });
+
+  it('puts no URI item into a DOCX or an HTML page, as text or as a link', async () => {
+    const docx = await Ream.parse(sourcePdf()).convert('docx', { fonts: FONTS });
+    const xml = new TextDecoder().decode(unzipSync(docx)['word/document.xml']);
+    const html = new TextDecoder().decode(
+      await Ream.parse(sourcePdf()).convert('html', { fonts: FONTS }),
+    );
+    for (const said of [xml, html]) {
+      expect(said).toContain('Chapter Two');
+      for (const absent of ['Website', 'Donate', 'Kazakh wiki', 'example.com', 'example.org']) {
+        expect(said).not.toContain(absent);
+      }
+    }
   });
 });

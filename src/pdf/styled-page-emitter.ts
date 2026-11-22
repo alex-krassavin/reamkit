@@ -622,6 +622,9 @@ const MAX_OUTLINE_LEVEL = 9;
  * view. A leaf has no `/Count` — Table 153 asks for one only of an item with
  * descendants.
  *
+ * An item that opens a URI (a source PDF's bookmark, `OutlineMark.uri`) gets
+ * a URI action instead of a destination — see {@link outlineTarget}.
+ *
  * Each destination is `[page /XYZ left top 0]` (Table 151): the heading's
  * first line at the top of the window, the column's left edge at its left,
  * and the zoom — 0, "the same meaning as a null value" — left as the reader
@@ -643,26 +646,21 @@ function buildOutline(
   const deepest = Number.isFinite(maxLevel)
     ? Math.max(1, Math.min(MAX_OUTLINE_LEVEL, Math.floor(maxLevel)))
     : MAX_OUTLINE_LEVEL;
-  const kept = marks.filter((m) => m.level <= deepest && pageRefs[m.pageIdx] !== undefined);
+  const kept = marks.filter(
+    (m) => m.level <= deepest && (m.uri !== undefined || pageRefs[m.pageIdx] !== undefined),
+  );
   if (kept.length === 0) return undefined;
   const rootDict = dict({ Type: name('Outlines') });
   const rootRef = doc.add(rootDict);
   const top: Array<OutlineNode> = [];
   const open: Array<OutlineNode> = [];
-  const round = (v: number): number => Math.round(v * 100) / 100;
   for (const mark of kept) {
     while (open.length > 0 && open[open.length - 1]!.mark.level >= mark.level) open.pop();
     const parent = open[open.length - 1];
     const itemDict = dict({
       Title: textString(mark.title),
       Parent: ref(parent ? parent.ref.id : rootRef.id),
-      Dest: [
-        ref(pageRefs[mark.pageIdx]!.id),
-        name('XYZ'),
-        round(mark.xLeftPt),
-        round(mark.yTopPt),
-        0,
-      ],
+      ...outlineTarget(mark, pageRefs),
     });
     const node: OutlineNode = { mark, dict: itemDict, ref: doc.add(itemDict), kids: [] };
     (parent ? parent.kids : top).push(node);
@@ -689,6 +687,41 @@ function buildOutline(
   };
   rootDict.set('Count', hang(rootDict, top));
   return rootRef;
+}
+
+/**
+ * Where an outline item takes the reader (ISO 32000-1 §12.3.3 Table 153, which
+ * allows `/Dest` or `/A`, never both): the destination of its mark's place, or,
+ * for a mark that opens a URI, a URI action (§12.6.4.7). The URI is mapped to
+ * the 7-bit ASCII Table 206 asks for and passes the scheme allowlist a link's
+ * does; one the allowlist refuses leaves the item where it stands, doing
+ * nothing — Table 153 asks for neither entry. PDF/A permits the action, as it
+ * does on the document's links: ISO 19005-1 §6.6.1 and ISO 19005-2/-3 §6.5.1
+ * forbid Launch, JavaScript and the like, and veraPDF's profiles test for the
+ * set left, URI among it.
+ *
+ * @param mark     The item's mark.
+ * @param pageRefs The page objects, by 0-based page index.
+ * @returns The item dictionary's `/Dest` or `/A` entry; none for a refused URI.
+ */
+function outlineTarget(
+  mark: OutlineMark,
+  pageRefs: ReadonlyArray<PdfRef>,
+): Record<string, PdfValue> {
+  if (mark.uri !== undefined) {
+    const safe = sanitizeHref(mark.uri);
+    return safe !== undefined ? { A: dict({ S: name('URI'), URI: iriToUri(safe) }) } : {};
+  }
+  const round = (v: number): number => Math.round(v * 100) / 100;
+  return {
+    Dest: [
+      ref(pageRefs[mark.pageIdx]!.id),
+      name('XYZ'),
+      round(mark.xLeftPt),
+      round(mark.yTopPt),
+      0,
+    ],
+  };
 }
 
 const DEFAULT_PRODUCER = 'Ream';

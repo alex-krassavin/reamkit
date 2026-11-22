@@ -679,6 +679,14 @@ export interface OutlineEntry {
    * paragraph stands.
    */
   readonly order?: number;
+  /**
+   * The URI the entry opens instead of a place in the document: a source
+   * PDF's bookmark whose action is a URI action (ISO 32000-1 §12.6.4.7). Such
+   * an entry jumps to no page — the paragraph it rides gives it only its place
+   * among the others (with `order`), and `topPt` means nothing for it. Only a
+   * PDF's outline can hold one; the other writers leave it out.
+   */
+  readonly uri?: string;
 }
 
 /**
