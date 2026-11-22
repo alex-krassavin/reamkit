@@ -168,6 +168,9 @@ const pdf = await doc.convert('pdf', { fonts, hyphenator });
 `convert` accepts (beyond the above): `info` (PDF `/Info` metadata — also read
 automatically from the document's `docProps/core.xml`), `attachments`
 (PDF/A-3 associated files), `tagged` (logical structure without full PDF/A),
+`outline` (the PDF's bookmarks — on by default, from a document's headings, a
+workbook's sheets or a deck's slides; `false` for none, `{ maxLevel: 3 }` to
+keep levels 1–3, `{ openPanel: true }` to open the reader's panel),
 `encrypt` (AES-256 with a user and an owner password and the permissions a
 reader keeps: printing, copying, modifying, …), `pageWidth`/`pageHeight`/margins
 overrides.
@@ -198,7 +201,8 @@ engine), **sparklines** and **Excel tables**, DrawingML shapes and
 charts, OMML math, Type0+CIDFontType2 embedding with subsetting, Knuth-Plass
 line breaking, Liang hyphenation, OpenType ligatures/kerning + Arabic cursive
 joining + Indic shaping (GSUB/GPOS, as HarfBuzz shapes), BiDi (UAX #9),
-hyperlinks (PDF link annotations + HTML anchors, scheme-allowlisted), tagged
+hyperlinks (PDF link annotations + HTML anchors, scheme-allowlisted), a PDF
+document outline (bookmarks from headings, sheets and slides), tagged
 PDF, PDF/A-1/2/3 (a/b/u), PDF/UA-1, AES-256 encryption, digital signatures
 (PKCS#7/ECDSA/PAdES/RFC 3161), SVG page preview, flowed HTML export, and
 **docx + xlsx output** (write WordprocessingML / SpreadsheetML back out, incl.
