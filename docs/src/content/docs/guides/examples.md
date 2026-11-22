@@ -571,6 +571,24 @@ const accessible = await doc.convert('pdf', { fonts, pdfUA: true });
 const archival = await doc.convert('pdf', { fonts, pdfA: 'PDF/A-2a', pdfUA: true });
 ```
 
+## PDF bookmarks
+
+A PDF opens with an outline (ISO 32000 §12.3.3), the reader's bookmarks panel.
+It is built from a Word document's headings, a workbook's printed sheets, a
+deck's slides, or a source PDF's own bookmarks, and it is on by default:
+
+```ts
+const pdf = await doc.convert('pdf', { fonts }); // outline from the headings
+const toc = await doc.convert('pdf', {
+  fonts,
+  outline: { maxLevel: 3, openPanel: true }, // Heading 1–3, panel open on load
+});
+const bare = await doc.convert('pdf', { fonts, outline: false }); // no outline
+```
+
+In tagged output each entry also names its heading's structure element, so
+assistive technology can go from a bookmark to the heading itself.
+
 ## Digital signature
 
 PKCS#7 detached (ISO 32000 §12.8) via WebCrypto — RSA or ECDSA:
