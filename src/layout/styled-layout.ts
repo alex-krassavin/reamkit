@@ -2295,6 +2295,25 @@ function sharedAfter(block: {
 }
 
 /**
+ * §17.6.4 — the height a band of columns is balanced to: all its blocks
+ * stacked, or 0 — fill column after column — when a column break in it says
+ * where its columns end (§17.3.3.1). Word leaves such a band unbalanced: one
+ * line, a column break and eight more in three columns stand one, eight and
+ * none, where it sets eight lines with no break four and four; LibreOffice
+ * balances what follows the break. Balanced, the break that ends a section's
+ * last paragraph found its line already pushed into the last column, and
+ * opened a page of its own (tdf103975_notPageBreakB.docx).
+ *
+ * @param blocks   The band's laid-out blocks.
+ * @param collapse Whether paragraph spacing collapses (Word documents).
+ * @returns The height to share among the columns, in points.
+ */
+function balancedBandHeight(blocks: ReadonlyArray<LaidOutBlock>, collapse: boolean): number {
+  const broken = blocks.some((b) => b.kind === 'paragraph' && (b.columnBreakLines?.size ?? 0) > 0);
+  return broken ? 0 : blocksHeight(blocks, collapse);
+}
+
+/**
  * Total laid-out height of a run of blocks, paragraph spacing included.
  *
  * @param blocks   The blocks, in order.
@@ -6358,6 +6377,12 @@ function layoutParagraphBlock(
   const firstLineWidth = paragraphMaxWidth(resolved, contentWidth, true);
   const otherWidth = paragraphMaxWidth(resolved, contentWidth, false);
   const leading = paragraphLeading(paragraph.properties, options);
+  // Measured in Word only (docx and .doc alike): what a slide's or a cell's
+  // trailing break leaves is its own application's business.
+  const markLine =
+    options.typesetBy === 'word'
+      ? (width: number): Line => emptyLine(paragraph, options, resolved, Math.max(width, 0))
+      : undefined;
   const runWrap = (
     part: ReadonlyArray<Token>,
     firstWidth: number,
@@ -6373,6 +6398,7 @@ function layoutParagraphBlock(
       leading,
       options.doNotExpandShiftReturn === true,
       widths,
+      markLine,
     );
   // §17.3.3.1 — a `w:br w:type="column"` splits the paragraph's own flow: what
   // follows it belongs in the NEXT column. Wrapping the parts one at a time is
@@ -6392,9 +6418,10 @@ function layoutParagraphBlock(
       // first-line one, and the float widths carry on where they left off.
       const width = i === 0 ? firstLineWidth : otherWidth;
       const lines = runWrap(part.tokens, width, lineWidths?.slice(wrapped.length));
-      // The line a page break ends is a line, with nothing else on it or not:
-      // two breaks in a row leave an empty one on the page between.
-      if (lines.length === 0 && (part.opens === 'page' || part.endsPage)) {
+      // The line a break ends is a line, with nothing else on it or not: two
+      // breaks in a row leave an empty one on the page between, and the mark
+      // after a column break at the paragraph's end stands in the next column.
+      if (lines.length === 0 && (part.opens !== undefined || part.endsPage || part.endsColumn)) {
         lines.push(emptyLine(paragraph, options, resolved, Math.max(width, 0)));
       }
       if (i > 0 && lines.length > 0) {
@@ -6942,6 +6969,8 @@ interface FlowPart {
   readonly opens?: 'column' | 'page';
   /** Whether a page break ends it. */
   endsPage: boolean;
+  /** Whether a column break ends it. */
+  endsColumn?: boolean;
 }
 
 /**
@@ -6969,6 +6998,16 @@ interface FlowPart {
  * first line. Moved to the next page with its mark, it stood an empty line down
  * every such page.
  *
+ * A COLUMN break is the other way round: it stays on the line it ends, and the
+ * mark after it goes on with what follows. Word sets "C1" and a column break at
+ * a paragraph's end on one line and its mark alone on the first line of the
+ * next column (of the next page, with one column), the paragraph after it a
+ * line below; a paragraph of nothing but a column break takes a line in each
+ * column; two in a row leave the second alone in a column of its own. The
+ * parts on either side of one are kept however empty: dropped, a trailing
+ * column break broke nothing at all, and what followed it ran on in the same
+ * column.
+ *
  * @param tokens The paragraph's tokens in order.
  * @returns The parts, in order (always at least one), and whether the
  *          paragraph breaks the page before itself and after itself.
@@ -6988,18 +7027,13 @@ function splitAtBreaks(tokens: ReadonlyArray<Token>): {
       parts[parts.length - 1]!.endsPage = true;
       parts.push({ tokens: [], opens: 'page', endsPage: false });
     } else if (t.kind === 'text' && t.columnBreak) {
+      parts[parts.length - 1]!.endsColumn = true;
       parts.push({ tokens: [], opens: 'column', endsPage: false });
     } else parts[parts.length - 1]!.tokens.push(t);
   }
   if (pageBreakAfter) parts[parts.length - 1]!.endsPage = true;
-  return {
-    // An empty stretch a page break opens or ends is still the line it stands on.
-    parts: parts.filter(
-      (p, i) => i === 0 || p.tokens.length > 0 || p.opens === 'page' || p.endsPage,
-    ),
-    pageBreakBefore,
-    pageBreakAfter,
-  };
+  // An empty stretch a break opens or ends is still the line it stands on.
+  return { parts, pageBreakBefore, pageBreakAfter };
 }
 
 // Fast LTR tokenization — splits each run on whitespace only.
@@ -7433,6 +7467,11 @@ interface StreamEntry {
   readonly hyphenWidthPt?: number;
   /** The forced break here is a soft line break (`w:br`), not the paragraph's end. */
   readonly softBreak?: boolean;
+  /**
+   * The token the soft break came from, carrying its run: what a line holding
+   * nothing but this break is measured by (see {@link lineFromRange}).
+   */
+  readonly breakToken?: Token;
 }
 
 // Tokens → the Knuth–Plass item stream: spaces become glue, images/math are
@@ -7483,6 +7522,7 @@ function paragraphItemStream(
           item: { type: 'penalty', width: 0, penalty: FORCED_BREAK, flagged: false },
           token: null,
           softBreak: true,
+          breakToken: tok,
         });
       }
       prevBoxEndCp = null;
@@ -7839,6 +7879,9 @@ function lineFromRange(
   resolved: ResolvedParagraphProperties,
   leading: LineLeading,
   allowEmpty = false,
+  // Whether a line a soft break leaves empty is measured by that break's run
+  // (Word's way, see below) rather than by a default size.
+  emptyByBreak = false,
 ): Line | null {
   let st = start;
   let et = breakIdx;
@@ -7870,10 +7913,12 @@ function lineFromRange(
   ) {
     et--;
   }
-  // An empty range is a line with nothing on it. At the end of a paragraph
-  // that is the final forced break and there is no line to draw; in the MIDDLE
+  // An empty range is a line with nothing on it. In the MIDDLE of a paragraph
   // it is the blank line two `<w:br/>` in a row ask for, and dropping it ran
-  // the paragraphs of 60329.docx's table cells together.
+  // the paragraphs of 60329.docx's table cells together. At the end it is what
+  // follows the last forced break: nothing at all when that break is the
+  // paragraph's own, and the line its mark stands on when it is a `w:br` —
+  // which `wrap` sets in the mark's size.
   if (st >= et && !allowEmpty) return null;
 
   const lineTokens: Array<Token> = [];
@@ -7925,9 +7970,19 @@ function lineFromRange(
   // sets a line of 9pt words between 72pt spaces, which we drew 72pt tall and
   // spilled onto a second page. A line that is NOTHING but spaces keeps its
   // own size: there is nothing else to measure it by.
-  const prints = lineTokens.some((t) => !t.isSpace);
-  for (const t of lineTokens) {
-    contentWidth += t.widthPt;
+  //
+  // §17.3.3.1 — and a line with nothing on it at all stands as tall as the
+  // `w:br` that ends it, though that break counts for nothing beside text. In
+  // Word a paragraph of one 22pt `w:br` and a 12pt mark is a 24.5pt line over
+  // a 13.45pt one; "P17", a 12pt break and a 24pt one stand 13.45, 27.2 and
+  // 13.45pt tall; and a 24pt break after 12pt text leaves that line 12pt
+  // (Courier New, probes in .git/wip-br-tabs). Measured at a default 12pt
+  // instead, every such line came out 14.4pt whatever the text around it.
+  const sizer = emptyByBreak && lineTokens.length === 0 ? entries[breakIdx]?.breakToken : undefined;
+  const measured = sizer ? [sizer] : lineTokens;
+  const prints = measured.some((t) => !t.isSpace);
+  for (const t of measured) {
+    if (t !== sizer) contentWidth += t.widthPt;
     if (prints && t.isSpace) continue;
     const sz = tokenLineSize(t);
     if (sz > maxSize) maxSize = sz;
@@ -8019,6 +8074,10 @@ function wrap(
   // Float text wrapping: explicit per-line widths (the last reuses for the
   // tail, the Knuth-Plass convention). Overrides first/other when given.
   lineWidths?: ReadonlyArray<number>,
+  // In a document Word typesets: the line the paragraph mark stands on alone,
+  // at a width. Given, a soft break at the paragraph's end leaves that line
+  // after it, and a line a soft break leaves empty is measured by its break.
+  markLine?: (widthPt: number) => Line,
 ): Array<Line> {
   if (tokens.length === 0) return [];
 
@@ -8077,7 +8136,8 @@ function wrap(
     let lineIdx = 0;
     for (const [i, breakIdx] of at.entries()) {
       const width = lineIdx < widths.length ? widths[lineIdx]! : widths[widths.length - 1]!;
-      const line = lineFromRange(
+      const last = i === at.length - 1;
+      let line = lineFromRange(
         entries,
         start,
         breakIdx,
@@ -8085,8 +8145,23 @@ function wrap(
         isFirst,
         resolved,
         leading,
-        i < at.length - 1,
+        !last,
+        markLine !== undefined,
       );
+      // §17.3.3.1 — a `w:br` (or §17.3.3.4 `w:cr`) at the very end of a
+      // paragraph still ends a line, and the paragraph mark stands on the
+      // next one by itself, in the mark's own size and the paragraph's
+      // spacing: Word and LibreOffice set a heading that ends "Scanned
+      // Assets", a tab and a `w:br` two lines tall (issue #144), a paragraph
+      // of nothing but a `w:br` two lines, and a 12pt break before a 24pt mark
+      // 13.45 + 27.65pt. Whatever spaces or tabs follow the break do not count
+      // there: a 24pt space or tab after it leaves the line 12pt, the mark's.
+      // The same in table cells, headers and text boxes. Dropped, the next
+      // paragraph started a line too high, and a cover page that opens with
+      // such a paragraph sat a line higher than in Word.
+      if (line === null && last && markLine && i > 0 && entries[at[i - 1]!]?.softBreak) {
+        line = { ...markLine(width), firstLine: false };
+      }
       // §17.15.1.35 — the compat flag fdo106029.docx sets: a line the author
       // ended with Shift+Enter is not the paragraph's last, but it reads like
       // one, and stretching "Lorem ipsum … elit." across the whole measure is
@@ -8118,9 +8193,12 @@ function wrap(
   // every break in the paragraph to fix one.
   const spill = (ls: ReadonlyArray<Line>): number =>
     Math.max(0, ...ls.map((l) => l.contentWidthPt - l.availableWidthPt));
-  if (profile === 'ream' && lines.length === 1 && spill(lines) > 0.01) {
+  // The lines a break leaves empty — the mark's after a trailing `w:br` among
+  // them — are not lines the breaker chose, and do not count.
+  const chosen = (ls: ReadonlyArray<Line>): number => ls.filter((l) => l.tokens.length > 0).length;
+  if (profile === 'ream' && chosen(lines) === 1 && spill(lines) > 0.01) {
     const greedy = buildLines(greedyBreakLines(items, widths));
-    if (greedy.length > 1 && spill(greedy) < spill(lines) - 0.01) lines = greedy;
+    if (chosen(greedy) > 1 && spill(greedy) < spill(lines) - 0.01) lines = greedy;
   }
 
   if (lines.length > 0) lines[lines.length - 1]!.isLastInParagraph = true;
@@ -9611,6 +9689,7 @@ class PageAssembler {
     this.cursorY = this.pageTopY();
     this.colStartY = this.cursorY;
     this.bandTopY = this.cursorY;
+    this.bandLowY = undefined;
   }
 
   readonly pages: Array<LaidOutPage> = [];
@@ -9729,6 +9808,12 @@ class PageAssembler {
    * columns run beside each other from there, not from the paper's top.
    */
   bandTopY: number;
+  /**
+   * The lowest the band's earlier columns reached, y-up: what a `continuous`
+   * section after the band starts under. Undefined while the band is in its
+   * first column.
+   */
+  bandLowY: number | undefined;
   /** The current column's left edge (`marginLeft` plus the column x-offset). */
   colLeft = (): number => this.ctx.marginLeft + (this.ctx.columns?.[this.colIdx]?.xOffsetPt ?? 0);
   /** The current column's width (the section content width when single-column). */
@@ -9785,6 +9870,7 @@ class PageAssembler {
     if (this.ctx.columns && this.colIdx + 1 < this.ctx.columns.length) {
       this.colIdx++;
       this.colStartLen = this.current.length;
+      this.bandLowY = Math.min(this.bandLowY ?? this.cursorY, this.cursorY);
       this.cursorY = this.bandTopY;
       this.colStartY = this.cursorY;
       // The next column of a balanced band gets the same share — except the
@@ -9874,8 +9960,18 @@ class PageAssembler {
     this.colIdx = 0;
     this.colStartLen = this.current.length;
     // The section's own top margin still governs an empty page — it is the
-    // first thing on the paper — but past that the cursor is where it is.
-    this.cursorY = Math.min(this.cursorY, next.pageHeight - next.marginTop);
+    // first thing on the paper — but past that the cursor is where it is: under
+    // the LOWEST column of the band before. An unbalanced band — one a column
+    // break ends — is longest in its first column as often as not, and Word
+    // starts the next section under that one ("X1", "X2" and a column break,
+    // the next section a line under "X2"); from the last column's cursor it
+    // was set over the first.
+    this.cursorY = Math.min(
+      this.cursorY,
+      this.bandLowY ?? this.cursorY,
+      next.pageHeight - next.marginTop,
+    );
+    this.bandLowY = undefined;
     this.bandTopY = this.cursorY;
     this.colStartY = this.cursorY;
     // §17.6.4 — balance the band when it has columns to share and its content
@@ -10365,6 +10461,7 @@ class PageAssembler {
     this.cursorY = this.pageTopY();
     this.colStartY = this.cursorY;
     this.bandTopY = this.cursorY;
+    this.bandLowY = undefined;
     this.balanceBottomY = undefined;
     this.balanceHeightPt = 0;
     this.pageStartCtx = this.ctx;
@@ -10582,6 +10679,7 @@ class PageAssembler {
     this.cursorY = this.pageTopY();
     this.colStartY = this.cursorY;
     this.bandTopY = this.cursorY;
+    this.bandLowY = undefined;
     this.balanceBottomY = undefined;
     this.balanceHeightPt = 0;
   };
@@ -10834,7 +10932,7 @@ function paginateSections(
     if (next.pageWidth !== here.pageWidth || next.pageHeight !== here.pageHeight) return;
     if ((next.sheet === undefined) !== (here.sheet === undefined)) return;
     const end = Math.min(here.endIndex, blocks.length);
-    asm.beginBalancedBand(blocksHeight(blocks.slice(fromBlock, end), typesetByWord));
+    asm.beginBalancedBand(balancedBandHeight(blocks.slice(fromBlock, end), typesetByWord));
   };
   balanceIfEndsContinuous(0);
 
@@ -10861,7 +10959,7 @@ function paginateSections(
         // §17.6.4 — the band's whole height, so a multi-column one can be
         // balanced: every block from here to the section's end.
         const end = Math.min(next.endIndex, blocks.length);
-        asm.startBandSection(next, blocksHeight(blocks.slice(blockIdx, end), typesetByWord));
+        asm.startBandSection(next, balancedBandHeight(blocks.slice(blockIdx, end), typesetByWord));
         continue;
       }
       // Forced: a section owns a page even when the body it holds draws
