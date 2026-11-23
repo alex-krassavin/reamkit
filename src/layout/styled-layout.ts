@@ -8698,13 +8698,14 @@ function computeColumnWidths(
   // grid standing only where it is what the cells declare (see
   // word-table-columns).
   if (options.typesetBy === 'word') {
+    const availablePt = contentWidth + legacyCellReach(table, options);
     return (
       wordColumnWidths(table, {
         colCount,
-        availablePt: contentWidth,
+        availablePt,
         padding: (cell) => cellPadding(table, cell),
         content: (cell) => cellContentWidths(cell, options, fontResources, contentWidth),
-      }) ?? gridWidthsScaled(table, contentWidth, colCount)
+      }) ?? gridWidthsScaled(table, availablePt, colCount)
     );
   }
 
@@ -8761,6 +8762,34 @@ function computeColumnWidths(
   }
 
   return colNaturalWidths;
+}
+
+/**
+ * [MS-DOCX] `compatibilityMode` — how much wider than the text column a table
+ * may be in a document laid out as Word 2010 and earlier lay it out. There the
+ * cells' TEXT spans the column: the table stands out by its first cell's left
+ * margin (see {@link legacyTableOutdent}) and reaches past the right one by
+ * its last cell's right margin. Measured in Word for Mac, modes 14 and none
+ * alike: a 100% table was 534.1pt on a 523.3pt column with 5.4pt margins, a
+ * 50% one 267.05pt; with 20pt and 40pt margins at the two ends 583.3pt and
+ * 291.65pt; an autofit table of 5in+5in stopped at 534.1pt. A table stated in
+ * points did not change. At mode 15 every one of them measured the column
+ * alone.
+ *
+ * @param table   The table.
+ * @param options Render options: whose document, and which mode.
+ * @returns The points a percentage and the page's limit measure past the
+ *          column, 0 where the table stands at it.
+ */
+function legacyCellReach(table: Table, options: StyledRenderOptions): number {
+  if (options.typesetBy !== 'word' || (options.compatibilityMode ?? 0) >= 15) return 0;
+  if ((table.properties.alignment ?? 'left') !== 'left' || table.properties.float) return 0;
+  const first = table.rows[0];
+  if (!first || (first.properties.gridBefore ?? 0) > 0) return 0;
+  const head = first.cells[0];
+  const tail = first.cells[first.cells.length - 1];
+  if (!head || !tail) return 0;
+  return cellPadding(table, head).left + cellPadding(table, tail).right;
 }
 
 /** A cell's left and right margins: its own, else the table's, else Word's 0.08in. */

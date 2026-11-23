@@ -480,9 +480,11 @@ describe('Word table columns through the layout', () => {
     '<w:compat><w:compatSetting w:name="compatibilityMode" ' +
     'w:uri="http://schemas.microsoft.com/office/word" w:val="15"/></w:compat>';
 
-  /** Where the text "B" starts on the page. */
-  function startOfB(p: Probe): number {
-    const flow = Ream.parse(buildDocxFromBody(xml(p) + SECT, { settingsXml: MODE15 })).flow;
+  /** Where the text "B" starts on the page, in a document of `mode` ('none': states no mode). */
+  function startOfB(p: Probe, mode: number | 'none' = 15): number {
+    const settingsXml =
+      mode === 'none' ? '' : MODE15.replace('w:val="15"', `w:val="${String(mode)}"`);
+    const flow = Ream.parse(buildDocxFromBody(xml(p) + SECT, { settingsXml })).flow;
     const laid = layoutStyledDocument(flow.body, {
       registry: FontRegistry.fromBytes(FONTS),
       ...flowRenderOptions(flow),
@@ -533,5 +535,23 @@ describe('Word table columns through the layout', () => {
     expect(
       startOfB({ tblPr: tblW('pct', 0) + FIXED, grid: [100, 100], rows: ab('', '') }),
     ).toBeCloseTo(36 + 11.8 + PAD, 1);
+  });
+
+  it('measures a share against the column and the outer cell margins before Word 2013', () => {
+    // Word, modes 14 and none: a 50% table of two empty-width cells was
+    // 267.05pt, half of 523.3 + 5.4 + 5.4, standing out 5.4pt; mode 15 halves
+    // the column alone.
+    const half: Probe = { tblPr: tblW('pct', 2500) + FIXED, grid: [100, 100], rows: ab('', '') };
+    for (const mode of [14, 'none'] as const) {
+      expect(startOfB(half, mode)).toBeCloseTo(36 - PAD + (LINE + 2 * PAD) / 4 + PAD, 1);
+    }
+    expect(startOfB(half, 15)).toBeCloseTo(36 + LINE / 4 + PAD, 1);
+    // An autofit table of no width stops at that wider line too.
+    const wide: Probe = {
+      tblPr: AUTO,
+      grid: [100, 100],
+      rows: ab(tcW('dxa', 7200), tcW('dxa', 7200)),
+    };
+    expect(startOfB(wide, 14)).toBeCloseTo(36 - PAD + (LINE + 2 * PAD) / 2 + PAD, 1);
   });
 });
