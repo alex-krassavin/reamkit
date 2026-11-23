@@ -16,7 +16,7 @@
     "astro": "^7.4.12",
     "marked": "^18.0.9",
     "marked-footnote": "^1.4.0",
-    "reamkit": "^1.36.0",
+    "reamkit": "^1.36.1",
     "sharp": "^0.35.5",
     "starlight-typedoc": "^0.23.0",
     "typedoc": "^0.28.19",
