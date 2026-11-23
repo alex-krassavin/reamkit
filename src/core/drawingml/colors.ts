@@ -16,7 +16,7 @@
 // ---------------------------------------------------------------------------
 
 import type { PoNode } from '@/core/po-helpers';
-import { poAttr, poChildren, poIntAttr, poIs } from '@/core/po-helpers';
+import { poAttr, poChildren, poIntAttr, poIs, poPercentAttr } from '@/core/po-helpers';
 
 /**
  * A colour transform child (§20.1.2.3): `lumMod`/`lumOff` modulate luminance,
@@ -337,7 +337,9 @@ export function readColorMods(colorNode: PoNode): Array<ColorMod> {
       'satOff',
     ] as const) {
       if (poIs(c, `a:${kind}`)) {
-        const v = poIntAttr(c, 'val');
+        // §20.1.10.40 — `"75%"` is as good a spelling as `"75000"`; Office
+        // reads both (MS-OI29500 on ST_Percentage).
+        const v = poPercentAttr(c, 'val', 1000);
         if (v !== undefined) mods.push({ kind, val: v / 100000 });
       }
     }

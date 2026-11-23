@@ -3,6 +3,128 @@
 All notable changes to **Ream** (`reamkit`) are documented here. The project
 follows [Semantic Versioning](https://semver.org/).
 
+## 1.36.1
+
+A patch about Word documents, laid out where Word lays them out: tables
+whose widths are written as percentages or disagree with their grid, a
+header's picture placed against the page, a break at the end of a
+paragraph, and tabs one after another. ben-vt reported all four (#143–#146).
+Each rule was measured in Word for Mac on probe documents of our own, read
+back through AppleScript and Word's own PDF.
+
+### Fixed
+
+- **A table width written as a percent string** (#145). `w:w="100%"` on a
+  table's or a cell's width was read as no width at all, so a fixed table
+  shrank to its grid and its text was squeezed into a strip. The docx
+  package writes every percentage width this way up to 9.x. `w:w` is now
+  read as Word reads it:
+  - A percent sign makes it a percentage whatever `w:type` says (`dxa`,
+    `auto` and `nil` too). The fraction of a percent is dropped: `"33.6%"`
+    is 33%.
+  - A unit makes it absolute whatever `w:type` says: `"2in"` under `pct` is
+    144pt.
+  - A table's indent (`w:tblInd`) is taken only from an absolute measure.
+  - A cell margin given as a percentage, `auto` or `nil` is zero on the
+    table's default (`w:tblCellMar`) and is ignored on a cell's own
+    (`w:tcMar`).
+
+  Table styles read their indent and margins the same way.
+
+- **Percentages in drawings and charts written with their sign**, such as
+  `lumMod val="75%"`, `gs pos="35%"`, `srcRect l="25%"`,
+  `normAutofit fontScale="62.5%"`, `c:gapWidth val="150%"` and `c:overlap`.
+  This also covers line spacing, bullet size, picture transparency, custom
+  dashes, and a 3-D chart's depth and gap. Strict OOXML writes all of them
+  this way, and they were dropped, so strict documents lost their colour
+  tints and shades: chart gridlines came out black and SmartArt arrows dark.
+
+- **A table's columns are laid out from its cells, not from a stale grid.**
+  A table's `w:tblGrid` is only the grid Word last laid it out at. The docx
+  package writes 100 twips for every column, with the real widths in the
+  cells, and such tables came out as thin slivers, or at their raw widths
+  with the rest of the line empty. They are now laid out as Word lays them
+  out:
+  - A fixed table takes its cells' widths and stretches them to its own
+    width: 1in beside 3in in a full-width table is 25% and 75%.
+  - An autofit table fits its cells' widths and its text, and is never
+    wider than the line. A word too long for its column widens it.
+  - A percentage is a share of the table's width.
+  - No cell is narrower than its margins, so cells with no width or a zero
+    width no longer draw on top of each other.
+
+- **A percentage table in an older document reaches past the margin.** In a
+  document laid out as Word 2010 and earlier lay it out (compatibility mode
+  14, or none stated), a 100% table spans the text column plus its outer
+  cell margins. Ream already set it out on the left by its first cell's
+  margin; it now reaches past the right margin by its last cell's, as in
+  Word. An autofit table stops at the same line.
+
+- **A table's own cell margins beat its table style's.** A table with a
+  style (Table Grid, say) and its own `w:tblCellMar` was drawn with the
+  style's inset: a left margin of 0.5in came out as 0.075in. Cell margins
+  are now ranked as Word ranks them, side by side:
+  1. a cell's own `w:tcMar`;
+  2. the `w:tcMar` a table style gives its regions, then its whole table;
+  3. the table's own `w:tblCellMar`;
+  4. the style's `w:tblCellMar`, for its regions and then its whole table,
+     through `basedOn`;
+  5. Word's built-in Normal Table: 0.075in left and right.
+
+  A table style's `w:tcMar` is now read. A first- or last-column region's
+  margins reach the whole row, as in Word, while its shading stays in its
+  own cells. In HTML a cell that states only its left margin keeps the
+  table's right one.
+
+- **A table style that states no band size bands nothing.** Without
+  `w:tblStyleRowBandSize` or `w:tblStyleColBandSize`, the band regions of a
+  style were applied as if the size were 1. Word applies none of them, nor
+  with a size of 0; a size stated up the `basedOn` chain counts.
+
+- **A header's or footer's drawing is placed against what its anchor
+  names** (#143). An anchored picture, shape or floating table in a header
+  or footer was aligned against the text area whatever it asked for. A
+  first-page picture as wide as the page, aligned right against the page,
+  left a white strip as wide as the margin down the sheet. Headers,
+  footers, the body, table cells and turned sections now share Word's one
+  placement rule:
+  - Every `relativeFrom` and every alignment is honoured: page, margin,
+    column, character, the margin bands, and the inside and outside
+    margins.
+  - `inside` and `outside` follow the sheet's own count of odd and even
+    pages, with mirrored margins or without.
+  - A `margin`-relative drawing on a page whose footer is taller than its
+    margin is placed against the text area that page has.
+  - An alignment against the anchoring paragraph is ignored, as in Word.
+
+- **A frame that names no vertical anchor hangs off the margin.** A
+  `w:framePr` without `w:vAnchor` was placed against its own paragraph and
+  could stay in the flow. Word measures it from the margin, and Ream now
+  does too.
+
+- **A break at the end of a paragraph leaves a line** (#144). After a
+  `w:br` at the very end of a paragraph, the paragraph mark stands on a
+  line of its own, in the mark's size and the paragraph's line spacing. A
+  heading ending in a tab and a break is two lines tall, as in Word, and
+  the text after it no longer rides a line too high. This holds in table
+  cells, headers and text boxes too.
+  - A line a break leaves empty stands as tall as that break's own font.
+    It was always 14.4pt.
+  - `w:cr` breaks the line like `w:br`. It was dropped, and the words on
+    either side ran together.
+  - A column break at the end of a paragraph sends the mark, and what
+    follows, to the next column. It was ignored.
+  - A continuous section that holds a column break is no longer balanced,
+    as Word fills it column after column.
+
+- **Tabs one after another go on from stop to stop** (#146). A right,
+  centre or decimal tab with nothing before the next tab gave its stop to
+  that next tab. A footer's page number after two tabs was centred on the
+  centre stop instead of ending at the right one. Such a tab now takes the
+  pen to its stop, and the next tab goes on to the stop after it. The
+  spaces at the end of a right or centre segment hang past the stop, as in
+  Word.
+
 ## 1.36.0
 
 A release about the bookmarks panel. A PDF Ream writes now opens with an

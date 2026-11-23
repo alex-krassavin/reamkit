@@ -38,7 +38,8 @@ const tbl = (look: string, extraRow1Cell = '') =>
 
 const FANCY_STYLE =
   '<w:style w:type="table" w:styleId="Fancy">' +
-  '<w:tblPr><w:tblBorders><w:top w:val="single" w:sz="8"/><w:insideH w:val="single" w:sz="4"/></w:tblBorders>' +
+  '<w:tblPr><w:tblStyleRowBandSize w:val="1"/>' +
+  '<w:tblBorders><w:top w:val="single" w:sz="8"/><w:insideH w:val="single" w:sz="4"/></w:tblBorders>' +
   '<w:tblCellMar><w:left w:w="120" w:type="dxa"/><w:right w:w="120" w:type="dxa"/></w:tblCellMar></w:tblPr>' +
   '<w:tblStylePr w:type="firstRow"><w:rPr><w:b/></w:rPr><w:tcPr><w:shd w:val="clear" w:fill="4472C4"/></w:tcPr></w:tblStylePr>' +
   '<w:tblStylePr w:type="band1Horz"><w:tcPr><w:shd w:val="clear" w:fill="D9E2F3"/></w:tcPr></w:tblStylePr>' +
@@ -70,6 +71,26 @@ describe('table styles (§17.7.6)', () => {
     // Banding starts after the first row: row 1 = band1 (shaded), row 2 = band2.
     expect(table.rows[1]!.cells[1]!.properties.shading?.colorHex).toBe('D9E2F3');
     expect(table.rows[2]!.cells[1]!.properties.shading).toBeUndefined();
+  });
+
+  it('bands only when the style states a band size (Word 16.114, probes scm14)', () => {
+    const look = '<w:tblLook w:firstRow="1" w:noHBand="0" w:noVBand="1"/>';
+    const banded = (styles: string): string | undefined =>
+      firstTable(buildDocxFromBody(tbl(look), { stylesXml: styles })).rows[1]!.cells[1]!.properties
+        .shading?.colorHex;
+    // No size anywhere: Word shades no band at all (n01).
+    const unsized = FANCY_STYLE.replace('<w:tblStyleRowBandSize w:val="1"/>', '');
+    expect(banded(unsized)).toBeUndefined();
+    // A size of 0 bands nothing either (n06).
+    expect(banded(FANCY_STYLE.replace('w:val="1"/>', 'w:val="0"/>'))).toBeUndefined();
+    // A size stated up the basedOn chain counts (n04).
+    const parent =
+      '<w:style w:type="table" w:styleId="Sized"><w:tblPr><w:tblStyleRowBandSize w:val="1"/></w:tblPr></w:style>';
+    const child = unsized.replace(
+      '<w:style w:type="table" w:styleId="Fancy">',
+      '<w:style w:type="table" w:styleId="Fancy"><w:basedOn w:val="Sized"/>',
+    );
+    expect(banded(parent + child)).toBe('D9E2F3');
   });
 
   it('tblLook gates the conditional formats', () => {

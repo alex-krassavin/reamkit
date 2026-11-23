@@ -15,8 +15,10 @@
 // given the opposite turn before the layout sees it, so that turning the body
 // puts it back where Word does.
 
+import { floatTopYUpIn, floatXIn } from './float-position';
 import type { BodyElement, FloatAnchor } from '@/core/document-model';
 import type { PageItem, PageWindow } from './page-doc';
+import type { FloatFrame } from './float-position';
 import { pt } from '@/core/ir';
 
 /** The sheet a turned section prints on, and the margins it states for it. */
@@ -191,8 +193,8 @@ function backedOff(rotation60k: number | undefined): number {
  */
 function frameAnchor(float: FloatAnchor, w: number, h: number, sheet: Sheet): FloatAnchor {
   // Where the anchor puts the drawing's box on the sheet (top-left, y down).
-  const x = sheetX(float.posH, w, sheet);
-  const y = sheetY(float.posV, h, sheet);
+  const x = sheetX(float, w, sheet);
+  const y = sheetY(float, h, sheet);
   // Its centre, carried back into the frame: the inverse of `turnOntoSheet`
   // takes a sheet point (X, Y) to (Y, sheetWidth − X).
   const cx = y + h / 2;
@@ -205,34 +207,36 @@ function frameAnchor(float: FloatAnchor, w: number, h: number, sheet: Sheet): Fl
   };
 }
 
-/** §20.4.3.3 — the box's left edge on the sheet. */
-function sheetX(h: FloatAnchor['posH'], w: number, sheet: Sheet): number {
-  const textRight = sheet.width - sheet.marginRight;
-  const [base, span] =
-    h?.relativeFrom === 'page'
-      ? [0, sheet.width]
-      : h?.relativeFrom === 'leftMargin'
-        ? [0, sheet.marginLeft]
-        : h?.relativeFrom === 'rightMargin'
-          ? [textRight, sheet.marginRight]
-          : [sheet.marginLeft, textRight - sheet.marginLeft];
-  if (h?.align === 'center') return base + (span - w) / 2;
-  if (h?.align === 'right') return base + span - w;
-  return base + (h?.offsetPt ?? 0);
+/**
+ * §20.4.2.10/§20.4.2.11 — the boxes an anchor can name on the sheet, for the
+ * one placement every drawing gets (./float-position). The body's paragraphs
+ * are not laid out yet, so one anchored to its paragraph or its line hangs off
+ * the top of the text area, and the page counts as an odd one.
+ */
+function sheetFrame(sheet: Sheet): FloatFrame {
+  const contentWidth = sheet.width - sheet.marginLeft - sheet.marginRight;
+  const textTop = sheet.height - sheet.marginTop;
+  return {
+    pageLeft: 0,
+    pageWidth: sheet.width,
+    pageTopYUp: sheet.height,
+    pageBottomYUp: 0,
+    marginLeft: sheet.marginLeft,
+    contentWidth,
+    marginTopYUp: textTop,
+    marginBottomYUp: sheet.marginBottom,
+    columnLeft: sheet.marginLeft,
+    columnWidth: contentWidth,
+    anchorY: textTop,
+  };
 }
 
-/** §20.4.3.4 — the box's top edge on the sheet. */
-function sheetY(v: FloatAnchor['posV'], h: number, sheet: Sheet): number {
-  const textBottom = sheet.height - sheet.marginBottom;
-  const [base, span] =
-    v?.relativeFrom === 'page'
-      ? [0, sheet.height]
-      : v?.relativeFrom === 'topMargin'
-        ? [0, sheet.marginTop]
-        : v?.relativeFrom === 'bottomMargin'
-          ? [textBottom, sheet.marginBottom]
-          : [sheet.marginTop, textBottom - sheet.marginTop];
-  if (v?.align === 'center') return base + (span - h) / 2;
-  if (v?.align === 'bottom') return base + span - h;
-  return base + (v?.offsetPt ?? 0);
+/** The box's left edge on the sheet. */
+function sheetX(float: FloatAnchor, w: number, sheet: Sheet): number {
+  return floatXIn(sheetFrame(sheet), float, w);
+}
+
+/** The box's top edge on the sheet, measured down from its top. */
+function sheetY(float: FloatAnchor, h: number, sheet: Sheet): number {
+  return sheet.height - floatTopYUpIn(sheetFrame(sheet), float, h);
 }

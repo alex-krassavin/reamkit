@@ -50,6 +50,7 @@ import {
   poFindDescendant,
   poIntAttr,
   poIs,
+  poPercentAttr,
   poTag,
   poText,
 } from '@/core/po-helpers';
@@ -973,7 +974,7 @@ function parsePic(
   // lays a photograph behind its title sets it low (ArtisticEffectSample's
   // cover shows one at 52%), and drawn full-strength the words are unreadable.
   const fixed = blip ? poChildren(blip).find((c) => poIs(c, 'a:alphaModFix')) : undefined;
-  const amt = fixed ? poIntAttr(fixed, 'amt') : undefined;
+  const amt = fixed ? poPercentAttr(fixed, 'amt', 1000) : undefined;
   const alpha = amt === undefined ? undefined : Math.min(1, Math.max(0, amt / 100000));
 
   // §20.1.8.55 `a:srcRect` — the picture's own edges, cut away before it is
@@ -1097,7 +1098,7 @@ export function parseTxBody(
   // §20.1.10.42 — a `normAutofit` that carries no scale of its own is a box
   // whose text has never been fitted; the layout measures it and shrinks it.
   const autofit = bodyPr ? poChildren(bodyPr).find((c) => poIs(c, 'a:normAutofit')) : undefined;
-  const shrink = autofit !== undefined && poIntAttr(autofit, 'fontScale') === undefined;
+  const shrink = autofit !== undefined && poPercentAttr(autofit, 'fontScale', 1000) === undefined;
   const warp = bodyPr ? textWarp(bodyPr) : undefined;
   // §20.1.10.83 `vert` — text set along the box's long axis. The docx side has
   // read this for as long as it has had text boxes; the slide side never did,
@@ -1168,8 +1169,11 @@ function textWarp(bodyPr: PoNode): ShapeTextBody['warp'] {
  */
 function fitToBody(content: Array<BodyElement>, bodyPr: PoNode | undefined): Array<BodyElement> {
   const fit = bodyPr ? poChildren(bodyPr).find((c) => poIs(c, 'a:normAutofit')) : undefined;
-  const scale = fit ? poIntAttr(fit, 'fontScale') : undefined;
-  const reduction = fit ? poIntAttr(fit, 'lnSpcReduction') : undefined;
+  // §20.1.10.67 / §20.1.10.77 — either may be spelled as a percentage with
+  // its sign (the standard's own example is `fontScale="92.000%"`), the same
+  // scale as 92000.
+  const scale = fit ? poPercentAttr(fit, 'fontScale', 1000) : undefined;
+  const reduction = fit ? poPercentAttr(fit, 'lnSpcReduction', 1000) : undefined;
   const fontScale = scale !== undefined && scale > 0 ? scale / 100000 : undefined;
   const lineScale =
     reduction !== undefined && reduction > 0 ? 1 - Math.min(reduction, 100000) / 100000 : undefined;

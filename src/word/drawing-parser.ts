@@ -39,6 +39,7 @@ import {
   poIntAttr,
   poIs,
   poIsLocal,
+  poPercentAttr,
   poTag,
   poText,
 } from '@/core/po-helpers';
@@ -205,17 +206,22 @@ function parseFloatAnchor(anchor: PoNode): FloatAnchor | undefined {
   const behindRaw = poAttr(anchor, 'behindDoc');
   const behind = (behindRaw === '1' || behindRaw === 'true') && wrap === 'none';
   const zOrder = poIntAttr(anchor, 'relativeHeight');
-  // §20.4.3.3 — `leftMargin`/`rightMargin` name the margin band on that side,
-  // the place a marginal note belongs.
+  // §20.4.3.4 — `leftMargin`/`rightMargin` name the margin band on that side,
+  // the place a marginal note belongs; `insideMargin`/`outsideMargin` one band
+  // or the other by the page's parity. Folded into `margin` as they once were,
+  // a picture Word puts in the left band of an odd page and the right band of
+  // an even one stood inside the text on both.
   const posH = parseAnchorPos(anchor, 'wp:positionH', [
     'margin',
     'page',
     'column',
+    'character',
     'leftMargin',
     'rightMargin',
+    'insideMargin',
+    'outsideMargin',
   ]);
-  // §20.4.3.4 — `insideMargin`/`outsideMargin` are the top/bottom margin on a
-  // page that is not part of a facing pair, which is how Word writes them.
+  // §20.4.3.5 — the same four bands down the page.
   const posV = parseAnchorPos(anchor, 'wp:positionV', [
     'margin',
     'page',
@@ -223,6 +229,8 @@ function parseFloatAnchor(anchor: PoNode): FloatAnchor | undefined {
     'line',
     'topMargin',
     'bottomMargin',
+    'insideMargin',
+    'outsideMargin',
   ]);
   // §20.4.2.3 — the stand-off the wrapped text keeps from each edge. Ignoring
   // it let effect-extent-line-width.docx fill its paragraph right down to the
@@ -254,8 +262,9 @@ function parseFloatAnchor(anchor: PoNode): FloatAnchor | undefined {
   };
 }
 
-const ANCHOR_ALIGNS = new Set(['left', 'center', 'right']);
-const ANCHOR_V_ALIGNS = new Set(['top', 'center', 'bottom']);
+// §20.4.3.1 ST_AlignH / §20.4.3.2 ST_AlignV.
+const ANCHOR_ALIGNS = new Set(['left', 'center', 'right', 'inside', 'outside']);
+const ANCHOR_V_ALIGNS = new Set(['top', 'center', 'bottom', 'inside', 'outside']);
 
 /**
  * `wp14:sizeRelH` / `wp14:sizeRelV` — the drawing's width and height as
@@ -332,8 +341,7 @@ function parseAnchorPos(
   const pos = expandMcChildren(poChildren(anchor)).find((c) => poIs(c, tag));
   if (!pos) return undefined;
   const relRaw = poAttr(pos, 'relativeFrom') ?? 'margin';
-  // Unsupported bases (character, inside/outsideMargin…) degrade to the
-  // nearest supported one.
+  // A base outside the schema's list degrades to the first one allowed.
   const relativeFrom = allowed.includes(relRaw) ? relRaw : allowed[0]!;
   const offsetNode = poChildren(pos).find((c) => poIs(c, 'wp:posOffset'));
   const offsetRaw = offsetNode ? Number(poText(offsetNode).trim()) : NaN;
@@ -343,7 +351,7 @@ function parseAnchorPos(
     relativeFrom,
     ...(Number.isFinite(offsetRaw) ? { offsetPt: emuToPt(offsetRaw) } : {}),
     ...(tag === 'wp:positionH' && ANCHOR_ALIGNS.has(alignRaw) ? { align: alignRaw } : {}),
-    // §20.4.3.1 — the vertical keywords are their own set.
+    // §20.4.3.2 — the vertical keywords are their own set.
     ...(tag === 'wp:positionV' && ANCHOR_V_ALIGNS.has(alignRaw) ? { align: alignRaw } : {}),
   };
 }
@@ -1745,7 +1753,7 @@ function vmlStyleLength(shape: PoNode | undefined, prop: 'width' | 'height'): Pt
 export function parseSrcRect(node: PoNode | undefined): ImageCrop | undefined {
   if (!node) return undefined;
   const edge = (name: string): number => {
-    const v = Number(poAttr(node, name));
+    const v = poPercentAttr(node, name, 1000) ?? NaN;
     // A negative srcRect pads rather than crops (the frame shows more than the
     // picture); nothing here draws that, so it reads as no cut on that edge.
     return Number.isFinite(v) && v > 0 ? v / 100000 : 0;
@@ -2694,7 +2702,7 @@ function fillFromNode(
       // showed it at full strength, which on tdf146223 is a saturated red
       // quadrant where the reference has a pale one.
       const fixed = blip ? poChildren(blip).find((c) => poIs(c, 'a:alphaModFix')) : undefined;
-      const amt = fixed ? poIntAttr(fixed, 'amt') : undefined;
+      const amt = fixed ? poPercentAttr(fixed, 'amt', 1000) : undefined;
       const alpha = amt === undefined ? undefined : Math.min(1, Math.max(0, amt / 100000));
       return {
         kind: 'picture',
@@ -2812,7 +2820,7 @@ function fillRectCrop(blipFill: PoNode): ImageCrop | undefined {
   const stretch = poChildren(blipFill).find((c) => poIs(c, 'a:stretch'));
   const rect = stretch ? poChildren(stretch).find((c) => poIs(c, 'a:fillRect')) : undefined;
   if (!rect) return undefined;
-  const side = (name: string): number => (poIntAttr(rect, name) ?? 0) / 100000;
+  const side = (name: string): number => (poPercentAttr(rect, name, 1000) ?? 0) / 100000;
   const l = side('l');
   const t = side('t');
   const r = side('r');
@@ -2913,7 +2921,7 @@ function duotoneOf(
 // a percent, before it is repeated. Absent or 100 % means the picture's own size.
 function tileScaleOf(tile: PoNode): ShapeFill['tileScale'] {
   const pct = (name: string): number => {
-    const v = poIntAttr(tile, name);
+    const v = poPercentAttr(tile, name, 1000);
     return v === undefined || v <= 0 ? 1 : v / 100000;
   };
   const sx = pct('sx');
@@ -2925,7 +2933,8 @@ function fillRectBox(blipFill: PoNode): ShapeFill['imageFillRect'] {
   const stretch = poChildren(blipFill).find((c) => poIs(c, 'a:stretch'));
   const rect = stretch ? poChildren(stretch).find((c) => poIs(c, 'a:fillRect')) : undefined;
   if (!rect) return undefined;
-  const side = (name: string): number => Math.max(0, (poIntAttr(rect, name) ?? 0) / 100000);
+  const side = (name: string): number =>
+    Math.max(0, (poPercentAttr(rect, name, 1000) ?? 0) / 100000);
   const [left, top, right, bottom] = [side('l'), side('t'), side('r'), side('b')];
   if (left + top + right + bottom === 0) return undefined;
   if (left + right >= 1 || top + bottom >= 1) return undefined;
@@ -3096,8 +3105,8 @@ function parseCustDash(custDash: PoNode): Array<number> | undefined {
   const out: Array<number> = [];
   for (const ds of poChildren(custDash)) {
     if (!poIs(ds, 'a:ds')) continue;
-    const d = (poIntAttr(ds, 'd') ?? 0) / 100000;
-    const sp = (poIntAttr(ds, 'sp') ?? 0) / 100000;
+    const d = (poPercentAttr(ds, 'd', 1000) ?? 0) / 100000;
+    const sp = (poPercentAttr(ds, 'sp', 1000) ?? 0) / 100000;
     if (d <= 0 && sp <= 0) continue;
     out.push(Math.max(0, d), Math.max(0, sp));
   }
@@ -3202,7 +3211,7 @@ function parseGradient(grad: PoNode, resolveColor: ColorResolver): ShapeGradient
       if (hex) break;
     }
     if (!hex) continue;
-    const pos = poIntAttr(gs, 'pos');
+    const pos = poPercentAttr(gs, 'pos', 1000);
     const offset = pos !== undefined ? clampUnit(pos / 100000) : stops.length === 0 ? 0 : 1;
     const alpha = containerAlpha(gs);
     stops.push({ offset, colorHex: hex, ...(alpha !== undefined ? { alpha } : {}) });
@@ -3220,7 +3229,7 @@ function parseGradient(grad: PoNode, resolveColor: ColorResolver): ShapeGradient
   if (path) {
     const rect = poChildren(path).find((c) => poIs(c, 'a:fillToRect'));
     const side = (name: string): number | undefined => {
-      const v = rect ? poIntAttr(rect, name) : undefined;
+      const v = rect ? poPercentAttr(rect, name, 1000) : undefined;
       return v === undefined ? undefined : v / 100000;
     };
     const l = side('l');

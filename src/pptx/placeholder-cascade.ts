@@ -24,7 +24,7 @@ import type { PlaceholderRef, ShapeBoxEmu } from '@/pptx/sp-helpers';
 import type { Pt } from '@/core/ir';
 import { emuToPt, pt } from '@/core/ir';
 import { resolveColorNode } from '@/core/drawingml/colors';
-import { poAttr, poChildren, poIntAttr, poIs } from '@/core/po-helpers';
+import { poAttr, poChildren, poIntAttr, poIs, poPercentAttr } from '@/core/po-helpers';
 import { fromSymbolFont } from '@/core/metafile/symbol-fonts';
 import { parsePh, parseXfrmBox, rPrToRunProps } from '@/pptx/sp-helpers';
 
@@ -118,7 +118,7 @@ export function parseBullet(
 ): LevelBullet | undefined {
   if (!pPr) return undefined;
   const child = (tag: string): PoNode | undefined => poChildren(pPr).find((c) => poIs(c, tag));
-  const pct = poIntAttr(child('a:buSzPct'), 'val');
+  const pct = poPercentAttr(child('a:buSzPct'), 'val', 1000);
   const pts = poIntAttr(child('a:buSzPts'), 'val');
   const clr = child('a:buClr');
   const colorHex =
@@ -387,9 +387,10 @@ export function pPrToParagraphProps(lvlPr: PoNode | undefined): ParagraphPropert
 export function lineSpacing(pPr: PoNode | undefined): ParagraphProperties {
   const holder = pPr ? poChildren(pPr).find((c) => poIs(c, 'a:lnSpc')) : undefined;
   if (!holder) return {};
-  const pctVal = poIntAttr(
+  const pctVal = poPercentAttr(
     poChildren(holder).find((c) => poIs(c, 'a:spcPct')),
     'val',
+    1000,
   );
   if (pctVal !== undefined && pctVal > 0) {
     return { spacingLine: pt((pctVal / 100000) * 12), spacingLineRule: 'auto' };
@@ -418,7 +419,7 @@ export function spacingFractions(
   const frac = (tag: string): number | undefined => {
     const holder = pPr ? poChildren(pPr).find((c) => poIs(c, tag)) : undefined;
     const pctNode = holder ? poChildren(holder).find((c) => poIs(c, 'a:spcPct')) : undefined;
-    const val = pctNode ? poIntAttr(pctNode, 'val') : undefined;
+    const val = pctNode ? poPercentAttr(pctNode, 'val', 1000) : undefined;
     return val === undefined || val < 0 ? undefined : val / 100000;
   };
   const [before, after] = [frac('a:spcBef'), frac('a:spcAft')];

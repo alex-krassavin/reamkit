@@ -36,6 +36,7 @@ import {
   poVal,
 } from '@/core/po-helpers';
 import { shadingFillHex } from '@/word/shading';
+import { cellMarginTwips, readTableMeasure } from '@/word/table-width';
 
 type Mutable<T> = { -readonly [K in keyof T]: T[K] };
 
@@ -248,25 +249,31 @@ function parseTableProperties(tblPr: PoNode | undefined): TableProperties {
 
   const tblW = poFirstChild(tblPr, 'w:tblW');
   if (tblW) {
-    const w = poIntAttr(tblW, 'w');
-    const type = poAttr(tblW, 'type');
     // tblW @w is twips for type=dxa but fiftieths of a percent for type=pct
-    // (5000 = 100% of the content width) — store each in its own field.
-    if (w !== undefined && type === 'pct') out.widthFraction = w / 5000;
-    else if (w !== undefined) out.widthPt = twipsToPt(w);
-    if (type && WIDTH_TYPES.has(type as 'auto' | 'dxa' | 'pct' | 'nil')) {
-      out.widthType = type as 'auto' | 'dxa' | 'pct' | 'nil';
+    // (5000 = 100% of the content width) — store each in its own field. A
+    // percent sign or a unit names the type itself (see readTableMeasure):
+    // the docx package's `w:w="100%"` read as nothing, and its fixed table
+    // shrank to its 10pt grid where Word fills the line (#145).
+    const type = poAttr(tblW, 'type');
+    const m = readTableMeasure(poAttr(tblW, 'w'), type);
+    if (m?.kind === 'pct') out.widthFraction = m.fiftieths / 5000;
+    else if (m) out.widthPt = twipsToPt(m.twips);
+    const declared = m?.spelled ? m.kind : type;
+    if (declared && WIDTH_TYPES.has(declared as 'auto' | 'dxa' | 'pct' | 'nil')) {
+      out.widthType = declared as 'auto' | 'dxa' | 'pct' | 'nil';
     }
   }
 
   // §17.4.65 `w:tblInd` — the table's own indent from the text margin. Read
   // nowhere, a table that declares one was drawn flush to the margin:
   // NumberedList.docx indents its procedure table through its table style.
+  // Only an absolute measure indents; Word drew `"10%"` and `type="pct"`
+  // flush, as the spec says a pct or auto indent is ignored.
   const tblInd = poFirstChild(tblPr, 'w:tblInd');
-  if (tblInd) {
-    const w = poIntAttr(tblInd, 'w');
-    const type = poAttr(tblInd, 'type');
-    if (w !== undefined && (type === undefined || type === 'dxa')) out.indentPt = twipsToPt(w);
+  const indType = poAttr(tblInd, 'type');
+  const ind = readTableMeasure(poAttr(tblInd, 'w'), indType);
+  if (ind?.kind === 'dxa' && (ind.spelled || indType === undefined || indType === 'dxa')) {
+    out.indentPt = twipsToPt(ind.twips);
   }
 
   // §17.4.58 `w:tblpPr` — the table floats: it is placed at an anchor of its
@@ -293,7 +300,7 @@ function parseTableProperties(tblPr: PoNode | undefined): TableProperties {
   const borders = parseBorders(poFirstChild(tblPr, 'w:tblBorders'));
   if (borders) out.borders = borders;
 
-  const margins = parseCellMargins(poFirstChild(tblPr, 'w:tblCellMar'));
+  const margins = parseCellMargins(poFirstChild(tblPr, 'w:tblCellMar'), true);
   if (margins) out.defaultCellMargins = margins;
 
   return out;
@@ -453,19 +460,21 @@ function parseCellProperties(tcPr: PoNode | undefined): {
   let rawVMerge: 'restart' | 'continue' | undefined;
   const tcW = poFirstChild(tcPr, 'w:tcW');
   if (tcW) {
-    const w = poIntAttr(tcW, 'w');
     // §17.4.72 — `w` means what `w:type` says it means. Read as twips whatever
     // the type, fdo38414.docx's `w:type="pct"` widths (fiftieths of a percent)
     // became 50pt columns; the type is now kept so the layout can resolve a
     // percentage against the table and the writer can put it back as it was.
+    // A percent sign or a unit overrules the type (readTableMeasure): Word
+    // split `"25%"`/`"75%"` cells a quarter and three quarters under every
+    // type, where we had dropped both widths (#145).
     const type = poAttr(tcW, 'type');
-    if (type === 'pct' || type === 'dxa' || type === 'auto' || type === 'nil') {
-      out.widthType = type;
+    const m = readTableMeasure(poAttr(tcW, 'w'), type);
+    const declared = m?.spelled ? m.kind : type;
+    if (declared === 'pct' || declared === 'dxa' || declared === 'auto' || declared === 'nil') {
+      out.widthType = declared;
     }
-    if (w !== undefined) {
-      if (type === 'pct') out.widthFraction = w / 5000;
-      else if (type !== 'auto' && type !== 'nil') out.width = twipsToPt(w);
-    }
+    if (m?.kind === 'pct') out.widthFraction = m.fiftieths / 5000;
+    else if (m?.kind === 'dxa') out.width = twipsToPt(m.twips);
   }
   const gridSpan = poFirstChild(tcPr, 'w:gridSpan');
   if (gridSpan) {
@@ -479,7 +488,7 @@ function parseCellProperties(tcPr: PoNode | undefined): {
   }
   const borders = parseBorders(poFirstChild(tcPr, 'w:tcBorders'));
   if (borders) out.borders = borders;
-  const margins = parseCellMargins(poFirstChild(tcPr, 'w:tcMar'));
+  const margins = parseCellMargins(poFirstChild(tcPr, 'w:tcMar'), false);
   if (margins) out.margins = margins;
   // §17.4.33 — w:shd cell shading: a PATTERN in `w:color` over `w:fill`, as a
   // run's and a paragraph's is, and what Word paints is the two blended. Read
@@ -574,22 +583,29 @@ function parseBorder(node: PoNode | undefined): Border | undefined {
   return out;
 }
 
-function parseCellMargins(node: PoNode | undefined): CellMargins | undefined {
+function parseCellMargins(
+  node: PoNode | undefined,
+  tableDefault: boolean,
+): CellMargins | undefined {
   if (!node) return undefined;
   const out: Mutable<CellMargins> = {};
-  const top = poIntAttr(poFirstChild(node, 'w:top'), 'w');
-  const bottom = poIntAttr(poFirstChild(node, 'w:bottom'), 'w');
-  const left = poIntAttr(poFirstChild(node, 'w:left') ?? poFirstChild(node, 'w:start'), 'w');
-  const right = poIntAttr(poFirstChild(node, 'w:right') ?? poFirstChild(node, 'w:end'), 'w');
   // §17.4.42 `w:tcMar` measures an INSET, and `w:w` is a signed type only
   // because ST_TblWidth is shared with the widths. A negative one is not a
   // narrower cell but a nonsense inset, and both references read it as none:
   // negative-cell-margin-twips.docx insets two of its three cells by −6160 and
   // −8800 twips, and taken at face value it drew their text 300pt off the left
-  // edge of the page — the two cells came out empty.
-  if (top !== undefined) out.top = twipsToPt(Math.max(0, top));
-  if (bottom !== undefined) out.bottom = twipsToPt(Math.max(0, bottom));
-  if (left !== undefined) out.left = twipsToPt(Math.max(0, left));
-  if (right !== undefined) out.right = twipsToPt(Math.max(0, right));
+  // edge of the page — the two cells came out empty. A side given as a share
+  // or as auto/nil is no inset either; cellMarginTwips says how each layer
+  // reads it.
+  const side = (el: PoNode | undefined): number | undefined =>
+    el ? cellMarginTwips(poAttr(el, 'w'), poAttr(el, 'type'), tableDefault) : undefined;
+  const top = side(poFirstChild(node, 'w:top'));
+  const bottom = side(poFirstChild(node, 'w:bottom'));
+  const left = side(poFirstChild(node, 'w:left') ?? poFirstChild(node, 'w:start'));
+  const right = side(poFirstChild(node, 'w:right') ?? poFirstChild(node, 'w:end'));
+  if (top !== undefined) out.top = twipsToPt(top);
+  if (bottom !== undefined) out.bottom = twipsToPt(bottom);
+  if (left !== undefined) out.left = twipsToPt(left);
+  if (right !== undefined) out.right = twipsToPt(right);
   return Object.keys(out).length > 0 ? out : undefined;
 }

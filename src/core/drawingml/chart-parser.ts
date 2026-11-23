@@ -34,6 +34,7 @@ import {
   poFindDescendant,
   poIntAttr,
   poIs,
+  poPercentAttr,
   poTag,
   poText,
   poVal,
@@ -228,6 +229,10 @@ export function parseChart(
     const v = Number(poVal(view3D ? poChildren(view3D).find((c) => poIs(c, tag)) : undefined));
     return Number.isFinite(v) ? v : fallback;
   };
+  // §21.2.3.9 ST_DepthPercent — whole percents, `"150%"` as well as `150`.
+  const viewPercent = (tag: string, fallback: number): number =>
+    poPercentAttr(view3D ? poChildren(view3D).find((c) => poIs(c, tag)) : undefined, 'val', 1) ??
+    fallback;
   // An absent `c:rotX` is the schema's 0 — the disc seen edge on, as Excel's
   // own PDF draws a 3-D pie whose view says only its perspective.
   const pie3D =
@@ -241,14 +246,18 @@ export function parseChart(
   // view says only that its axes are square.
   const gapDepthRaw =
     group && poIs(group, 'c:bar3DChart')
-      ? Number(poVal(poChildren(group).find((c) => poIs(c, 'c:gapDepth'))) ?? NaN)
+      ? (poPercentAttr(
+          poChildren(group).find((c) => poIs(c, 'c:gapDepth')),
+          'val',
+          1,
+        ) ?? NaN)
       : NaN;
   const bar3D =
     group && poIs(group, 'c:bar3DChart')
       ? {
           rotX: Math.min(90, Math.max(-90, viewAngle('c:rotX', 0))),
           rotY: ((viewAngle('c:rotY', 0) % 360) + 360) % 360,
-          depthPercent: Math.min(2000, Math.max(20, viewAngle('c:depthPercent', 100))),
+          depthPercent: Math.min(2000, Math.max(20, viewPercent('c:depthPercent', 100))),
           gapDepth: Number.isFinite(gapDepthRaw) ? Math.min(500, Math.max(0, gapDepthRaw)) : 150,
         }
       : undefined;
@@ -422,16 +431,16 @@ export function parseChart(
   const gapNode = poChildren(plotArea)
     .flatMap((g) => poChildren(g))
     .find((c) => poIs(c, 'c:gapWidth'));
-  const gapRaw = gapNode ? poVal(gapNode) : undefined;
-  const gapPercent = gapRaw === undefined ? NaN : Number(gapRaw);
+  // §21.2.3.16 ST_GapAmount / §21.2.3.31 ST_Overlap — whole percents, which
+  // may carry their sign (`"150%"`).
+  const gapPercent = poPercentAttr(gapNode, 'val', 1) ?? NaN;
   // §21.2.2.131 — and how far a cluster's bars lie over each other. Excel's
   // own charts space theirs a quarter of a bar apart (`-27`), which drawn
   // touching made every bar of chart.docx's clusters a tenth too wide.
   const overlapNode = poChildren(plotArea)
     .flatMap((g) => poChildren(g))
     .find((c) => poIs(c, 'c:overlap'));
-  const overlapRaw = overlapNode ? poVal(overlapNode) : undefined;
-  const overlapPercent = overlapRaw === undefined ? NaN : Number(overlapRaw);
+  const overlapPercent = poPercentAttr(overlapNode, 'val', 1) ?? NaN;
 
   return {
     type,

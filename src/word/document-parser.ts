@@ -1560,6 +1560,12 @@ function parseRun(
         text += '\n';
       }
       if (forced) cut(false);
+    } else if (poIs(child, 'w:cr')) {
+      // §17.3.3.4 — a carriage return ends the line like a `w:br` of type
+      // textWrapping does. Read as nothing, "P11", a `w:cr` and the next
+      // words ran together; Word and LibreOffice break the line there, and
+      // one at a paragraph's end leaves the empty line a `w:br` leaves.
+      text += '\n';
     } else if (poIs(child, 'w:sym')) {
       // §17.3.3.30 — a character from a SYMBOL font, named by the font and the
       // code point it sits at there (usually in the private-use area). Read

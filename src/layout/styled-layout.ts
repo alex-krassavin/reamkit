@@ -102,6 +102,8 @@ import type { StructNode, StructType } from '@/pdf/struct-tree';
 
 import type { MetaPicture } from '@/core/metafile/picture';
 import type { Sheet } from '@/layout/turned-section';
+import type { FloatFrame } from '@/layout/float-position';
+import type { CellContentWidths } from '@/layout/word-table-columns';
 import { pageItemBounds } from '@/layout/page-doc';
 import { ResourceStore, halfPtToPt, pt } from '@/core/ir';
 import { headingLevelOf, outlineLevelOf, outlineTitleOf } from '@/core/outline';
@@ -153,7 +155,9 @@ import {
 } from '@/core/drawingml/shape-render';
 import { StructTreeBuilder } from '@/pdf/struct-tree';
 import { floatIntoFrame, turnOntoSheet } from '@/layout/turned-section';
+import { BAND_PAGE_INSET_PT, floatTopYUpIn, floatXIn } from '@/layout/float-position';
 import { undrawnLoss } from '@/layout/undrawn';
+import { wordColumnWidths } from '@/layout/word-table-columns';
 
 /**
  * PDF/A conformance string: part 1 (ISO 19005-1, PDF 1.4) / 2 (ISO 19005-2) / 3
@@ -530,6 +534,9 @@ export const A4_HEIGHT = 842;
  */
 export const GLUE_SHRINK_RATIO = 0.3;
 const TWIP_TO_PT = 1 / 20;
+
+/** §17.6.11 — Word's own distance of a header or footer from its page edge: half an inch. */
+const WORD_BAND_OFFSET_PT = 720 * TWIP_TO_PT;
 const EIGHTH_PT = 1 / 8;
 const DEFAULT_CELL_PADDING_TWIPS = 108;
 const DEFAULT_BORDER_SIZE_EIGHTH = 4;
@@ -1068,83 +1075,6 @@ const MIN_WRAP_WIDTH = 36;
 // paragraphs flow around. topAndBottom stays a plain in-flow block.
 function isOutOfFlowFloat(f: FloatAnchor | undefined): f is FloatAnchor {
   return f !== undefined && f.wrap !== 'topAndBottom';
-}
-
-/**
- * §20.4.3.3/§20.4.3.4 — the boxes an anchor's `relativeFrom` names, in page
- * coordinates (y-up). Normally they are the page, its margins and the text
- * column; for a drawing anchored inside a table cell they are all that cell,
- * which is what `@layoutInCell` asks for.
- */
-interface FloatFrame {
-  /** The `page` box. */
-  readonly pageLeft: number;
-  readonly pageWidth: number;
-  readonly pageTopYUp: number;
-  readonly pageBottomYUp: number;
-  /** The `margin` box — the text area. */
-  readonly marginLeft: number;
-  readonly contentWidth: number;
-  readonly marginTopYUp: number;
-  readonly marginBottomYUp: number;
-  /** The `column` box. */
-  readonly columnLeft: number;
-  readonly columnWidth: number;
-  /** The anchoring paragraph's top, y-up. */
-  readonly anchorY: number;
-}
-
-/** The float's left edge, resolved from its horizontal anchor (§20.4.3.3). */
-function floatXIn(frame: FloatFrame, f: FloatAnchor, widthPt: number): number {
-  const h = f.posH;
-  if (!h) return frame.columnLeft;
-  // §20.4.3.3 — the margin BANDS: the strip between the page edge and the
-  // text area on that side, which is where a marginal note is placed.
-  const textRight = frame.marginLeft + frame.contentWidth;
-  const pageRight = frame.pageLeft + frame.pageWidth;
-  const base =
-    h.relativeFrom === 'page' || h.relativeFrom === 'leftMargin'
-      ? frame.pageLeft
-      : h.relativeFrom === 'column'
-        ? frame.columnLeft
-        : h.relativeFrom === 'rightMargin'
-          ? textRight
-          : frame.marginLeft;
-  const span =
-    h.relativeFrom === 'page'
-      ? frame.pageWidth
-      : h.relativeFrom === 'column'
-        ? frame.columnWidth
-        : h.relativeFrom === 'leftMargin'
-          ? frame.marginLeft - frame.pageLeft
-          : h.relativeFrom === 'rightMargin'
-            ? pageRight - textRight
-            : frame.contentWidth;
-  if (h.align === 'center') return base + (span - widthPt) / 2;
-  if (h.align === 'right') return base + span - widthPt;
-  return base + (h.offsetPt ?? 0);
-}
-
-/** The float's TOP, y-up, resolved from its vertical anchor (§20.4.3.4). */
-function floatTopYUpIn(frame: FloatFrame, f: FloatAnchor, heightPt = 0): number {
-  const v = f.posV;
-  if (!v) return frame.anchorY;
-  // §20.4.3.1 — a keyword position: within the page or the margin box.
-  if (v.align !== undefined) {
-    const page = v.relativeFrom === 'page';
-    const topYUp = page ? frame.pageTopYUp : frame.marginTopYUp;
-    const bottomYUp = page ? frame.pageBottomYUp : frame.marginBottomYUp;
-    if (v.align === 'top') return topYUp;
-    if (v.align === 'bottom') return bottomYUp + heightPt;
-    return bottomYUp + (topYUp - bottomYUp + heightPt) / 2;
-  }
-  // §20.4.3.4 — the TOP margin band starts at the page's own top edge; the
-  // BOTTOM one starts where the text area ends.
-  if (v.relativeFrom === 'page' || v.relativeFrom === 'topMargin')
-    return frame.pageTopYUp - (v.offsetPt ?? 0);
-  if (v.relativeFrom === 'bottomMargin') return frame.marginBottomYUp - (v.offsetPt ?? 0);
-  if (v.relativeFrom === 'margin') return frame.marginTopYUp - (v.offsetPt ?? 0);
-  return frame.anchorY - (v.offsetPt ?? 0);
 }
 
 const FOOTNOTE_RULE_WIDTH = 144; // Word's ~2" short separator
@@ -1846,8 +1776,8 @@ function resolvePageDimensions(
   const sectionBottom = section?.margins?.bottom !== undefined ? section.margins.bottom : undefined;
   const gutter = section?.margins?.gutter ?? 0;
   const atTop = options.gutterAtTop === true;
-  const headerOffsetPt = section?.margins?.header ?? 720 * TWIP_TO_PT;
-  const footerOffsetPt = section?.margins?.footer ?? 720 * TWIP_TO_PT;
+  const headerOffsetPt = section?.margins?.header ?? WORD_BAND_OFFSET_PT;
+  const footerOffsetPt = section?.margins?.footer ?? WORD_BAND_OFFSET_PT;
 
   return {
     pageWidth: options.pageWidth ?? sectionPageWidth ?? A4_WIDTH,
@@ -1895,6 +1825,14 @@ export interface SectionRenderCtx {
    * as tall as it is. Absent ⇒ every page takes `marginTop`/`marginBottom`.
    */
   readonly bandMargins?: Readonly<Record<HfBand, BodyMargins>>;
+  /**
+   * §17.6.11 `w:pgMar @w:header`/`@w:footer` — how far the header and the
+   * footer stand from the page's edges. A body drawing aligned `inside` or
+   * `outside` the page stops halfway across that gap (./float-position).
+   * Absent ⇒ Word's own half inch.
+   */
+  readonly headerOffsetPt?: number;
+  readonly footerOffsetPt?: number;
   readonly titlePg: boolean;
   readonly evenAndOddHeaders: boolean;
   /**
@@ -1959,30 +1897,32 @@ function buildSectionContext(
     marginTopPt: dims.marginTop,
     marginBottomPt: dims.marginBottom,
   };
-  const headerSet = layoutHeaderSet(
+  const bandGeometry = (offsetPt: number): BandGeometry => ({
+    pageWidth: dims.pageWidth,
+    pageHeight: dims.pageHeight,
+    marginLeft: dims.marginLeft,
+    contentWidth,
+    offsetPt,
+    margins: { top: dims.marginTop, bottom: dims.marginBottom },
+  });
+  const headerSet = layoutBandSet(
+    'header',
     section.properties,
     headersFooters,
     secOptions,
     fontResources,
     imageResources,
-    contentWidth,
-    dims.marginLeft,
-    dims.pageHeight,
-    dims.headerOffsetPt,
-    { top: dims.marginTop, bottom: dims.marginBottom },
+    bandGeometry(dims.headerOffsetPt),
     relativeBox,
   );
-  const footerSet = layoutFooterSet(
+  const footerSet = layoutBandSet(
+    'footer',
     section.properties,
     headersFooters,
     secOptions,
     fontResources,
     imageResources,
-    contentWidth,
-    dims.marginLeft,
-    dims.pageHeight,
-    dims.footerOffsetPt,
-    { top: dims.marginTop, bottom: dims.marginBottom },
+    bandGeometry(dims.footerOffsetPt),
     relativeBox,
   );
   const columns = buildColumnGeometry(section.properties.columns, contentWidth);
@@ -2071,6 +2011,8 @@ function buildSectionContext(
     headerSet,
     footerSet,
     bandMargins,
+    headerOffsetPt: dims.headerOffsetPt,
+    footerOffsetPt: dims.footerOffsetPt,
     titlePg: section.properties.titlePg === true,
     evenAndOddHeaders: section.properties.evenAndOddHeaders === true,
     continuous: section.properties.sectionStart === 'continuous',
@@ -2124,11 +2066,70 @@ interface BodyMargins {
 // (§17.16.5.33/.35) — substitution changes text widths, so this is an honest
 // re-layout, not a glyph swap. The page's number arrives as the section prints
 // it (§17.6.12: its own start, and its own numerals).
+//
+// A band's anchored drawings are placed against the page it is drawn on — its
+// parity and its text area (see ./float-position) — so a band that carries one
+// is drawn for each such page (`drawFor`), and `commands` is merely the band as
+// an odd page with the section's own margins shows it.
 interface HfBandEntry {
   readonly commands: Array<PageItem>;
-  readonly renderDynamic?: (pageText: string, totalPages: number) => Array<PageItem>;
+  /** The band as `page` shows it. Absent ⇒ `commands`, the same on every page. */
+  readonly drawFor?: (page: BandPage) => Array<PageItem>;
+  readonly renderDynamic?: (
+    pageText: string,
+    totalPages: number,
+    page?: BandPage,
+  ) => Array<PageItem>;
   /** Laid-out height of the band, so the body can be kept clear of it. */
   readonly heightPt?: number;
+}
+
+/** What a band's anchored drawings are placed against: the page it is drawn on. */
+interface BandPage {
+  /** The sheet is an even one (§20.4.3.1 `inside`/`outside`). */
+  readonly evenPage: boolean;
+  /** The body's margins on that page, the bands' own growth included. */
+  readonly margins: BodyMargins;
+}
+
+/** Where a section's header or footer band is laid out on its page. */
+interface BandGeometry {
+  readonly pageWidth: number;
+  readonly pageHeight: number;
+  readonly marginLeft: number;
+  readonly contentWidth: number;
+  /** §17.6.11 `w:pgMar @w:header`/`@w:footer` — the band's distance from its edge. */
+  readonly offsetPt: number;
+  /** The section's own margins, before any band grows them. */
+  readonly margins: BodyMargins;
+}
+
+/** The boxes a band's drawing is placed in, short of the band's own cursor. */
+type BandFloatFrame = Omit<FloatFrame, 'anchorY' | 'columnLeft' | 'columnWidth'>;
+
+/**
+ * §20.4.2.10/§20.4.2.11 — the boxes a header's or footer's anchored drawing
+ * can name: the page itself and the body's text area on it, exactly as a
+ * drawing in the body would see them. A band has one column, its own text area.
+ *
+ * @param geometry Where the band is laid out.
+ * @param page     The page it is drawn on.
+ * @returns The frame, short of the anchoring paragraph's position.
+ */
+function bandFloatFrame(geometry: BandGeometry, page: BandPage): BandFloatFrame {
+  return {
+    pageLeft: 0,
+    pageWidth: geometry.pageWidth,
+    pageTopYUp: geometry.pageHeight,
+    pageBottomYUp: 0,
+    marginLeft: geometry.marginLeft,
+    contentWidth: geometry.contentWidth,
+    marginTopYUp: geometry.pageHeight - page.margins.top,
+    marginBottomYUp: page.margins.bottom,
+    evenPage: page.evenPage,
+    pageInsetTopPt: BAND_PAGE_INSET_PT,
+    pageInsetBottomPt: BAND_PAGE_INSET_PT,
+  };
 }
 
 interface HeaderFooterSet {
@@ -2144,66 +2145,91 @@ function markPagination(cmds: Array<PageItem>): Array<PageItem> {
   return cmds.map((c) => ({ ...c, artifact: 'pagination' as const }));
 }
 
-// Pre-layout the three possible header/footer bands. Each band is an array of
-// draw commands ready to be merged onto a body page. Missing bands fall back
-// to the default during page assembly, so producing an empty array here is
-// fine (we always check before falling back).
-function layoutHeaderSet(
+// Pre-layout the three possible header (or footer) bands. Each band is an
+// array of draw commands ready to be merged onto a body page. Missing bands
+// fall back to the default during page assembly, so producing an empty array
+// here is fine (we always check before falling back).
+function layoutBandSet(
+  edge: 'header' | 'footer',
   section: SectionProperties,
   headersFooters: ReadonlyMap<string, ReadonlyArray<BodyElement>>,
   options: StyledRenderOptions,
   fontResources: ReadonlyMap<string, FontResource>,
   imageResources: ReadonlyMap<ResourceId, ImageResource> | undefined,
-  contentWidth: number,
-  marginLeft: number,
-  pageHeight: number,
-  headerOffsetPt: number,
-  // §20.4.3.1 — the margin box a keyword-positioned drawing centres itself in.
-  bandMargins: { readonly top: number; readonly bottom: number },
+  geometry: BandGeometry,
   // §20.4.3.6 — the page a band's drawing may be sized as a share of.
   relativeBox?: RelativeBox,
 ): HeaderFooterSet {
+  const refs = edge === 'header' ? section.headers : section.footers;
+  const collapse = collapsesSpacing(options);
+  const firstPage: BandPage = { evenPage: false, margins: geometry.margins };
   const band = (type: HeaderFooterType): HfBandEntry => {
-    const ref = refByType(section.headers, type);
+    const ref = refByType(refs, type);
     if (!ref) return { commands: [] };
     const content = headersFooters.get(ref.relationshipId);
     if (!content) return { commands: [] };
-    let measured = 0;
-    const render = (c: ReadonlyArray<BodyElement>): Array<PageItem> => {
-      const blocks = laidOutBlocksFor(
+    const layout = (c: ReadonlyArray<BodyElement>): ReadonlyArray<LaidOutBlock> =>
+      laidOutBlocksFor(
         c,
         options,
         fontResources,
-        contentWidth,
+        geometry.contentWidth,
         imageResources,
         relativeBox,
       );
-      measured = blocksHeight(blocks, collapsesSpacing(options));
+    const draw = (blocks: ReadonlyArray<LaidOutBlock>, page: BandPage): Array<PageItem> => {
+      // §17.6.11 — a header hangs its distance down from the page's top edge.
+      // A footer's `w:pgMar @w:footer` is the distance up from the page edge
+      // to the BOTTOM of the band, so the band's own height is what puts its
+      // top. An anchored drawing adds nothing to that height (blocksHeight):
+      // counted, fdo80895.docx's footer ellipse lifted the whole band 26pt off
+      // the floor.
+      const startY =
+        edge === 'header'
+          ? geometry.pageHeight - geometry.offsetPt
+          : geometry.offsetPt + blocksHeight(blocks, collapse);
       return markPagination(
         drawBlocksSequentially(
           blocks,
-          marginLeft,
-          pageHeight - headerOffsetPt,
-          pageHeight,
-          contentWidth,
+          geometry.marginLeft,
+          startY,
+          geometry.pageHeight,
+          geometry.contentWidth,
           undefined,
-          bandMargins,
-          collapsesSpacing(options),
+          bandFloatFrame(geometry, page),
+          collapse,
         ),
       );
     };
     if (contentHasPageFields(content)) {
       // Measure once with placeholder values so the height is known before the
       // first page is composed; the per-page render replaces the commands.
-      render(substitutePageFields(content, '1', 1));
       return {
         commands: [],
-        heightPt: measured,
-        renderDynamic: (page, total) => render(substitutePageFields(content, page, total)),
+        heightPt: blocksHeight(layout(substitutePageFields(content, '1', 1)), collapse),
+        renderDynamic: (pageText, totalPages, page = firstPage) =>
+          draw(layout(substitutePageFields(content, pageText, totalPages)), page),
       };
     }
-    const commands = render(content);
-    return { commands, heightPt: measured };
+    const blocks = layout(content);
+    const commands = draw(blocks, firstPage);
+    const heightPt = blocksHeight(blocks, collapse);
+    // Only an anchored drawing moves with the page it is drawn on; a band of
+    // text alone is the same on every page and keeps its one set of commands.
+    const anchored = (b: LaidOutBlock): boolean =>
+      (b as { readonly float?: FloatAnchor }).float !== undefined;
+    if (!blocks.some(anchored)) return { commands, heightPt };
+    const drawn = new Map<string, Array<PageItem>>();
+    const drawFor = (page: BandPage): Array<PageItem> => {
+      const key = `${String(page.evenPage)}|${String(page.margins.top)}|${String(page.margins.bottom)}`;
+      let cmds = drawn.get(key);
+      if (!cmds) {
+        cmds = draw(blocks, page);
+        drawn.set(key, cmds);
+      }
+      return cmds;
+    };
+    return { commands, drawFor, heightPt };
   };
   return { default: band('default'), first: band('first'), even: band('even') };
 }
@@ -2271,6 +2297,25 @@ function sharedAfter(block: {
 }
 
 /**
+ * §17.6.4 — the height a band of columns is balanced to: all its blocks
+ * stacked, or 0 — fill column after column — when a column break in it says
+ * where its columns end (§17.3.3.1). Word leaves such a band unbalanced: one
+ * line, a column break and eight more in three columns stand one, eight and
+ * none, where it sets eight lines with no break four and four; LibreOffice
+ * balances what follows the break. Balanced, the break that ends a section's
+ * last paragraph found its line already pushed into the last column, and
+ * opened a page of its own (tdf103975_notPageBreakB.docx).
+ *
+ * @param blocks   The band's laid-out blocks.
+ * @param collapse Whether paragraph spacing collapses (Word documents).
+ * @returns The height to share among the columns, in points.
+ */
+function balancedBandHeight(blocks: ReadonlyArray<LaidOutBlock>, collapse: boolean): number {
+  const broken = blocks.some((b) => b.kind === 'paragraph' && (b.columnBreakLines?.size ?? 0) > 0);
+  return broken ? 0 : blocksHeight(blocks, collapse);
+}
+
+/**
  * Total laid-out height of a run of blocks, paragraph spacing included.
  *
  * @param blocks   The blocks, in order.
@@ -2301,71 +2346,6 @@ function blocksHeight(blocks: ReadonlyArray<LaidOutBlock>, collapse = false): nu
     spacing.close(sharedAfter(b));
     return sum + before + b.heightPt + b.spacingAfterPt;
   }, 0);
-}
-
-function layoutFooterSet(
-  section: SectionProperties,
-  headersFooters: ReadonlyMap<string, ReadonlyArray<BodyElement>>,
-  options: StyledRenderOptions,
-  fontResources: ReadonlyMap<string, FontResource>,
-  imageResources: ReadonlyMap<ResourceId, ImageResource> | undefined,
-  contentWidth: number,
-  marginLeft: number,
-  pageHeight: number,
-  footerOffsetPt: number,
-  // §20.4.3.1 — the margin box a keyword-positioned drawing centres itself in.
-  bandMargins: { readonly top: number; readonly bottom: number },
-  // §20.4.3.6 — the page a band's drawing may be sized as a share of.
-  relativeBox?: RelativeBox,
-): HeaderFooterSet {
-  const band = (type: HeaderFooterType): HfBandEntry => {
-    const ref = refByType(section.footers, type);
-    if (!ref) return { commands: [] };
-    const content = headersFooters.get(ref.relationshipId);
-    if (!content) return { commands: [] };
-    let measured = 0;
-    const render = (c: ReadonlyArray<BodyElement>): Array<PageItem> => {
-      const blocks = laidOutBlocksFor(
-        c,
-        options,
-        fontResources,
-        contentWidth,
-        imageResources,
-        relativeBox,
-      );
-      // §17.6.11 — `w:pgMar @w:footer` is the distance up from the page edge to
-      // the BOTTOM of the band, so the band's own height is what puts its top.
-      // An anchored drawing adds nothing to that height (blocksHeight): counted,
-      // fdo80895.docx's footer ellipse lifted the whole band 26pt off the floor.
-      const totalHeight = blocksHeight(blocks, collapsesSpacing(options));
-      measured = totalHeight;
-      return markPagination(
-        drawBlocksSequentially(
-          blocks,
-          marginLeft,
-          footerOffsetPt + totalHeight,
-          pageHeight,
-          contentWidth,
-          undefined,
-          bandMargins,
-          collapsesSpacing(options),
-        ),
-      );
-    };
-    if (contentHasPageFields(content)) {
-      // Measured once with placeholder values, as a header is, so the body
-      // knows where the band's top stands before the first page is composed.
-      render(substitutePageFields(content, '1', 1));
-      return {
-        commands: [],
-        heightPt: measured,
-        renderDynamic: (page, total) => render(substitutePageFields(content, page, total)),
-      };
-    }
-    const commands = render(content);
-    return { commands, heightPt: measured };
-  };
-  return { default: band('default'), first: band('first'), even: band('even') };
 }
 
 // A band is dynamic when any of its paragraphs carries a PAGE/NUMPAGES field
@@ -2729,16 +2709,16 @@ function rebuildBoxLines(
 
 /**
  * §17.3.1.11 — whether the frame is placed DOWN THE PAGE by itself, rather than
- * where the flow has reached. `w:vAnchor="text"` (the default) measures `w:y`
- * from the paragraph's own position, so such frames stack as paragraphs do —
- * and a float takes no flow space, so lifting them out puts every one of them
- * on the same line: tdf105035_framePrB.docx writes its title and its author
- * line as text-anchored frames and both landed on the cursor, one over the
- * other. Only a frame anchored to the page or the margin, or aligned by
- * keyword, truly stands somewhere of its own.
+ * where the flow has reached. `w:vAnchor="text"` measures `w:y` from the
+ * paragraph's own position, so such frames stack as paragraphs do — and a
+ * float takes no flow space, so lifting them out puts every one of them on
+ * the same line: tdf105035_framePrB.docx writes its title and its author line
+ * as text-anchored frames and both landed on the cursor, one over the other.
+ * Any other frame stands somewhere of its own — one that states no anchor
+ * too, which Word measures from the MARGIN (see {@link frameFloat}).
  */
 function framePositioned(frame: FrameProperties): boolean {
-  return frame.yAlign !== undefined || (frame.vAnchor !== undefined && frame.vAnchor !== 'text');
+  return frame.yAlign !== undefined || frame.vAnchor !== 'text';
 }
 
 function frameFloat(frame: FrameProperties): FloatAnchor {
@@ -2763,21 +2743,25 @@ function frameFloat(frame: FrameProperties): FloatAnchor {
           : 'topAndBottom'
         : 'square';
   const hRel = frame.hAnchor === 'page' ? 'page' : frame.hAnchor === 'margin' ? 'margin' : 'column';
+  // §17.3.1.11 `w:vAnchor` — a frame that names none hangs off the MARGIN, as
+  // Word places it: one with `w:y="1440"` and no anchor stands 72pt below the
+  // top margin, wherever its paragraph is, and one with neither sits on the
+  // margin's top edge. Read as text-anchored, such a frame stood 72pt below
+  // its paragraph instead — ten lines down the page, 120pt lower than Word.
   const vRel =
-    frame.vAnchor === 'page' ? 'page' : frame.vAnchor === 'margin' ? 'margin' : 'paragraph';
-  const align =
-    frame.xAlign === 'left' || frame.xAlign === 'center' || frame.xAlign === 'right'
-      ? frame.xAlign
-      : undefined;
-  // §17.3.1.11 `w:yAlign` — a KEYWORD down the page instead of an offset, and
-  // it is what tells a frame to sit at the top of the page rather than where
-  // its paragraph happens to stand. Ignored, tdf104394_lostTextbox.docx's
-  // floating table and the paragraph beside it followed the tall frame above
-  // them onto page 2, where every reader draws them on page 1.
-  const vAlign =
-    frame.yAlign === 'top' || frame.yAlign === 'center' || frame.yAlign === 'bottom'
-      ? frame.yAlign
-      : undefined;
+    frame.vAnchor === 'page' ? 'page' : frame.vAnchor === 'text' ? 'paragraph' : 'margin';
+  // §17.3.1.11 `w:xAlign`/`w:yAlign` — a KEYWORD instead of an offset, and the
+  // vertical one is what tells a frame to sit at the top of the page rather
+  // than where its paragraph happens to stand. Ignored, tdf104394_lostTextbox
+  // .docx's floating table and the paragraph beside it followed the tall frame
+  // above them onto page 2, where every reader draws them on page 1. `inside`
+  // and `outside` turn with the page as a drawing's do: Word puts a frame
+  // aligned `inside` the margin on its left on an odd page and on its right on
+  // an even one, and `inside` down it at its top, then at its foot. Read as no
+  // alignment, CT-with-frame.docx's line number, `outside` the page, stood on
+  // the page's left edge; Word sets that frame on the right of an odd page.
+  const align = frame.xAlign;
+  const vAlign = frame.yAlign;
   return {
     wrap,
     posH: { relativeFrom: hRel, ...(align ? { align } : { offsetPt: frame.xPt ?? pt(0) }) },
@@ -5074,62 +5058,6 @@ function pictureOutlineItems(
   }));
 }
 
-// §20.4.2.3 — where an anchored drawing sits across a header or footer band:
-// the alignment its anchor names, or the offset it states. Undefined when the
-// drawing is not anchored at all, and so flows with the band's other content.
-function bandAnchor(
-  float: FloatAnchor | undefined,
-  widthPt: number,
-  contentWidth: number,
-  // Where the band's own left edge sits on the page, so an offset measured
-  // from the PAGE can be expressed as one from the band.
-  bandLeftPt = 0,
-): number | undefined {
-  if (!float) return undefined;
-  const align = float.posH?.align;
-  if (align === 'right') return contentWidth - widthPt;
-  if (align === 'center') return (contentWidth - widthPt) / 2;
-  if (align === 'left') return 0;
-  const offset = float.posH?.offsetPt ?? 0;
-  return float.posH?.relativeFrom === 'page' ? offset - bandLeftPt : offset;
-}
-
-/**
- * §20.4.2.3 — how far DOWN the page a band's anchored drawing starts, in the
- * band emitter's y-UP frame. A `page`-relative anchor is measured from the
- * paper's own top edge, whatever the band's cursor has reached: n773061.docx
- * hangs its header text box 92pt down the page and, measured from the header's
- * first paragraph, it landed 60pt lower than Word and LibreOffice put it.
- *
- * @param float      The anchor.
- * @param cursorY    The band's cursor (y-up), where a paragraph-relative
- *                   anchor is measured from.
- * @param pageHeight The page height.
- * @returns The drawing's top edge, y-up.
- */
-function bandAnchorTop(
-  float: FloatAnchor,
-  cursorY: number,
-  pageHeight: number,
-  heightPt = 0,
-  margins?: { readonly top: number; readonly bottom: number },
-): number {
-  // §20.4.3.1 — a KEYWORD rather than an offset: Word centres a watermark in
-  // the page (or in the margin box) this way, and pinned to the band's cursor
-  // pictureWatermark.docx printed its penguins in the top corner.
-  const align = float.posV?.align;
-  if (align !== undefined) {
-    const page = float.posV?.relativeFrom === 'page' || !margins;
-    const topYUp = page ? pageHeight : pageHeight - margins.top;
-    const bottomYUp = page ? 0 : margins.bottom;
-    if (align === 'top') return topYUp;
-    if (align === 'bottom') return bottomYUp + heightPt;
-    return bottomYUp + (topYUp - bottomYUp + heightPt) / 2;
-  }
-  const offset = float.posV?.offsetPt ?? 0;
-  return float.posV?.relativeFrom === 'page' ? pageHeight - offset : cursorY - offset;
-}
-
 // `startY` is in the internal y-up frame the band math works in; the emitted
 // items carry top-left coordinates like everything else on a page.
 function drawBlocksSequentially(
@@ -5140,15 +5068,33 @@ function drawBlocksSequentially(
   contentWidth: number,
   // Tagged PDF: stamp every emitted line with this structure node (used by
   // the footnote band; header/footer bands stay artifact-marked instead).
-  structId?: number,
-  // §20.4.3.1 — the margin box a keyword-positioned drawing centres itself in.
-  bandMargins?: { readonly top: number; readonly bottom: number },
+  structId: number | undefined,
+  // §20.4.2.10/§20.4.2.11 — the page and text area an anchored drawing in the
+  // band is placed against, as it would be in the body.
+  frame: BandFloatFrame,
   // Whether paragraph spacing stacks as Word stacks it (see SpacingStack).
   collapse = false,
 ): Array<PageItem> {
   const out: Array<PageItem> = [];
   let cursorY = startY;
   const spacing = new SpacingStack(collapse);
+  // An anchored drawing hangs off the paragraph the band's cursor has reached,
+  // and its band has one column, its own text area. Its left edge and top, on
+  // the page; undefined when the block is not anchored and flows instead.
+  const anchoredAt = (
+    float: FloatAnchor | undefined,
+    widthPt: number,
+    heightPt: number,
+  ): { readonly x: number; readonly top: number } | undefined => {
+    if (!float) return undefined;
+    const at: FloatFrame = {
+      ...frame,
+      columnLeft: startX,
+      columnWidth: contentWidth,
+      anchorY: cursorY,
+    };
+    return { x: floatXIn(at, float, widthPt), top: floatTopYUpIn(at, float, heightPt) };
+  };
   // §20.4.2.3 `@behindDoc` — a drawing that sits BEHIND the text sits behind
   // everything else in the band too, whatever order it was written in. Such a
   // drawing is out of the flow, so drawing it first costs the cursor nothing.
@@ -5174,12 +5120,12 @@ function drawBlocksSequentially(
       // margins and 78pt too low, because a `w:tblpPr` was read everywhere but
       // here.
       const anchored = isOutOfFlowFloat(block.float)
-        ? bandAnchor(block.float, block.totalWidthPt, contentWidth, startX)
+        ? anchoredAt(block.float, block.totalWidthPt, block.heightPt)
         : undefined;
-      if (anchored !== undefined && block.float) {
-        let rowY = bandAnchorTop(block.float, cursorY, pageHeight, block.heightPt, bandMargins);
+      if (anchored !== undefined) {
+        let rowY = anchored.top;
         for (const row of block.rows) {
-          emitRowChunk(out, row, startX + anchored, rowY, pageHeight, block.colCount);
+          emitRowChunk(out, row, anchored.x, rowY, pageHeight, block.colCount);
           rowY -= row.heightPt;
         }
         continue;
@@ -5205,18 +5151,16 @@ function drawBlocksSequentially(
     }
     // …and a first-page header is very often nothing BUT the crest.
     if (block.kind === 'image') {
-      const anchored = bandAnchor(block.float, block.widthPt, contentWidth, startX);
-      cursorY -=
-        anchored === undefined ? spacing.open(block.spacingBeforePt) : block.spacingBeforePt;
-      const offset =
-        anchored ?? alignmentOffset(block.resolvedAlignment, block.widthPt, contentWidth);
-      const top =
-        anchored === undefined || !block.float
-          ? cursorY
-          : bandAnchorTop(block.float, cursorY, pageHeight, block.heightPt, bandMargins);
+      if (block.float) cursorY -= block.spacingBeforePt;
+      else cursorY -= spacing.open(block.spacingBeforePt);
+      const anchored = anchoredAt(block.float, block.widthPt, block.heightPt);
+      const x =
+        anchored?.x ??
+        startX + alignmentOffset(block.resolvedAlignment, block.widthPt, contentWidth);
+      const top = anchored?.top ?? cursorY;
       out.push({
         type: 'image',
-        x: pt(startX + offset),
+        x: pt(x),
         y: pt(pageHeight - top),
         width: pt(block.widthPt),
         height: pt(block.heightPt),
@@ -5232,7 +5176,7 @@ function drawBlocksSequentially(
         out.push(
           ...pictureOutlineItems(
             block.outline,
-            startX + offset,
+            x,
             pageHeight - top,
             block.widthPt,
             block.heightPt,
@@ -5253,16 +5197,14 @@ function drawBlocksSequentially(
     // anchor across the band's width, since that is the whole point of the
     // frame: FDO73546 numbers its pages this way and we numbered none.
     if (block.kind === 'shape') {
-      const anchored = bandAnchor(block.float, block.widthPt, contentWidth, startX);
-      cursorY -=
-        anchored === undefined ? spacing.open(block.spacingBeforePt) : block.spacingBeforePt;
-      const offset =
-        anchored ?? alignmentOffset(block.resolvedAlignment, block.widthPt, contentWidth);
-      const top =
-        anchored === undefined || !block.float
-          ? cursorY
-          : bandAnchorTop(block.float, cursorY, pageHeight, block.heightPt, bandMargins);
-      emitShapeItems(block, startX + offset, top - block.heightPt, out, pageHeight, structId);
+      if (block.float) cursorY -= block.spacingBeforePt;
+      else cursorY -= spacing.open(block.spacingBeforePt);
+      const anchored = anchoredAt(block.float, block.widthPt, block.heightPt);
+      const x =
+        anchored?.x ??
+        startX + alignmentOffset(block.resolvedAlignment, block.widthPt, contentWidth);
+      const top = anchored?.top ?? cursorY;
+      emitShapeItems(block, x, top - block.heightPt, out, pageHeight, structId);
       if (anchored === undefined) cursorY -= block.heightPt;
       cursorY -= block.spacingAfterPt;
       if (anchored === undefined) spacing.close(block.spacingAfterPt);
@@ -6437,6 +6379,12 @@ function layoutParagraphBlock(
   const firstLineWidth = paragraphMaxWidth(resolved, contentWidth, true);
   const otherWidth = paragraphMaxWidth(resolved, contentWidth, false);
   const leading = paragraphLeading(paragraph.properties, options);
+  // Measured in Word only (docx and .doc alike): what a slide's or a cell's
+  // trailing break leaves is its own application's business.
+  const markLine =
+    options.typesetBy === 'word'
+      ? (width: number): Line => emptyLine(paragraph, options, resolved, Math.max(width, 0))
+      : undefined;
   const runWrap = (
     part: ReadonlyArray<Token>,
     firstWidth: number,
@@ -6452,6 +6400,7 @@ function layoutParagraphBlock(
       leading,
       options.doNotExpandShiftReturn === true,
       widths,
+      markLine,
     );
   // §17.3.3.1 — a `w:br w:type="column"` splits the paragraph's own flow: what
   // follows it belongs in the NEXT column. Wrapping the parts one at a time is
@@ -6471,9 +6420,10 @@ function layoutParagraphBlock(
       // first-line one, and the float widths carry on where they left off.
       const width = i === 0 ? firstLineWidth : otherWidth;
       const lines = runWrap(part.tokens, width, lineWidths?.slice(wrapped.length));
-      // The line a page break ends is a line, with nothing else on it or not:
-      // two breaks in a row leave an empty one on the page between.
-      if (lines.length === 0 && (part.opens === 'page' || part.endsPage)) {
+      // The line a break ends is a line, with nothing else on it or not: two
+      // breaks in a row leave an empty one on the page between, and the mark
+      // after a column break at the paragraph's end stands in the next column.
+      if (lines.length === 0 && (part.opens !== undefined || part.endsPage || part.endsColumn)) {
         lines.push(emptyLine(paragraph, options, resolved, Math.max(width, 0)));
       }
       if (i > 0 && lines.length > 0) {
@@ -7021,6 +6971,8 @@ interface FlowPart {
   readonly opens?: 'column' | 'page';
   /** Whether a page break ends it. */
   endsPage: boolean;
+  /** Whether a column break ends it. */
+  endsColumn?: boolean;
 }
 
 /**
@@ -7048,6 +7000,16 @@ interface FlowPart {
  * first line. Moved to the next page with its mark, it stood an empty line down
  * every such page.
  *
+ * A COLUMN break is the other way round: it stays on the line it ends, and the
+ * mark after it goes on with what follows. Word sets "C1" and a column break at
+ * a paragraph's end on one line and its mark alone on the first line of the
+ * next column (of the next page, with one column), the paragraph after it a
+ * line below; a paragraph of nothing but a column break takes a line in each
+ * column; two in a row leave the second alone in a column of its own. The
+ * parts on either side of one are kept however empty: dropped, a trailing
+ * column break broke nothing at all, and what followed it ran on in the same
+ * column.
+ *
  * @param tokens The paragraph's tokens in order.
  * @returns The parts, in order (always at least one), and whether the
  *          paragraph breaks the page before itself and after itself.
@@ -7067,18 +7029,13 @@ function splitAtBreaks(tokens: ReadonlyArray<Token>): {
       parts[parts.length - 1]!.endsPage = true;
       parts.push({ tokens: [], opens: 'page', endsPage: false });
     } else if (t.kind === 'text' && t.columnBreak) {
+      parts[parts.length - 1]!.endsColumn = true;
       parts.push({ tokens: [], opens: 'column', endsPage: false });
     } else parts[parts.length - 1]!.tokens.push(t);
   }
   if (pageBreakAfter) parts[parts.length - 1]!.endsPage = true;
-  return {
-    // An empty stretch a page break opens or ends is still the line it stands on.
-    parts: parts.filter(
-      (p, i) => i === 0 || p.tokens.length > 0 || p.opens === 'page' || p.endsPage,
-    ),
-    pageBreakBefore,
-    pageBreakAfter,
-  };
+  // An empty stretch a break opens or ends is still the line it stands on.
+  return { parts, pageBreakBefore, pageBreakAfter };
 }
 
 // Fast LTR tokenization — splits each run on whitespace only.
@@ -7512,6 +7469,11 @@ interface StreamEntry {
   readonly hyphenWidthPt?: number;
   /** The forced break here is a soft line break (`w:br`), not the paragraph's end. */
   readonly softBreak?: boolean;
+  /**
+   * The token the soft break came from, carrying its run: what a line holding
+   * nothing but this break is measured by (see {@link lineFromRange}).
+   */
+  readonly breakToken?: Token;
 }
 
 // Tokens → the Knuth–Plass item stream: spaces become glue, images/math are
@@ -7562,6 +7524,7 @@ function paragraphItemStream(
           item: { type: 'penalty', width: 0, penalty: FORCED_BREAK, flagged: false },
           token: null,
           softBreak: true,
+          breakToken: tok,
         });
       }
       prevBoxEndCp = null;
@@ -7732,9 +7695,13 @@ const TAB_LEADER_CHARS: ReadonlyMap<string, string> = new Map([
  * A `right`, `center` or `decimal` stop positions the text AFTER the tab, so
  * each is resolved against the segment that follows it.
  *
+ * The tabs are settled one after another, each from where the one before it
+ * left the pen, and a stop is passed once the pen has reached it.
+ *
  * @param tokens   The line's tokens, replaced in place.
  * @param resolved The paragraph's resolved properties: the stops and indents.
  * @param isFirst  Whether this is the paragraph's first line.
+ * @param availableWidthPt The line's width, from where it starts.
  */
 function resolveTabs(
   tokens: Array<Token>,
@@ -7751,13 +7718,22 @@ function resolveTabs(
       x += tok.widthPt;
       continue;
     }
-    // The run of tokens up to the next tab: what this stop has to place.
+    // The run of tokens up to the next tab: what this stop has to place. It is
+    // aligned by its INK — the spaces at its end hang past the stop. Word ends
+    // "XY" and two spaces at a right stop with the Y, and centres the "XY" on
+    // a centre stop; leading spaces count (Courier New probes in
+    // .git/wip-br-tabs; LibreOffice counts the trailing ones as well).
     let segment = 0;
+    let ink = 0;
     let decimalAt = 0;
     let seenDecimal = false;
+    let tabAfter = false;
     for (let j = i + 1; j < tokens.length; j++) {
       const next = tokens[j]!;
-      if (next.kind === 'text' && next.tab === true) break;
+      if (next.kind === 'text' && next.tab === true) {
+        tabAfter = true;
+        break;
+      }
       if (!seenDecimal && next.kind === 'text') {
         const dot = next.text.indexOf('.');
         if (dot >= 0) {
@@ -7767,16 +7743,9 @@ function resolveTabs(
         }
       }
       segment += next.widthPt;
+      if (!next.isSpace) ink = segment;
     }
-    // §17.3.3.15 — an absolute-position tab has no distance of its own: it
-    // reaches for the middle or the far side of the column, wherever those
-    // fall. Everything else is a distance from the text margin.
-    const stopAt = (sp: TabStop): number =>
-      sp.relativeTo === 'center'
-        ? availableWidthPt / 2
-        : sp.relativeTo === 'right'
-          ? availableWidthPt
-          : sp.positionPt;
+    const stopAt = (sp: TabStop): number => tabStopAt(sp, availableWidthPt);
     const stop = stops.find((sp) => stopAt(sp) > x + 0.01);
     // A hanging indent is itself a tab stop (§17.3.1.12): the first line starts
     // out at the negative offset and the tab after the marker brings the text
@@ -7802,31 +7771,84 @@ function resolveTabs(
         ? explicitAt
         : (hangingStop ?? gridAt);
     const alignment = stop?.alignment ?? 'left';
-    // A right/centre/decimal stop places the segment AFTER the tab against the
-    // stop, so a tab with nothing to place claims nothing and the stop falls to
-    // the tab behind it. FDO77715.docx's header is written that way — two tabs
-    // against a single right stop at the margin — and letting the first take it
-    // drove the title off the page. A LEFT stop (and the default grid, which is
-    // left) is a position in its own right: each of fdo79915.docx's six tabs
-    // advances one stop of the half-inch grid, and collapsing them put "Name:"
-    // five stops short of where Word and LibreOffice write it.
-    if (segment === 0 && alignment !== 'left') {
-      const after = tokens[i + 1];
-      if (after?.kind === 'text' && after.tab === true) {
-        tokens[i] = { ...tok, widthPt: 0, text: '' };
-        continue;
-      }
+    // A right/centre/decimal stop with nothing to place before the next tab
+    // still takes the pen to it, and the next tab goes on from there to the
+    // stop after it, as a left stop and the default grid do (each of
+    // fdo79915.docx's six tabs advances one stop of the grid). Issue #146: a
+    // footer's text, two tabs and a PAGE field against a centre stop at 8222
+    // and a right one at 9356 twips — Word and LibreOffice end the number at
+    // the right stop. Handing the centre stop on to the second tab instead
+    // centred the number on it, 57pt short. Measured in Word for every kind:
+    // centre, right or decimal and then right, centre or left, at the line's
+    // start and mid-line, in RTL paragraphs too, and past the last stop the
+    // next tab takes the default grid.
+    //
+    // Only where nothing is left for the next tab on this line does the stop
+    // still pass to it. Word moves that tab down a line and sets what follows
+    // it against the stop from there — "ab" and two tabs against one right
+    // stop at the margin end "XYZ" at the margin on the line below — and this
+    // line is already broken, so the text keeps its place across the page,
+    // one line up, rather than running off the edge.
+    if (
+      ink === 0 &&
+      tabAfter &&
+      alignment !== 'left' &&
+      !tabRoomAfter(resolved, isFirst, availableWidthPt, position)
+    ) {
+      tokens[i] = { ...tok, widthPt: 0, text: '' };
+      continue;
     }
     let target = position;
-    if (alignment === 'right') target = position - segment;
-    else if (alignment === 'center') target = position - segment / 2;
-    else if (alignment === 'decimal') target = position - (seenDecimal ? decimalAt : segment);
+    if (alignment === 'right') target = position - ink;
+    else if (alignment === 'center') target = position - ink / 2;
+    else if (alignment === 'decimal') target = position - (seenDecimal ? decimalAt : ink);
     const width = Math.max(0, target - x);
     const leaderChar = stop?.leader === undefined ? undefined : TAB_LEADER_CHARS.get(stop.leader);
     const text = leaderChar === undefined ? '' : fillLeader(tok, leaderChar, width);
     tokens[i] = { ...tok, widthPt: width, text };
     x += width;
   }
+}
+
+/**
+ * Where a tab stop stands, from the text margin. §17.3.3.23 — an absolute
+ * position tab has no distance of its own: it reaches for the middle or the
+ * far side of the column, wherever those fall.
+ *
+ * @param sp               The stop.
+ * @param availableWidthPt The line's width.
+ * @returns Its position, in points.
+ */
+function tabStopAt(sp: TabStop, availableWidthPt: number): number {
+  if (sp.relativeTo === 'center') return availableWidthPt / 2;
+  if (sp.relativeTo === 'right') return availableWidthPt;
+  return sp.positionPt;
+}
+
+/**
+ * Whether a tab that starts at `fromPt` still has a stop on this line: a stop
+ * of the paragraph's own within its column, or a stop of the default grid
+ * within its right indent (Word moves a tab bound past those down a line).
+ *
+ * @param resolved         The paragraph's resolved properties: stops, indents, grid.
+ * @param isFirst          Whether this is the paragraph's first line.
+ * @param availableWidthPt The line's width, from where it starts.
+ * @param fromPt           Where the tab starts, from the text margin.
+ * @returns True when the tab reaches a stop before the line ends.
+ */
+function tabRoomAfter(
+  resolved: ResolvedParagraphProperties,
+  isFirst: boolean,
+  availableWidthPt: number,
+  fromPt: number,
+): boolean {
+  const lineEnd = resolved.indentLeft + (isFirst ? resolved.indentFirstLine : 0) + availableWidthPt;
+  const columnEnd = lineEnd + Math.max(0, resolved.indentRight);
+  const own = resolved.tabs.find((sp) => tabStopAt(sp, availableWidthPt) > fromPt + 0.01);
+  if (own) return tabStopAt(own, availableWidthPt) <= columnEnd + 0.01;
+  const grid = resolved.defaultTabStopPt ?? DEFAULT_TAB_STOP_PT;
+  if (!(grid > 0)) return true;
+  return (Math.floor(fromPt / grid) + 1) * grid <= lineEnd + 0.01;
 }
 
 /** As many leader characters as fit the gap, measured in the tab's own font. */
@@ -7918,6 +7940,9 @@ function lineFromRange(
   resolved: ResolvedParagraphProperties,
   leading: LineLeading,
   allowEmpty = false,
+  // Whether a line a soft break leaves empty is measured by that break's run
+  // (Word's way, see below) rather than by a default size.
+  emptyByBreak = false,
 ): Line | null {
   let st = start;
   let et = breakIdx;
@@ -7949,10 +7974,12 @@ function lineFromRange(
   ) {
     et--;
   }
-  // An empty range is a line with nothing on it. At the end of a paragraph
-  // that is the final forced break and there is no line to draw; in the MIDDLE
+  // An empty range is a line with nothing on it. In the MIDDLE of a paragraph
   // it is the blank line two `<w:br/>` in a row ask for, and dropping it ran
-  // the paragraphs of 60329.docx's table cells together.
+  // the paragraphs of 60329.docx's table cells together. At the end it is what
+  // follows the last forced break: nothing at all when that break is the
+  // paragraph's own, and the line its mark stands on when it is a `w:br` —
+  // which `wrap` sets in the mark's size.
   if (st >= et && !allowEmpty) return null;
 
   const lineTokens: Array<Token> = [];
@@ -8004,9 +8031,19 @@ function lineFromRange(
   // sets a line of 9pt words between 72pt spaces, which we drew 72pt tall and
   // spilled onto a second page. A line that is NOTHING but spaces keeps its
   // own size: there is nothing else to measure it by.
-  const prints = lineTokens.some((t) => !t.isSpace);
-  for (const t of lineTokens) {
-    contentWidth += t.widthPt;
+  //
+  // §17.3.3.1 — and a line with nothing on it at all stands as tall as the
+  // `w:br` that ends it, though that break counts for nothing beside text. In
+  // Word a paragraph of one 22pt `w:br` and a 12pt mark is a 24.5pt line over
+  // a 13.45pt one; "P17", a 12pt break and a 24pt one stand 13.45, 27.2 and
+  // 13.45pt tall; and a 24pt break after 12pt text leaves that line 12pt
+  // (Courier New, probes in .git/wip-br-tabs). Measured at a default 12pt
+  // instead, every such line came out 14.4pt whatever the text around it.
+  const sizer = emptyByBreak && lineTokens.length === 0 ? entries[breakIdx]?.breakToken : undefined;
+  const measured = sizer ? [sizer] : lineTokens;
+  const prints = measured.some((t) => !t.isSpace);
+  for (const t of measured) {
+    if (t !== sizer) contentWidth += t.widthPt;
     if (prints && t.isSpace) continue;
     const sz = tokenLineSize(t);
     if (sz > maxSize) maxSize = sz;
@@ -8098,6 +8135,10 @@ function wrap(
   // Float text wrapping: explicit per-line widths (the last reuses for the
   // tail, the Knuth-Plass convention). Overrides first/other when given.
   lineWidths?: ReadonlyArray<number>,
+  // In a document Word typesets: the line the paragraph mark stands on alone,
+  // at a width. Given, a soft break at the paragraph's end leaves that line
+  // after it, and a line a soft break leaves empty is measured by its break.
+  markLine?: (widthPt: number) => Line,
 ): Array<Line> {
   if (tokens.length === 0) return [];
 
@@ -8156,7 +8197,8 @@ function wrap(
     let lineIdx = 0;
     for (const [i, breakIdx] of at.entries()) {
       const width = lineIdx < widths.length ? widths[lineIdx]! : widths[widths.length - 1]!;
-      const line = lineFromRange(
+      const last = i === at.length - 1;
+      let line = lineFromRange(
         entries,
         start,
         breakIdx,
@@ -8164,8 +8206,23 @@ function wrap(
         isFirst,
         resolved,
         leading,
-        i < at.length - 1,
+        !last,
+        markLine !== undefined,
       );
+      // §17.3.3.1 — a `w:br` (or §17.3.3.4 `w:cr`) at the very end of a
+      // paragraph still ends a line, and the paragraph mark stands on the
+      // next one by itself, in the mark's own size and the paragraph's
+      // spacing: Word and LibreOffice set a heading that ends "Scanned
+      // Assets", a tab and a `w:br` two lines tall (issue #144), a paragraph
+      // of nothing but a `w:br` two lines, and a 12pt break before a 24pt mark
+      // 13.45 + 27.65pt. Whatever spaces or tabs follow the break do not count
+      // there: a 24pt space or tab after it leaves the line 12pt, the mark's.
+      // The same in table cells, headers and text boxes. Dropped, the next
+      // paragraph started a line too high, and a cover page that opens with
+      // such a paragraph sat a line higher than in Word.
+      if (line === null && last && markLine && i > 0 && entries[at[i - 1]!]?.softBreak) {
+        line = { ...markLine(width), firstLine: false };
+      }
       // §17.15.1.35 — the compat flag fdo106029.docx sets: a line the author
       // ended with Shift+Enter is not the paragraph's last, but it reads like
       // one, and stretching "Lorem ipsum … elit." across the whole measure is
@@ -8197,9 +8254,12 @@ function wrap(
   // every break in the paragraph to fix one.
   const spill = (ls: ReadonlyArray<Line>): number =>
     Math.max(0, ...ls.map((l) => l.contentWidthPt - l.availableWidthPt));
-  if (profile === 'ream' && lines.length === 1 && spill(lines) > 0.01) {
+  // The lines a break leaves empty — the mark's after a trailing `w:br` among
+  // them — are not lines the breaker chose, and do not count.
+  const chosen = (ls: ReadonlyArray<Line>): number => ls.filter((l) => l.tokens.length > 0).length;
+  if (profile === 'ream' && chosen(lines) === 1 && spill(lines) > 0.01) {
     const greedy = buildLines(greedyBreakLines(items, widths));
-    if (greedy.length > 1 && spill(greedy) < spill(lines) - 0.01) lines = greedy;
+    if (chosen(greedy) > 1 && spill(greedy) < spill(lines) - 0.01) lines = greedy;
   }
 
   if (lines.length > 0) lines[lines.length - 1]!.isLastInParagraph = true;
@@ -8633,23 +8693,29 @@ function computeColumnWidths(
   }
   if (colCount === 0) return [];
 
-  // §17.4.49 `w:tblGrid` is the document's own answer, not a hint. Word writes
-  // the grid it last laid the table out at, and every reader — Word reopening
-  // the file included — draws it at those widths; autofit only ever recomputes
-  // them when the user edits. Refitting to the natural width of the text
-  // instead shrank a table to its words: 2_table_doc.docx declares two 221pt
-  // columns across the page and we drew a 100pt box in the corner.
+  // A Word document's table is laid out as Word lays it out on opening the
+  // file: from the cells' `w:tcW`, their text and the table's `w:tblW`, the
+  // grid standing only where it is what the cells declare (see
+  // word-table-columns).
+  if (options.typesetBy === 'word') {
+    const availablePt = contentWidth + legacyCellReach(table, options);
+    return (
+      wordColumnWidths(table, {
+        colCount,
+        availablePt,
+        padding: (cell) => cellPadding(table, cell),
+        content: (cell) => cellContentWidths(cell, options, fontResources, contentWidth),
+      }) ?? gridWidthsScaled(table, availablePt, colCount)
+    );
+  }
+
+  // Anywhere else the grid is the table's own geometry, not a hint: a slide's
+  // `a:gridCol`, the columns a PDF page draws. The text does not resize it.
   //
   // The measured autofit stays for a table that brings no grid at all.
-  // §17.4.53 `w:tblLayout w:type="fixed"` — the preferred widths ARE the
-  // layout, and where they disagree with the grid it is the grid that is
-  // stale. fdo38414.docx writes a grid whose first column is 132 twips and
-  // cells that ask for a fifth of the table; drawn on the grid its first
-  // column was two characters wide and every column after it landed one place
-  // to the left of where Word and LibreOffice draw it.
-  // A grid too short for the rows cannot place them at all, whatever the
-  // layout mode says: fdo59273.docx grids four columns and then spans its four
-  // cells across eleven, and the two on the right fell off the table.
+  // `fixed` with cell widths: the cells' widths are the layout, and where they
+  // disagree with the grid it is the grid that is stale. A grid too short for
+  // the rows cannot place them at all, whatever the layout mode says.
   const gridShort = gridColTwips(table).length < colCount;
   const declared = declaredColumnWidths(table, colCount, contentWidth, gridShort);
   if (declared) return declared;
@@ -8664,14 +8730,7 @@ function computeColumnWidths(
     for (let i = 0; i < row.cells.length; i++) {
       const cell = row.cells[i]!;
       const span = Math.max(1, cell.properties.colSpan ?? 1);
-      const padLeft =
-        cell.properties.margins?.left ??
-        table.properties.defaultCellMargins?.left ??
-        DEFAULT_CELL_PADDING_TWIPS * TWIP_TO_PT;
-      const padRight =
-        cell.properties.margins?.right ??
-        table.properties.defaultCellMargins?.right ??
-        DEFAULT_CELL_PADDING_TWIPS * TWIP_TO_PT;
+      const { left: padLeft, right: padRight } = cellPadding(table, cell);
       let maxContent = 0;
       for (const el of cell.content) {
         if (el.kind !== 'paragraph') continue;
@@ -8703,6 +8762,224 @@ function computeColumnWidths(
   }
 
   return colNaturalWidths;
+}
+
+/**
+ * [MS-DOCX] `compatibilityMode` — how much wider than the text column a table
+ * may be in a document laid out as Word 2010 and earlier lay it out. There the
+ * cells' TEXT spans the column: the table stands out by its first cell's left
+ * margin (see {@link legacyTableOutdent}) and reaches past the right one by
+ * its last cell's right margin. Measured in Word for Mac, modes 14 and none
+ * alike: a 100% table was 534.1pt on a 523.3pt column with 5.4pt margins, a
+ * 50% one 267.05pt; with 20pt and 40pt margins at the two ends 583.3pt and
+ * 291.65pt; an autofit table of 5in+5in stopped at 534.1pt. A table stated in
+ * points did not change. At mode 15 every one of them measured the column
+ * alone.
+ *
+ * @param table   The table.
+ * @param options Render options: whose document, and which mode.
+ * @returns The points a percentage and the page's limit measure past the
+ *          column, 0 where the table stands at it.
+ */
+function legacyCellReach(table: Table, options: StyledRenderOptions): number {
+  if (options.typesetBy !== 'word' || (options.compatibilityMode ?? 0) >= 15) return 0;
+  if ((table.properties.alignment ?? 'left') !== 'left' || table.properties.float) return 0;
+  const first = table.rows[0];
+  if (!first || (first.properties.gridBefore ?? 0) > 0) return 0;
+  const head = first.cells[0];
+  const tail = first.cells[first.cells.length - 1];
+  if (!head || !tail) return 0;
+  return cellPadding(table, head).left + cellPadding(table, tail).right;
+}
+
+/** A cell's left and right margins: its own, else the table's, else Word's 0.08in. */
+function cellPadding(table: Table, cell: TableCell): { left: number; right: number } {
+  return {
+    left:
+      cell.properties.margins?.left ??
+      table.properties.defaultCellMargins?.left ??
+      DEFAULT_CELL_PADDING_TWIPS * TWIP_TO_PT,
+    right:
+      cell.properties.margins?.right ??
+      table.properties.defaultCellMargins?.right ??
+      DEFAULT_CELL_PADDING_TWIPS * TWIP_TO_PT,
+  };
+}
+
+/**
+ * How wide a table cell's content is, set as narrow as it breaks and as wide
+ * as it runs on one line: what Word's autofit sizes a column by. A floating
+ * drawing takes no room in the cell, so it counts for nothing.
+ *
+ * @param cell          The cell.
+ * @param options       The render options.
+ * @param fontResources The faces the text is measured in.
+ * @param contentWidth  The width the cell's table stands in, for a nested table.
+ * @returns The cell's content widths, its margins left out.
+ */
+function cellContentWidths(
+  cell: TableCell,
+  options: StyledRenderOptions,
+  fontResources: ReadonlyMap<string, FontResource>,
+  contentWidth: number,
+): CellContentWidths {
+  let minPt = 0;
+  let maxPt = 0;
+  // Turned text runs down the cell: its lines stack across the width, which
+  // they do not set (tdf127814.docx's "a hónap napjai" stands in a 30pt column).
+  if (cell.properties.textDirection) return { minPt, maxPt };
+  for (const el of cell.content) {
+    let lo = 0;
+    let hi = 0;
+    if (el.kind === 'paragraph') {
+      ({ minPt: lo, maxPt: hi } = paragraphContentWidths(el.paragraph, options, fontResources));
+    } else if (el.kind === 'table') {
+      lo = hi = nestedTableWidth(el.table, options, fontResources, contentWidth);
+    } else {
+      const block = el.kind === 'image' ? el.image : el.kind === 'shape' ? el.shape : el.chart;
+      if (!block.float) lo = hi = block.width;
+    }
+    if (lo > minPt) minPt = lo;
+    if (hi > maxPt) maxPt = hi;
+  }
+  return { minPt, maxPt };
+}
+
+/**
+ * A paragraph's narrowest and widest setting: its longest unbreakable piece (a
+ * word, which may run across runs, the part of one up to a hyphen, an
+ * ideograph, an inline picture), and its longest line with no wrapping. The
+ * first line stands at the first-line indent, the rest at the left one. A word
+ * is reckoned at whichever indent leaves it more room: all_gaps_word.docx sets
+ * "4 ½ pt" with a 72pt hanging indent in a 51.6pt column Word did not widen.
+ */
+function paragraphContentWidths(
+  paragraph: Paragraph,
+  options: StyledRenderOptions,
+  fontResources: ReadonlyMap<string, FontResource>,
+): CellContentWidths {
+  let line = 0;
+  let firstLine: number | undefined;
+  let otherLines = 0;
+  let word = 0;
+  let widestWord = 0;
+  // The last run ended inside a word, so the next run's first piece joins it.
+  let inWord = false;
+  const endWord = (): void => {
+    if (word > widestWord) widestWord = word;
+    word = 0;
+    inWord = false;
+  };
+  const endLine = (): void => {
+    endWord();
+    if (firstLine === undefined) firstLine = line;
+    else if (line > otherLines) otherLines = line;
+    line = 0;
+  };
+  for (const run of paragraph.runs) {
+    if (run.pageBreak || run.columnBreak) endLine();
+    if (run.inlineImage) {
+      endWord();
+      word = run.inlineImage.width;
+      inWord = true;
+      line += word;
+      endWord();
+      continue;
+    }
+    if (run.math || run.text.length === 0) continue;
+    const resolved = resolveRunProperties(run.properties, paragraph.properties, options.styles);
+    const primary = runFontKeyAndParsed(
+      options,
+      resolved.fontFamily.ascii,
+      resolved.bold,
+      resolved.italic,
+    );
+    const faces = runFaces(options, resolved, primary, run.text);
+    const measure = (text: string): number => {
+      let total = 0;
+      for (const span of faceSpans(faces, text)) {
+        total +=
+          lookupFont(fontResources, span.fontKey).measure.textWidthPt(
+            span.text,
+            resolved.fontSizePt,
+          ) * (span.synthetic?.widthScale ?? 1);
+      }
+      return total * (resolved.widthScale ?? 1);
+    };
+    run.text.split('\n').forEach((part, k) => {
+      if (k > 0) endLine();
+      tokenizeText(part).forEach((tok, t) => {
+        if (tok.isSpace) {
+          // A tab is at least a space wide; where it ends depends on the stops.
+          line += measure(tok.tab ? ' ' : tok.text);
+          endWord();
+          return;
+        }
+        // Pieces of one run are separate boxes (ideographs break between
+        // them); a run's first piece carries on the word the last one ended.
+        if (t > 0) endWord();
+        for (const piece of hyphenPieces(tok.text)) {
+          const w = measure(piece.text);
+          line += w;
+          word += w;
+          inWord = true;
+          if (piece.breakAfter) endWord();
+        }
+      });
+    });
+  }
+  endLine();
+  const pp = resolveParagraphProperties(paragraph.properties, options.styles);
+  const left = Math.max(0, pp.indentLeft);
+  const right = Math.max(0, pp.indentRight);
+  const first = Math.max(0, pp.indentLeft + pp.indentFirstLine);
+  return {
+    minPt: widestWord + Math.min(left, first) + right,
+    maxPt: Math.max((firstLine ?? 0) + first, otherLines > 0 ? otherLines + left : 0) + right,
+  };
+}
+
+/** A word cut after each hyphen a line may break at (see `HYPHENS`, `SOFT_HYPHEN`). */
+function hyphenPieces(text: string): Array<{ text: string; breakAfter: boolean }> {
+  const out: Array<{ text: string; breakAfter: boolean }> = [];
+  let buf = '';
+  for (const ch of text) {
+    buf += ch;
+    if (ch === SOFT_HYPHEN || HYPHENS.has(ch.codePointAt(0)!)) {
+      out.push({ text: buf, breakAfter: true });
+      buf = '';
+    }
+  }
+  if (buf) out.push({ text: buf, breakAfter: false });
+  return out;
+}
+
+// Nested tables measured for the autofit of the table they stand in, per
+// layout (the font resources are one layout's), so a deep nest is not
+// re-measured at every level.
+const nestedWidths = new WeakMap<ReadonlyMap<string, FontResource>, WeakMap<Table, number>>();
+
+/**
+ * How much of a cell a table nested in it takes: the width of its columns
+ * plus its indent. A table sized as a share of its cell fits whatever it gets,
+ * so it asks for nothing (Word: a 2in fixed table in an autofit cell made the
+ * column 2in and its margins).
+ */
+function nestedTableWidth(
+  table: Table,
+  options: StyledRenderOptions,
+  fontResources: ReadonlyMap<string, FontResource>,
+  contentWidth: number,
+): number {
+  if (table.properties.float || table.properties.widthType === 'pct') return 0;
+  let cache = nestedWidths.get(fontResources);
+  if (!cache) nestedWidths.set(fontResources, (cache = new WeakMap()));
+  const hit = cache.get(table);
+  if (hit !== undefined) return hit;
+  const widths = computeColumnWidths(table, options, fontResources, contentWidth);
+  const w = widths.reduce((s, v) => s + v, 0) + Math.max(0, table.properties.indentPt ?? 0);
+  cache.set(table, w);
+  return w;
 }
 
 // Recover the integer twips behind a Pt grid column. Grid ratios and sums were
@@ -9690,6 +9967,7 @@ class PageAssembler {
     this.cursorY = this.pageTopY();
     this.colStartY = this.cursorY;
     this.bandTopY = this.cursorY;
+    this.bandLowY = undefined;
   }
 
   readonly pages: Array<LaidOutPage> = [];
@@ -9808,6 +10086,12 @@ class PageAssembler {
    * columns run beside each other from there, not from the paper's top.
    */
   bandTopY: number;
+  /**
+   * The lowest the band's earlier columns reached, y-up: what a `continuous`
+   * section after the band starts under. Undefined while the band is in its
+   * first column.
+   */
+  bandLowY: number | undefined;
   /** The current column's left edge (`marginLeft` plus the column x-offset). */
   colLeft = (): number => this.ctx.marginLeft + (this.ctx.columns?.[this.colIdx]?.xOffsetPt ?? 0);
   /** The current column's width (the section content width when single-column). */
@@ -9864,6 +10148,7 @@ class PageAssembler {
     if (this.ctx.columns && this.colIdx + 1 < this.ctx.columns.length) {
       this.colIdx++;
       this.colStartLen = this.current.length;
+      this.bandLowY = Math.min(this.bandLowY ?? this.cursorY, this.cursorY);
       this.cursorY = this.bandTopY;
       this.colStartY = this.cursorY;
       // The next column of a balanced band gets the same share — except the
@@ -9953,8 +10238,18 @@ class PageAssembler {
     this.colIdx = 0;
     this.colStartLen = this.current.length;
     // The section's own top margin still governs an empty page — it is the
-    // first thing on the paper — but past that the cursor is where it is.
-    this.cursorY = Math.min(this.cursorY, next.pageHeight - next.marginTop);
+    // first thing on the paper — but past that the cursor is where it is: under
+    // the LOWEST column of the band before. An unbalanced band — one a column
+    // break ends — is longest in its first column as often as not, and Word
+    // starts the next section under that one ("X1", "X2" and a column break,
+    // the next section a line under "X2"); from the last column's cursor it
+    // was set over the first.
+    this.cursorY = Math.min(
+      this.cursorY,
+      this.bandLowY ?? this.cursorY,
+      next.pageHeight - next.marginTop,
+    );
+    this.bandLowY = undefined;
     this.bandTopY = this.cursorY;
     this.colStartY = this.cursorY;
     // §17.6.4 — balance the band when it has columns to share and its content
@@ -10045,20 +10340,33 @@ class PageAssembler {
       ...(f.wrapSide === 'bothSides' ? { wrapBothSides: true } : {}),
     });
   };
-  /** The frame a float anchored in the body flow is resolved against. */
-  floatFrame = (): FloatFrame => ({
-    pageLeft: 0,
-    pageWidth: this.ctx.pageWidth,
-    pageTopYUp: this.ctx.pageHeight,
-    pageBottomYUp: 0,
-    marginLeft: this.ctx.marginLeft,
-    contentWidth: this.ctx.contentWidth,
-    marginTopYUp: this.ctx.pageHeight - this.ctx.marginTop,
-    marginBottomYUp: this.ctx.marginBottom,
-    columnLeft: this.colLeft(),
-    columnWidth: this.colWidth(),
-    anchorY: this.cursorY,
-  });
+  /**
+   * The frame a float anchored in the body flow is resolved against: the
+   * page, the text area THIS page's bands leave it (a page under a taller
+   * header than the rest has a shorter `margin` box), the column, the page's
+   * parity, and — for a picture aligned inside or outside the page itself —
+   * half the header's and footer's distances from the edges, which is where
+   * Word stops it.
+   */
+  floatFrame = (): FloatFrame => {
+    const margins = this.pageMargins();
+    return {
+      pageLeft: 0,
+      pageWidth: this.ctx.pageWidth,
+      pageTopYUp: this.ctx.pageHeight,
+      pageBottomYUp: 0,
+      marginLeft: this.ctx.marginLeft,
+      contentWidth: this.ctx.contentWidth,
+      marginTopYUp: this.ctx.pageHeight - margins.top,
+      marginBottomYUp: margins.bottom,
+      columnLeft: this.colLeft(),
+      columnWidth: this.colWidth(),
+      anchorY: this.cursorY,
+      evenPage: this.globalPageIdx % 2 === 1,
+      pageInsetTopPt: (this.ctx.headerOffsetPt ?? WORD_BAND_OFFSET_PT) / 2,
+      pageInsetBottomPt: (this.ctx.footerOffsetPt ?? WORD_BAND_OFFSET_PT) / 2,
+    };
+  };
   /** The float's left edge on the page, resolved from its horizontal anchor. */
   floatX = (f: FloatAnchor, widthPt: number): number => floatXIn(this.floatFrame(), f, widthPt);
   /**
@@ -10311,7 +10619,7 @@ class PageAssembler {
           this.ctx.pageHeight,
           this.ctx.contentWidth,
           structId,
-          undefined,
+          this.floatFrame(),
           this.collapseSpacing,
         ),
       );
@@ -10328,8 +10636,10 @@ class PageAssembler {
     pageIdx: number;
     /** §17.6.12 — the page's number as its section prints it. */
     pageText: string;
+    /** The page the band's anchored drawings are placed against. */
+    page: BandPage;
     position: 'header' | 'footer';
-    render: (pageText: string, totalPages: number) => Array<PageItem>;
+    render: (pageText: string, totalPages: number, page?: BandPage) => Array<PageItem>;
   }> = [];
 
   /**
@@ -10359,12 +10669,23 @@ class PageAssembler {
     );
     const header = pickBand(this.ctx.headerSet, band);
     const footer = pickBand(this.ctx.footerSet, band);
+    // §17.6.20 — a section whose lines run down the sheet was laid out in the
+    // frame its text reads in, and everything but the bands turns onto the
+    // sheet here; the header and the footer were laid out on the sheet.
+    const sheet = this.ctx.sheet;
+    // §20.4.3.1 — the bands' anchored drawings are placed against this page:
+    // its parity (the sheet's own count) and the text area it ends up with.
+    const bandPage: BandPage = {
+      evenPage: this.globalPageIdx % 2 === 1,
+      margins: sheet ? { top: sheet.marginTop, bottom: sheet.marginBottom } : this.pageMargins(),
+    };
     // §17.6.12 — printed in the numerals the section numbers its pages in.
     const pageText = pageNumberText(this.pageNumber, this.ctx.properties.pageNumberFormat);
     if (header.renderDynamic) {
       this.dynBands.push({
         pageIdx: this.pages.length,
         pageText,
+        page: bandPage,
         position: 'header',
         render: header.renderDynamic,
       });
@@ -10373,14 +10694,11 @@ class PageAssembler {
       this.dynBands.push({
         pageIdx: this.pages.length,
         pageText,
+        page: bandPage,
         position: 'footer',
         render: footer.renderDynamic,
       });
     }
-    // §17.6.20 — a section whose lines run down the sheet was laid out in the
-    // frame its text reads in, and everything but the bands turns onto the
-    // sheet here; the header and the footer were laid out on the sheet.
-    const sheet = this.ctx.sheet;
     const onSheet = (items: ReadonlyArray<PageItem>): ReadonlyArray<PageItem> =>
       sheet ? items.map((item) => turnOntoSheet(item, sheet.width)) : items;
     this.pages.push({
@@ -10389,7 +10707,7 @@ class PageAssembler {
         ...onSheet(this.pageBackgroundItems()),
         ...onSheet(this.pageBorderItems()),
         ...onSheet(this.columnSeparatorItems()),
-        ...header.commands,
+        ...(header.drawFor?.(bandPage) ?? header.commands),
         // §20.4.2.3 — what the page puts behind its content paints before all
         // of it, in this order, rather than riding the passes where every
         // shape lands on top of every image.
@@ -10397,7 +10715,7 @@ class PageAssembler {
         ...onSheet(this.current),
         ...onSheet(this.inFront(PageAssembler.byZ(this.floatsFront))),
         ...onSheet(this.renderNotesBand()),
-        ...footer.commands,
+        ...(footer.drawFor?.(bandPage) ?? footer.commands),
       ],
       width: pt(sheet?.width ?? this.ctx.pageWidth),
       height: pt(sheet?.height ?? this.ctx.pageHeight),
@@ -10421,6 +10739,7 @@ class PageAssembler {
     this.cursorY = this.pageTopY();
     this.colStartY = this.cursorY;
     this.bandTopY = this.cursorY;
+    this.bandLowY = undefined;
     this.balanceBottomY = undefined;
     this.balanceHeightPt = 0;
     this.pageStartCtx = this.ctx;
@@ -10638,6 +10957,7 @@ class PageAssembler {
     this.cursorY = this.pageTopY();
     this.colStartY = this.cursorY;
     this.bandTopY = this.cursorY;
+    this.bandLowY = undefined;
     this.balanceBottomY = undefined;
     this.balanceHeightPt = 0;
   };
@@ -10890,7 +11210,7 @@ function paginateSections(
     if (next.pageWidth !== here.pageWidth || next.pageHeight !== here.pageHeight) return;
     if ((next.sheet === undefined) !== (here.sheet === undefined)) return;
     const end = Math.min(here.endIndex, blocks.length);
-    asm.beginBalancedBand(blocksHeight(blocks.slice(fromBlock, end), typesetByWord));
+    asm.beginBalancedBand(balancedBandHeight(blocks.slice(fromBlock, end), typesetByWord));
   };
   balanceIfEndsContinuous(0);
 
@@ -10917,7 +11237,7 @@ function paginateSections(
         // §17.6.4 — the band's whole height, so a multi-column one can be
         // balanced: every block from here to the section's end.
         const end = Math.min(next.endIndex, blocks.length);
-        asm.startBandSection(next, blocksHeight(blocks.slice(blockIdx, end), typesetByWord));
+        asm.startBandSection(next, balancedBandHeight(blocks.slice(blockIdx, end), typesetByWord));
         continue;
       }
       // Forced: a section owns a page even when the body it holds draws
@@ -11632,7 +11952,7 @@ function paginateSections(
   // dynamic bands and splice them where the static band would have sat
   // (header before the body content, footer after).
   for (const d of asm.dynBands) {
-    const cmds = d.render(d.pageText, asm.pages.length);
+    const cmds = d.render(d.pageText, asm.pages.length, d.page);
     const page = asm.pages[d.pageIdx]!;
     if (d.position === 'header') page.commands.unshift(...cmds);
     else page.commands.push(...cmds);

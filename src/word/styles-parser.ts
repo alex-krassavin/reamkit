@@ -27,7 +27,8 @@ import { eighthPtToPt, twipsToPt } from '@/core/ir';
 import { parseParagraphProperties } from '@/word/paragraph-properties';
 import { parseRunProperties } from '@/word/run-properties';
 import { shadingFillHex } from '@/word/shading';
-import { asArray, asElement, getAttr, getVal, parseIntAttr } from '@/word/xml-helpers';
+import { cellMarginTwips, readTableMeasure } from '@/word/table-width';
+import { asArray, asElement, getAttr, getVal } from '@/word/xml-helpers';
 
 const decoder = new TextDecoder('utf-8');
 
@@ -177,8 +178,9 @@ function parseTableStyleParts(
   if (tblPr) {
     const rowBand = intVal(tblPr['w:tblStyleRowBandSize']);
     const colBand = intVal(tblPr['w:tblStyleColBandSize']);
-    if (rowBand !== undefined && rowBand > 0) out.rowBandSize = rowBand;
-    if (colBand !== undefined && colBand > 0) out.colBandSize = colBand;
+    // A 0 is kept: stated by a derived style, it turns its parent's bands off.
+    if (rowBand !== undefined && rowBand >= 0) out.rowBandSize = rowBand;
+    if (colBand !== undefined && colBand >= 0) out.colBandSize = colBand;
   }
 
   const conditions: Array<TableStyleCondition> = [];
@@ -187,7 +189,7 @@ function parseTableStyleParts(
     if (!cond) continue;
     const typeAttr = getAttr(cond, 'type');
     if (!typeAttr || !CONDITION_TYPES.has(typeAttr as TableStyleConditionType)) continue;
-    const layer = parseTableStyleLayer(cond, themeFonts);
+    const layer = parseTableStyleLayer(cond, themeFonts, true);
     if (layer) conditions.push({ type: typeAttr as TableStyleConditionType, layer });
   }
   if (conditions.length > 0) out.tableConditions = conditions;
@@ -195,11 +197,13 @@ function parseTableStyleParts(
 }
 
 // One layer = the element's tblPr (table borders + cell margins) + tcPr
-// (region cell borders + shading) + rPr/pPr. tblBorders wins over tcBorders
-// when both appear (the base layer's table grid vs a region's own edges).
+// (region cell borders + shading + cell margins) + rPr/pPr. tblBorders wins
+// over tcBorders when both appear (the base layer's table grid vs a region's
+// own edges). `region` marks a `w:tblStylePr`.
 function parseTableStyleLayer(
   el: Record<string, unknown>,
   themeFonts?: ThemeFonts,
+  region = false,
 ): TableStyleLayer | undefined {
   const tblPr = asElement(el['w:tblPr']);
   const tcPr = asElement(el['w:tcPr']);
@@ -207,14 +211,26 @@ function parseTableStyleLayer(
   const borders =
     parseFlatBorders(tblPr ? asElement(tblPr['w:tblBorders']) : undefined) ??
     parseFlatBorders(tcPr ? asElement(tcPr['w:tcBorders']) : undefined);
-  const cellMargins = parseFlatCellMargins(tblPr ? asElement(tblPr['w:tblCellMar']) : undefined);
-  // §17.4.65 `w:tblInd` — the table indent a whole-table layer declares.
+  const cellMargins = parseFlatCellMargins(
+    tblPr ? asElement(tblPr['w:tblCellMar']) : undefined,
+    true,
+  );
+  // §17.4.42 — a style's `w:tcMar` is honoured too, and as the CELL's own
+  // margin rather than the table's default: Word 16.114 insets a style's
+  // `w:tcPr/w:tcMar` of 1080 by 54pt even under a table that states its own
+  // `w:tblCellMar` of 720 (style-cellmar probes t14, t20, t13, t16).
+  const cellLevelMargins = parseFlatCellMargins(
+    tcPr ? asElement(tcPr['w:tcMar']) : undefined,
+    false,
+  );
+  // §17.4.65 `w:tblInd` — the table indent a whole-table layer declares, read
+  // as the table's own is (table-parser.ts): only an absolute measure indents.
   const tblInd = tblPr ? asElement(tblPr['w:tblInd']) : undefined;
-  const indW = tblInd ? parseIntAttr(tblInd, 'w') : undefined;
   const indType = tblInd ? getAttr(tblInd, 'type') : undefined;
+  const ind = tblInd ? readTableMeasure(getAttr(tblInd, 'w'), indType) : undefined;
   const indentPt =
-    indW !== undefined && (indType === undefined || indType === 'dxa')
-      ? twipsToPt(indW)
+    ind?.kind === 'dxa' && (ind.spelled || indType === undefined || indType === 'dxa')
+      ? twipsToPt(ind.twips)
       : undefined;
   const shading = parseFlatShading(tcPr ? tcPr['w:shd'] : undefined);
   const runProperties = parseRunProperties(el['w:rPr'], themeFonts);
@@ -223,6 +239,13 @@ function parseTableStyleLayer(
   const layer: TableStyleLayer = {
     ...(borders ? { borders } : {}),
     ...(cellMargins ? { cellMargins } : {}),
+    ...(cellLevelMargins ? { cellLevelMargins } : {}),
+    // A region that states a tblPr or tcPr at all, margins or not, takes the
+    // place of its namesake's margins up the basedOn chain. A derived style's
+    // firstRow with nothing but a `w:shd` in its tcPr lost the 54pt its
+    // parent's firstRow `w:tcMar` gave, one with only an `w:rPr` kept them
+    // (style-cellmar probes k03, q02, q03, k01, k04).
+    ...(region && (tblPr || tcPr) ? { restatesMargins: true } : {}),
     ...(indentPt !== undefined ? { indentPt } : {}),
     ...(shading ? { shading } : {}),
     ...(Object.keys(runProperties).length > 0 ? { runProperties } : {}),
@@ -277,14 +300,17 @@ function parseFlatBorders(el: Record<string, unknown> | undefined): CellBorders 
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
-function parseFlatCellMargins(el: Record<string, unknown> | undefined): CellMargins | undefined {
+function parseFlatCellMargins(
+  el: Record<string, unknown> | undefined,
+  tableDefault: boolean,
+): CellMargins | undefined {
   if (!el) return undefined;
+  // A style's `w:tblCellMar` is the table's default layer: a side given as a
+  // share or as auto/nil is no inset (cellMarginTwips), nor is a negative one.
+  // Its `w:tcMar` reads as a cell's own, which drops such a side instead.
   const read = (node: unknown): number | undefined => {
     const m = asElement(node);
-    if (!m) return undefined;
-    const w = getAttr(m, 'w');
-    const n = w !== undefined ? Number(w) : NaN;
-    return Number.isFinite(n) ? n : undefined;
+    return m ? cellMarginTwips(getAttr(m, 'w'), getAttr(m, 'type'), tableDefault) : undefined;
   };
   const top = read(el['w:top']);
   const bottom = read(el['w:bottom']);

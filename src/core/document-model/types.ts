@@ -838,7 +838,24 @@ export type StyleType = 'paragraph' | 'character' | 'table' | 'numbering';
  */
 export interface TableStyleLayer {
   readonly borders?: CellBorders;
+  /**
+   * §17.4.43 `w:tblPr/w:tblCellMar` — the layer's TABLE-level cell margins.
+   * The table's own `w:tblCellMar` outranks them side by side, a region's
+   * included.
+   */
   readonly cellMargins?: CellMargins;
+  /**
+   * §17.4.42 `w:tcPr/w:tcMar` — the layer's CELL-level margins. They outrank
+   * every table-level margin, the table's own `w:tblCellMar` included; only a
+   * cell's own `w:tcMar` beats them, side by side.
+   */
+  readonly cellLevelMargins?: CellMargins;
+  /**
+   * True when the layer carries a `w:tblPr` or `w:tcPr` of its own, margins
+   * or not. A region that does replaces the margins a `basedOn` ancestor's
+   * region of the same type gave, instead of adding to them.
+   */
+  readonly restatesMargins?: boolean;
   /** §17.4.65 `w:tblInd` — the table indent a whole-table layer declares. */
   readonly indentPt?: Pt;
   readonly shading?: CellShading;
@@ -898,7 +915,10 @@ export interface Style {
   /** Table styles only (§17.7.6): the base layer and conditional overrides. */
   readonly tableLayer?: TableStyleLayer;
   readonly tableConditions?: ReadonlyArray<TableStyleCondition>;
-  /** `w:tblPr/w:tblStyleRowBandSize` / `ColBandSize` (default 1). */
+  /**
+   * `w:tblPr/w:tblStyleRowBandSize` / `ColBandSize`: rows (columns) per band.
+   * Absent here and up the `basedOn` chain, or 0, the style bands nothing.
+   */
   readonly rowBandSize?: number;
   readonly colBandSize?: number;
 }
@@ -2253,29 +2273,54 @@ export interface FloatAnchor {
   readonly zOrder?: number;
   readonly posH?: {
     /**
-     * §20.4.3.3 ST_RelFromH. `leftMargin`/`rightMargin` are the margin BANDS
+     * §20.4.3.4 ST_RelFromH. `leftMargin`/`rightMargin` are the margin BANDS
      * beside the text area, which is where a marginal note is placed:
      * tdf103573.docx centres one box in each, and read as plain `margin` they
      * both landed in the middle of the text and printed over each other.
+     * `insideMargin`/`outsideMargin` are one band or the other by the page's
+     * parity, and `character` is where the anchor stands in its line.
      */
-    readonly relativeFrom: 'margin' | 'page' | 'column' | 'leftMargin' | 'rightMargin';
+    readonly relativeFrom:
+      | 'margin'
+      | 'page'
+      | 'column'
+      | 'character'
+      | 'leftMargin'
+      | 'rightMargin'
+      | 'insideMargin'
+      | 'outsideMargin';
     readonly offsetPt?: Pt; // wp:posOffset
-    readonly align?: 'left' | 'center' | 'right'; // wp:align
+    /**
+     * §20.4.2.1 `wp:align` (§20.4.3.1 ST_AlignH). `inside` is the left on an
+     * odd page and the right on an even one; `outside` the other way round.
+     */
+    readonly align?: 'left' | 'center' | 'right' | 'inside' | 'outside';
   };
   readonly posV?: {
     /**
-     * §20.4.3.4 ST_RelFromV. `topMargin`/`bottomMargin` measure from the top
+     * §20.4.3.5 ST_RelFromV. `topMargin`/`bottomMargin` measure from the top
      * edge of the margin BAND they name — page-content-bottom.docx hangs a
      * square 312pt above the bottom margin, and read as plain `margin` it went
-     * off the top of the page.
+     * off the top of the page. `insideMargin`/`outsideMargin` are one band or
+     * the other by the page's parity.
      */
-    readonly relativeFrom: 'margin' | 'page' | 'paragraph' | 'line' | 'topMargin' | 'bottomMargin';
+    readonly relativeFrom:
+      | 'margin'
+      | 'page'
+      | 'paragraph'
+      | 'line'
+      | 'topMargin'
+      | 'bottomMargin'
+      | 'insideMargin'
+      | 'outsideMargin';
     readonly offsetPt?: Pt;
     /**
-     * §20.4.3.1 `wp:align` (VML: `mso-position-vertical`) — a KEYWORD rather
-     * than an offset, which is how Word centres a watermark in its page.
+     * §20.4.2.2 `wp:align` (§20.4.3.2 ST_AlignV; VML: `mso-position-vertical`)
+     * — a KEYWORD rather than an offset, which is how Word centres a watermark
+     * in its page. `inside` is the top on an odd page and the bottom on an even
+     * one; `outside` the other way round.
      */
-    readonly align?: 'top' | 'center' | 'bottom';
+    readonly align?: 'top' | 'center' | 'bottom' | 'inside' | 'outside';
   };
   /**
    * §20.4.2.3 `@wrapText` on the wrap element — which side(s) of the drawing
