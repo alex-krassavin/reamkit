@@ -91,6 +91,10 @@ export interface BuildDocxOptions {
   // Images owned by the default header (word/_rels/header1.xml.rels) — for
   // exercising per-part relationship resolution.
   readonly headerImages?: Readonly<Record<string, FixtureImage>>;
+  // …and by the first-page header (word/_rels/header2.xml.rels) and the
+  // default footer (word/_rels/footer1.xml.rels), the same way.
+  readonly firstHeaderImages?: Readonly<Record<string, FixtureImage>>;
+  readonly footerImages?: Readonly<Record<string, FixtureImage>>;
   // Chart parts keyed by the relationship id a c:chart @r:id references. Each
   // value is a full <c:chartSpace>…</c:chartSpace> document.
   readonly charts?: Readonly<Record<string, string>>;
@@ -121,7 +125,12 @@ ${bodyInnerXml}
 </w:document>`;
 
   const imageDefaults = new Set<string>();
-  for (const img of Object.values({ ...options.images, ...options.headerImages })) {
+  for (const img of Object.values({
+    ...options.images,
+    ...options.headerImages,
+    ...options.firstHeaderImages,
+    ...options.footerImages,
+  })) {
     imageDefaults.add(`<Default Extension="${img.extension}" ContentType="${img.contentType}"/>`);
   }
   const headerSlots: Array<{ idx: number; xml: string; rId: string }> = [];
@@ -267,6 +276,12 @@ ${f.xml}
     const rel = `<Relationship Id="${c.rId}" Type="${REL_CHART}" Target="charts/chart${c.idx}.xml"/>`;
     (c.owner === 'footer' ? footerRels : docRels).push(rel);
   }
+  let footerImgIdx = 1;
+  for (const [rId, img] of Object.entries(options.footerImages ?? {})) {
+    const target = `media/fImage${String(footerImgIdx++)}.${img.extension}`;
+    entries[`word/${target}`] = img.bytes;
+    footerRels.push(`<Relationship Id="${rId}" Type="${REL_IMAGE}" Target="${target}"/>`);
+  }
   if (footerRels.length > 0) {
     entries['word/_rels/footer1.xml.rels'] = encoder.encode(
       `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -304,6 +319,21 @@ ${footerRels.join('\n')}
       `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
 ${hdrRels.join('\n')}
+</Relationships>`,
+    );
+  }
+  if (options.firstHeaderImages) {
+    const rels: Array<string> = [];
+    let imgIdx = 1;
+    for (const [rId, img] of Object.entries(options.firstHeaderImages)) {
+      const target = `media/h2Image${String(imgIdx++)}.${img.extension}`;
+      entries[`word/${target}`] = img.bytes;
+      rels.push(`<Relationship Id="${rId}" Type="${REL_IMAGE}" Target="${target}"/>`);
+    }
+    entries['word/_rels/header2.xml.rels'] = encoder.encode(
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+${rels.join('\n')}
 </Relationships>`,
     );
   }

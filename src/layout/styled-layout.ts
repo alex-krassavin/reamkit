@@ -102,6 +102,7 @@ import type { StructNode, StructType } from '@/pdf/struct-tree';
 
 import type { MetaPicture } from '@/core/metafile/picture';
 import type { Sheet } from '@/layout/turned-section';
+import type { FloatFrame } from '@/layout/float-position';
 import { pageItemBounds } from '@/layout/page-doc';
 import { ResourceStore, halfPtToPt, pt } from '@/core/ir';
 import { headingLevelOf, outlineLevelOf, outlineTitleOf } from '@/core/outline';
@@ -153,6 +154,7 @@ import {
 } from '@/core/drawingml/shape-render';
 import { StructTreeBuilder } from '@/pdf/struct-tree';
 import { floatIntoFrame, turnOntoSheet } from '@/layout/turned-section';
+import { BAND_PAGE_INSET_PT, floatTopYUpIn, floatXIn } from '@/layout/float-position';
 import { undrawnLoss } from '@/layout/undrawn';
 
 /**
@@ -530,6 +532,9 @@ export const A4_HEIGHT = 842;
  */
 export const GLUE_SHRINK_RATIO = 0.3;
 const TWIP_TO_PT = 1 / 20;
+
+/** §17.6.11 — Word's own distance of a header or footer from its page edge: half an inch. */
+const WORD_BAND_OFFSET_PT = 720 * TWIP_TO_PT;
 const EIGHTH_PT = 1 / 8;
 const DEFAULT_CELL_PADDING_TWIPS = 108;
 const DEFAULT_BORDER_SIZE_EIGHTH = 4;
@@ -1068,83 +1073,6 @@ const MIN_WRAP_WIDTH = 36;
 // paragraphs flow around. topAndBottom stays a plain in-flow block.
 function isOutOfFlowFloat(f: FloatAnchor | undefined): f is FloatAnchor {
   return f !== undefined && f.wrap !== 'topAndBottom';
-}
-
-/**
- * §20.4.3.3/§20.4.3.4 — the boxes an anchor's `relativeFrom` names, in page
- * coordinates (y-up). Normally they are the page, its margins and the text
- * column; for a drawing anchored inside a table cell they are all that cell,
- * which is what `@layoutInCell` asks for.
- */
-interface FloatFrame {
-  /** The `page` box. */
-  readonly pageLeft: number;
-  readonly pageWidth: number;
-  readonly pageTopYUp: number;
-  readonly pageBottomYUp: number;
-  /** The `margin` box — the text area. */
-  readonly marginLeft: number;
-  readonly contentWidth: number;
-  readonly marginTopYUp: number;
-  readonly marginBottomYUp: number;
-  /** The `column` box. */
-  readonly columnLeft: number;
-  readonly columnWidth: number;
-  /** The anchoring paragraph's top, y-up. */
-  readonly anchorY: number;
-}
-
-/** The float's left edge, resolved from its horizontal anchor (§20.4.3.3). */
-function floatXIn(frame: FloatFrame, f: FloatAnchor, widthPt: number): number {
-  const h = f.posH;
-  if (!h) return frame.columnLeft;
-  // §20.4.3.3 — the margin BANDS: the strip between the page edge and the
-  // text area on that side, which is where a marginal note is placed.
-  const textRight = frame.marginLeft + frame.contentWidth;
-  const pageRight = frame.pageLeft + frame.pageWidth;
-  const base =
-    h.relativeFrom === 'page' || h.relativeFrom === 'leftMargin'
-      ? frame.pageLeft
-      : h.relativeFrom === 'column'
-        ? frame.columnLeft
-        : h.relativeFrom === 'rightMargin'
-          ? textRight
-          : frame.marginLeft;
-  const span =
-    h.relativeFrom === 'page'
-      ? frame.pageWidth
-      : h.relativeFrom === 'column'
-        ? frame.columnWidth
-        : h.relativeFrom === 'leftMargin'
-          ? frame.marginLeft - frame.pageLeft
-          : h.relativeFrom === 'rightMargin'
-            ? pageRight - textRight
-            : frame.contentWidth;
-  if (h.align === 'center') return base + (span - widthPt) / 2;
-  if (h.align === 'right') return base + span - widthPt;
-  return base + (h.offsetPt ?? 0);
-}
-
-/** The float's TOP, y-up, resolved from its vertical anchor (§20.4.3.4). */
-function floatTopYUpIn(frame: FloatFrame, f: FloatAnchor, heightPt = 0): number {
-  const v = f.posV;
-  if (!v) return frame.anchorY;
-  // §20.4.3.1 — a keyword position: within the page or the margin box.
-  if (v.align !== undefined) {
-    const page = v.relativeFrom === 'page';
-    const topYUp = page ? frame.pageTopYUp : frame.marginTopYUp;
-    const bottomYUp = page ? frame.pageBottomYUp : frame.marginBottomYUp;
-    if (v.align === 'top') return topYUp;
-    if (v.align === 'bottom') return bottomYUp + heightPt;
-    return bottomYUp + (topYUp - bottomYUp + heightPt) / 2;
-  }
-  // §20.4.3.4 — the TOP margin band starts at the page's own top edge; the
-  // BOTTOM one starts where the text area ends.
-  if (v.relativeFrom === 'page' || v.relativeFrom === 'topMargin')
-    return frame.pageTopYUp - (v.offsetPt ?? 0);
-  if (v.relativeFrom === 'bottomMargin') return frame.marginBottomYUp - (v.offsetPt ?? 0);
-  if (v.relativeFrom === 'margin') return frame.marginTopYUp - (v.offsetPt ?? 0);
-  return frame.anchorY - (v.offsetPt ?? 0);
 }
 
 const FOOTNOTE_RULE_WIDTH = 144; // Word's ~2" short separator
@@ -1846,8 +1774,8 @@ function resolvePageDimensions(
   const sectionBottom = section?.margins?.bottom !== undefined ? section.margins.bottom : undefined;
   const gutter = section?.margins?.gutter ?? 0;
   const atTop = options.gutterAtTop === true;
-  const headerOffsetPt = section?.margins?.header ?? 720 * TWIP_TO_PT;
-  const footerOffsetPt = section?.margins?.footer ?? 720 * TWIP_TO_PT;
+  const headerOffsetPt = section?.margins?.header ?? WORD_BAND_OFFSET_PT;
+  const footerOffsetPt = section?.margins?.footer ?? WORD_BAND_OFFSET_PT;
 
   return {
     pageWidth: options.pageWidth ?? sectionPageWidth ?? A4_WIDTH,
@@ -1895,6 +1823,14 @@ export interface SectionRenderCtx {
    * as tall as it is. Absent ⇒ every page takes `marginTop`/`marginBottom`.
    */
   readonly bandMargins?: Readonly<Record<HfBand, BodyMargins>>;
+  /**
+   * §17.6.11 `w:pgMar @w:header`/`@w:footer` — how far the header and the
+   * footer stand from the page's edges. A body drawing aligned `inside` or
+   * `outside` the page stops halfway across that gap (./float-position).
+   * Absent ⇒ Word's own half inch.
+   */
+  readonly headerOffsetPt?: number;
+  readonly footerOffsetPt?: number;
   readonly titlePg: boolean;
   readonly evenAndOddHeaders: boolean;
   /**
@@ -1959,30 +1895,32 @@ function buildSectionContext(
     marginTopPt: dims.marginTop,
     marginBottomPt: dims.marginBottom,
   };
-  const headerSet = layoutHeaderSet(
+  const bandGeometry = (offsetPt: number): BandGeometry => ({
+    pageWidth: dims.pageWidth,
+    pageHeight: dims.pageHeight,
+    marginLeft: dims.marginLeft,
+    contentWidth,
+    offsetPt,
+    margins: { top: dims.marginTop, bottom: dims.marginBottom },
+  });
+  const headerSet = layoutBandSet(
+    'header',
     section.properties,
     headersFooters,
     secOptions,
     fontResources,
     imageResources,
-    contentWidth,
-    dims.marginLeft,
-    dims.pageHeight,
-    dims.headerOffsetPt,
-    { top: dims.marginTop, bottom: dims.marginBottom },
+    bandGeometry(dims.headerOffsetPt),
     relativeBox,
   );
-  const footerSet = layoutFooterSet(
+  const footerSet = layoutBandSet(
+    'footer',
     section.properties,
     headersFooters,
     secOptions,
     fontResources,
     imageResources,
-    contentWidth,
-    dims.marginLeft,
-    dims.pageHeight,
-    dims.footerOffsetPt,
-    { top: dims.marginTop, bottom: dims.marginBottom },
+    bandGeometry(dims.footerOffsetPt),
     relativeBox,
   );
   const columns = buildColumnGeometry(section.properties.columns, contentWidth);
@@ -2071,6 +2009,8 @@ function buildSectionContext(
     headerSet,
     footerSet,
     bandMargins,
+    headerOffsetPt: dims.headerOffsetPt,
+    footerOffsetPt: dims.footerOffsetPt,
     titlePg: section.properties.titlePg === true,
     evenAndOddHeaders: section.properties.evenAndOddHeaders === true,
     continuous: section.properties.sectionStart === 'continuous',
@@ -2124,11 +2064,70 @@ interface BodyMargins {
 // (§17.16.5.33/.35) — substitution changes text widths, so this is an honest
 // re-layout, not a glyph swap. The page's number arrives as the section prints
 // it (§17.6.12: its own start, and its own numerals).
+//
+// A band's anchored drawings are placed against the page it is drawn on — its
+// parity and its text area (see ./float-position) — so a band that carries one
+// is drawn for each such page (`drawFor`), and `commands` is merely the band as
+// an odd page with the section's own margins shows it.
 interface HfBandEntry {
   readonly commands: Array<PageItem>;
-  readonly renderDynamic?: (pageText: string, totalPages: number) => Array<PageItem>;
+  /** The band as `page` shows it. Absent ⇒ `commands`, the same on every page. */
+  readonly drawFor?: (page: BandPage) => Array<PageItem>;
+  readonly renderDynamic?: (
+    pageText: string,
+    totalPages: number,
+    page?: BandPage,
+  ) => Array<PageItem>;
   /** Laid-out height of the band, so the body can be kept clear of it. */
   readonly heightPt?: number;
+}
+
+/** What a band's anchored drawings are placed against: the page it is drawn on. */
+interface BandPage {
+  /** The sheet is an even one (§20.4.3.1 `inside`/`outside`). */
+  readonly evenPage: boolean;
+  /** The body's margins on that page, the bands' own growth included. */
+  readonly margins: BodyMargins;
+}
+
+/** Where a section's header or footer band is laid out on its page. */
+interface BandGeometry {
+  readonly pageWidth: number;
+  readonly pageHeight: number;
+  readonly marginLeft: number;
+  readonly contentWidth: number;
+  /** §17.6.11 `w:pgMar @w:header`/`@w:footer` — the band's distance from its edge. */
+  readonly offsetPt: number;
+  /** The section's own margins, before any band grows them. */
+  readonly margins: BodyMargins;
+}
+
+/** The boxes a band's drawing is placed in, short of the band's own cursor. */
+type BandFloatFrame = Omit<FloatFrame, 'anchorY' | 'columnLeft' | 'columnWidth'>;
+
+/**
+ * §20.4.2.10/§20.4.2.11 — the boxes a header's or footer's anchored drawing
+ * can name: the page itself and the body's text area on it, exactly as a
+ * drawing in the body would see them. A band has one column, its own text area.
+ *
+ * @param geometry Where the band is laid out.
+ * @param page     The page it is drawn on.
+ * @returns The frame, short of the anchoring paragraph's position.
+ */
+function bandFloatFrame(geometry: BandGeometry, page: BandPage): BandFloatFrame {
+  return {
+    pageLeft: 0,
+    pageWidth: geometry.pageWidth,
+    pageTopYUp: geometry.pageHeight,
+    pageBottomYUp: 0,
+    marginLeft: geometry.marginLeft,
+    contentWidth: geometry.contentWidth,
+    marginTopYUp: geometry.pageHeight - page.margins.top,
+    marginBottomYUp: page.margins.bottom,
+    evenPage: page.evenPage,
+    pageInsetTopPt: BAND_PAGE_INSET_PT,
+    pageInsetBottomPt: BAND_PAGE_INSET_PT,
+  };
 }
 
 interface HeaderFooterSet {
@@ -2144,66 +2143,91 @@ function markPagination(cmds: Array<PageItem>): Array<PageItem> {
   return cmds.map((c) => ({ ...c, artifact: 'pagination' as const }));
 }
 
-// Pre-layout the three possible header/footer bands. Each band is an array of
-// draw commands ready to be merged onto a body page. Missing bands fall back
-// to the default during page assembly, so producing an empty array here is
-// fine (we always check before falling back).
-function layoutHeaderSet(
+// Pre-layout the three possible header (or footer) bands. Each band is an
+// array of draw commands ready to be merged onto a body page. Missing bands
+// fall back to the default during page assembly, so producing an empty array
+// here is fine (we always check before falling back).
+function layoutBandSet(
+  edge: 'header' | 'footer',
   section: SectionProperties,
   headersFooters: ReadonlyMap<string, ReadonlyArray<BodyElement>>,
   options: StyledRenderOptions,
   fontResources: ReadonlyMap<string, FontResource>,
   imageResources: ReadonlyMap<ResourceId, ImageResource> | undefined,
-  contentWidth: number,
-  marginLeft: number,
-  pageHeight: number,
-  headerOffsetPt: number,
-  // §20.4.3.1 — the margin box a keyword-positioned drawing centres itself in.
-  bandMargins: { readonly top: number; readonly bottom: number },
+  geometry: BandGeometry,
   // §20.4.3.6 — the page a band's drawing may be sized as a share of.
   relativeBox?: RelativeBox,
 ): HeaderFooterSet {
+  const refs = edge === 'header' ? section.headers : section.footers;
+  const collapse = collapsesSpacing(options);
+  const firstPage: BandPage = { evenPage: false, margins: geometry.margins };
   const band = (type: HeaderFooterType): HfBandEntry => {
-    const ref = refByType(section.headers, type);
+    const ref = refByType(refs, type);
     if (!ref) return { commands: [] };
     const content = headersFooters.get(ref.relationshipId);
     if (!content) return { commands: [] };
-    let measured = 0;
-    const render = (c: ReadonlyArray<BodyElement>): Array<PageItem> => {
-      const blocks = laidOutBlocksFor(
+    const layout = (c: ReadonlyArray<BodyElement>): ReadonlyArray<LaidOutBlock> =>
+      laidOutBlocksFor(
         c,
         options,
         fontResources,
-        contentWidth,
+        geometry.contentWidth,
         imageResources,
         relativeBox,
       );
-      measured = blocksHeight(blocks, collapsesSpacing(options));
+    const draw = (blocks: ReadonlyArray<LaidOutBlock>, page: BandPage): Array<PageItem> => {
+      // §17.6.11 — a header hangs its distance down from the page's top edge.
+      // A footer's `w:pgMar @w:footer` is the distance up from the page edge
+      // to the BOTTOM of the band, so the band's own height is what puts its
+      // top. An anchored drawing adds nothing to that height (blocksHeight):
+      // counted, fdo80895.docx's footer ellipse lifted the whole band 26pt off
+      // the floor.
+      const startY =
+        edge === 'header'
+          ? geometry.pageHeight - geometry.offsetPt
+          : geometry.offsetPt + blocksHeight(blocks, collapse);
       return markPagination(
         drawBlocksSequentially(
           blocks,
-          marginLeft,
-          pageHeight - headerOffsetPt,
-          pageHeight,
-          contentWidth,
+          geometry.marginLeft,
+          startY,
+          geometry.pageHeight,
+          geometry.contentWidth,
           undefined,
-          bandMargins,
-          collapsesSpacing(options),
+          bandFloatFrame(geometry, page),
+          collapse,
         ),
       );
     };
     if (contentHasPageFields(content)) {
       // Measure once with placeholder values so the height is known before the
       // first page is composed; the per-page render replaces the commands.
-      render(substitutePageFields(content, '1', 1));
       return {
         commands: [],
-        heightPt: measured,
-        renderDynamic: (page, total) => render(substitutePageFields(content, page, total)),
+        heightPt: blocksHeight(layout(substitutePageFields(content, '1', 1)), collapse),
+        renderDynamic: (pageText, totalPages, page = firstPage) =>
+          draw(layout(substitutePageFields(content, pageText, totalPages)), page),
       };
     }
-    const commands = render(content);
-    return { commands, heightPt: measured };
+    const blocks = layout(content);
+    const commands = draw(blocks, firstPage);
+    const heightPt = blocksHeight(blocks, collapse);
+    // Only an anchored drawing moves with the page it is drawn on; a band of
+    // text alone is the same on every page and keeps its one set of commands.
+    const anchored = (b: LaidOutBlock): boolean =>
+      (b as { readonly float?: FloatAnchor }).float !== undefined;
+    if (!blocks.some(anchored)) return { commands, heightPt };
+    const drawn = new Map<string, Array<PageItem>>();
+    const drawFor = (page: BandPage): Array<PageItem> => {
+      const key = `${String(page.evenPage)}|${String(page.margins.top)}|${String(page.margins.bottom)}`;
+      let cmds = drawn.get(key);
+      if (!cmds) {
+        cmds = draw(blocks, page);
+        drawn.set(key, cmds);
+      }
+      return cmds;
+    };
+    return { commands, drawFor, heightPt };
   };
   return { default: band('default'), first: band('first'), even: band('even') };
 }
@@ -2301,71 +2325,6 @@ function blocksHeight(blocks: ReadonlyArray<LaidOutBlock>, collapse = false): nu
     spacing.close(sharedAfter(b));
     return sum + before + b.heightPt + b.spacingAfterPt;
   }, 0);
-}
-
-function layoutFooterSet(
-  section: SectionProperties,
-  headersFooters: ReadonlyMap<string, ReadonlyArray<BodyElement>>,
-  options: StyledRenderOptions,
-  fontResources: ReadonlyMap<string, FontResource>,
-  imageResources: ReadonlyMap<ResourceId, ImageResource> | undefined,
-  contentWidth: number,
-  marginLeft: number,
-  pageHeight: number,
-  footerOffsetPt: number,
-  // §20.4.3.1 — the margin box a keyword-positioned drawing centres itself in.
-  bandMargins: { readonly top: number; readonly bottom: number },
-  // §20.4.3.6 — the page a band's drawing may be sized as a share of.
-  relativeBox?: RelativeBox,
-): HeaderFooterSet {
-  const band = (type: HeaderFooterType): HfBandEntry => {
-    const ref = refByType(section.footers, type);
-    if (!ref) return { commands: [] };
-    const content = headersFooters.get(ref.relationshipId);
-    if (!content) return { commands: [] };
-    let measured = 0;
-    const render = (c: ReadonlyArray<BodyElement>): Array<PageItem> => {
-      const blocks = laidOutBlocksFor(
-        c,
-        options,
-        fontResources,
-        contentWidth,
-        imageResources,
-        relativeBox,
-      );
-      // §17.6.11 — `w:pgMar @w:footer` is the distance up from the page edge to
-      // the BOTTOM of the band, so the band's own height is what puts its top.
-      // An anchored drawing adds nothing to that height (blocksHeight): counted,
-      // fdo80895.docx's footer ellipse lifted the whole band 26pt off the floor.
-      const totalHeight = blocksHeight(blocks, collapsesSpacing(options));
-      measured = totalHeight;
-      return markPagination(
-        drawBlocksSequentially(
-          blocks,
-          marginLeft,
-          footerOffsetPt + totalHeight,
-          pageHeight,
-          contentWidth,
-          undefined,
-          bandMargins,
-          collapsesSpacing(options),
-        ),
-      );
-    };
-    if (contentHasPageFields(content)) {
-      // Measured once with placeholder values, as a header is, so the body
-      // knows where the band's top stands before the first page is composed.
-      render(substitutePageFields(content, '1', 1));
-      return {
-        commands: [],
-        heightPt: measured,
-        renderDynamic: (page, total) => render(substitutePageFields(content, page, total)),
-      };
-    }
-    const commands = render(content);
-    return { commands, heightPt: measured };
-  };
-  return { default: band('default'), first: band('first'), even: band('even') };
 }
 
 // A band is dynamic when any of its paragraphs carries a PAGE/NUMPAGES field
@@ -2770,19 +2729,18 @@ function frameFloat(frame: FrameProperties): FloatAnchor {
   // its paragraph instead — ten lines down the page, 120pt lower than Word.
   const vRel =
     frame.vAnchor === 'page' ? 'page' : frame.vAnchor === 'text' ? 'paragraph' : 'margin';
-  const align =
-    frame.xAlign === 'left' || frame.xAlign === 'center' || frame.xAlign === 'right'
-      ? frame.xAlign
-      : undefined;
-  // §17.3.1.11 `w:yAlign` — a KEYWORD down the page instead of an offset, and
-  // it is what tells a frame to sit at the top of the page rather than where
-  // its paragraph happens to stand. Ignored, tdf104394_lostTextbox.docx's
-  // floating table and the paragraph beside it followed the tall frame above
-  // them onto page 2, where every reader draws them on page 1.
-  const vAlign =
-    frame.yAlign === 'top' || frame.yAlign === 'center' || frame.yAlign === 'bottom'
-      ? frame.yAlign
-      : undefined;
+  // §17.3.1.11 `w:xAlign`/`w:yAlign` — a KEYWORD instead of an offset, and the
+  // vertical one is what tells a frame to sit at the top of the page rather
+  // than where its paragraph happens to stand. Ignored, tdf104394_lostTextbox
+  // .docx's floating table and the paragraph beside it followed the tall frame
+  // above them onto page 2, where every reader draws them on page 1. `inside`
+  // and `outside` turn with the page as a drawing's do: Word puts a frame
+  // aligned `inside` the margin on its left on an odd page and on its right on
+  // an even one, and `inside` down it at its top, then at its foot. Read as no
+  // alignment, CT-with-frame.docx's line number, `outside` the page, stood on
+  // the page's left edge; Word sets that frame on the right of an odd page.
+  const align = frame.xAlign;
+  const vAlign = frame.yAlign;
   return {
     wrap,
     posH: { relativeFrom: hRel, ...(align ? { align } : { offsetPt: frame.xPt ?? pt(0) }) },
@@ -5079,62 +5037,6 @@ function pictureOutlineItems(
   }));
 }
 
-// §20.4.2.3 — where an anchored drawing sits across a header or footer band:
-// the alignment its anchor names, or the offset it states. Undefined when the
-// drawing is not anchored at all, and so flows with the band's other content.
-function bandAnchor(
-  float: FloatAnchor | undefined,
-  widthPt: number,
-  contentWidth: number,
-  // Where the band's own left edge sits on the page, so an offset measured
-  // from the PAGE can be expressed as one from the band.
-  bandLeftPt = 0,
-): number | undefined {
-  if (!float) return undefined;
-  const align = float.posH?.align;
-  if (align === 'right') return contentWidth - widthPt;
-  if (align === 'center') return (contentWidth - widthPt) / 2;
-  if (align === 'left') return 0;
-  const offset = float.posH?.offsetPt ?? 0;
-  return float.posH?.relativeFrom === 'page' ? offset - bandLeftPt : offset;
-}
-
-/**
- * §20.4.2.3 — how far DOWN the page a band's anchored drawing starts, in the
- * band emitter's y-UP frame. A `page`-relative anchor is measured from the
- * paper's own top edge, whatever the band's cursor has reached: n773061.docx
- * hangs its header text box 92pt down the page and, measured from the header's
- * first paragraph, it landed 60pt lower than Word and LibreOffice put it.
- *
- * @param float      The anchor.
- * @param cursorY    The band's cursor (y-up), where a paragraph-relative
- *                   anchor is measured from.
- * @param pageHeight The page height.
- * @returns The drawing's top edge, y-up.
- */
-function bandAnchorTop(
-  float: FloatAnchor,
-  cursorY: number,
-  pageHeight: number,
-  heightPt = 0,
-  margins?: { readonly top: number; readonly bottom: number },
-): number {
-  // §20.4.3.1 — a KEYWORD rather than an offset: Word centres a watermark in
-  // the page (or in the margin box) this way, and pinned to the band's cursor
-  // pictureWatermark.docx printed its penguins in the top corner.
-  const align = float.posV?.align;
-  if (align !== undefined) {
-    const page = float.posV?.relativeFrom === 'page' || !margins;
-    const topYUp = page ? pageHeight : pageHeight - margins.top;
-    const bottomYUp = page ? 0 : margins.bottom;
-    if (align === 'top') return topYUp;
-    if (align === 'bottom') return bottomYUp + heightPt;
-    return bottomYUp + (topYUp - bottomYUp + heightPt) / 2;
-  }
-  const offset = float.posV?.offsetPt ?? 0;
-  return float.posV?.relativeFrom === 'page' ? pageHeight - offset : cursorY - offset;
-}
-
 // `startY` is in the internal y-up frame the band math works in; the emitted
 // items carry top-left coordinates like everything else on a page.
 function drawBlocksSequentially(
@@ -5145,15 +5047,33 @@ function drawBlocksSequentially(
   contentWidth: number,
   // Tagged PDF: stamp every emitted line with this structure node (used by
   // the footnote band; header/footer bands stay artifact-marked instead).
-  structId?: number,
-  // §20.4.3.1 — the margin box a keyword-positioned drawing centres itself in.
-  bandMargins?: { readonly top: number; readonly bottom: number },
+  structId: number | undefined,
+  // §20.4.2.10/§20.4.2.11 — the page and text area an anchored drawing in the
+  // band is placed against, as it would be in the body.
+  frame: BandFloatFrame,
   // Whether paragraph spacing stacks as Word stacks it (see SpacingStack).
   collapse = false,
 ): Array<PageItem> {
   const out: Array<PageItem> = [];
   let cursorY = startY;
   const spacing = new SpacingStack(collapse);
+  // An anchored drawing hangs off the paragraph the band's cursor has reached,
+  // and its band has one column, its own text area. Its left edge and top, on
+  // the page; undefined when the block is not anchored and flows instead.
+  const anchoredAt = (
+    float: FloatAnchor | undefined,
+    widthPt: number,
+    heightPt: number,
+  ): { readonly x: number; readonly top: number } | undefined => {
+    if (!float) return undefined;
+    const at: FloatFrame = {
+      ...frame,
+      columnLeft: startX,
+      columnWidth: contentWidth,
+      anchorY: cursorY,
+    };
+    return { x: floatXIn(at, float, widthPt), top: floatTopYUpIn(at, float, heightPt) };
+  };
   // §20.4.2.3 `@behindDoc` — a drawing that sits BEHIND the text sits behind
   // everything else in the band too, whatever order it was written in. Such a
   // drawing is out of the flow, so drawing it first costs the cursor nothing.
@@ -5179,12 +5099,12 @@ function drawBlocksSequentially(
       // margins and 78pt too low, because a `w:tblpPr` was read everywhere but
       // here.
       const anchored = isOutOfFlowFloat(block.float)
-        ? bandAnchor(block.float, block.totalWidthPt, contentWidth, startX)
+        ? anchoredAt(block.float, block.totalWidthPt, block.heightPt)
         : undefined;
-      if (anchored !== undefined && block.float) {
-        let rowY = bandAnchorTop(block.float, cursorY, pageHeight, block.heightPt, bandMargins);
+      if (anchored !== undefined) {
+        let rowY = anchored.top;
         for (const row of block.rows) {
-          emitRowChunk(out, row, startX + anchored, rowY, pageHeight, block.colCount);
+          emitRowChunk(out, row, anchored.x, rowY, pageHeight, block.colCount);
           rowY -= row.heightPt;
         }
         continue;
@@ -5210,18 +5130,16 @@ function drawBlocksSequentially(
     }
     // …and a first-page header is very often nothing BUT the crest.
     if (block.kind === 'image') {
-      const anchored = bandAnchor(block.float, block.widthPt, contentWidth, startX);
-      cursorY -=
-        anchored === undefined ? spacing.open(block.spacingBeforePt) : block.spacingBeforePt;
-      const offset =
-        anchored ?? alignmentOffset(block.resolvedAlignment, block.widthPt, contentWidth);
-      const top =
-        anchored === undefined || !block.float
-          ? cursorY
-          : bandAnchorTop(block.float, cursorY, pageHeight, block.heightPt, bandMargins);
+      if (block.float) cursorY -= block.spacingBeforePt;
+      else cursorY -= spacing.open(block.spacingBeforePt);
+      const anchored = anchoredAt(block.float, block.widthPt, block.heightPt);
+      const x =
+        anchored?.x ??
+        startX + alignmentOffset(block.resolvedAlignment, block.widthPt, contentWidth);
+      const top = anchored?.top ?? cursorY;
       out.push({
         type: 'image',
-        x: pt(startX + offset),
+        x: pt(x),
         y: pt(pageHeight - top),
         width: pt(block.widthPt),
         height: pt(block.heightPt),
@@ -5237,7 +5155,7 @@ function drawBlocksSequentially(
         out.push(
           ...pictureOutlineItems(
             block.outline,
-            startX + offset,
+            x,
             pageHeight - top,
             block.widthPt,
             block.heightPt,
@@ -5258,16 +5176,14 @@ function drawBlocksSequentially(
     // anchor across the band's width, since that is the whole point of the
     // frame: FDO73546 numbers its pages this way and we numbered none.
     if (block.kind === 'shape') {
-      const anchored = bandAnchor(block.float, block.widthPt, contentWidth, startX);
-      cursorY -=
-        anchored === undefined ? spacing.open(block.spacingBeforePt) : block.spacingBeforePt;
-      const offset =
-        anchored ?? alignmentOffset(block.resolvedAlignment, block.widthPt, contentWidth);
-      const top =
-        anchored === undefined || !block.float
-          ? cursorY
-          : bandAnchorTop(block.float, cursorY, pageHeight, block.heightPt, bandMargins);
-      emitShapeItems(block, startX + offset, top - block.heightPt, out, pageHeight, structId);
+      if (block.float) cursorY -= block.spacingBeforePt;
+      else cursorY -= spacing.open(block.spacingBeforePt);
+      const anchored = anchoredAt(block.float, block.widthPt, block.heightPt);
+      const x =
+        anchored?.x ??
+        startX + alignmentOffset(block.resolvedAlignment, block.widthPt, contentWidth);
+      const top = anchored?.top ?? cursorY;
+      emitShapeItems(block, x, top - block.heightPt, out, pageHeight, structId);
       if (anchored === undefined) cursorY -= block.heightPt;
       cursorY -= block.spacingAfterPt;
       if (anchored === undefined) spacing.close(block.spacingAfterPt);
@@ -10050,20 +9966,33 @@ class PageAssembler {
       ...(f.wrapSide === 'bothSides' ? { wrapBothSides: true } : {}),
     });
   };
-  /** The frame a float anchored in the body flow is resolved against. */
-  floatFrame = (): FloatFrame => ({
-    pageLeft: 0,
-    pageWidth: this.ctx.pageWidth,
-    pageTopYUp: this.ctx.pageHeight,
-    pageBottomYUp: 0,
-    marginLeft: this.ctx.marginLeft,
-    contentWidth: this.ctx.contentWidth,
-    marginTopYUp: this.ctx.pageHeight - this.ctx.marginTop,
-    marginBottomYUp: this.ctx.marginBottom,
-    columnLeft: this.colLeft(),
-    columnWidth: this.colWidth(),
-    anchorY: this.cursorY,
-  });
+  /**
+   * The frame a float anchored in the body flow is resolved against: the
+   * page, the text area THIS page's bands leave it (a page under a taller
+   * header than the rest has a shorter `margin` box), the column, the page's
+   * parity, and — for a picture aligned inside or outside the page itself —
+   * half the header's and footer's distances from the edges, which is where
+   * Word stops it.
+   */
+  floatFrame = (): FloatFrame => {
+    const margins = this.pageMargins();
+    return {
+      pageLeft: 0,
+      pageWidth: this.ctx.pageWidth,
+      pageTopYUp: this.ctx.pageHeight,
+      pageBottomYUp: 0,
+      marginLeft: this.ctx.marginLeft,
+      contentWidth: this.ctx.contentWidth,
+      marginTopYUp: this.ctx.pageHeight - margins.top,
+      marginBottomYUp: margins.bottom,
+      columnLeft: this.colLeft(),
+      columnWidth: this.colWidth(),
+      anchorY: this.cursorY,
+      evenPage: this.globalPageIdx % 2 === 1,
+      pageInsetTopPt: (this.ctx.headerOffsetPt ?? WORD_BAND_OFFSET_PT) / 2,
+      pageInsetBottomPt: (this.ctx.footerOffsetPt ?? WORD_BAND_OFFSET_PT) / 2,
+    };
+  };
   /** The float's left edge on the page, resolved from its horizontal anchor. */
   floatX = (f: FloatAnchor, widthPt: number): number => floatXIn(this.floatFrame(), f, widthPt);
   /**
@@ -10316,7 +10245,7 @@ class PageAssembler {
           this.ctx.pageHeight,
           this.ctx.contentWidth,
           structId,
-          undefined,
+          this.floatFrame(),
           this.collapseSpacing,
         ),
       );
@@ -10333,8 +10262,10 @@ class PageAssembler {
     pageIdx: number;
     /** §17.6.12 — the page's number as its section prints it. */
     pageText: string;
+    /** The page the band's anchored drawings are placed against. */
+    page: BandPage;
     position: 'header' | 'footer';
-    render: (pageText: string, totalPages: number) => Array<PageItem>;
+    render: (pageText: string, totalPages: number, page?: BandPage) => Array<PageItem>;
   }> = [];
 
   /**
@@ -10364,12 +10295,23 @@ class PageAssembler {
     );
     const header = pickBand(this.ctx.headerSet, band);
     const footer = pickBand(this.ctx.footerSet, band);
+    // §17.6.20 — a section whose lines run down the sheet was laid out in the
+    // frame its text reads in, and everything but the bands turns onto the
+    // sheet here; the header and the footer were laid out on the sheet.
+    const sheet = this.ctx.sheet;
+    // §20.4.3.1 — the bands' anchored drawings are placed against this page:
+    // its parity (the sheet's own count) and the text area it ends up with.
+    const bandPage: BandPage = {
+      evenPage: this.globalPageIdx % 2 === 1,
+      margins: sheet ? { top: sheet.marginTop, bottom: sheet.marginBottom } : this.pageMargins(),
+    };
     // §17.6.12 — printed in the numerals the section numbers its pages in.
     const pageText = pageNumberText(this.pageNumber, this.ctx.properties.pageNumberFormat);
     if (header.renderDynamic) {
       this.dynBands.push({
         pageIdx: this.pages.length,
         pageText,
+        page: bandPage,
         position: 'header',
         render: header.renderDynamic,
       });
@@ -10378,14 +10320,11 @@ class PageAssembler {
       this.dynBands.push({
         pageIdx: this.pages.length,
         pageText,
+        page: bandPage,
         position: 'footer',
         render: footer.renderDynamic,
       });
     }
-    // §17.6.20 — a section whose lines run down the sheet was laid out in the
-    // frame its text reads in, and everything but the bands turns onto the
-    // sheet here; the header and the footer were laid out on the sheet.
-    const sheet = this.ctx.sheet;
     const onSheet = (items: ReadonlyArray<PageItem>): ReadonlyArray<PageItem> =>
       sheet ? items.map((item) => turnOntoSheet(item, sheet.width)) : items;
     this.pages.push({
@@ -10394,7 +10333,7 @@ class PageAssembler {
         ...onSheet(this.pageBackgroundItems()),
         ...onSheet(this.pageBorderItems()),
         ...onSheet(this.columnSeparatorItems()),
-        ...header.commands,
+        ...(header.drawFor?.(bandPage) ?? header.commands),
         // §20.4.2.3 — what the page puts behind its content paints before all
         // of it, in this order, rather than riding the passes where every
         // shape lands on top of every image.
@@ -10402,7 +10341,7 @@ class PageAssembler {
         ...onSheet(this.current),
         ...onSheet(this.inFront(PageAssembler.byZ(this.floatsFront))),
         ...onSheet(this.renderNotesBand()),
-        ...footer.commands,
+        ...(footer.drawFor?.(bandPage) ?? footer.commands),
       ],
       width: pt(sheet?.width ?? this.ctx.pageWidth),
       height: pt(sheet?.height ?? this.ctx.pageHeight),
@@ -11637,7 +11576,7 @@ function paginateSections(
   // dynamic bands and splice them where the static band would have sat
   // (header before the body content, footer after).
   for (const d of asm.dynBands) {
-    const cmds = d.render(d.pageText, asm.pages.length);
+    const cmds = d.render(d.pageText, asm.pages.length, d.page);
     const page = asm.pages[d.pageIdx]!;
     if (d.position === 'header') page.commands.unshift(...cmds);
     else page.commands.push(...cmds);

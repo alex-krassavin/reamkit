@@ -206,17 +206,22 @@ function parseFloatAnchor(anchor: PoNode): FloatAnchor | undefined {
   const behindRaw = poAttr(anchor, 'behindDoc');
   const behind = (behindRaw === '1' || behindRaw === 'true') && wrap === 'none';
   const zOrder = poIntAttr(anchor, 'relativeHeight');
-  // §20.4.3.3 — `leftMargin`/`rightMargin` name the margin band on that side,
-  // the place a marginal note belongs.
+  // §20.4.3.4 — `leftMargin`/`rightMargin` name the margin band on that side,
+  // the place a marginal note belongs; `insideMargin`/`outsideMargin` one band
+  // or the other by the page's parity. Folded into `margin` as they once were,
+  // a picture Word puts in the left band of an odd page and the right band of
+  // an even one stood inside the text on both.
   const posH = parseAnchorPos(anchor, 'wp:positionH', [
     'margin',
     'page',
     'column',
+    'character',
     'leftMargin',
     'rightMargin',
+    'insideMargin',
+    'outsideMargin',
   ]);
-  // §20.4.3.4 — `insideMargin`/`outsideMargin` are the top/bottom margin on a
-  // page that is not part of a facing pair, which is how Word writes them.
+  // §20.4.3.5 — the same four bands down the page.
   const posV = parseAnchorPos(anchor, 'wp:positionV', [
     'margin',
     'page',
@@ -224,6 +229,8 @@ function parseFloatAnchor(anchor: PoNode): FloatAnchor | undefined {
     'line',
     'topMargin',
     'bottomMargin',
+    'insideMargin',
+    'outsideMargin',
   ]);
   // §20.4.2.3 — the stand-off the wrapped text keeps from each edge. Ignoring
   // it let effect-extent-line-width.docx fill its paragraph right down to the
@@ -255,8 +262,9 @@ function parseFloatAnchor(anchor: PoNode): FloatAnchor | undefined {
   };
 }
 
-const ANCHOR_ALIGNS = new Set(['left', 'center', 'right']);
-const ANCHOR_V_ALIGNS = new Set(['top', 'center', 'bottom']);
+// §20.4.3.1 ST_AlignH / §20.4.3.2 ST_AlignV.
+const ANCHOR_ALIGNS = new Set(['left', 'center', 'right', 'inside', 'outside']);
+const ANCHOR_V_ALIGNS = new Set(['top', 'center', 'bottom', 'inside', 'outside']);
 
 /**
  * `wp14:sizeRelH` / `wp14:sizeRelV` — the drawing's width and height as
@@ -333,8 +341,7 @@ function parseAnchorPos(
   const pos = expandMcChildren(poChildren(anchor)).find((c) => poIs(c, tag));
   if (!pos) return undefined;
   const relRaw = poAttr(pos, 'relativeFrom') ?? 'margin';
-  // Unsupported bases (character, inside/outsideMargin…) degrade to the
-  // nearest supported one.
+  // A base outside the schema's list degrades to the first one allowed.
   const relativeFrom = allowed.includes(relRaw) ? relRaw : allowed[0]!;
   const offsetNode = poChildren(pos).find((c) => poIs(c, 'wp:posOffset'));
   const offsetRaw = offsetNode ? Number(poText(offsetNode).trim()) : NaN;
@@ -344,7 +351,7 @@ function parseAnchorPos(
     relativeFrom,
     ...(Number.isFinite(offsetRaw) ? { offsetPt: emuToPt(offsetRaw) } : {}),
     ...(tag === 'wp:positionH' && ANCHOR_ALIGNS.has(alignRaw) ? { align: alignRaw } : {}),
-    // §20.4.3.1 — the vertical keywords are their own set.
+    // §20.4.3.2 — the vertical keywords are their own set.
     ...(tag === 'wp:positionV' && ANCHOR_V_ALIGNS.has(alignRaw) ? { align: alignRaw } : {}),
   };
 }
