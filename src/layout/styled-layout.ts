@@ -2729,16 +2729,16 @@ function rebuildBoxLines(
 
 /**
  * §17.3.1.11 — whether the frame is placed DOWN THE PAGE by itself, rather than
- * where the flow has reached. `w:vAnchor="text"` (the default) measures `w:y`
- * from the paragraph's own position, so such frames stack as paragraphs do —
- * and a float takes no flow space, so lifting them out puts every one of them
- * on the same line: tdf105035_framePrB.docx writes its title and its author
- * line as text-anchored frames and both landed on the cursor, one over the
- * other. Only a frame anchored to the page or the margin, or aligned by
- * keyword, truly stands somewhere of its own.
+ * where the flow has reached. `w:vAnchor="text"` measures `w:y` from the
+ * paragraph's own position, so such frames stack as paragraphs do — and a
+ * float takes no flow space, so lifting them out puts every one of them on
+ * the same line: tdf105035_framePrB.docx writes its title and its author line
+ * as text-anchored frames and both landed on the cursor, one over the other.
+ * Any other frame stands somewhere of its own — one that states no anchor
+ * too, which Word measures from the MARGIN (see {@link frameFloat}).
  */
 function framePositioned(frame: FrameProperties): boolean {
-  return frame.yAlign !== undefined || (frame.vAnchor !== undefined && frame.vAnchor !== 'text');
+  return frame.yAlign !== undefined || frame.vAnchor !== 'text';
 }
 
 function frameFloat(frame: FrameProperties): FloatAnchor {
@@ -2763,8 +2763,13 @@ function frameFloat(frame: FrameProperties): FloatAnchor {
           : 'topAndBottom'
         : 'square';
   const hRel = frame.hAnchor === 'page' ? 'page' : frame.hAnchor === 'margin' ? 'margin' : 'column';
+  // §17.3.1.11 `w:vAnchor` — a frame that names none hangs off the MARGIN, as
+  // Word places it: one with `w:y="1440"` and no anchor stands 72pt below the
+  // top margin, wherever its paragraph is, and one with neither sits on the
+  // margin's top edge. Read as text-anchored, such a frame stood 72pt below
+  // its paragraph instead — ten lines down the page, 120pt lower than Word.
   const vRel =
-    frame.vAnchor === 'page' ? 'page' : frame.vAnchor === 'margin' ? 'margin' : 'paragraph';
+    frame.vAnchor === 'page' ? 'page' : frame.vAnchor === 'text' ? 'paragraph' : 'margin';
   const align =
     frame.xAlign === 'left' || frame.xAlign === 'center' || frame.xAlign === 'right'
       ? frame.xAlign
