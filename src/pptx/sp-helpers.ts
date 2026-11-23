@@ -14,7 +14,7 @@ import { resolveColorNode } from '@/core/drawingml/colors';
 import { resolveThemeFont } from '@/core/drawingml/theme-parser';
 import { hanFaceOfLang } from '@/core/fonts/scripts';
 import { pt } from '@/core/ir';
-import { poAttr, poChildren, poIntAttr, poIs } from '@/core/po-helpers';
+import { poAttr, poChildren, poIntAttr, poIs, poPercentAttr } from '@/core/po-helpers';
 
 /**
  * §19.3.1.36 `p:ph` — a shape's placeholder reference. `type`/`idx` tie a slide
@@ -206,7 +206,7 @@ function gradientFillColor(rPr: PoNode, colors: ColorResolver): string | undefin
   const stops = list ? poChildren(list).filter((c) => poIs(c, 'a:gs')) : [];
   let best: { at: number; node: PoNode } | undefined;
   for (const gs of stops) {
-    const at = Math.abs((poIntAttr(gs, 'pos') ?? 0) - 50000);
+    const at = Math.abs((poPercentAttr(gs, 'pos', 1000) ?? 0) - 50000);
     if (!best || at < best.at) best = { at, node: gs };
   }
   if (!best) return undefined;
