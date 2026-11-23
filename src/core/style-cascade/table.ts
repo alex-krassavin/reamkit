@@ -20,6 +20,7 @@
 import type {
   BodyElement,
   CellBorders,
+  CellMargins,
   ParagraphProperties,
   RunProperties,
   Style,
@@ -31,6 +32,8 @@ import type {
   TableStyleLayer,
 } from '@/core/document-model';
 
+import type { Pt } from '@/core/ir';
+import { twipsToPt } from '@/core/ir';
 import { mergeRunPartial } from '@/core/style-cascade/resolver';
 
 /**
@@ -93,8 +96,13 @@ function applyTableStyle(table: Table, sheet: StyleSheet): void {
   if (folded.base.borders) {
     tp.borders = { ...folded.base.borders, ...definedOnly(tp.borders ?? {}) };
   }
-  if (!tp.defaultCellMargins && folded.base.cellMargins) {
-    tp.defaultCellMargins = folded.base.cellMargins;
+  // §17.4.43 — the table's OWN `w:tblCellMar` beats its style's SIDE BY SIDE,
+  // and the style's sides fill the rest: under TableGrid (108 each way) a
+  // direct `left` of 720 alone insets the text 36pt from the left and 5.4pt
+  // from the right in Word 16.114 (style-cellmar probes t02-t04, t18).
+  const directMargins = tp.defaultCellMargins;
+  if (folded.base.cellMargins) {
+    tp.defaultCellMargins = { ...folded.base.cellMargins, ...definedOnly(directMargins ?? {}) };
   }
   if (tp.indentPt === undefined && folded.base.indentPt !== undefined) {
     tp.indentPt = folded.base.indentPt;
@@ -110,32 +118,93 @@ function applyTableStyle(table: Table, sheet: StyleSheet): void {
   for (let r = 0; r < rows.length; r++) {
     const row = rows[r]!;
     let colStart = 0;
+    const placed: Array<{ cell: TableCell; pos: CellPosition }> = [];
     for (const cell of row.cells) {
       const span = cell.properties.colSpan ?? 1;
-      const layer = cellLayer(folded, look, {
-        // §17.4.7 — a row may CLAIM the first/last-row format whatever its
-        // index is, and Word's calendar templates do exactly that for their
-        // second header row.
-        firstRow: r === 0 || row.properties.conditional?.firstRow === true,
-        lastRow: r === rows.length - 1 || row.properties.conditional?.lastRow === true,
-        firstCol: colStart === 0,
-        lastCol: colStart + span >= colCount,
-        rowBand: bandIndex(r, look.firstRow === true, folded.rowBandSize),
-        colBand: bandIndex(colStart, look.firstColumn === true, folded.colBandSize),
-        noHBand: look.noHBand === true,
-        noVBand: look.noVBand === true,
+      placed.push({
+        cell,
+        pos: {
+          // §17.4.7 — a row may CLAIM the first/last-row format whatever its
+          // index is, and Word's calendar templates do exactly that for their
+          // second header row.
+          firstRow: r === 0 || row.properties.conditional?.firstRow === true,
+          lastRow: r === rows.length - 1 || row.properties.conditional?.lastRow === true,
+          firstCol: colStart === 0,
+          lastCol: colStart + span >= colCount,
+          rowBand: bandIndex(r, look.firstRow === true, folded.rowBandSize),
+          colBand: bandIndex(colStart, look.firstColumn === true, folded.colBandSize),
+          noHBand: look.noHBand === true,
+          noVBand: look.noVBand === true,
+        },
       });
-      const pos = {
-        firstRow: r === 0 || row.properties.conditional?.firstRow === true,
-        lastRow: r === rows.length - 1 || row.properties.conditional?.lastRow === true,
-        firstCol: colStart === 0,
-        lastCol: colStart + span >= colCount,
-      };
       colStart += span;
+    }
+    const rowMargins = rowRegionMargins(placed.map((p) => regionLayers(folded, look, p.pos)));
+    for (const { cell, pos } of placed) {
+      resolveCellMargins(cell, rowMargins, folded.base.cellLevelMargins, directMargins);
+      const layer = cellLayer(folded, look, pos);
       if (!layer) continue;
       applyLayerToCell(cell, layer, directBorders, pos);
     }
   }
+}
+
+const SIDES = ['top', 'left', 'bottom', 'right'] as const;
+type MarginSides = Partial<Record<(typeof SIDES)[number], Pt>>;
+
+/**
+ * The margins a table style's REGIONS give one row. Word lets them reach the
+ * whole row whichever of its cells the region names: a firstCol, lastCol,
+ * nwCell or band1Vert margin of 1080 insets every cell of the rows it touches
+ * by 54pt, while the same regions' shading stays in their own cells
+ * (style-cellmar probes c01-c06, x05). They are laid down cell by cell, left
+ * to right, each cell's regions in their §17.7.6 order: a firstRow left of
+ * 1080 over a nwCell left of 0 comes out 54pt, as the second cell's firstRow
+ * has the last word (q06), and a lastCol beats a firstCol (q04).
+ */
+function rowRegionMargins(cells: ReadonlyArray<ReadonlyArray<TableStyleLayer>>): {
+  readonly table: MarginSides;
+  readonly cell: MarginSides;
+} {
+  const table: MarginSides = {};
+  const cell: MarginSides = {};
+  for (const layers of cells) {
+    for (const layer of layers) {
+      Object.assign(table, definedOnly(layer.cellMargins ?? {}));
+      Object.assign(cell, definedOnly(layer.cellLevelMargins ?? {}));
+    }
+  }
+  return { table, cell };
+}
+
+/**
+ * Settle one cell's margins, side by side, highest first (Word 16.114,
+ * style-cellmar probes): the cell's own `w:tcMar`; the cell-level `w:tcMar`
+ * of the style's regions, then of the style as a whole, both above the
+ * table's own `w:tblCellMar` (t16, t20); the table-level `w:tblCellMar` of
+ * the style's regions, but under the table's own (t15, x06, x08, q08); and
+ * last the table's default, which the layout reads from the table. A region's
+ * side is written into the cell only where it outranks that default.
+ */
+function resolveCellMargins(
+  tableCell: TableCell,
+  row: ReturnType<typeof rowRegionMargins>,
+  styleCellLevel: CellMargins | undefined,
+  direct: CellMargins | undefined,
+): void {
+  const cell = tableCell as unknown as MutableCell;
+  const fromRegions: MarginSides = {};
+  for (const side of SIDES) {
+    const v = row.table[side];
+    if (v !== undefined && direct?.[side] === undefined) fromRegions[side] = v;
+  }
+  const merged: MarginSides = {
+    ...fromRegions,
+    ...definedOnly(styleCellLevel ?? {}),
+    ...row.cell,
+    ...definedOnly(cell.properties.margins ?? {}),
+  };
+  if (Object.keys(merged).length > 0) cell.properties.margins = merged;
 }
 
 interface MutableCell {
@@ -159,7 +228,9 @@ function applyLayerToCell(
 ): void {
   const cell = tableCell as unknown as MutableCell;
   if (layer.shading && !cell.properties.shading) cell.properties.shading = layer.shading;
-  if (layer.cellMargins && !cell.properties.margins) cell.properties.margins = layer.cellMargins;
+  // The layer's margins are settled by resolveCellMargins: written in here,
+  // the style's whole-table `w:tblCellMar` became every cell's own and beat
+  // the table's `w:tblCellMar`, which Word ranks above it.
   if (layer.borders) {
     // Per-side fallback: a direct tcBorders side always wins over the style's.
     const own = cell.properties.borders ?? {};
@@ -251,7 +322,20 @@ function cellLayer(
   // edge by edge and we boxed every one of its 54 cells.
   const { borders: _tableWide, ...withoutBorders } = folded.base;
   const base: TableStyleLayer = withoutBorders;
-  const layers: Array<TableStyleLayer | undefined> = [base];
+  let out: TableStyleLayer | undefined;
+  for (const layer of [base, ...regionLayers(folded, look, pos)]) {
+    out = out ? mergeLayer(out, layer) : layer;
+  }
+  return out;
+}
+
+// The conditional regions that apply to a cell, low → high precedence.
+function regionLayers(
+  folded: FoldedTableStyle,
+  look: TableLook,
+  pos: CellPosition,
+): Array<TableStyleLayer> {
+  const layers: Array<TableStyleLayer | undefined> = [];
   const cond = (t: TableStyleConditionType) => folded.conditions.get(t);
 
   if (!pos.noVBand && pos.colBand >= 0) {
@@ -270,13 +354,7 @@ function cellLayer(
   if (look.firstRow && look.lastColumn && pos.firstRow && pos.lastCol) layers.push(cond('neCell'));
   if (look.lastRow && look.firstColumn && pos.lastRow && pos.firstCol) layers.push(cond('swCell'));
   if (look.lastRow && look.lastColumn && pos.lastRow && pos.lastCol) layers.push(cond('seCell'));
-
-  let out: TableStyleLayer | undefined;
-  for (const layer of layers) {
-    if (!layer) continue;
-    out = out ? mergeLayer(out, layer) : layer;
-  }
-  return out;
+  return layers.filter((l): l is TableStyleLayer => l !== undefined);
 }
 
 // basedOn chain folded root-first: base layers merge into one; conditional
@@ -294,14 +372,18 @@ function foldTableStyleChain(styleId: string, sheet: StyleSheet): FoldedTableSty
   }
   if (chain.length === 0) return undefined;
 
-  let base: TableStyleLayer = {};
+  // A chain that never reaches Word's built-in Normal Table starts from no
+  // margins at all: a table style based on nothing that states none insets
+  // its text by 0pt in Word, not by the 5.4pt it would inherit (style-cellmar
+  // probes t06, t07, v02, v03).
+  let base: TableStyleLayer = chain.some(isNormalTable) ? {} : { cellMargins: NO_MARGINS };
   const conditions = new Map<TableStyleConditionType, TableStyleLayer>();
   let rowBandSize = 1;
   let colBandSize = 1;
   for (const style of chain) {
     // The style's own rPr/pPr are part of its base layer (alongside tblPr).
     const own: TableStyleLayer = {
-      ...(style.tableLayer ?? {}),
+      ...withNormalTableMargins(style),
       ...(Object.keys(style.runProperties).length > 0 && !style.tableLayer?.runProperties
         ? { runProperties: style.runProperties }
         : {}),
@@ -313,12 +395,47 @@ function foldTableStyleChain(styleId: string, sheet: StyleSheet): FoldedTableSty
     base = mergeLayer(base, own);
     for (const c of style.tableConditions ?? []) {
       const prev = conditions.get(c.type);
-      conditions.set(c.type, prev ? mergeLayer(prev, c.layer) : c.layer);
+      const kept = prev && c.layer.restatesMargins ? withoutMargins(prev) : prev;
+      conditions.set(c.type, kept ? mergeLayer(kept, c.layer) : c.layer);
     }
     if (style.rowBandSize !== undefined) rowBandSize = style.rowBandSize;
     if (style.colBandSize !== undefined) colBandSize = style.colBandSize;
   }
   return { base, conditions, rowBandSize, colBandSize };
+}
+
+// §17.7.4.9 — Word knows its built-in styles by name, and its "Normal Table"
+// insets cells by 108 twips left and right and 0 top and bottom whatever the
+// document's own definition says: one that states 720 each way still insets
+// by 5.4pt, under any table style based on it and in compatibility modes 12,
+// 14 and 15 alike, while the same definition under another name insets by
+// 36pt (style-cellmar probes scm2, scm6, scm7, scm12).
+const NORMAL_TABLE_MARGINS: CellMargins = {
+  top: twipsToPt(0),
+  left: twipsToPt(108),
+  bottom: twipsToPt(0),
+  right: twipsToPt(108),
+};
+const NO_MARGINS: CellMargins = {
+  top: twipsToPt(0),
+  left: twipsToPt(0),
+  bottom: twipsToPt(0),
+  right: twipsToPt(0),
+};
+
+function isNormalTable(style: Style): boolean {
+  return style.name?.toLowerCase() === 'normal table';
+}
+
+function withNormalTableMargins(style: Style): TableStyleLayer {
+  const layer = style.tableLayer ?? {};
+  if (!isNormalTable(style)) return layer;
+  return { ...withoutMargins(layer), cellMargins: NORMAL_TABLE_MARGINS };
+}
+
+function withoutMargins(layer: TableStyleLayer): TableStyleLayer {
+  const { cellMargins: _table, cellLevelMargins: _cell, ...rest } = layer;
+  return rest;
 }
 
 function mergeLayer(base: TableStyleLayer, override: TableStyleLayer): TableStyleLayer {
@@ -328,6 +445,16 @@ function mergeLayer(base: TableStyleLayer, override: TableStyleLayer): TableStyl
       : {}),
     ...((override.cellMargins ?? base.cellMargins)
       ? { cellMargins: { ...base.cellMargins, ...definedOnly(override.cellMargins ?? {}) } }
+      : {}),
+    // Side by side down the chain, as the table-level margins are: a derived
+    // style's `w:tcMar` left of 0 keeps its parent's right of 1080 (k02).
+    ...((override.cellLevelMargins ?? base.cellLevelMargins)
+      ? {
+          cellLevelMargins: {
+            ...base.cellLevelMargins,
+            ...definedOnly(override.cellLevelMargins ?? {}),
+          },
+        }
       : {}),
     ...((override.indentPt ?? base.indentPt) !== undefined
       ? { indentPt: override.indentPt ?? base.indentPt }

@@ -838,7 +838,24 @@ export type StyleType = 'paragraph' | 'character' | 'table' | 'numbering';
  */
 export interface TableStyleLayer {
   readonly borders?: CellBorders;
+  /**
+   * §17.4.43 `w:tblPr/w:tblCellMar` — the layer's TABLE-level cell margins.
+   * The table's own `w:tblCellMar` outranks them side by side, a region's
+   * included.
+   */
   readonly cellMargins?: CellMargins;
+  /**
+   * §17.4.42 `w:tcPr/w:tcMar` — the layer's CELL-level margins. They outrank
+   * every table-level margin, the table's own `w:tblCellMar` included; only a
+   * cell's own `w:tcMar` beats them, side by side.
+   */
+  readonly cellLevelMargins?: CellMargins;
+  /**
+   * True when the layer carries a `w:tblPr` or `w:tcPr` of its own, margins
+   * or not. A region that does replaces the margins a `basedOn` ancestor's
+   * region of the same type gave, instead of adding to them.
+   */
+  readonly restatesMargins?: boolean;
   /** §17.4.65 `w:tblInd` — the table indent a whole-table layer declares. */
   readonly indentPt?: Pt;
   readonly shading?: CellShading;

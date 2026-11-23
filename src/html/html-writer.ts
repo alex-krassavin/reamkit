@@ -1277,13 +1277,16 @@ function emitCell(
       'background-position:1.5pt 1.5pt',
     );
   }
-  const margins = cell.properties.margins ?? table.properties.defaultCellMargins;
-  // Word's default cell padding (108 twips = 5.4pt left/right) keeps text off
-  // the rules even when the document does not specify margins.
-  const padTop = margins?.top ?? 0;
-  const padRight = margins?.right ?? 5.4;
-  const padBottom = margins?.bottom ?? 0;
-  const padLeft = margins?.left ?? 5.4;
+  // Side by side, as the page layout reads them: a cell that states only its
+  // left margin keeps the table's right one. Word's default cell padding (108
+  // twips = 5.4pt left/right) keeps text off the rules even when the document
+  // does not specify margins.
+  const own = cell.properties.margins;
+  const tableMar = table.properties.defaultCellMargins;
+  const padTop = own?.top ?? tableMar?.top ?? 0;
+  const padRight = own?.right ?? tableMar?.right ?? 5.4;
+  const padBottom = own?.bottom ?? tableMar?.bottom ?? 0;
+  const padLeft = own?.left ?? tableMar?.left ?? 5.4;
   css.push(`padding:${fmt(padTop)}pt ${fmt(padRight)}pt ${fmt(padBottom)}pt ${fmt(padLeft)}pt`);
 
   // Frozen-pane stickiness (E-SHEET SE3): pin a frozen-row / frozen-column cell
