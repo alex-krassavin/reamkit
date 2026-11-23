@@ -136,6 +136,53 @@ export function universalMeasureTwips(raw: string): number | undefined {
   return per === undefined ? undefined : Number(m[1]) * per;
 }
 
+// §22.9.2.9 ST_Percentage — a percentage spelled WITH its sign. Word takes a
+// leading plus and leading zeros ("+50%", "050%" make a half-width table) and
+// nothing looser: " 50%", "50 %" and "50%%" each gave no width at all (#145's
+// probes, Word 16.114).
+const PERCENT_SIGN = /^[+-]?[0-9]+(?:\.[0-9]+)?%$/u;
+
+/**
+ * §22.9.2.9 ST_Percentage — the number of percent in a value written with its
+ * sign (`"33.3%"`, `"-50%"`). Transitional OOXML lets this spelling stand
+ * wherever a percentage may also be a bare number counted in the attribute's
+ * own unit: fiftieths of a percent in a WordprocessingML table width,
+ * thousandths in DrawingML, whole percents in a chart. Producers use it. The
+ * docx package wrote every percentage table width as `"100%"` up to 9.x, and
+ * read as a bare number it was nothing (#145).
+ *
+ * @param raw The attribute value.
+ * @returns The percent, or undefined when the value is not spelled this way.
+ */
+export function percentSignValue(raw: string): number | undefined {
+  return PERCENT_SIGN.test(raw) ? Number(raw.slice(0, -1)) : undefined;
+}
+
+/**
+ * {@link poIntAttr} for an attribute whose type admits the percent-sign form
+ * (see {@link percentSignValue}), in the unit its bare-number form counts.
+ *
+ * @param node The element.
+ * @param name The attribute's local name.
+ * @param perPercent How many units of the bare-number form make one percent:
+ *   1000 for DrawingML's ST_Percentage family (§20.1.10.40), 1 for a chart's
+ *   whole percents.
+ * @returns The value in bare-number units, or undefined when absent or not a
+ *   number in either spelling.
+ */
+export function poPercentAttr(
+  node: PoNode | undefined,
+  name: string,
+  perPercent: number,
+): number | undefined {
+  const v = poAttr(node, name);
+  if (v === undefined) return undefined;
+  const pct = percentSignValue(v);
+  if (pct !== undefined) return pct * perPercent;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : undefined;
+}
+
 /** Shorthand for the `val` attribute (`@w:val`/…). */
 export function poVal(node: PoNode | undefined): string | undefined {
   return poAttr(node, 'val');

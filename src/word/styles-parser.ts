@@ -27,7 +27,8 @@ import { eighthPtToPt, twipsToPt } from '@/core/ir';
 import { parseParagraphProperties } from '@/word/paragraph-properties';
 import { parseRunProperties } from '@/word/run-properties';
 import { shadingFillHex } from '@/word/shading';
-import { asArray, asElement, getAttr, getVal, parseIntAttr } from '@/word/xml-helpers';
+import { cellMarginTwips, readTableMeasure } from '@/word/table-width';
+import { asArray, asElement, getAttr, getVal } from '@/word/xml-helpers';
 
 const decoder = new TextDecoder('utf-8');
 
@@ -208,13 +209,14 @@ function parseTableStyleLayer(
     parseFlatBorders(tblPr ? asElement(tblPr['w:tblBorders']) : undefined) ??
     parseFlatBorders(tcPr ? asElement(tcPr['w:tcBorders']) : undefined);
   const cellMargins = parseFlatCellMargins(tblPr ? asElement(tblPr['w:tblCellMar']) : undefined);
-  // §17.4.65 `w:tblInd` — the table indent a whole-table layer declares.
+  // §17.4.65 `w:tblInd` — the table indent a whole-table layer declares, read
+  // as the table's own is (table-parser.ts): only an absolute measure indents.
   const tblInd = tblPr ? asElement(tblPr['w:tblInd']) : undefined;
-  const indW = tblInd ? parseIntAttr(tblInd, 'w') : undefined;
   const indType = tblInd ? getAttr(tblInd, 'type') : undefined;
+  const ind = tblInd ? readTableMeasure(getAttr(tblInd, 'w'), indType) : undefined;
   const indentPt =
-    indW !== undefined && (indType === undefined || indType === 'dxa')
-      ? twipsToPt(indW)
+    ind?.kind === 'dxa' && (ind.spelled || indType === undefined || indType === 'dxa')
+      ? twipsToPt(ind.twips)
       : undefined;
   const shading = parseFlatShading(tcPr ? tcPr['w:shd'] : undefined);
   const runProperties = parseRunProperties(el['w:rPr'], themeFonts);
@@ -279,12 +281,11 @@ function parseFlatBorders(el: Record<string, unknown> | undefined): CellBorders 
 
 function parseFlatCellMargins(el: Record<string, unknown> | undefined): CellMargins | undefined {
   if (!el) return undefined;
+  // A style's `w:tblCellMar` is the table's default layer: a side given as a
+  // share or as auto/nil is no inset (cellMarginTwips), nor is a negative one.
   const read = (node: unknown): number | undefined => {
     const m = asElement(node);
-    if (!m) return undefined;
-    const w = getAttr(m, 'w');
-    const n = w !== undefined ? Number(w) : NaN;
-    return Number.isFinite(n) ? n : undefined;
+    return m ? cellMarginTwips(getAttr(m, 'w'), getAttr(m, 'type'), true) : undefined;
   };
   const top = read(el['w:top']);
   const bottom = read(el['w:bottom']);
