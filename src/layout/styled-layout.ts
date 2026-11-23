@@ -103,6 +103,7 @@ import type { StructNode, StructType } from '@/pdf/struct-tree';
 import type { MetaPicture } from '@/core/metafile/picture';
 import type { Sheet } from '@/layout/turned-section';
 import type { FloatFrame } from '@/layout/float-position';
+import type { CellContentWidths } from '@/layout/word-table-columns';
 import { pageItemBounds } from '@/layout/page-doc';
 import { ResourceStore, halfPtToPt, pt } from '@/core/ir';
 import { headingLevelOf, outlineLevelOf, outlineTitleOf } from '@/core/outline';
@@ -156,6 +157,7 @@ import { StructTreeBuilder } from '@/pdf/struct-tree';
 import { floatIntoFrame, turnOntoSheet } from '@/layout/turned-section';
 import { BAND_PAGE_INSET_PT, floatTopYUpIn, floatXIn } from '@/layout/float-position';
 import { undrawnLoss } from '@/layout/undrawn';
+import { wordColumnWidths } from '@/layout/word-table-columns';
 
 /**
  * PDF/A conformance string: part 1 (ISO 19005-1, PDF 1.4) / 2 (ISO 19005-2) / 3
@@ -8691,23 +8693,28 @@ function computeColumnWidths(
   }
   if (colCount === 0) return [];
 
-  // §17.4.49 `w:tblGrid` is the document's own answer, not a hint. Word writes
-  // the grid it last laid the table out at, and every reader — Word reopening
-  // the file included — draws it at those widths; autofit only ever recomputes
-  // them when the user edits. Refitting to the natural width of the text
-  // instead shrank a table to its words: 2_table_doc.docx declares two 221pt
-  // columns across the page and we drew a 100pt box in the corner.
+  // A Word document's table is laid out as Word lays it out on opening the
+  // file: from the cells' `w:tcW`, their text and the table's `w:tblW`, the
+  // grid standing only where it is what the cells declare (see
+  // word-table-columns).
+  if (options.typesetBy === 'word') {
+    return (
+      wordColumnWidths(table, {
+        colCount,
+        availablePt: contentWidth,
+        padding: (cell) => cellPadding(table, cell),
+        content: (cell) => cellContentWidths(cell, options, fontResources, contentWidth),
+      }) ?? gridWidthsScaled(table, contentWidth, colCount)
+    );
+  }
+
+  // Anywhere else the grid is the table's own geometry, not a hint: a slide's
+  // `a:gridCol`, the columns a PDF page draws. The text does not resize it.
   //
   // The measured autofit stays for a table that brings no grid at all.
-  // §17.4.53 `w:tblLayout w:type="fixed"` — the preferred widths ARE the
-  // layout, and where they disagree with the grid it is the grid that is
-  // stale. fdo38414.docx writes a grid whose first column is 132 twips and
-  // cells that ask for a fifth of the table; drawn on the grid its first
-  // column was two characters wide and every column after it landed one place
-  // to the left of where Word and LibreOffice draw it.
-  // A grid too short for the rows cannot place them at all, whatever the
-  // layout mode says: fdo59273.docx grids four columns and then spans its four
-  // cells across eleven, and the two on the right fell off the table.
+  // `fixed` with cell widths: the cells' widths are the layout, and where they
+  // disagree with the grid it is the grid that is stale. A grid too short for
+  // the rows cannot place them at all, whatever the layout mode says.
   const gridShort = gridColTwips(table).length < colCount;
   const declared = declaredColumnWidths(table, colCount, contentWidth, gridShort);
   if (declared) return declared;
@@ -8722,14 +8729,7 @@ function computeColumnWidths(
     for (let i = 0; i < row.cells.length; i++) {
       const cell = row.cells[i]!;
       const span = Math.max(1, cell.properties.colSpan ?? 1);
-      const padLeft =
-        cell.properties.margins?.left ??
-        table.properties.defaultCellMargins?.left ??
-        DEFAULT_CELL_PADDING_TWIPS * TWIP_TO_PT;
-      const padRight =
-        cell.properties.margins?.right ??
-        table.properties.defaultCellMargins?.right ??
-        DEFAULT_CELL_PADDING_TWIPS * TWIP_TO_PT;
+      const { left: padLeft, right: padRight } = cellPadding(table, cell);
       let maxContent = 0;
       for (const el of cell.content) {
         if (el.kind !== 'paragraph') continue;
@@ -8761,6 +8761,196 @@ function computeColumnWidths(
   }
 
   return colNaturalWidths;
+}
+
+/** A cell's left and right margins: its own, else the table's, else Word's 0.08in. */
+function cellPadding(table: Table, cell: TableCell): { left: number; right: number } {
+  return {
+    left:
+      cell.properties.margins?.left ??
+      table.properties.defaultCellMargins?.left ??
+      DEFAULT_CELL_PADDING_TWIPS * TWIP_TO_PT,
+    right:
+      cell.properties.margins?.right ??
+      table.properties.defaultCellMargins?.right ??
+      DEFAULT_CELL_PADDING_TWIPS * TWIP_TO_PT,
+  };
+}
+
+/**
+ * How wide a table cell's content is, set as narrow as it breaks and as wide
+ * as it runs on one line: what Word's autofit sizes a column by. A floating
+ * drawing takes no room in the cell, so it counts for nothing.
+ *
+ * @param cell          The cell.
+ * @param options       The render options.
+ * @param fontResources The faces the text is measured in.
+ * @param contentWidth  The width the cell's table stands in, for a nested table.
+ * @returns The cell's content widths, its margins left out.
+ */
+function cellContentWidths(
+  cell: TableCell,
+  options: StyledRenderOptions,
+  fontResources: ReadonlyMap<string, FontResource>,
+  contentWidth: number,
+): CellContentWidths {
+  let minPt = 0;
+  let maxPt = 0;
+  // Turned text runs down the cell: its lines stack across the width, which
+  // they do not set (tdf127814.docx's "a hónap napjai" stands in a 30pt column).
+  if (cell.properties.textDirection) return { minPt, maxPt };
+  for (const el of cell.content) {
+    let lo = 0;
+    let hi = 0;
+    if (el.kind === 'paragraph') {
+      ({ minPt: lo, maxPt: hi } = paragraphContentWidths(el.paragraph, options, fontResources));
+    } else if (el.kind === 'table') {
+      lo = hi = nestedTableWidth(el.table, options, fontResources, contentWidth);
+    } else {
+      const block = el.kind === 'image' ? el.image : el.kind === 'shape' ? el.shape : el.chart;
+      if (!block.float) lo = hi = block.width;
+    }
+    if (lo > minPt) minPt = lo;
+    if (hi > maxPt) maxPt = hi;
+  }
+  return { minPt, maxPt };
+}
+
+/**
+ * A paragraph's narrowest and widest setting: its longest unbreakable piece (a
+ * word, which may run across runs, the part of one up to a hyphen, an
+ * ideograph, an inline picture), and its longest line with no wrapping. The
+ * first line stands at the first-line indent, the rest at the left one. A word
+ * is reckoned at whichever indent leaves it more room: all_gaps_word.docx sets
+ * "4 ½ pt" with a 72pt hanging indent in a 51.6pt column Word did not widen.
+ */
+function paragraphContentWidths(
+  paragraph: Paragraph,
+  options: StyledRenderOptions,
+  fontResources: ReadonlyMap<string, FontResource>,
+): CellContentWidths {
+  let line = 0;
+  let firstLine: number | undefined;
+  let otherLines = 0;
+  let word = 0;
+  let widestWord = 0;
+  // The last run ended inside a word, so the next run's first piece joins it.
+  let inWord = false;
+  const endWord = (): void => {
+    if (word > widestWord) widestWord = word;
+    word = 0;
+    inWord = false;
+  };
+  const endLine = (): void => {
+    endWord();
+    if (firstLine === undefined) firstLine = line;
+    else if (line > otherLines) otherLines = line;
+    line = 0;
+  };
+  for (const run of paragraph.runs) {
+    if (run.pageBreak || run.columnBreak) endLine();
+    if (run.inlineImage) {
+      endWord();
+      word = run.inlineImage.width;
+      inWord = true;
+      line += word;
+      endWord();
+      continue;
+    }
+    if (run.math || run.text.length === 0) continue;
+    const resolved = resolveRunProperties(run.properties, paragraph.properties, options.styles);
+    const primary = runFontKeyAndParsed(
+      options,
+      resolved.fontFamily.ascii,
+      resolved.bold,
+      resolved.italic,
+    );
+    const faces = runFaces(options, resolved, primary, run.text);
+    const measure = (text: string): number => {
+      let total = 0;
+      for (const span of faceSpans(faces, text)) {
+        total +=
+          lookupFont(fontResources, span.fontKey).measure.textWidthPt(
+            span.text,
+            resolved.fontSizePt,
+          ) * (span.synthetic?.widthScale ?? 1);
+      }
+      return total * (resolved.widthScale ?? 1);
+    };
+    run.text.split('\n').forEach((part, k) => {
+      if (k > 0) endLine();
+      tokenizeText(part).forEach((tok, t) => {
+        if (tok.isSpace) {
+          // A tab is at least a space wide; where it ends depends on the stops.
+          line += measure(tok.tab ? ' ' : tok.text);
+          endWord();
+          return;
+        }
+        // Pieces of one run are separate boxes (ideographs break between
+        // them); a run's first piece carries on the word the last one ended.
+        if (t > 0) endWord();
+        for (const piece of hyphenPieces(tok.text)) {
+          const w = measure(piece.text);
+          line += w;
+          word += w;
+          inWord = true;
+          if (piece.breakAfter) endWord();
+        }
+      });
+    });
+  }
+  endLine();
+  const pp = resolveParagraphProperties(paragraph.properties, options.styles);
+  const left = Math.max(0, pp.indentLeft);
+  const right = Math.max(0, pp.indentRight);
+  const first = Math.max(0, pp.indentLeft + pp.indentFirstLine);
+  return {
+    minPt: widestWord + Math.min(left, first) + right,
+    maxPt: Math.max((firstLine ?? 0) + first, otherLines > 0 ? otherLines + left : 0) + right,
+  };
+}
+
+/** A word cut after each hyphen a line may break at (see `HYPHENS`, `SOFT_HYPHEN`). */
+function hyphenPieces(text: string): Array<{ text: string; breakAfter: boolean }> {
+  const out: Array<{ text: string; breakAfter: boolean }> = [];
+  let buf = '';
+  for (const ch of text) {
+    buf += ch;
+    if (ch === SOFT_HYPHEN || HYPHENS.has(ch.codePointAt(0)!)) {
+      out.push({ text: buf, breakAfter: true });
+      buf = '';
+    }
+  }
+  if (buf) out.push({ text: buf, breakAfter: false });
+  return out;
+}
+
+// Nested tables measured for the autofit of the table they stand in, per
+// layout (the font resources are one layout's), so a deep nest is not
+// re-measured at every level.
+const nestedWidths = new WeakMap<ReadonlyMap<string, FontResource>, WeakMap<Table, number>>();
+
+/**
+ * How much of a cell a table nested in it takes: the width of its columns
+ * plus its indent. A table sized as a share of its cell fits whatever it gets,
+ * so it asks for nothing (Word: a 2in fixed table in an autofit cell made the
+ * column 2in and its margins).
+ */
+function nestedTableWidth(
+  table: Table,
+  options: StyledRenderOptions,
+  fontResources: ReadonlyMap<string, FontResource>,
+  contentWidth: number,
+): number {
+  if (table.properties.float || table.properties.widthType === 'pct') return 0;
+  let cache = nestedWidths.get(fontResources);
+  if (!cache) nestedWidths.set(fontResources, (cache = new WeakMap()));
+  const hit = cache.get(table);
+  if (hit !== undefined) return hit;
+  const widths = computeColumnWidths(table, options, fontResources, contentWidth);
+  const w = widths.reduce((s, v) => s + v, 0) + Math.max(0, table.properties.indentPt ?? 0);
+  cache.set(table, w);
+  return w;
 }
 
 // Recover the integer twips behind a Pt grid column. Grid ratios and sums were
