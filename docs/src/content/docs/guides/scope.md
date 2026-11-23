@@ -328,7 +328,11 @@ yourself, or `{ images: 'drop' }` to omit them.
 - Tables — auto / fixed layout, §17.4 border-conflict resolution, cell shading,
   vertical merge and grid span, nested tables, **table styles** (`w:tblStyle` with
   conditional formats: banding, first/last row/column). A table's own
-  `w:tblBorders` overrides its style one side at a time. A table in a text box
+  `w:tblBorders` overrides its style one side at a time. Columns are laid out
+  from the cells' widths (`w:tcW`) and the table's own (`w:tblW`) as Word lays
+  them out, not from the grid it last saved (`w:tblGrid`); a width may be
+  written as a percentage (`"100%"`) or with a unit (`"2in"`). A table's own
+  cell margins beat its style's, side by side. A table in a text box
   paints its shading and rules over the box's fill. A row of exact height keeps
   it on every page and is never split. An "at least" row breaks only where its
   minimum fits, and its border takes room on top of that height, as in Word.
@@ -365,7 +369,8 @@ yourself, or `{ images: 'drop' }` to omit them.
   goes to the next page with what it heads (`w:keepNext`), and a paragraph asked
   to stay whole does (`w:keepLines`). A table's horizontal borders take the room
   they are wide, and a Word 2010 table (compatibility mode 14 and earlier) stands
-  out by its first cell's margin. Each page sets its body below the header and
+  out by its first cell's margin and reaches past the right one by its last
+  cell's. Each page sets its body below the header and
   above the footer it shows, and a page break typed on a line of its own stays
   on the page it ends.
 - **Footnotes and endnotes** — notes at the bottom of the referencing page behind
@@ -396,6 +401,9 @@ yourself, or `{ images: 'drop' }` to omit them.
   **anchored inside a table cell** is placed against the cell (or against the
   page, where `layoutInCell` is off), and a picture's **washout**
   (`@gain`/`@blacklevel`) prints as the contrast and brightness it asks for.
+  A header's or footer's drawing is placed as a body drawing is, against what
+  its anchor names: the page, the margin, or the inside or outside margin by
+  the sheet's parity.
 - **Metafiles** — EMF (MS-EMF) and WMF (MS-WMF), the format Word writes for
   anything it draws itself: an embedded workbook's preview, a legacy clipart,
   an ActiveX control's face, an equation. The records are played through their
