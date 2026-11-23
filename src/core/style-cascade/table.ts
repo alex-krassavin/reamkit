@@ -302,11 +302,11 @@ interface CellPosition {
 
 // Which band a row/column falls into: rows participating in banding start
 // after the first row when the first-row format is on (§17.7.6.6 note); band
-// size groups N consecutive rows per band.
+// size groups N consecutive rows per band, and a size of 0 bands nothing.
 function bandIndex(index: number, skipFirst: boolean, bandSize: number): number {
   const adjusted = index - (skipFirst ? 1 : 0);
-  if (adjusted < 0) return -1;
-  return Math.floor(adjusted / Math.max(1, bandSize));
+  if (adjusted < 0 || bandSize <= 0) return -1;
+  return Math.floor(adjusted / bandSize);
 }
 
 // Merge the applicable region layers, low → high precedence.
@@ -378,8 +378,13 @@ function foldTableStyleChain(styleId: string, sheet: StyleSheet): FoldedTableSty
   // probes t06, t07, v02, v03).
   let base: TableStyleLayer = chain.some(isNormalTable) ? {} : { cellMargins: NO_MARGINS };
   const conditions = new Map<TableStyleConditionType, TableStyleLayer>();
-  let rowBandSize = 1;
-  let colBandSize = 1;
+  // §17.7.6.7 / §17.7.6.5 — a style that states no band size, here or up its
+  // chain, bands NOTHING in Word 16.114: neither the shading nor the margins
+  // of its band1Horz and band1Vert regions show, and a size of 0 does the
+  // same. A size stated by a basedOn parent counts (style-cellmar probes
+  // scm14 n01-n06, t21).
+  let rowBandSize = 0;
+  let colBandSize = 0;
   for (const style of chain) {
     // The style's own rPr/pPr are part of its base layer (alongside tblPr).
     const own: TableStyleLayer = {

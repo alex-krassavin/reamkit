@@ -915,7 +915,10 @@ export interface Style {
   /** Table styles only (§17.7.6): the base layer and conditional overrides. */
   readonly tableLayer?: TableStyleLayer;
   readonly tableConditions?: ReadonlyArray<TableStyleCondition>;
-  /** `w:tblPr/w:tblStyleRowBandSize` / `ColBandSize` (default 1). */
+  /**
+   * `w:tblPr/w:tblStyleRowBandSize` / `ColBandSize`: rows (columns) per band.
+   * Absent here and up the `basedOn` chain, or 0, the style bands nothing.
+   */
   readonly rowBandSize?: number;
   readonly colBandSize?: number;
 }

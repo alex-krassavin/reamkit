@@ -178,8 +178,9 @@ function parseTableStyleParts(
   if (tblPr) {
     const rowBand = intVal(tblPr['w:tblStyleRowBandSize']);
     const colBand = intVal(tblPr['w:tblStyleColBandSize']);
-    if (rowBand !== undefined && rowBand > 0) out.rowBandSize = rowBand;
-    if (colBand !== undefined && colBand > 0) out.colBandSize = colBand;
+    // A 0 is kept: stated by a derived style, it turns its parent's bands off.
+    if (rowBand !== undefined && rowBand >= 0) out.rowBandSize = rowBand;
+    if (colBand !== undefined && colBand >= 0) out.colBandSize = colBand;
   }
 
   const conditions: Array<TableStyleCondition> = [];

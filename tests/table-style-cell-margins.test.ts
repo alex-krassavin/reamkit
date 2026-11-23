@@ -388,3 +388,31 @@ describe('the HTML view', () => {
     expect(pads).toEqual(['0pt 18pt 0pt 0pt', '0pt 18pt 0pt 36pt']);
   });
 });
+
+describe('band regions', () => {
+  it('inset nothing unless the style states a band size (t21, x03)', () => {
+    const banded = (size: string): Array<[number, number]> => {
+      const style =
+        '<w:style w:type="table" w:styleId="Band"><w:name w:val="Band"/><w:basedOn w:val="TableNormal"/>' +
+        `<w:tblPr>${size}${GRID}</w:tblPr>` +
+        region('band1Horz', { tc: { left: 1080 } }) +
+        '</w:style>';
+      const table = tableOf(NT + style, {
+        style: 'Band',
+        rows: 3,
+        look: '<w:tblLook w:firstRow="0" w:lastRow="0" w:firstColumn="0" w:lastColumn="0" w:noHBand="0" w:noVBand="1"/>',
+      });
+      return [0, 1, 2].map((r) => insets(table, r)[0]!);
+    };
+    expect(banded('')).toEqual([
+      [5.4, 5.4],
+      [5.4, 5.4],
+      [5.4, 5.4],
+    ]);
+    expect(banded('<w:tblStyleRowBandSize w:val="1"/>')).toEqual([
+      [54, 5.4],
+      [5.4, 5.4],
+      [54, 5.4],
+    ]);
+  });
+});
