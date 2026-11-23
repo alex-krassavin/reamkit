@@ -7693,9 +7693,13 @@ const TAB_LEADER_CHARS: ReadonlyMap<string, string> = new Map([
  * A `right`, `center` or `decimal` stop positions the text AFTER the tab, so
  * each is resolved against the segment that follows it.
  *
+ * The tabs are settled one after another, each from where the one before it
+ * left the pen, and a stop is passed once the pen has reached it.
+ *
  * @param tokens   The line's tokens, replaced in place.
  * @param resolved The paragraph's resolved properties: the stops and indents.
  * @param isFirst  Whether this is the paragraph's first line.
+ * @param availableWidthPt The line's width, from where it starts.
  */
 function resolveTabs(
   tokens: Array<Token>,
@@ -7712,13 +7716,22 @@ function resolveTabs(
       x += tok.widthPt;
       continue;
     }
-    // The run of tokens up to the next tab: what this stop has to place.
+    // The run of tokens up to the next tab: what this stop has to place. It is
+    // aligned by its INK — the spaces at its end hang past the stop. Word ends
+    // "XY" and two spaces at a right stop with the Y, and centres the "XY" on
+    // a centre stop; leading spaces count (Courier New probes in
+    // .git/wip-br-tabs; LibreOffice counts the trailing ones as well).
     let segment = 0;
+    let ink = 0;
     let decimalAt = 0;
     let seenDecimal = false;
+    let tabAfter = false;
     for (let j = i + 1; j < tokens.length; j++) {
       const next = tokens[j]!;
-      if (next.kind === 'text' && next.tab === true) break;
+      if (next.kind === 'text' && next.tab === true) {
+        tabAfter = true;
+        break;
+      }
       if (!seenDecimal && next.kind === 'text') {
         const dot = next.text.indexOf('.');
         if (dot >= 0) {
@@ -7728,16 +7741,9 @@ function resolveTabs(
         }
       }
       segment += next.widthPt;
+      if (!next.isSpace) ink = segment;
     }
-    // §17.3.3.15 — an absolute-position tab has no distance of its own: it
-    // reaches for the middle or the far side of the column, wherever those
-    // fall. Everything else is a distance from the text margin.
-    const stopAt = (sp: TabStop): number =>
-      sp.relativeTo === 'center'
-        ? availableWidthPt / 2
-        : sp.relativeTo === 'right'
-          ? availableWidthPt
-          : sp.positionPt;
+    const stopAt = (sp: TabStop): number => tabStopAt(sp, availableWidthPt);
     const stop = stops.find((sp) => stopAt(sp) > x + 0.01);
     // A hanging indent is itself a tab stop (§17.3.1.12): the first line starts
     // out at the negative offset and the tab after the marker brings the text
@@ -7763,31 +7769,84 @@ function resolveTabs(
         ? explicitAt
         : (hangingStop ?? gridAt);
     const alignment = stop?.alignment ?? 'left';
-    // A right/centre/decimal stop places the segment AFTER the tab against the
-    // stop, so a tab with nothing to place claims nothing and the stop falls to
-    // the tab behind it. FDO77715.docx's header is written that way — two tabs
-    // against a single right stop at the margin — and letting the first take it
-    // drove the title off the page. A LEFT stop (and the default grid, which is
-    // left) is a position in its own right: each of fdo79915.docx's six tabs
-    // advances one stop of the half-inch grid, and collapsing them put "Name:"
-    // five stops short of where Word and LibreOffice write it.
-    if (segment === 0 && alignment !== 'left') {
-      const after = tokens[i + 1];
-      if (after?.kind === 'text' && after.tab === true) {
-        tokens[i] = { ...tok, widthPt: 0, text: '' };
-        continue;
-      }
+    // A right/centre/decimal stop with nothing to place before the next tab
+    // still takes the pen to it, and the next tab goes on from there to the
+    // stop after it, as a left stop and the default grid do (each of
+    // fdo79915.docx's six tabs advances one stop of the grid). Issue #146: a
+    // footer's text, two tabs and a PAGE field against a centre stop at 8222
+    // and a right one at 9356 twips — Word and LibreOffice end the number at
+    // the right stop. Handing the centre stop on to the second tab instead
+    // centred the number on it, 57pt short. Measured in Word for every kind:
+    // centre, right or decimal and then right, centre or left, at the line's
+    // start and mid-line, in RTL paragraphs too, and past the last stop the
+    // next tab takes the default grid.
+    //
+    // Only where nothing is left for the next tab on this line does the stop
+    // still pass to it. Word moves that tab down a line and sets what follows
+    // it against the stop from there — "ab" and two tabs against one right
+    // stop at the margin end "XYZ" at the margin on the line below — and this
+    // line is already broken, so the text keeps its place across the page,
+    // one line up, rather than running off the edge.
+    if (
+      ink === 0 &&
+      tabAfter &&
+      alignment !== 'left' &&
+      !tabRoomAfter(resolved, isFirst, availableWidthPt, position)
+    ) {
+      tokens[i] = { ...tok, widthPt: 0, text: '' };
+      continue;
     }
     let target = position;
-    if (alignment === 'right') target = position - segment;
-    else if (alignment === 'center') target = position - segment / 2;
-    else if (alignment === 'decimal') target = position - (seenDecimal ? decimalAt : segment);
+    if (alignment === 'right') target = position - ink;
+    else if (alignment === 'center') target = position - ink / 2;
+    else if (alignment === 'decimal') target = position - (seenDecimal ? decimalAt : ink);
     const width = Math.max(0, target - x);
     const leaderChar = stop?.leader === undefined ? undefined : TAB_LEADER_CHARS.get(stop.leader);
     const text = leaderChar === undefined ? '' : fillLeader(tok, leaderChar, width);
     tokens[i] = { ...tok, widthPt: width, text };
     x += width;
   }
+}
+
+/**
+ * Where a tab stop stands, from the text margin. §17.3.3.23 — an absolute
+ * position tab has no distance of its own: it reaches for the middle or the
+ * far side of the column, wherever those fall.
+ *
+ * @param sp               The stop.
+ * @param availableWidthPt The line's width.
+ * @returns Its position, in points.
+ */
+function tabStopAt(sp: TabStop, availableWidthPt: number): number {
+  if (sp.relativeTo === 'center') return availableWidthPt / 2;
+  if (sp.relativeTo === 'right') return availableWidthPt;
+  return sp.positionPt;
+}
+
+/**
+ * Whether a tab that starts at `fromPt` still has a stop on this line: a stop
+ * of the paragraph's own within its column, or a stop of the default grid
+ * within its right indent (Word moves a tab bound past those down a line).
+ *
+ * @param resolved         The paragraph's resolved properties: stops, indents, grid.
+ * @param isFirst          Whether this is the paragraph's first line.
+ * @param availableWidthPt The line's width, from where it starts.
+ * @param fromPt           Where the tab starts, from the text margin.
+ * @returns True when the tab reaches a stop before the line ends.
+ */
+function tabRoomAfter(
+  resolved: ResolvedParagraphProperties,
+  isFirst: boolean,
+  availableWidthPt: number,
+  fromPt: number,
+): boolean {
+  const lineEnd = resolved.indentLeft + (isFirst ? resolved.indentFirstLine : 0) + availableWidthPt;
+  const columnEnd = lineEnd + Math.max(0, resolved.indentRight);
+  const own = resolved.tabs.find((sp) => tabStopAt(sp, availableWidthPt) > fromPt + 0.01);
+  if (own) return tabStopAt(own, availableWidthPt) <= columnEnd + 0.01;
+  const grid = resolved.defaultTabStopPt ?? DEFAULT_TAB_STOP_PT;
+  if (!(grid > 0)) return true;
+  return (Math.floor(fromPt / grid) + 1) * grid <= lineEnd + 0.01;
 }
 
 /** As many leader characters as fit the gap, measured in the tab's own font. */
